@@ -38,7 +38,7 @@ Developed by [SourceTrait](https://sourcetrait.com), a division of **Asmov LLC**
 Copyright (C) 2025 [Asmov LLC](https://asmov.software)  
 
 This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as
+it under the terms of the **GNU Affero General Public License** as
 published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 
@@ -59,11 +59,11 @@ modules under licenses of your choice, while preserving the AGPL's source
 obligations (including *Section 13 -- Remote Network Interaction*) for the
 software itself.
 
-The authoritative exception text is in
-[`LICENSE-AGPL-3-LINKING-EXCEPTION.txt`](./LICENSE-AGPL-3-LINKING-EXCEPTION.txt).
+The authoritative exception text is in:  
+[`LICENSE-AGPL-3-LINKING-EXCEPTION.txt`](./LICENSE-AGPL-3-LINKING-EXCEPTION.txt)
 
-External dependency licenses are listed in
-[`LICENSES-EXTERNAL.txt`](./LICENSES-EXTERNAL.txt).
+External dependency licenses are listed in:  
+[`LICENSES-EXTERNAL.txt`](./LICENSES-EXTERNAL.txt)
 
 [Docs Badge]: https://img.shields.io/badge/docs-blue
 [License]: #License-AGPL3

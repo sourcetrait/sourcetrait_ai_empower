@@ -1,17 +1,23 @@
-SourceTrait Empower 
+SourceTrait Empower: Nu Plugin
 ================================================================================
-[![License Badge]][License] [![Linkable Badge]][Linkable]
-
-*Harness toolkit for AI-assisted data analysis and development tooling*
-
-
-Crates
---------------------------------------------------------------------------------
-
-### [Nu Plugin](./crates/nu_plugin_empower)
-[![Nu Plugin Crate Badge]][Nu Plugin Crate] [![Docs Badge]][Nu Plugin Docs]
+[![License Badge]][License]
 
 *Nu commands*
+
+Commands:
+- [peek](#peek)
+
+
+Usage
+--------------------------------------------------------------------------------
+
+### `peek`
+
+
+
+Installation
+--------------------------------------------------------------------------------
+
 
 
 Repository
@@ -31,7 +37,7 @@ all copyright covering your contribution.
 
 License (AGPL3)
 --------------------------------------------------------------------------------
-SourceTrait Empower: Harness toolkit for AI-assisted data analysis and development tooling  
+SourceTrait Empower Nu Plugin: Nu commands   
 Developed by [SourceTrait](https://sourcetrait.com), a division of **Asmov LLC**  
 Copyright (C) 2025 [Asmov LLC](https://asmov.software)  
 
@@ -49,26 +55,8 @@ You should have received a [copy](./LICENSE-AGPL-3.txt) of the
 GNU Affero General Public License along with this program.
 If not, see [https://www.gnu.org/licenses/](https://www.gnu.org/licenses/).
 
-### Linking Exception (Section 7)
 
-In addition to the *AGPL-3.0* terms above, this software is distributed with a
-*Section 7 Additional Permission* allowing it to be linked with independent
-modules under licenses of your choice, while preserving the AGPL's source
-obligations (including *Section 13 -- Remote Network Interaction*) for the
-software itself.
-
-The authoritative exception text is in:  
-[`LICENSE-AGPL-3-LINKING-EXCEPTION.txt`](./LICENSE-AGPL-3-LINKING-EXCEPTION.txt)
-
-External dependency licenses are listed in:  
-[`LICENSES-EXTERNAL.txt`](./LICENSES-EXTERNAL.txt)
 
 [Docs Badge]: https://img.shields.io/badge/docs-blue
 [License]: #License-AGPL3
 [License Badge]: https://img.shields.io/badge/license-AGPL3-blue.svg
-[Linkable]: #Linking-Exception-Section-7
-[Linkable Badge]: https://img.shields.io/badge/linkable-yes-green.svg
-
-[Nu Plugin Crate]: https://crates.io/crates/nu_plugin_empower
-[Nu Plugin Crate Badge]: https://img.shields.io/crates/v/nu_plugin_empower.svg
-[Nu Plugin Docs]: https://docs.rs/nu_plugin_empower

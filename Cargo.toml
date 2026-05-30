@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/sourcetrait_lib_empower",
+]
+
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+chrono = { version = "0.4" }
+hek = { version = "0.5" }
+derive_builder = { version = "0.20" }
+directories = { version = "6" }
+shellexpand = { version = "3", features = ["path"] }
+serde = { version = "1", features = ["derive"] }
+sourcetrait_chronox = { version = "1" }
+sourcetrait_clapx = { version = "1" }
+sourcetrait_ronx = { version = "3" }
+sourcetrait_stdx = { version = "1" }
+sourcetrait_testing = { version = "4" }
+sourcetrait_tomlx = { version = "3" }
+snafu = "0.8"
+strum = { version = "0.27", features = ["derive"] }
+tempfile = { version = "3.20" }
+toml = { version = "0.8" }

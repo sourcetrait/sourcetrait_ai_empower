@@ -49,42 +49,21 @@ GNU Affero General Public License for more details.
 
 You should have received a [copy](./LICENSE-AGPL-3.txt) of the
 GNU Affero General Public License along with this program.
-If not, see https://www.gnu.org/licenses/.
+If not, see [https://www.gnu.org/licenses/](https://www.gnu.org/licenses/).
 
 ### Linking Exception (Section 7)
 
-The software in this package is distributed under the GNU Affero General Public
-License Version 3 (with a special exception described below).
+In addition to the *AGPL-3.0* terms above, this software is distributed with a
+*Section 7 Additional Permission* allowing it to be linked with independent
+modules under licenses of your choice, while preserving the AGPL's source
+obligations (including *Section 13 -- Remote Network Interaction*) for the
+software itself.
 
-A [copy](./LICENSE-AGPL-3.txt) of GNU Affero General Public License (AGPL3) is
-included in this distribution. If you do not have the source code, it is
-available at: https://www.gnu.org/licenses/.
+The authoritative exception text is in
+[`LICENSE-AGPL-3-LINKING-EXCEPTION.txt`](./LICENSE-AGPL-3-LINKING-EXCEPTION.txt).
 
-Linking this library statically or dynamically with other modules is
-making a combined work based on this library.  Thus, the terms and
-conditions of the GNU Affero General Public License cover the whole
-combination.
-
-As a special exception, the copyright holders of this library give you
-permission to link this library with independent modules to produce an
-executable, regardless of the license terms of these independent
-modules, and to copy and distribute the resulting executable under
-terms of your choice, provided that you also meet, for each linked
-independent module, the terms and conditions of the license of that
-module.  An independent module is a module which is not derived from
-or based on this library.  If you modify this library, you may extend
-this exception to your version of the library, but you are not
-obligated to do so.  If you do not wish to do so, delete this
-exception statement from your version.
-
-This library also depends upon other software distributed under other
-terms. External software included with or imported by this library may also be
-distributed under different licensing terms. The name of each external license
-used by each dependency is [included](/LICENSES-EXTERNAL.txt) in this
-distribution.
-
-If you do not have the source code for this library, it is available at:
-https://github.com/sourcetrait
+External dependency licenses are listed in
+[`LICENSES-EXTERNAL.txt`](./LICENSES-EXTERNAL.txt).
 
 [Docs Badge]: https://img.shields.io/badge/docs-blue
 [License]: #License-AGPL3

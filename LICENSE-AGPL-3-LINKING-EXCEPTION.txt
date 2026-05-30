@@ -6,7 +6,7 @@ A copy of GNU Affero General Public License (AGPL3) is included in this
 distribution, in the file LICENSE-AGPL-3.txt. If you do not have the source
 code, it is available at:
 
-https://www.gnu.org/licenses
+https://www.gnu.org/licenses/
 
 Linking this Software statically or dynamically with other modules is
 making a combined work based on this Software. Thus, the terms and

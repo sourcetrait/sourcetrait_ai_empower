@@ -13,11 +13,30 @@ Usage
 
 ### `peek`
 
+Structural queries against markdown files.
+
+#### `peek md find`
+
+Find regex matches in a markdown file. Returns `[[offset, length], ...]`
+sorted by appearance. Multiline regex (`^` and `$` match line boundaries).
+
+```nu
+peek md find '^## ' README.md
+```
 
 
 Installation
 --------------------------------------------------------------------------------
 
+Build from source, install to the nushell plugin directory, register:
+
+```nu
+^cargo install --path .
+cp ~/.cargo/bin/nu_plugin_empower ~/.config/nushell/plugins/
+plugin add ~/.config/nushell/plugins/nu_plugin_empower
+```
+
+Requires nushell 0.113 or later.
 
 
 Repository

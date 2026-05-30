@@ -1,3 +1,4 @@
+#[allow(unused)]
 pub type NuPluginEmpowerResult<T> = Result<T, NuPluginEmpowerError>;
 
 #[derive(Debug, snafu::Snafu)]

@@ -1,6 +1,6 @@
-use nu_plugin::{MsgPackSerializer, serve_plugin};
-use nu_plugin_empower::EmpowerPlugin;
-
 fn main() {
-    serve_plugin(&EmpowerPlugin, MsgPackSerializer {});
+    nu_plugin::serve_plugin(
+        &nu_plugin_empower::EmpowerPlugin,
+        nu_plugin::MsgPackSerializer {}
+    );
 }

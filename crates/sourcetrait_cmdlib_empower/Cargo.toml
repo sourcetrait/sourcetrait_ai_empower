@@ -13,3 +13,4 @@ keywords = ["sourcetrait", "empower", "cmdlib"]
 [dependencies]
 sourcetrait_lib_empower = { path = "../sourcetrait_lib_empower" }
 snafu.workspace = true
+regex = "1"

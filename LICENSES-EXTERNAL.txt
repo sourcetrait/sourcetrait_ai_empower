@@ -1,5 +1,6 @@
 (MIT OR Apache-2.0) AND Unicode-3.0 (1): unicode-ident
-AGPL-3.0-or-later WITH GPL-3.0-linking-source-exception (5): sourcetrait_lib_empower, sourcetrait_stdx, sourcetrait_testing, sourcetrait_testing_macro, sourcetrait_tooling
+AGPL-3.0-or-later WITH GPL-3.0-linking-exception (1): sourcetrait_lib_empower
+AGPL-3.0-or-later WITH GPL-3.0-linking-source-exception (4): sourcetrait_stdx, sourcetrait_testing, sourcetrait_testing_macro, sourcetrait_tooling
 Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT (4): linux-raw-sys, rustix, wasip2, wit-bindgen
 Apache-2.0 OR BSD-2-Clause OR MIT (2): zerocopy, zerocopy-derive
 Apache-2.0 OR LGPL-2.1-or-later OR MIT (1): r-efi

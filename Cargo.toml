@@ -7,16 +7,17 @@ members = [
 ]
 
 [workspace.dependencies]
-clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4" }
-hek = { version = "0.5" }
+clap = { version = "4", features = ["derive"] }
 derive_builder = { version = "0.20" }
 directories = { version = "6" }
-shellexpand = { version = "3", features = ["path"] }
-serde = { version = "1", features = ["derive"] }
+hek = { version = "0.5" }
 nu-plugin = { version = "0.113" }
 nu-protocol = { version = "0.113" }
 regex = { version = "1" }
+serde = { version = "1", features = ["derive"] }
+shellexpand = { version = "3", features = ["path"] }
+snafu = "0.8"
 sourcetrait_chronox = { version = "1" }
 sourcetrait_clapx = { version = "1" }
 sourcetrait_cmdlib_empower = { path = "crates/sourcetrait_cmdlib_empower" }
@@ -25,7 +26,6 @@ sourcetrait_ronx = { version = "3" }
 sourcetrait_stdx = { version = "1" }
 sourcetrait_testing = { version = "4" }
 sourcetrait_tomlx = { version = "3" }
-snafu = "0.8"
 strum = { version = "0.27", features = ["derive"] }
 tempfile = { version = "3.20" }
 toml = { version = "0.8" }

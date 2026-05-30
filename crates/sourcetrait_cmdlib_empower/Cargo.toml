@@ -11,6 +11,6 @@ categories = []
 keywords = ["sourcetrait", "empower", "cmdlib"]
 
 [dependencies]
-sourcetrait_lib_empower = { path = "../sourcetrait_lib_empower" }
+sourcetrait_lib_empower.workspace = true
 snafu.workspace = true
-regex = "1"
+regex.workspace = true

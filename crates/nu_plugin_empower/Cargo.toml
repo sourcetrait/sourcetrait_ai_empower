@@ -15,7 +15,7 @@ name = "nu_plugin_empower"
 path = "src/main.rs"
 
 [dependencies]
-sourcetrait_cmdlib_empower = { path = "../sourcetrait_cmdlib_empower" }
+sourcetrait_cmdlib_empower.workspace = true
 snafu.workspace = true
 nu-plugin.workspace = true
 nu-protocol.workspace = true

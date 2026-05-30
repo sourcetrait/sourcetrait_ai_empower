@@ -14,6 +14,8 @@ derive_builder = { version = "0.20" }
 directories = { version = "6" }
 shellexpand = { version = "3", features = ["path"] }
 serde = { version = "1", features = ["derive"] }
+nu-plugin = { version = "0.113" }
+nu-protocol = { version = "0.113" }
 sourcetrait_chronox = { version = "1" }
 sourcetrait_clapx = { version = "1" }
 sourcetrait_ronx = { version = "3" }

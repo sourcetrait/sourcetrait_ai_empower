@@ -21,6 +21,14 @@ that you also meet, for each linked independent module, the terms and conditions
 of the license of that module. An independent module is a module which is not
 derived from or based on this Software.
 
+This exception does not modify or waive the obligations of the GNU Affero
+General Public License with respect to this Software itself or to any modified
+version of it. In particular, Section 13 (Remote Network Interaction)
+continues to apply to this Software and to any modification of it, whether
+distributed alone or as part of a combined work. The 'terms of your choice'
+permission above governs only the independent modules and the act of
+combining; it does not extend to this Software's own AGPL obligations.
+
 If you modify this Software, you may extend this exception to your version of
 the Software, but you are not obligated to do so. If you do not wish to do so,
 delete this exception statement from your version.

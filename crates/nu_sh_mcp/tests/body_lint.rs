@@ -397,6 +397,154 @@ fn lint_import_library_reports_main_body_violation() {
     assert!(msg.contains("mod bad.nu"), "got {msg:?}");
 }
 
+// ----------------------------------------------------------------------------
+// Slice 5.3: helper-function lint (source tag `fn <name>`)
+// ----------------------------------------------------------------------------
+
+#[test]
+fn lint_helper_hardcoded_path_tagged() {
+    let mut host = Host::spawn();
+    let resp = host.run(serde_json::json!({
+        "args_schema": "x: int",
+        "result_schema": "out: int",
+        "args": {"x": 5},
+        "closure": "{ out: ((double {x: $args.x}).out + 1) }",
+        "functions": [{
+            "name": "double",
+            "args_schema": "x: int",
+            "result_schema": "out: int",
+            "body": "let p = \"/home/box/x\"; { out: ($args.x * 2) }"
+        }]
+    }));
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
+    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+    assert!(msg.contains("fn double"), "got {msg:?}");
+}
+
+#[test]
+fn lint_helper_blacklisted_external_tagged() {
+    let mut host = Host::spawn();
+    let resp = host.run(serde_json::json!({
+        "args_schema": "noop: int",
+        "result_schema": "out: int",
+        "args": {"noop": 0},
+        "closure": "{ out: 0 }",
+        "functions": [{
+            "name": "evil",
+            "args_schema": "noop: int",
+            "result_schema": "out: int",
+            "body": "let x = (^awk 'y' | str trim); { out: 0 }"
+        }]
+    }));
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
+    assert!(msg.contains("lint::blacklisted_command"), "got {msg:?}");
+    assert!(msg.contains("fn evil"), "got {msg:?}");
+}
+
+#[test]
+fn lint_helper_clean_closure_dirty_only_helper_flags() {
+    // Closure is clean; one helper has a path; only the helper-tagged
+    // violation appears.
+    let mut host = Host::spawn();
+    let resp = host.run(serde_json::json!({
+        "args_schema": "x: int",
+        "result_schema": "out: int",
+        "args": {"x": 1},
+        "closure": "{ out: ((helper {x: $args.x}).out) }",
+        "functions": [{
+            "name": "helper",
+            "args_schema": "x: int",
+            "result_schema": "out: int",
+            "body": "cd \"/x/y\"; { out: $args.x }"
+        }]
+    }));
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
+    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+    assert!(msg.contains("fn helper"), "got {msg:?}");
+    // Closure body has no path, so its bare-tag (no source) line should
+    // not appear -- only the helper-tagged one.
+    let helper_tagged_count = msg
+        .lines()
+        .filter(|l| l.starts_with("lint::"))
+        .count();
+    assert_eq!(helper_tagged_count, 1, "got {msg:?}");
+}
+
+#[test]
+fn lint_helper_and_closure_both_dirty_aggregates() {
+    let mut host = Host::spawn();
+    let resp = host.run(serde_json::json!({
+        "args_schema": "noop: int",
+        "result_schema": "out: int",
+        "args": {"noop": 0},
+        "closure": "cd \"/a/b\"; { out: 0 }",
+        "functions": [{
+            "name": "h1",
+            "args_schema": "noop: int",
+            "result_schema": "out: int",
+            "body": "let p = \"/c/d\"; { out: 0 }"
+        }]
+    }));
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
+    let lines: Vec<&str> = msg.lines().filter(|l| l.starts_with("lint::")).collect();
+    assert_eq!(lines.len(), 2, "got {msg:?}");
+    // Closure line: no source tag.
+    let closure_line = lines.iter().find(|l| !l.contains(" fn ")).unwrap_or_else(|| {
+        panic!("expected one bare closure-tagged line; got {msg:?}")
+    });
+    assert!(
+        closure_line.contains("lint::hardcoded_variable"),
+        "got {closure_line:?}",
+    );
+    // Helper line: tagged fn h1.
+    let helper_line = lines.iter().find(|l| l.contains(" fn h1")).unwrap_or_else(|| {
+        panic!("expected one fn h1 line; got {msg:?}")
+    });
+    assert!(
+        helper_line.contains("lint::hardcoded_variable"),
+        "got {helper_line:?}",
+    );
+}
+
+#[test]
+fn lint_helper_clean_passes() {
+    // Smoke that the existing smoke_4-style helper invocation still
+    // works under slice 5.3 -- helpers are linted but a clean helper +
+    // clean closure should round-trip an envelope.
+    let mut host = Host::spawn();
+    let resp = host.run(serde_json::json!({
+        "args_schema": "x: int",
+        "result_schema": "out: int",
+        "args": {"x": 5},
+        "closure": "{ out: ((double {x: $args.x}).out + 1) }",
+        "functions": [{
+            "name": "double",
+            "args_schema": "x: int",
+            "result_schema": "out: int",
+            "body": "{ out: ($args.x * 2) }"
+        }]
+    }));
+    assert!(resp.get("error").is_none(), "got {resp}");
+    let result = resp.get("result").unwrap_or_else(|| {
+        panic!("expected ok result; got {resp}");
+    });
+    let content = result
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or_else(|| panic!("expected text content; got {resp}"));
+    let env: serde_json::Value = serde_json::from_str(content)
+        .unwrap_or_else(|e| panic!("parse envelope: {e}; got {content:?}"));
+    // double(5).out = 10; 10 + 1 = 11.
+    assert_eq!(env["result"]["out"].as_i64(), Some(11), "got {env}");
+}
+
 #[test]
 fn lint_import_library_combines_structural_and_lint() {
     let mut host = Host::spawn();

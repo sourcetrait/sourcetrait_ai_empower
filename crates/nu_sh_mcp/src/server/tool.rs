@@ -318,12 +318,13 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<String, mcp::ErrorData> {
-        // Slice 5.1: AST body lint runs BEFORE template synthesis so any
-        // hardcoded-path or blacklisted-external violation surfaces as
-        // -32602 invalid_params with the agent-fixable `lint::<class>
-        // [L:C]` report shape. Helper functions in p.functions are NOT
-        // linted in this slice -- that's slice 5.3.
-        let violations = lint_body(&self.lint_engine, &p.args_schema, &p.closure, None);
+        // Slice 5.1 (closure) + slice 5.3 (helpers): AST body lint runs
+        // BEFORE template synthesis so any hardcoded-path or blacklisted-
+        // external violation surfaces as -32602 invalid_params with the
+        // agent-fixable `lint::<class> [L:C]` report shape. Helpers
+        // contribute lines tagged ` fn <name>` so the agent can spot
+        // which body in a multi-helper submission failed.
+        let violations = lint_run_params(&self.lint_engine, &p);
         if !violations.is_empty() {
             return Err(mcp::ErrorData::invalid_params(
                 format_lint_violations(&violations),
@@ -372,9 +373,11 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<String, mcp::ErrorData> {
-        // Slice 5.2: lint applies to interact() bodies on the same shape
-        // as run(); the stateful substrate is irrelevant for static lint.
-        let violations = lint_body(&self.lint_engine, &p.args_schema, &p.closure, None);
+        // Slice 5.2 (closure) + slice 5.3 (helpers): lint applies to
+        // interact() bodies on the same shape as run(); the stateful
+        // substrate is irrelevant for static lint, so both paths share
+        // the same `lint_run_params` aggregator.
+        let violations = lint_run_params(&self.lint_engine, &p);
         if !violations.is_empty() {
             return Err(mcp::ErrorData::invalid_params(
                 format_lint_violations(&violations),
@@ -690,6 +693,33 @@ impl NuSh {
             )
         })
     }
+}
+
+/// What: aggregate lint of a `RunParams` -- the agent's closure body
+/// PLUS each helper in `p.functions`. Closure violations carry no
+/// source tag (single context); helper violations are tagged
+/// `fn <name>` so the agent can attribute a finding to the right body
+/// when several helpers ship together.
+///
+/// Why: slice 5.1 covered the closure entry; slice 5.3 broadens to
+/// helpers so a submission like `{run, functions: [{name: double,
+/// body: cd "/x"; ...}]}` no longer slips a hardcoded path through
+/// just because the lint stopped at the closure boundary. Helpers
+/// land as top-level defs in the worker's submission template, so
+/// linting them is a 1:1 mapping of the closure rule.
+///
+/// Where: called by `NuSh::run` and `NuSh::interact` before any
+/// template synthesis. The result feeds `format_lint_violations` on
+/// non-empty.
+fn lint_run_params(engine: &ParseEngine, p: &RunParams) -> Vec<LintViolation> {
+    let mut violations = lint_body(engine, &p.args_schema, &p.closure, None);
+    for helper in &p.functions {
+        let source_tag = format!("fn {}", helper.name);
+        let helper_violations =
+            lint_body(engine, &helper.args_schema, &helper.body, Some(&source_tag));
+        violations.extend(helper_violations);
+    }
+    violations
 }
 
 /// What: the shape returned by `dispatch_to_worker`. Pairs the

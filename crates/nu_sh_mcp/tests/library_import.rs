@@ -213,6 +213,51 @@ fn import_happy_path_writes_repo_and_meta() {
 }
 
 #[test]
+fn import_rejects_mod_nu_with_syntax_error() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("badmodlib");
+    std::fs::create_dir_all(&src).unwrap();
+    // Unbalanced angle bracket -- syntax error in mod.nu.
+    write_source(&src, "mod.nu", "export module foo\nexport\n");
+    write_source(&src, "foo/mod.nu", "");
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({
+            "name": "badmodlib",
+            "path": src.to_str().unwrap(),
+        }),
+    );
+    assert!(has_error_path(&resp), "syntax-error mod.nu should reject; got {resp}");
+    let msg = error_message(&resp);
+    assert!(
+        msg.contains("parse error"),
+        "expected parse-error violation in mod.nu; got {msg:?}",
+    );
+}
+
+#[test]
+fn import_rejects_mod_nu_referencing_missing_file() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("missingreflib");
+    std::fs::create_dir_all(&src).unwrap();
+    // export use references a file that doesn't exist in the tree.
+    write_source(&src, "mod.nu", "export use ./does_not_exist.nu\n");
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({
+            "name": "missingreflib",
+            "path": src.to_str().unwrap(),
+        }),
+    );
+    assert!(has_error_path(&resp), "missing-ref mod.nu should reject; got {resp}");
+    let msg = error_message(&resp);
+    assert!(
+        msg.contains("ModuleNotFound") || msg.contains("does_not_exist"),
+        "expected ModuleNotFound for missing ref; got {msg:?}",
+    );
+}
+
+#[test]
 fn import_accepts_multiline_def_signature() {
     // Text-based validator would have FAILED this -- the `args: record<...>`
     // sits on a different line from `export def main`, so the line-level

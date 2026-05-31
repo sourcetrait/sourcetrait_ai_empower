@@ -20,6 +20,28 @@ impl ParseEngine {
     pub(crate) fn engine_state(&self) -> &nu::EngineState {
         &self.engine_state
     }
+
+    /// Build a per-file engine state with `$env.PWD` set to the file's
+    /// parent directory. nu_parser resolves `export use ./<file>.nu`
+    /// and `export module <name>` relative to `$env.PWD`; without this
+    /// guard, parsing a `mod.nu` standalone produces noisy
+    /// `ModuleNotFound` diagnostics for files that DO exist on disk
+    /// (slice 4.5 experiment: probe_modnu_parse confirmed). Clone is
+    /// cheap-ish because EngineState's data shares via Arc internally.
+    pub(crate) fn engine_state_for_file(
+        &self,
+        file_parent: &std::path::Path,
+    ) -> nu::EngineState {
+        let mut clone = self.engine_state.clone();
+        clone.add_env_var(
+            "PWD".to_string(),
+            nu::Value::string(
+                file_parent.to_string_lossy().into_owned(),
+                nu::Span::unknown(),
+            ),
+        );
+        clone
+    }
 }
 
 /// Convert a byte offset into a 1-based (line, column) pair against

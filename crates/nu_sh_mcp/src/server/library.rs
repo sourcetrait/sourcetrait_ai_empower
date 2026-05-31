@@ -707,23 +707,58 @@ fn validate_one_file(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
     let is_mod = path.file_name().map(|n| n == "mod.nu").unwrap_or(false);
     if is_mod {
-        // mod.nu files reference sibling/child modules via `export use
-        // ./<file>.nu` and `export module <subdir>`. nu_parser resolves
-        // these at parse time; running it standalone surfaces noisy
-        // ModuleNotFound errors that aren't real violations. mod.nu's
-        // grammar is narrow enough that a tokenized line scan is both
-        // sufficient and accurate.
+        // 0.0.15: parse mod.nu with `$env.PWD = <parent>` guard so
+        // `export use ./<file>.nu` + `export module <name>` resolve
+        // correctly against the file's actual location (slice 4.5
+        // experiment confirmed: without the guard, valid cascades
+        // surface noisy ModuleNotFound errors). Surfaces real
+        // ModuleNotFound when a referenced file genuinely doesn't
+        // exist + any syntax errors in the mod.nu body. Structural
+        // rule (only export use / export module allowed) stays text-
+        // based because nu_parser accepts inline `def` as legal
+        // module-body syntax even though our convention forbids it.
+        parse_check_mod_nu(&rel, stem, &source, parent, engine, violations);
         validate_mod_nu(&rel, &source, violations);
     } else {
-        validate_function_file_ast(&rel, stem, &source, engine, violations);
+        validate_function_file_ast(&rel, stem, &source, parent, engine, violations);
     }
     Ok(())
 }
 
+/// Parse a mod.nu file with `$env.PWD = parent` so sibling/child
+/// references resolve. Surfaces only `parse error: ...` violations;
+/// the structural rule is enforced by the sibling text-based
+/// `validate_mod_nu`.
+fn parse_check_mod_nu(
+    rel: &str,
+    stem: &str,
+    source: &str,
+    parent: &std::path::Path,
+    engine: &ParseEngine,
+    violations: &mut Vec<Violation>,
+) {
+    let wrapper_name = format!("__v_{stem}");
+    let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
+    let engine_state = engine.engine_state_for_file(parent);
+    let mut working_set = nu::StateWorkingSet::new(&engine_state);
+    let _ = nu::parse(&mut working_set, Some(rel), wrapped.as_bytes(), false);
+    for err in &working_set.parse_errors {
+        let span_start = err.span().start.saturating_sub(prefix_len);
+        let (line, _col) = span_to_line_col(source, span_start);
+        violations.push(Violation {
+            path: rel.to_string(),
+            line,
+            message: format!("parse error: {err:?}"),
+        });
+    }
+}
+
 /// AST-based function file validator. Wraps `source` in
-/// `module __v_<stem> { ... }`, runs nu_parser, then walks the
+/// `module __v_<stem> { ... }`, runs nu_parser (with `$env.PWD =
+/// parent` so any sibling `use` resolves cleanly), then walks the
 /// resulting `Module` to enforce:
 ///   - parse cleanly (no syntax errors)
 ///   - exactly two exports named `main` and `resolve`
@@ -734,12 +769,14 @@ fn validate_function_file_ast(
     rel: &str,
     stem: &str,
     source: &str,
+    parent: &std::path::Path,
     engine: &ParseEngine,
     violations: &mut Vec<Violation>,
 ) {
     let wrapper_name = format!("__v_{stem}");
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
-    let mut working_set = nu::StateWorkingSet::new(engine.engine_state());
+    let engine_state = engine.engine_state_for_file(parent);
+    let mut working_set = nu::StateWorkingSet::new(&engine_state);
     let _ = nu::parse(&mut working_set, Some(rel), wrapped.as_bytes(), false);
 
     // 1. Surface parse errors with source-relative line numbers.

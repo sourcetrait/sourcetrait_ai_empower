@@ -58,25 +58,25 @@ pub(crate) fn serve(warm_base: &WarmBase) -> io::Result<()> {
     }
 }
 
-// MTP gap (2026-05-31): the worker process's fd 1 is shared between the
-// length-prefixed msgpack IPC framing in `serve` above and any direct
-// stdout writes the nushell engine performs during `eval_block` below --
-// external command stdout, uncaptured intermediate pipeline values,
-// `print` calls. The two sources interleave on the same descriptor and
-// corrupt the IPC byte stream; the host hangs on its next response read
-// because the length prefix it sees is partially overwritten.
-//
-// Callers must consume every external invocation in the closure body --
-// `^cmd | complete | ignore` or `^cmd | str trim` etc. A bare `^cmd`
-// statement at the top level of a body is unsafe and will hang the host.
-//
-// Substrate fix planned for a post-MTP slice: dup the real fd 1 into an
-// internal side channel that `serve`'s framing uses exclusively, then
-// redirect the engine's stdout to /dev/null or a per-call spill buffer.
 fn eval_source(warm_base: &WarmBase, source: &str) -> Result<Vec<u8>, String> {
     let mut engine_state = warm_base.engine_state.clone();
     engine_state.set_signals(nu::Signals::new(Arc::new(AtomicBool::new(false))));
-    let mut stack = nu::Stack::new().capture_all();
+    // Redirect external command stdout/stderr at the engine layer so they
+    // never reach the worker process's fd 1, which `serve` above uses
+    // exclusively for length-prefixed msgpack IPC frames. Without this, a
+    // bare `^cmd` in a closure body would corrupt the IPC byte stream and
+    // hang the host on its next response read. /dev/null discards any
+    // chatter; the design iteration in progress is whether to swap this
+    // for an `os_pipe::pipe()` whose reader is drained into a per-call
+    // buffer that the response folds back as a `spill`-like field.
+    let dev_null_out = std::fs::File::create("/dev/null")
+        .map_err(|e| format!("open /dev/null stdout: {e}"))?;
+    let dev_null_err = std::fs::File::create("/dev/null")
+        .map_err(|e| format!("open /dev/null stderr: {e}"))?;
+    let mut stack = nu::Stack::new()
+        .stdout_file(dev_null_out)
+        .stderr_file(dev_null_err)
+        .capture_all();
     let mut working_set = nu::StateWorkingSet::new(&engine_state);
     let block = nu::parse(&mut working_set, None, source.as_bytes(), false);
     if !working_set.parse_errors.is_empty() {

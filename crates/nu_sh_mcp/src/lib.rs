@@ -101,6 +101,10 @@ pub(crate) mod mcp {
         ServiceExt,
         handler::server::router::tool::ToolRouter,
         handler::server::wrapper::Parameters,
+        model::{
+            Implementation,
+            ServerInfo,
+        },
         tool,
         tool_handler,
         tool_router,

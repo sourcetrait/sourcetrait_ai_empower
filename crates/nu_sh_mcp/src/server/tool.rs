@@ -272,6 +272,7 @@ pub struct NuSh {
     interact_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
     nonce_gen: Arc<lib_empower::NonceGen>,
     library_locks: Arc<LibraryLocks>,
+    lint_engine: Arc<ParseEngine>,
     #[allow(dead_code)]
     tool_router: mcp::ToolRouter<NuSh>,
 }
@@ -298,12 +299,14 @@ impl NuSh {
         interact_worker: WorkerHandle,
         nonce_gen: Arc<lib_empower::NonceGen>,
         library_locks: Arc<LibraryLocks>,
+        lint_engine: Arc<ParseEngine>,
     ) -> Self {
         Self {
             runs_worker: Arc::new(tk::AsyncMutex::new(runs_worker)),
             interact_worker: Arc::new(tk::AsyncMutex::new(interact_worker)),
             nonce_gen,
             library_locks,
+            lint_engine,
             tool_router: Self::tool_router(),
         }
     }
@@ -315,6 +318,18 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<String, mcp::ErrorData> {
+        // Slice 5.1: AST body lint runs BEFORE template synthesis so any
+        // hardcoded-path or blacklisted-external violation surfaces as
+        // -32602 invalid_params with the agent-fixable `lint::<class>
+        // [L:C]` report shape. Helper functions in p.functions are NOT
+        // linted in this slice -- that's slice 5.3.
+        let violations = lint_body(&self.lint_engine, &p.args_schema, &p.closure, None);
+        if !violations.is_empty() {
+            return Err(mcp::ErrorData::invalid_params(
+                format_lint_violations(&violations),
+                None,
+            ));
+        }
         let source = build_run_source(&p);
         let payload_bytes = json::to_vec(&p).map_err(|e| {
             mcp::ErrorData::internal_error(

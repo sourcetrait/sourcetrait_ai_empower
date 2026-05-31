@@ -1,6 +1,7 @@
 pub(crate) mod server {
     pub(crate) mod cache;
     pub(crate) mod library;
+    pub(crate) mod lint;
     pub(crate) mod parse_engine;
     pub(crate) mod run;
     pub(crate) mod tool;
@@ -47,9 +48,14 @@ pub(crate) use crate::{
             undefine_function_impl,
             unregister_library_impl,
         },
+        lint::{
+            format_lint_violations,
+            lint_body,
+        },
         parse_engine::{
             ParseEngine,
             span_to_line_col,
+            wrap_as_def_body,
             wrap_as_module,
         },
         tool::{
@@ -121,8 +127,13 @@ pub(crate) mod nu {
         VarId,
         ast::{
             Argument,
+            Block,
+            Comparison,
             Expr,
             Expression,
+            ExternalArgument,
+            Operator,
+            RecordItem,
         },
         debugger::WithoutDebug,
         engine::{

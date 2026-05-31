@@ -211,14 +211,16 @@ fn smoke_4_function_helpers_in_scope() {
 
 #[test]
 fn smoke_5_external_command() {
-    // External `^echo "hello"` should round-trip the stdout. The closure
+    // External `^printf "hello"` should round-trip the stdout. The closure
     // captures the output as a string and emits {out: <captured>}.
+    // Uses `printf` (POSIX, universal, NOT in slice 5.1 lint blacklist)
+    // because `^echo` is blacklisted by the body linter.
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": "noop: int",
         "result_schema": "out: string",
         "args": {"noop": 0},
-        "closure": "{ out: (^echo hello | str trim) }",
+        "closure": "{ out: (^printf hello | str trim) }",
         "functions": []
     });
     let resp = host.run(args);

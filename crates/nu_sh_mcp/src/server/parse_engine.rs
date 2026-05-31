@@ -38,6 +38,46 @@ impl ParseEngine {
         Self { engine_state }
     }
 
+    /// What: constructs a fresh `ParseEngine` carrying the full shell
+    /// command set (`nu_cmd_lang::create_default_context` +
+    /// `nu_command::add_shell_command_context`) plus the same
+    /// `is_interactive = false` and `is_mcp = true` flags.
+    ///
+    /// Why: the slice 5.x body linter needs `cd`, `ls`, `str replace`,
+    /// `parse`, `find`, `split row`, `split column`, etc. resolved as
+    /// `Expr::Call` rather than collapsing to `Expr::ExternalCall`.
+    /// Without the full shell context, the parser cannot identify the
+    /// regex-receiver decl names (the named `--regex` flag flattens to
+    /// a plain ext arg and becomes indistinguishable from a path-shape
+    /// positional). Slice 5.0 probe `notes/nu_sh_mcp/
+    /// slice_5_0_probe_findings.md` confirmed this trade-off.
+    ///
+    /// Where: called once in `server::run::run_server` to construct
+    /// the `lint_engine: Arc<ParseEngine>` field on `NuSh`. Per-call
+    /// clones for parse are cheap because `EngineState`'s data is
+    /// Arc-shared.
+    pub(crate) fn new_full() -> Self {
+        let mut engine_state = nu::create_default_context();
+        engine_state = nu::add_shell_command_context(engine_state);
+        engine_state.is_interactive = false;
+        engine_state.is_mcp = true;
+        Self { engine_state }
+    }
+
+    /// What: borrow the underlying `EngineState` so callers can construct
+    /// a `StateWorkingSet` against it directly.
+    ///
+    /// Why: the body linter parses synthetic source that contains no
+    /// `use ./...` references, so `engine_state_for_file`'s PWD wrap
+    /// would be wasted work; exposing the base state lets the lint walker
+    /// share it without cloning.
+    ///
+    /// Where: called by `server::lint::lint_body` to spin up a working
+    /// set for each agent submission.
+    pub(crate) fn engine_state(&self) -> &nu::EngineState {
+        &self.engine_state
+    }
+
     /// Build a per-file engine state with `$env.PWD` set to the file's
     /// parent directory. nu_parser resolves `export use ./<file>.nu`
     /// and `export module <name>` relative to `$env.PWD`; without this
@@ -109,5 +149,28 @@ pub(crate) fn wrap_as_module(source: &str, wrapper_name: &str) -> (String, usize
     let prefix = format!("module {wrapper_name} {{\n");
     let prefix_len = prefix.len();
     let wrapped = format!("{prefix}{source}\n}}\n");
+    (wrapped, prefix_len)
+}
+
+/// What: wrap `body` in `def __lint_body [args: record<{args_schema}>] {
+/// {body} }\n` so `$args.field` references inside the agent's closure
+/// resolve cleanly during parse. Returns the wrapped source plus the
+/// byte length of the synthesized prefix so callers can translate
+/// wrapper-relative span offsets back to body-relative.
+///
+/// Why: the body lint can't parse a bare closure body because the typed
+/// `$args` positional must be in scope; wrapping the body inside a `def`
+/// with the agent-supplied `args_schema` mirrors what
+/// `template::build_run_source` will eventually emit, so the parser sees
+/// the same shape the worker will. The prefix-length return is the
+/// bookkeeping every span-translation site needs.
+///
+/// Where: called by `server::lint::lint_body` immediately before
+/// `nu_parser::parse`. Mirrors `wrap_as_module` for the library
+/// validator.
+pub(crate) fn wrap_as_def_body(body: &str, args_schema: &str) -> (String, usize) {
+    let prefix = format!("def __lint_body [args: record<{args_schema}>] {{\n");
+    let prefix_len = prefix.len();
+    let wrapped = format!("{prefix}{body}\n}}\n");
     (wrapped, prefix_len)
 }

@@ -37,7 +37,20 @@ pub fn run_server() {
         )
         .expect("spawn both workers");
         let nonce_gen = Arc::new(lib_empower::NonceGen::new());
-        let server = NuSh::new(runs_worker, interact_worker, nonce_gen, library_locks);
+        // Slice 5.1 substrate: a full-shell `ParseEngine` shared across
+        // every body-lint pass. The slice 4.x function-file validator's
+        // lang-only ParseEngine is still constructed per-invocation
+        // inside `library::validate_library_source`; the lint variant
+        // gets its own field because the regex-receiver skip set
+        // requires the full shell decl table (slice 5.0 probe).
+        let lint_engine = Arc::new(ParseEngine::new_full());
+        let server = NuSh::new(
+            runs_worker,
+            interact_worker,
+            nonce_gen,
+            library_locks,
+            lint_engine,
+        );
         let service = server.serve(mcp::stdio()).await.expect("serve stdio");
         service.waiting().await.expect("service waiting");
     });

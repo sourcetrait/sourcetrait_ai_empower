@@ -192,13 +192,12 @@ fn smoke_4_function_helpers_in_scope() {
     let resp = host.run(args);
     let envelope = extract_envelope(&resp)
         .unwrap_or_else(|| panic!("expected envelope; got {resp}"));
-    let result_str = envelope["result"]
-        .as_str()
-        .unwrap_or_else(|| panic!("result should be NUON string: {envelope}"));
     // double(5) -> {out: 10}; (10) + 1 -> 11; outer envelope -> {out: 11}
-    assert!(
-        result_str.contains("out") && result_str.contains("11"),
-        "expected NUON record containing 'out' and '11'; got {result_str:?}",
+    assert_eq!(
+        envelope["result"]["out"].as_i64(),
+        Some(11),
+        "expected {{out: 11}}; got {:?}",
+        envelope["result"],
     );
 }
 
@@ -217,12 +216,11 @@ fn smoke_5_external_command() {
     let resp = host.run(args);
     let envelope = extract_envelope(&resp)
         .unwrap_or_else(|| panic!("expected envelope; got {resp}"));
-    let result_str = envelope["result"]
-        .as_str()
-        .unwrap_or_else(|| panic!("result should be NUON string: {envelope}"));
-    assert!(
-        result_str.contains("hello"),
-        "expected NUON record containing 'hello'; got {result_str:?}",
+    assert_eq!(
+        envelope["result"]["out"].as_str(),
+        Some("hello"),
+        "expected {{out: \"hello\"}}; got {:?}",
+        envelope["result"],
     );
 }
 
@@ -273,13 +271,12 @@ fn smoke_7_multi_call_stability_and_scoping() {
         let envelope = extract_envelope(&resp).unwrap_or_else(|| {
             panic!("call {i}: expected envelope; got {resp}")
         });
-        let result_str = envelope["result"].as_str().unwrap_or_else(|| {
-            panic!("call {i}: result should be NUON string; got {envelope}")
-        });
-        let expected = (i + 100).to_string();
-        assert!(
-            result_str.contains(&expected),
-            "call {i}: expected {expected} in result; got {result_str:?}",
+        let expected = (i + 100) as i64;
+        assert_eq!(
+            envelope["result"]["out"].as_i64(),
+            Some(expected),
+            "call {i}: expected {{out: {expected}}}; got {:?}",
+            envelope["result"],
         );
     }
     // Introspect: ask the worker whether __exec exists at the top level after
@@ -294,12 +291,11 @@ fn smoke_7_multi_call_stability_and_scoping() {
     let resp = host.run(intro);
     let envelope = extract_envelope(&resp)
         .unwrap_or_else(|| panic!("intro: expected envelope; got {resp}"));
-    let result_str = envelope["result"]
-        .as_str()
-        .unwrap_or_else(|| panic!("intro: result NUON; got {envelope}"));
-    assert!(
-        result_str.contains("leaked") && result_str.contains("0"),
-        "do-block scoping should keep __exec out of the persistent EngineState; \
-         got {result_str:?}",
+    assert_eq!(
+        envelope["result"]["leaked"].as_i64(),
+        Some(0),
+        "do-block scoping should keep __exec out of the persistent \
+         EngineState; got {:?}",
+        envelope["result"],
     );
 }

@@ -68,8 +68,10 @@ pub(crate) mod nu {
     pub(crate) use nu_cmd_lang::create_default_context;
     pub(crate) use nu_command::add_shell_command_context;
     pub(crate) use nu_engine::eval_block;
+    pub(crate) use nu_json::Value as JsonValue;
     pub(crate) use nu_parser::parse;
     pub(crate) use nu_protocol::{
+        FromValue,
         PipelineData,
         Signals,
         Span,
@@ -80,10 +82,6 @@ pub(crate) mod nu {
             Stack,
             StateWorkingSet,
         },
-    };
-    pub(crate) use nuon::{
-        ToNuonConfig,
-        to_nuon,
     };
 }
 
@@ -151,6 +149,7 @@ pub(crate) mod json {
         Value,
         json,
         to_string as to_string_json,
+        to_value,
         to_vec,
     };
 }

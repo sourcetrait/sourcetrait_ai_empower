@@ -1,5 +1,6 @@
 use crate::*;
 
+use nu::FromValue as _;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::AtomicBool;
 
@@ -112,7 +113,15 @@ fn eval_source(
         .body
         .into_value(nu::Span::unknown())
         .map_err(|e| format!("into_value: {e}"))?;
-    let nuon_str = nu::to_nuon(&engine_state, &value, nu::ToNuonConfig::default())
-        .map_err(|e| format!("to_nuon: {e}"))?;
-    msgpack::to_vec_named(&nuon_str).map_err(|e| format!("msgpack value: {e}"))
+    // Convert the nushell Value to a JSON value via nu_json (the same
+    // converter the `to json` command uses, so the semantics match what
+    // a nushell user would see). Per the_user 2026-05-31 design call:
+    // closures and ranges aren't passed back, so the JSON-lossy nushell
+    // types we'd otherwise need NUON to preserve are out of contract.
+    // Structured JSON in the envelope's `result` field beats a quoted
+    // NUON string for agent ergonomics.
+    let json_value = nu::JsonValue::from_value(value)
+        .map_err(|e| format!("Value to JSON: {e}"))?;
+    msgpack::to_vec_named(&json_value)
+        .map_err(|e| format!("msgpack value: {e}"))
 }

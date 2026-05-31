@@ -137,14 +137,15 @@ fn host_tools_list_and_run_stub() {
         Some("0"),
         "rerun_id should be \"0\" per MTP scope",
     );
-    // Phase 3 real eval: closure `{ out: ($args.x + 1) }` with args.x = 5
-    // returns the record {out: 6}, serialized as NUON.
-    let result_str = envelope["result"]
-        .as_str()
-        .unwrap_or_else(|| panic!("result should be a NUON string; got {:?}", envelope["result"]));
-    assert!(
-        result_str.contains("out") && result_str.contains("6"),
-        "result NUON should encode the record {{out: 6}}; got {result_str:?}",
+    // 0.0.7+: result is a structured JSON object (via nu_json::Value
+    // conversion in the worker), not a NUON string. Closure
+    // `{ out: ($args.x + 1) }` with args.x = 5 returns the record
+    // {out: 6}, surfaced as JSON object {"out": 6}.
+    assert_eq!(
+        envelope["result"]["out"].as_i64(),
+        Some(6),
+        "result.out should be 6; got {:?}",
+        envelope["result"],
     );
     eprintln!(
         "tools/call run -> stub envelope: {:.3} ms",

@@ -18,14 +18,22 @@ struct Host {
     stdin: std::process::ChildStdin,
     stdout: BufReader<std::process::ChildStdout>,
     next_id: u64,
+    #[allow(dead_code)]
+    data_dir: tempfile::TempDir,
+    #[allow(dead_code)]
+    cache_dir: tempfile::TempDir,
 }
 
 impl Host {
     fn spawn() -> Self {
         let host_bin = env!("CARGO_BIN_EXE_nu_sh_mcp");
         let worker_bin = env!("CARGO_BIN_EXE_nu_sh_mcp_worker");
+        let data_dir = tempfile::tempdir().expect("data tempdir");
+        let cache_dir = tempfile::tempdir().expect("cache tempdir");
         let mut child = Command::new(host_bin)
             .env("NU_SH_MCP_WORKER_PATH", worker_bin)
+            .env("XDG_DATA_HOME", data_dir.path())
+            .env("XDG_CACHE_HOME", cache_dir.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -33,7 +41,7 @@ impl Host {
             .expect("spawn host");
         let stdin = child.stdin.take().expect("host stdin");
         let stdout = BufReader::new(child.stdout.take().expect("host stdout"));
-        let mut host = Self { child, stdin, stdout, next_id: 1 };
+        let mut host = Self { child, stdin, stdout, next_id: 1, data_dir, cache_dir };
         host.initialize();
         host
     }
@@ -142,10 +150,13 @@ fn interact_lists_both_run_and_interact_tools() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 3, "expected 3 tools; got {names:?}");
-    assert!(names.contains(&"run"), "missing 'run' in {names:?}");
-    assert!(names.contains(&"interact"), "missing 'interact' in {names:?}");
-    assert!(names.contains(&"rerun"), "missing 'rerun' in {names:?}");
+    assert_eq!(names.len(), 5, "expected 5 tools; got {names:?}");
+    for expected in ["run", "interact", "rerun", "register_library", "unregister_library"] {
+        assert!(
+            names.contains(&expected),
+            "missing `{expected}` in {names:?}",
+        );
+    }
 }
 
 #[test]

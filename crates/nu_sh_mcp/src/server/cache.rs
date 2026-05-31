@@ -10,8 +10,9 @@ pub(crate) enum CacheKind {
     /// `run()` so that `rerun()` can re-evaluate the same closure with
     /// new args without the agent re-sending the body.
     Closure,
-    /// `Calls` is reserved for the `call()` tool (post-MTP slice 3);
-    /// pre-defined here so the partitioning is fixed at the type level.
+    /// `Calls` is reserved for the `call()` tool (slice 3 closing
+    /// commit); pre-defined here so the partitioning is fixed at the
+    /// type level.
     #[allow(dead_code)]
     Calls,
 }
@@ -30,10 +31,20 @@ impl CacheKind {
 pub(crate) static BASE_DIRS: LazyLock<dirs::BaseDirs> =
     LazyLock::new(|| dirs::BaseDirs::new().expect("BaseDirs::new failed"));
 
+/// `$XDG_CACHE_HOME/nu_sh_mcp/`. The `sourcetrait/` segment that used
+/// to sit between the XDG root and our app name was dropped in 0.0.10
+/// (the_user 2026-05-31) since none of these paths are user-facing.
 pub(crate) fn cache_base_dir() -> PathBuf {
     BASE_DIRS
         .cache_dir()
-        .join(lib_empower::consts::SOURCETRAIT)
+        .join(lib_empower::consts::NU_SH_MCP)
+}
+
+/// `$XDG_DATA_HOME/nu_sh_mcp/`. Houses the keypair + libraries git
+/// repo (slice 3 substrate).
+pub(crate) fn data_base_dir() -> PathBuf {
+    BASE_DIRS
+        .data_dir()
         .join(lib_empower::consts::NU_SH_MCP)
 }
 

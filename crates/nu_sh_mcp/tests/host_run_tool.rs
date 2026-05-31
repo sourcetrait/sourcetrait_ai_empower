@@ -40,9 +40,13 @@ fn host_tools_list_and_run_stub() {
     let host_bin = env!("CARGO_BIN_EXE_nu_sh_mcp");
     let worker_bin = env!("CARGO_BIN_EXE_nu_sh_mcp_worker");
 
+    let data_dir = tempfile::tempdir().expect("data tempdir");
+    let cache_dir = tempfile::tempdir().expect("cache tempdir");
     let host_spawn_start = Instant::now();
     let mut host = Command::new(host_bin)
         .env("NU_SH_MCP_WORKER_PATH", worker_bin)
+        .env("XDG_DATA_HOME", data_dir.path())
+        .env("XDG_CACHE_HOME", cache_dir.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -92,14 +96,17 @@ fn host_tools_list_and_run_stub() {
     let tools = list_resp["result"]["tools"]
         .as_array()
         .expect("tools array in tools/list result");
-    assert_eq!(tools.len(), 3, "expected exactly 3 tools, got {tools:?}");
+    assert_eq!(tools.len(), 5, "expected exactly 5 tools, got {tools:?}");
     let names: Vec<&str> = tools
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert!(names.contains(&"run"), "missing 'run' in {names:?}");
-    assert!(names.contains(&"interact"), "missing 'interact' in {names:?}");
-    assert!(names.contains(&"rerun"), "missing 'rerun' in {names:?}");
+    for expected in ["run", "interact", "rerun", "register_library", "unregister_library"] {
+        assert!(
+            names.contains(&expected),
+            "missing `{expected}` in {names:?}",
+        );
+    }
 
     // tools/call run with a stub closure body
     let call_start = Instant::now();

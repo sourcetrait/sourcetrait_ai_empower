@@ -1,5 +1,6 @@
 pub(crate) mod server {
     pub(crate) mod cache;
+    pub(crate) mod library;
     pub(crate) mod run;
     pub(crate) mod tool;
     pub(crate) mod worker_handle;
@@ -30,6 +31,13 @@ pub(crate) use crate::{
             CacheKind,
             cache_dir,
             closure_cache_file,
+            data_base_dir,
+        },
+        library::{
+            LibraryLocks,
+            ensure_substrate,
+            register_library_impl,
+            unregister_library_impl,
         },
         tool::{
             NuSh,
@@ -51,6 +59,7 @@ pub(crate) use crate::{
 };
 
 pub(crate) use std::{
+    collections::HashMap,
     fs,
     io,
     io::{
@@ -156,7 +165,10 @@ pub(crate) mod tk {
             Command,
         },
         runtime::Runtime,
-        sync::Mutex as AsyncMutex,
+        sync::{
+            Mutex as AsyncMutex,
+            RwLock as AsyncRwLock,
+        },
         try_join,
     };
 }

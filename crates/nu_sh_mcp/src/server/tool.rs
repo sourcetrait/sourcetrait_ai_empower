@@ -29,7 +29,7 @@ pub struct RunParams {
 pub struct RerunParams {
     /// base62 rerun_id returned by a prior `run()` invocation. Names a
     /// `closures/<rerun_id>.json` cache file under
-    /// `$XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/`.
+    /// `$XDG_CACHE_HOME/nu_sh_mcp/`.
     pub rerun_id: String,
     /// Per-call args. The args_schema baked into the cached closure
     /// gates this at parse time inside the worker.
@@ -47,10 +47,27 @@ struct ClosureCacheBody {
     closure: String,
 }
 
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct RegisterLibraryParams {
+    /// Library name (top-level identifier). Becomes the directory name
+    /// in the MCP repo under `$XDG_DATA_HOME/nu_sh_mcp/libraries/`.
+    pub name: String,
+    /// Client-side path where the MCP mirrors the library's files.
+    /// Created if absent. Subsequent define_function calls write here
+    /// alongside the MCP's canonical copy.
+    pub path: String,
+}
+
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct UnregisterLibraryParams {
+    pub name: String,
+}
+
 pub struct NuSh {
     runs_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
     interact_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
     nonce_gen: Arc<lib_empower::NonceGen>,
+    library_locks: Arc<LibraryLocks>,
     #[allow(dead_code)]
     tool_router: mcp::ToolRouter<NuSh>,
 }
@@ -61,11 +78,13 @@ impl NuSh {
         runs_worker: WorkerHandle,
         interact_worker: WorkerHandle,
         nonce_gen: Arc<lib_empower::NonceGen>,
+        library_locks: Arc<LibraryLocks>,
     ) -> Self {
         Self {
             runs_worker: Arc::new(tk::AsyncMutex::new(runs_worker)),
             interact_worker: Arc::new(tk::AsyncMutex::new(interact_worker)),
             nonce_gen,
+            library_locks,
             tool_router: Self::tool_router(),
         }
     }
@@ -144,6 +163,60 @@ impl NuSh {
                 None,
             )
         })
+    }
+
+    #[mcp::tool(
+        description = "Register an empty library namespace; subsequent define_function calls populate it on both the MCP-managed canonical repo and the agent's local mirror at `path`."
+    )]
+    async fn register_library(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<RegisterLibraryParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let lock = self
+            .library_locks
+            .register(&p.name)
+            .await
+            .map_err(|_| {
+                mcp::ErrorData::invalid_params(
+                    format!("library `{}` is already registered", p.name),
+                    None,
+                )
+            })?;
+        let _guard = lock.write().await;
+        register_library_impl(&p.name, std::path::Path::new(&p.path)).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("register_library: {e}"),
+                None,
+            )
+        })?;
+        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+    }
+
+    #[mcp::tool(
+        description = "Drop a library and all its functions from the MCP-managed canonical repo. Does not touch the agent's local mirror."
+    )]
+    async fn unregister_library(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<UnregisterLibraryParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let lock = self
+            .library_locks
+            .unregister(&p.name)
+            .await
+            .map_err(|_| {
+                mcp::ErrorData::invalid_params(
+                    format!("library `{}` is not registered", p.name),
+                    None,
+                )
+            })?;
+        let _guard = lock.write().await;
+        unregister_library_impl(&p.name).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("unregister_library: {e}"),
+                None,
+            )
+        })?;
+        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
     }
 
     #[mcp::tool(
@@ -308,8 +381,11 @@ impl mcp::ServerHandler for NuSh {
         .with_title("nushell");
         info.instructions = Some(
             "Evaluation artifacts are cached at \
-             $XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/{runs,interacts}/<nonce>/{stdout,stderr}; \
-             closures cached at $XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/closures/<rerun_id>.json."
+             $XDG_CACHE_HOME/nu_sh_mcp/{runs,interacts}/<nonce>/{stdout,stderr}; \
+             closures cached at $XDG_CACHE_HOME/nu_sh_mcp/closures/<rerun_id>.json. \
+             Registered libraries live in a signed git repo at \
+             $XDG_DATA_HOME/nu_sh_mcp/libraries/; signing keypair at \
+             $XDG_DATA_HOME/nu_sh_mcp/keypair/."
                 .to_string(),
         );
         info

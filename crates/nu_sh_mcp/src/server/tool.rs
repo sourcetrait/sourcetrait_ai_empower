@@ -125,7 +125,8 @@ impl mcp::ServerHandler for NuSh {
         info.server_info = mcp::Implementation::new(
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
-        );
+        )
+        .with_title("nushell");
         info
     }
 }

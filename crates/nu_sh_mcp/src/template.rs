@@ -21,7 +21,11 @@ pub(crate) fn build_run_source(p: &RunParams) -> String {
     out.push_str(&p.result_schema);
     out.push_str(">] { $result }\n");
     out.push_str("    __resolve (__exec ");
-    out.push_str(&p.args.to_string());
+    // Serialize the args object as JSON. JSON object syntax is a valid
+    // nushell record literal, so the same string serves both roles --
+    // no decode step on the worker side.
+    let args_json = json::to_string_json(&p.args).unwrap_or_else(|_| "{}".to_string());
+    out.push_str(&args_json);
     out.push_str(")\n");
     out.push_str("}\n");
     out

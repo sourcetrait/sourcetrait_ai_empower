@@ -103,6 +103,8 @@ pub(crate) mod mcp {
         handler::server::wrapper::Parameters,
         model::{
             Implementation,
+            JsonObject,
+            ServerCapabilities,
             ServerInfo,
         },
         tool,

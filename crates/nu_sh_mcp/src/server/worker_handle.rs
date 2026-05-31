@@ -1,7 +1,5 @@
 use crate::*;
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
 pub(crate) struct WorkerHandle {
     #[allow(dead_code)]
     child: tk::Child,

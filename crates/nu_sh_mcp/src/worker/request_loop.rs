@@ -1,9 +1,5 @@
 use crate::*;
 
-use nu::FromValue as _;
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::AtomicBool;
-
 pub(crate) fn serve(warm_base: &WarmBase) -> io::Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();

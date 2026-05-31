@@ -22,6 +22,8 @@ pub(crate) use crate::{
         write_frame,
         write_frame_async,
     },
+    mcp::ServiceExt,
+    nu::FromValue,
     server::{
         cache::{
             CacheKind,
@@ -50,11 +52,20 @@ pub(crate) use std::{
         Read,
         Write,
     },
+    panic::{
+        AssertUnwindSafe,
+        catch_unwind,
+    },
     path::PathBuf,
     process,
     sync::{
         Arc,
         LazyLock,
+        atomic::{
+            AtomicBool,
+            AtomicU64,
+            Ordering,
+        },
     },
 };
 
@@ -149,7 +160,6 @@ pub(crate) mod json {
         Value,
         json,
         to_string as to_string_json,
-        to_value,
         to_vec,
     };
 }

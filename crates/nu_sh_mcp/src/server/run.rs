@@ -1,7 +1,5 @@
 use crate::*;
 
-use mcp::ServiceExt as _;
-
 pub fn run_server() {
     let rt = tk::Runtime::new().expect("tokio Runtime::new");
     rt.block_on(async {

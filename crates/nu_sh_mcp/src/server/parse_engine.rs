@@ -17,10 +17,6 @@ impl ParseEngine {
         Self { engine_state }
     }
 
-    pub(crate) fn engine_state(&self) -> &nu::EngineState {
-        &self.engine_state
-    }
-
     /// Build a per-file engine state with `$env.PWD` set to the file's
     /// parent directory. nu_parser resolves `export use ./<file>.nu`
     /// and `export module <name>` relative to `$env.PWD`; without this

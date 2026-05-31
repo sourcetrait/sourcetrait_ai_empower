@@ -710,29 +710,29 @@ fn validate_one_file(
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
     let is_mod = path.file_name().map(|n| n == "mod.nu").unwrap_or(false);
     if is_mod {
-        // 0.0.15: parse mod.nu with `$env.PWD = <parent>` guard so
-        // `export use ./<file>.nu` + `export module <name>` resolve
-        // correctly against the file's actual location (slice 4.5
-        // experiment confirmed: without the guard, valid cascades
-        // surface noisy ModuleNotFound errors). Surfaces real
-        // ModuleNotFound when a referenced file genuinely doesn't
-        // exist + any syntax errors in the mod.nu body. Structural
-        // rule (only export use / export module allowed) stays text-
-        // based because nu_parser accepts inline `def` as legal
-        // module-body syntax even though our convention forbids it.
-        parse_check_mod_nu(&rel, stem, &source, parent, engine, violations);
-        validate_mod_nu(&rel, &source, violations);
+        validate_mod_nu_ast(&rel, stem, &source, parent, engine, violations);
     } else {
         validate_function_file_ast(&rel, stem, &source, parent, engine, violations);
     }
     Ok(())
 }
 
-/// Parse a mod.nu file with `$env.PWD = parent` so sibling/child
-/// references resolve. Surfaces only `parse error: ...` violations;
-/// the structural rule is enforced by the sibling text-based
-/// `validate_mod_nu`.
-fn parse_check_mod_nu(
+/// Pure-AST mod.nu validator. Parses the source in a
+/// `module __v_<stem> { ... }` wrapper with `$env.PWD = parent` so
+/// `export use ./<file>.nu` + `export module <name>` resolve cleanly
+/// (slice 4.5 PWD guard). Then walks the body block via the outer
+/// `module` call's second argument (a `Block` expression), and for
+/// each pipeline element enforces:
+///
+/// - Must be a `Call` (NOT `Garbage`, not raw expressions).
+/// - Call's decl name must be `"export use"` or `"export module"`.
+/// - Any other decl (def/const/alias/let/mut/etc.) is a violation.
+///
+/// This replaces the prior text-based `validate_mod_nu`. Empower is
+/// source-of-truth -- the validator walks the same AST the parser
+/// produces, so it can't drift from nushell's grammar (the_user
+/// 2026-05-31 slice 4.6).
+fn validate_mod_nu_ast(
     rel: &str,
     stem: &str,
     source: &str,
@@ -744,7 +744,9 @@ fn parse_check_mod_nu(
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
     let engine_state = engine.engine_state_for_file(parent);
     let mut working_set = nu::StateWorkingSet::new(&engine_state);
-    let _ = nu::parse(&mut working_set, Some(rel), wrapped.as_bytes(), false);
+    let outer_block = nu::parse(&mut working_set, Some(rel), wrapped.as_bytes(), false);
+
+    // 1. Surface parse errors with source-relative lines.
     for err in &working_set.parse_errors {
         let span_start = err.span().start.saturating_sub(prefix_len);
         let (line, _col) = span_to_line_col(source, span_start);
@@ -753,6 +755,110 @@ fn parse_check_mod_nu(
             line,
             message: format!("parse error: {err:?}"),
         });
+    }
+
+    // 2. Locate the wrapper's body block via the outer `module` call's
+    //    second positional argument. Probe (slice 4.6) confirmed:
+    //    outer block has exactly 1 pipeline -> 1 element -> Call decl
+    //    "module" with args[0]=name String + args[1]=Block(body_id).
+    let body_block_id = outer_block
+        .pipelines
+        .first()
+        .and_then(|p| p.elements.first())
+        .and_then(|elem| match &elem.expr.expr {
+            nu::Expr::Call(call) => call.arguments.iter().find_map(|arg| {
+                if let nu::Argument::Positional(e) = arg {
+                    if let nu::Expr::Block(id) = &e.expr {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }),
+            _ => None,
+        });
+
+    let body_block_id: nu::BlockId = match body_block_id {
+        Some(id) => id,
+        None => {
+            // Parse-level failure; parse_errors already populated above.
+            return;
+        }
+    };
+
+    // 3. Walk body block. Each pipeline element must be a Call to one of
+    //    the allowed decl names.
+    let body = working_set.get_block(body_block_id);
+    for pipeline in &body.pipelines {
+        for elem in &pipeline.elements {
+            check_mod_nu_pipeline_element(rel, &elem.expr, &working_set, source, prefix_len, violations);
+        }
+    }
+}
+
+/// Inspect a single body-block pipeline element. The only allowed
+/// shape is `Expr::Call` whose decl name is `"export use"` or
+/// `"export module"`. Everything else is a violation -- including
+/// `Garbage` (already covered by parse_errors but worth a structural
+/// note), other Call decls (`def`/`const`/`alias`/...), and bare
+/// expressions if they somehow survived parsing.
+fn check_mod_nu_pipeline_element(
+    rel: &str,
+    expr: &nu::Expression,
+    working_set: &nu::StateWorkingSet,
+    source: &str,
+    prefix_len: usize,
+    violations: &mut Vec<Violation>,
+) {
+    let span_start = expr.span.start.saturating_sub(prefix_len);
+    let (line, _col) = span_to_line_col(source, span_start);
+    match &expr.expr {
+        nu::Expr::Call(call) => {
+            let decl = working_set.get_decl(call.decl_id);
+            let name = decl.name();
+            if name == "export use" || name == "export module" {
+                return;
+            }
+            violations.push(Violation {
+                path: rel.to_string(),
+                line,
+                message: format!(
+                    "mod.nu may only contain `export use ./<file>.nu` or `export module <name>` statements; got call to `{name}`",
+                ),
+            });
+        }
+        nu::Expr::Garbage => {
+            // Parse error already surfaced; don't double-report.
+        }
+        other => {
+            violations.push(Violation {
+                path: rel.to_string(),
+                line,
+                message: format!(
+                    "mod.nu may only contain `export use ./<file>.nu` or `export module <name>` statements; got `{}`",
+                    short_expr_label(other),
+                ),
+            });
+        }
+    }
+}
+
+fn short_expr_label(expr: &nu::Expr) -> &'static str {
+    match expr {
+        nu::Expr::FullCellPath(_) => "cell-path expression",
+        nu::Expr::Var(_) => "variable reference",
+        nu::Expr::String(_) => "string literal",
+        nu::Expr::Int(_) => "integer literal",
+        nu::Expr::Float(_) => "float literal",
+        nu::Expr::Bool(_) => "bool literal",
+        nu::Expr::Block(_) => "block",
+        nu::Expr::Closure(_) => "closure",
+        nu::Expr::BinaryOp(_, _, _) => "binary operation",
+        nu::Expr::Subexpression(_) => "subexpression",
+        nu::Expr::Keyword(_) => "keyword",
+        _ => "other expression",
     }
 }
 
@@ -1006,6 +1112,7 @@ fn decl_line(
     0
 }
 
+#[cfg(any())]
 fn validate_mod_nu(rel: &str, source: &str, violations: &mut Vec<Violation>) {
     for (i, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -1025,7 +1132,7 @@ fn validate_mod_nu(rel: &str, source: &str, violations: &mut Vec<Violation>) {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(any())]
 fn validate_function_file(rel: &str, source: &str, violations: &mut Vec<Violation>) {
     let lines: Vec<&str> = source.lines().collect();
 
@@ -1121,7 +1228,7 @@ fn validate_function_file(rel: &str, source: &str, violations: &mut Vec<Violatio
 /// between the body's opening `{` and its matching `}`. Skips the
 /// parameter list (handles balanced `[ ]`). Returns None if the
 /// brackets/braces are imbalanced or the def isn't found.
-#[allow(dead_code)]
+#[cfg(any())]
 fn extract_def_body(source: &str, fn_name: &str) -> Option<String> {
     let pat = format!("export def {fn_name}");
     let pos = source.find(&pat)?;

@@ -392,6 +392,91 @@ fn import_rejects_non_passthrough_resolve_body() {
 }
 
 #[test]
+fn import_rejects_mod_nu_with_inline_const() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("constmodlib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "export module sub\nconst X = 42\n");
+    write_source(&src, "sub/mod.nu", "");
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({
+            "name": "constmodlib",
+            "path": src.to_str().unwrap(),
+        }),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(
+        msg.contains("call to `const`") || msg.contains("may only contain"),
+        "expected const-rejection violation; got {msg:?}",
+    );
+}
+
+#[test]
+fn import_rejects_mod_nu_with_inline_alias() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("aliasmodlib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "export module sub\nalias foo = ls\n");
+    write_source(&src, "sub/mod.nu", "");
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({
+            "name": "aliasmodlib",
+            "path": src.to_str().unwrap(),
+        }),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(
+        msg.contains("call to `alias`") || msg.contains("may only contain"),
+        "expected alias-rejection violation; got {msg:?}",
+    );
+}
+
+#[test]
+fn import_rejects_mod_nu_with_let() {
+    // 0.0.16: `let` at module body level is a PARSE ERROR per
+    // nu_parser's grammar (not even on the allowed-keyword list).
+    // The AST validator surfaces it via parse_errors.
+    let mut host = Host::spawn();
+    let src = host.source_dir("letmodlib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "let x = 5\n");
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({
+            "name": "letmodlib",
+            "path": src.to_str().unwrap(),
+        }),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(
+        msg.contains("parse error") || msg.contains("Expected"),
+        "expected parse error for let in mod.nu; got {msg:?}",
+    );
+}
+
+#[test]
+fn import_accepts_mod_nu_with_only_comments() {
+    // Empty body is legal nushell module; our convention accepts it too.
+    let mut host = Host::spawn();
+    let src = host.source_dir("commentedmodlib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "# this library is empty\n# more comment\n");
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({
+            "name": "commentedmodlib",
+            "path": src.to_str().unwrap(),
+        }),
+    );
+    assert!(!has_error_path(&resp), "empty mod.nu with comments should accept; got {resp}");
+}
+
+#[test]
 fn import_rejects_mod_nu_with_inline_def() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib4");
@@ -419,7 +504,11 @@ fn import_aggregates_multiple_violations() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib5");
     std::fs::create_dir_all(&src).unwrap();
-    write_source(&src, "mod.nu", "export module a\nlet x = 1\n");
+    // 0.0.16: `let` at module body level triggers a parse error
+    // (caught by the AST validator's syntax pass). Use `def helper []`
+    // instead -- nu_parser accepts that syntactically but our
+    // structural rule rejects any decl beyond export use / export module.
+    write_source(&src, "mod.nu", "export module a\ndef helper [] { 1 }\n");
     write_source(&src, "a/mod.nu", "");
     write_source(&src, "a/no_main.nu", "export def resolve [args: record<x: int>] { $args }\n");
     write_source(&src, "a/no_resolve.nu", "export def main [args: record<x: int>] { { out: $args.x } }\n");

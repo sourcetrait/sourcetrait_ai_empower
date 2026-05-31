@@ -109,6 +109,7 @@ pub(crate) mod nu {
     pub(crate) use nu_json::Value as JsonValue;
     pub(crate) use nu_parser::parse;
     pub(crate) use nu_protocol::{
+        BlockId,
         DeclId,
         FromValue,
         Module,
@@ -119,6 +120,7 @@ pub(crate) mod nu {
         Value,
         VarId,
         ast::{
+            Argument,
             Expr,
             Expression,
         },

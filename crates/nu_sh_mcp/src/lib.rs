@@ -35,8 +35,10 @@ pub(crate) use crate::{
         },
         library::{
             LibraryLocks,
+            define_function_impl,
             ensure_substrate,
             register_library_impl,
+            undefine_function_impl,
             unregister_library_impl,
         },
         tool::{

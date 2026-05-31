@@ -63,6 +63,33 @@ pub struct UnregisterLibraryParams {
     pub name: String,
 }
 
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct DefineFunctionParams {
+    /// Library name (must be already-registered).
+    pub library: String,
+    /// Slash-separated module path within the library. Empty for a
+    /// function at the library root. Each segment must satisfy the
+    /// same identifier shape as `name`.
+    pub module_path: String,
+    /// Function name; becomes the filename `<name>.nu`. Identifier
+    /// shape `[a-zA-Z_][a-zA-Z0-9_-]*`; `mod` reserved.
+    pub name: String,
+    /// Schema for the function's `args` positional. Comma-separated
+    /// `field: type` pairs (no surrounding `record<>`).
+    pub args_schema: String,
+    /// Schema for the function's return record.
+    pub result_schema: String,
+    /// Function body. Inlined inside `def main`'s block.
+    pub body: String,
+}
+
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct UndefineFunctionParams {
+    pub library: String,
+    pub module_path: String,
+    pub name: String,
+}
+
 pub struct NuSh {
     runs_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
     interact_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
@@ -188,6 +215,54 @@ impl NuSh {
                 format!("register_library: {e}"),
                 None,
             )
+        })?;
+        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+    }
+
+    #[mcp::tool(
+        description = "Define (or replace) a single function inside a registered library. Writes `<library>/<module_path>/<name>.nu` with the `export def main` + `export def resolve` envelope, updates the `mod.nu` cascade up to the library root, mirrors to the agent's local copy, and commits."
+    )]
+    async fn define_function(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<DefineFunctionParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let lock = self.library_locks.lookup(&p.library).await.ok_or_else(|| {
+            mcp::ErrorData::invalid_params(
+                format!("library `{}` is not registered", p.library),
+                None,
+            )
+        })?;
+        let _guard = lock.write().await;
+        define_function_impl(
+            &p.library,
+            &p.module_path,
+            &p.name,
+            &p.args_schema,
+            &p.result_schema,
+            &p.body,
+        )
+        .map_err(|e| {
+            mcp::ErrorData::internal_error(format!("define_function: {e}"), None)
+        })?;
+        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+    }
+
+    #[mcp::tool(
+        description = "Remove a function from a registered library. Updates the `mod.nu` cascade, prunes any now-empty intermediate directories, mirrors the removal, and commits."
+    )]
+    async fn undefine_function(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<UndefineFunctionParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let lock = self.library_locks.lookup(&p.library).await.ok_or_else(|| {
+            mcp::ErrorData::invalid_params(
+                format!("library `{}` is not registered", p.library),
+                None,
+            )
+        })?;
+        let _guard = lock.write().await;
+        undefine_function_impl(&p.library, &p.module_path, &p.name).map_err(|e| {
+            mcp::ErrorData::internal_error(format!("undefine_function: {e}"), None)
         })?;
         Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
     }

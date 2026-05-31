@@ -1,4 +1,5 @@
 pub(crate) mod server {
+    pub(crate) mod cache;
     pub(crate) mod run;
     pub(crate) mod tool;
     pub(crate) mod worker_handle;
@@ -22,6 +23,10 @@ pub(crate) use crate::{
         write_frame_async,
     },
     server::{
+        cache::{
+            CacheKind,
+            cache_dir,
+        },
         tool::{
             NuSh,
             RunParams,
@@ -39,6 +44,7 @@ pub(crate) use crate::{
 };
 
 pub(crate) use std::{
+    fs,
     io,
     io::{
         Read,
@@ -46,8 +52,17 @@ pub(crate) use std::{
     },
     path::PathBuf,
     process,
-    sync::Arc,
+    sync::{
+        Arc,
+        LazyLock,
+    },
 };
+
+pub(crate) use sourcetrait_lib_empower as lib_empower;
+
+pub(crate) mod dirs {
+    pub(crate) use directories::BaseDirs;
+}
 
 pub(crate) mod nu {
     pub(crate) use nu_cmd_lang::create_default_context;
@@ -136,6 +151,7 @@ pub(crate) mod json {
         Value,
         json,
         to_string as to_string_json,
+        to_vec,
     };
 }
 

@@ -41,3 +41,4 @@ strum = { version = "0.27", features = ["derive"] }
 tempfile = { version = "3.20" }
 tokio = { version = "1", features = ["macros", "process", "io-util", "rt-multi-thread", "sync"] }
 toml = { version = "0.8" }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }

@@ -44,10 +44,15 @@ impl WorkerHandle {
 
     pub(crate) async fn send_request(
         &mut self,
+        log_dir: PathBuf,
         source: String,
     ) -> io::Result<RunResponse> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = RunRequest { id, source };
+        let request = RunRequest {
+            id,
+            log_dir,
+            source,
+        };
         let request_bytes = msgpack::to_vec_named(&request).map_err(|e| {
             io::Error::other(format!("encode RunRequest: {e}"))
         })?;

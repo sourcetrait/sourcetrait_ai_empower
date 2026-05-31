@@ -30,7 +30,7 @@ pub(crate) fn serve(warm_base: &WarmBase) -> io::Result<()> {
             }
         };
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            eval_source(warm_base, &req.source)
+            eval_source(warm_base, &req.log_dir, &req.source)
         }));
         let resp = match outcome {
             Ok(Ok(value_bytes)) => RunResponse {
@@ -58,24 +58,28 @@ pub(crate) fn serve(warm_base: &WarmBase) -> io::Result<()> {
     }
 }
 
-fn eval_source(warm_base: &WarmBase, source: &str) -> Result<Vec<u8>, String> {
+fn eval_source(
+    warm_base: &WarmBase,
+    log_dir: &std::path::Path,
+    source: &str,
+) -> Result<Vec<u8>, String> {
     let mut engine_state = warm_base.engine_state.clone();
     engine_state.set_signals(nu::Signals::new(Arc::new(AtomicBool::new(false))));
     // Redirect external command stdout/stderr at the engine layer so they
     // never reach the worker process's fd 1, which `serve` above uses
     // exclusively for length-prefixed msgpack IPC frames. Without this, a
     // bare `^cmd` in a closure body would corrupt the IPC byte stream and
-    // hang the host on its next response read. /dev/null discards any
-    // chatter; the design iteration in progress is whether to swap this
-    // for an `os_pipe::pipe()` whose reader is drained into a per-call
-    // buffer that the response folds back as a `spill`-like field.
-    let dev_null_out = std::fs::File::create("/dev/null")
-        .map_err(|e| format!("open /dev/null stdout: {e}"))?;
-    let dev_null_err = std::fs::File::create("/dev/null")
-        .map_err(|e| format!("open /dev/null stderr: {e}"))?;
+    // hang the host on its next response read. The host has already
+    // created `log_dir` before dispatching this RunRequest; the engine
+    // writes external chatter into `<log_dir>/stdout` and `<log_dir>/stderr`
+    // so the agent can fetch it by nonce out of band.
+    let stdout_file = fs::File::create(log_dir.join("stdout"))
+        .map_err(|e| format!("open {}/stdout: {e}", log_dir.display()))?;
+    let stderr_file = fs::File::create(log_dir.join("stderr"))
+        .map_err(|e| format!("open {}/stderr: {e}", log_dir.display()))?;
     let mut stack = nu::Stack::new()
-        .stdout_file(dev_null_out)
-        .stderr_file(dev_null_err)
+        .stdout_file(stdout_file)
+        .stderr_file(stderr_file)
         .capture_all();
     let mut working_set = nu::StateWorkingSet::new(&engine_state);
     let block = nu::parse(&mut working_set, None, source.as_bytes(), false);

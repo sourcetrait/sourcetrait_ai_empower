@@ -13,3 +13,4 @@ keywords = ["sourcetrait", "empower", "lib"]
 [dependencies]
 snafu.workspace = true
 sourcetrait_testing.workspace = true
+xxhash-rust.workspace = true

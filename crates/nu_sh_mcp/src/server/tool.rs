@@ -27,15 +27,20 @@ pub struct RunParams {
 
 pub struct NuSh {
     worker: Arc<tk::AsyncMutex<WorkerHandle>>,
+    nonce_gen: Arc<lib_empower::NonceGen>,
     #[allow(dead_code)]
     tool_router: mcp::ToolRouter<NuSh>,
 }
 
 #[mcp::tool_router]
 impl NuSh {
-    pub(crate) fn new(worker: WorkerHandle) -> Self {
+    pub(crate) fn new(
+        worker: WorkerHandle,
+        nonce_gen: Arc<lib_empower::NonceGen>,
+    ) -> Self {
         Self {
             worker: Arc::new(tk::AsyncMutex::new(worker)),
+            nonce_gen,
             tool_router: Self::tool_router(),
         }
     }
@@ -45,23 +50,43 @@ impl NuSh {
                        Builds a do-scoped __exec/__resolve template from \
                        args_schema, result_schema, args, optional helper \
                        functions, and the closure body. Returns the typed \
-                       result plus a rerun_id."
+                       result plus a nonce and a rerun_id. Per-call \
+                       stdout/stderr captured at \
+                       $XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/runs/<nonce>/."
     )]
     async fn run(
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<String, mcp::ErrorData> {
+        let payload_bytes = json::to_vec(&p).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("serialize RunParams for nonce: {e}"),
+                None,
+            )
+        })?;
+        let nonce = self.nonce_gen.next(&payload_bytes);
+        let log_dir = cache_dir(CacheKind::Runs, nonce);
+        fs::create_dir_all(&log_dir).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("create_dir_all {}: {e}", log_dir.display()),
+                None,
+            )
+        })?;
         let source = build_run_source(&p);
         let mut worker = self.worker.lock().await;
-        let response = worker.send_request(source).await.map_err(|e| {
-            mcp::ErrorData::internal_error(e.to_string(), None)
-        })?;
+        let response = worker
+            .send_request(log_dir, source)
+            .await
+            .map_err(|e| {
+                mcp::ErrorData::internal_error(e.to_string(), None)
+            })?;
         drop(worker);
         if response.ok {
             let value: json::Value = msgpack::from_slice(&response.value)
                 .unwrap_or(json::Value::Null);
             let envelope = json::json!({
                 "result": value,
+                "nonce": nonce.to_string(),
                 "rerun_id": "0",
             });
             json::to_string_json(&envelope).map_err(|e| {

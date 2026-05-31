@@ -41,8 +41,11 @@ fn worker_handshake_and_stub_response() {
         hello_elapsed.as_secs_f64() * 1000.0,
     );
 
+    let log_dir = std::env::temp_dir().join("nu_sh_mcp_handshake_test");
+    std::fs::create_dir_all(&log_dir).expect("create test log_dir");
     let request = serde_json::json!({
         "id": 42u64,
+        "log_dir": log_dir.to_str().expect("log_dir to utf-8"),
         "source": "1 + 1",
     });
     let request_bytes = rmp_serde::to_vec_named(&request)

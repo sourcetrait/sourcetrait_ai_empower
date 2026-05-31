@@ -150,7 +150,7 @@ fn interact_lists_both_run_and_interact_tools() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 7, "expected 7 tools; got {names:?}");
+    assert_eq!(names.len(), 9, "expected 9 tools; got {names:?}");
     for expected in [
         "run",
         "interact",
@@ -159,6 +159,8 @@ fn interact_lists_both_run_and_interact_tools() {
         "unregister_library",
         "define_function",
         "undefine_function",
+        "import_library",
+        "reimport_library",
     ] {
         assert!(
             names.contains(&expected),

@@ -609,6 +609,354 @@ fn function_id(library: &str, module_path: &str, name: &str) -> String {
 }
 
 // ============================================================================
+// Strict library source validator (for import_library / reimport_library)
+// ============================================================================
+
+#[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
+pub(crate) struct Violation {
+    /// Path relative to the source root.
+    pub path: String,
+    /// 1-based line number; 0 means "file-level" (no specific line).
+    pub line: usize,
+    /// Human-readable description of the violation.
+    pub message: String,
+}
+
+/// Walk every `.nu` under `root`. Apply the strict per-file shape:
+/// - `mod.nu`: only `export use ./<file>.nu` or `export module <name>` lines
+///   (plus blank lines and `#` comments).
+/// - Function files: exactly two exports named `main` and `resolve`;
+///   both have `args: record<...>` typed positionals; resolve's body is
+///   exactly the expression `$args`.
+/// Dotfile entries (e.g. `.git`, `.nu_sh_mcp_meta.json`) are skipped.
+/// Returns ALL violations -- no bail-on-first; no auto-fix.
+pub(crate) fn validate_library_source(root: &std::path::Path) -> io::Result<Vec<Violation>> {
+    let mut violations = Vec::new();
+    validate_walk(root, root, &mut violations)?;
+    Ok(violations)
+}
+
+fn validate_walk(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    violations: &mut Vec<Violation>,
+) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_lossy = name.to_string_lossy();
+        if name_lossy.starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            validate_walk(root, &path, violations)?;
+        } else if ft.is_file()
+            && path.extension().map(|e| e == "nu").unwrap_or(false)
+        {
+            validate_one_file(root, &path, violations)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_one_file(
+    root: &std::path::Path,
+    path: &std::path::Path,
+    violations: &mut Vec<Violation>,
+) -> io::Result<()> {
+    let source = fs::read_to_string(path)?;
+    let rel = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned();
+    if path.file_name().map(|n| n == "mod.nu").unwrap_or(false) {
+        validate_mod_nu(&rel, &source, violations);
+    } else {
+        validate_function_file(&rel, &source, violations);
+    }
+    Ok(())
+}
+
+fn validate_mod_nu(rel: &str, source: &str, violations: &mut Vec<Violation>) {
+    for (i, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with("export use ") || trimmed.starts_with("export module ") {
+            continue;
+        }
+        violations.push(Violation {
+            path: rel.to_string(),
+            line: i + 1,
+            message: format!(
+                "mod.nu may only contain `export use ./<file>.nu` or `export module <name>` lines (or comments / blanks); got: {trimmed}",
+            ),
+        });
+    }
+}
+
+fn validate_function_file(rel: &str, source: &str, violations: &mut Vec<Violation>) {
+    let lines: Vec<&str> = source.lines().collect();
+
+    // Find all top-level `export def <name>` declarations by scanning lines.
+    // Lightweight: doesn't track string/comment context. Function files are
+    // small + author-curated; a `# export def fake` inside a comment is the
+    // author's tell-tale and gets flagged. Acceptable trade-off for v1.
+    let mut exports: Vec<(usize, String)> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("export def ") {
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == '[')
+                .unwrap_or(rest.len());
+            exports.push((i + 1, rest[..end].to_string()));
+        }
+    }
+
+    let main_line = exports.iter().find(|(_, n)| n == "main").map(|(l, _)| *l);
+    let resolve_line = exports.iter().find(|(_, n)| n == "resolve").map(|(l, _)| *l);
+
+    if main_line.is_none() {
+        violations.push(Violation {
+            path: rel.to_string(),
+            line: 0,
+            message: "function file must contain `export def main [args: record<...>]`".to_string(),
+        });
+    }
+    if resolve_line.is_none() {
+        violations.push(Violation {
+            path: rel.to_string(),
+            line: 0,
+            message: "function file must contain `export def resolve [args: record<...>] { $args }`".to_string(),
+        });
+    }
+    for (line, name) in &exports {
+        if name != "main" && name != "resolve" {
+            violations.push(Violation {
+                path: rel.to_string(),
+                line: *line,
+                message: format!(
+                    "function file may only export `main` and `resolve`; saw `export def {name}`",
+                ),
+            });
+        }
+    }
+
+    if let Some(line) = main_line {
+        let sig_line = lines.get(line - 1).copied().unwrap_or("");
+        if !sig_line.contains("args: record<") {
+            violations.push(Violation {
+                path: rel.to_string(),
+                line,
+                message: "main must take a typed positional `args: record<...>`".to_string(),
+            });
+        }
+    }
+
+    if let Some(line) = resolve_line {
+        let sig_line = lines.get(line - 1).copied().unwrap_or("");
+        if !sig_line.contains("args: record<") {
+            violations.push(Violation {
+                path: rel.to_string(),
+                line,
+                message: "resolve must take a typed positional `args: record<...>`".to_string(),
+            });
+        }
+        match extract_def_body(source, "resolve") {
+            Some(body) => {
+                if body.trim() != "$args" {
+                    violations.push(Violation {
+                        path: rel.to_string(),
+                        line,
+                        message: format!(
+                            "resolve's body must be exactly `$args`; got `{}`",
+                            body.trim(),
+                        ),
+                    });
+                }
+            }
+            None => {
+                violations.push(Violation {
+                    path: rel.to_string(),
+                    line,
+                    message: "resolve's body could not be located (parens/brackets imbalanced?)".to_string(),
+                });
+            }
+        }
+    }
+}
+
+/// Extract the body content of an `export def <name>` block: everything
+/// between the body's opening `{` and its matching `}`. Skips the
+/// parameter list (handles balanced `[ ]`). Returns None if the
+/// brackets/braces are imbalanced or the def isn't found.
+fn extract_def_body(source: &str, fn_name: &str) -> Option<String> {
+    let pat = format!("export def {fn_name}");
+    let pos = source.find(&pat)?;
+    let bytes = source.as_bytes();
+    let mut i = pos + pat.len();
+    // Skip whitespace until `[`.
+    while i < bytes.len() && bytes[i] != b'[' {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+    // Walk through the parameter list (balanced `[ ]`).
+    let mut depth = 1usize;
+    i += 1;
+    while i < bytes.len() && depth > 0 {
+        match bytes[i] {
+            b'[' => depth += 1,
+            b']' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    // Skip whitespace until `{`.
+    while i < bytes.len() && bytes[i] != b'{' {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+    // Body opens at `{`; walk until matching `}`.
+    i += 1;
+    let body_start = i;
+    let mut depth = 1usize;
+    while i < bytes.len() && depth > 0 {
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+    Some(source[body_start..i].to_string())
+}
+
+// ============================================================================
+// import_library / reimport_library
+// ============================================================================
+
+pub(crate) fn import_library_impl(
+    name: &str,
+    source_path: &std::path::Path,
+) -> Result<(), ImportError> {
+    if !is_valid_ident(name) {
+        return Err(ImportError::InvalidLibraryName(name.to_string()));
+    }
+    if !source_path.exists() || !source_path.is_dir() {
+        return Err(ImportError::SourceMissing(source_path.to_path_buf()));
+    }
+    let violations =
+        validate_library_source(source_path).map_err(ImportError::Io)?;
+    if !violations.is_empty() {
+        return Err(ImportError::Violations(violations));
+    }
+    let dest = library_dir(name);
+    if dest.exists() {
+        fs::remove_dir_all(&dest).map_err(ImportError::Io)?;
+    }
+    copy_dir_recursive(source_path, &dest).map_err(ImportError::Io)?;
+    let meta = LibraryMeta {
+        kind: LibraryKind::Imported,
+        source_path: source_path.to_path_buf(),
+    };
+    let meta_bytes = json::to_vec(&meta)
+        .map_err(|e| ImportError::Io(io::Error::other(format!("serialize meta: {e}"))))?;
+    fs::write(library_meta_path(name), &meta_bytes).map_err(ImportError::Io)?;
+    run_git(&libraries_dir(), &["add", "--", name]).map_err(ImportError::Io)?;
+    let msg = format!("import library {name} from {}", source_path.display());
+    run_git(&libraries_dir(), &["commit", "-m", &msg]).map_err(ImportError::Io)?;
+    Ok(())
+}
+
+pub(crate) fn reimport_library_impl(name: &str) -> Result<(), ImportError> {
+    if !is_valid_ident(name) {
+        return Err(ImportError::InvalidLibraryName(name.to_string()));
+    }
+    let lib_root = library_dir(name);
+    if !lib_root.exists() {
+        return Err(ImportError::NotRegistered(name.to_string()));
+    }
+    let meta = load_meta(name).map_err(ImportError::Io)?;
+    match meta.kind {
+        LibraryKind::Imported => {}
+        LibraryKind::Registered => {
+            return Err(ImportError::WrongKind);
+        }
+    }
+    let source_path = meta.source_path.clone();
+    if !source_path.exists() || !source_path.is_dir() {
+        return Err(ImportError::SourceMissing(source_path));
+    }
+    let violations =
+        validate_library_source(&source_path).map_err(ImportError::Io)?;
+    if !violations.is_empty() {
+        return Err(ImportError::Violations(violations));
+    }
+    if lib_root.exists() {
+        fs::remove_dir_all(&lib_root).map_err(ImportError::Io)?;
+    }
+    copy_dir_recursive(&source_path, &lib_root).map_err(ImportError::Io)?;
+    let meta_bytes = json::to_vec(&meta)
+        .map_err(|e| ImportError::Io(io::Error::other(format!("serialize meta: {e}"))))?;
+    fs::write(library_meta_path(name), &meta_bytes).map_err(ImportError::Io)?;
+    run_git(&libraries_dir(), &["add", "--", name]).map_err(ImportError::Io)?;
+    let msg = format!("reimport library {name} from {}", source_path.display());
+    run_git(&libraries_dir(), &["commit", "-m", &msg]).map_err(ImportError::Io)?;
+    Ok(())
+}
+
+#[derive(Debug)]
+pub(crate) enum ImportError {
+    Io(io::Error),
+    InvalidLibraryName(String),
+    SourceMissing(PathBuf),
+    NotRegistered(String),
+    WrongKind,
+    Violations(Vec<Violation>),
+}
+
+/// Copy a directory tree recursively. Skips dotfile entries at every
+/// level (so a client `.git` doesn't bleed into the MCP repo).
+fn copy_dir_recursive(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+) -> io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if ft.is_file() {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
 // Server startup substrate
 // ============================================================================
 

@@ -90,6 +90,22 @@ pub struct UndefineFunctionParams {
     pub name: String,
 }
 
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct ImportLibraryParams {
+    /// Library name to register under. Must be unused.
+    pub name: String,
+    /// Absolute path to the directory holding the pre-authored library
+    /// source. The MCP validates the tree, copies it into the canonical
+    /// repo, and records this path for future `reimport_library` calls.
+    pub path: String,
+}
+
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct ReimportLibraryParams {
+    /// Library name. Must be already registered AND of kind=imported.
+    pub name: String,
+}
+
 pub struct NuSh {
     runs_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
     interact_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
@@ -268,6 +284,47 @@ impl NuSh {
     }
 
     #[mcp::tool(
+        description = "Import a pre-authored library from a client path into the MCP-managed canonical repo. Strict validation: each function file must have exactly `export def main [args: record<...>]` + `export def resolve [args: record<...>] { $args }`; each `mod.nu` may only re-export children. All violations are reported at once; no auto-fix."
+    )]
+    async fn import_library(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<ImportLibraryParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let lock = self
+            .library_locks
+            .register(&p.name)
+            .await
+            .map_err(|_| {
+                mcp::ErrorData::invalid_params(
+                    format!("library `{}` is already registered", p.name),
+                    None,
+                )
+            })?;
+        let _guard = lock.write().await;
+        import_library_impl(&p.name, std::path::Path::new(&p.path))
+            .map_err(import_error_to_mcp_error)?;
+        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+    }
+
+    #[mcp::tool(
+        description = "Re-import a library from the path it was originally imported from. Reads source_path from the library's metadata; re-runs strict validation; replaces the canonical copy with a fresh snapshot. Errors if the library was register_library-style (kind=registered) instead of import_library-style."
+    )]
+    async fn reimport_library(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<ReimportLibraryParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let lock = self.library_locks.lookup(&p.name).await.ok_or_else(|| {
+            mcp::ErrorData::invalid_params(
+                format!("library `{}` is not registered", p.name),
+                None,
+            )
+        })?;
+        let _guard = lock.write().await;
+        reimport_library_impl(&p.name).map_err(import_error_to_mcp_error)?;
+        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+    }
+
+    #[mcp::tool(
         description = "Drop a library and all its functions from the MCP-managed canonical repo. Does not touch the agent's local mirror."
     )]
     async fn unregister_library(
@@ -431,6 +488,47 @@ fn write_closure_cache(
         )
     })?;
     Ok(())
+}
+
+fn import_error_to_mcp_error(e: ImportError) -> mcp::ErrorData {
+    match e {
+        ImportError::InvalidLibraryName(n) => mcp::ErrorData::invalid_params(
+            format!("invalid library name: {n:?}"),
+            None,
+        ),
+        ImportError::SourceMissing(p) => mcp::ErrorData::invalid_params(
+            format!("source path does not exist or is not a directory: {}", p.display()),
+            None,
+        ),
+        ImportError::NotRegistered(n) => mcp::ErrorData::invalid_params(
+            format!("library `{n}` is not registered"),
+            None,
+        ),
+        ImportError::WrongKind => mcp::ErrorData::invalid_params(
+            "reimport_library only applies to libraries imported via import_library; this one was created via register_library".to_string(),
+            None,
+        ),
+        ImportError::Violations(v) => mcp::ErrorData::invalid_params(
+            format_violations(&v),
+            None,
+        ),
+        ImportError::Io(e) => mcp::ErrorData::internal_error(
+            format!("import: {e}"),
+            None,
+        ),
+    }
+}
+
+fn format_violations(v: &[Violation]) -> String {
+    let mut out = format!("validation failed: {} violation(s):", v.len());
+    for vio in v {
+        if vio.line == 0 {
+            out.push_str(&format!("\n  - {}: {}", vio.path, vio.message));
+        } else {
+            out.push_str(&format!("\n  - {}:{}: {}", vio.path, vio.line, vio.message));
+        }
+    }
+    out
 }
 
 #[mcp::tool_handler]

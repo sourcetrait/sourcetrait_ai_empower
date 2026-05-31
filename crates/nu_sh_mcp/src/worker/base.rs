@@ -2,10 +2,11 @@ use crate::*;
 
 pub(crate) struct WarmBase {
     pub engine_state: nu::EngineState,
+    pub mode: Mode,
 }
 
 impl WarmBase {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(mode: Mode) -> Self {
         let mut engine_state = nu::add_shell_command_context(nu::create_default_context());
         engine_state.is_interactive = false;
         engine_state.is_mcp = true;
@@ -18,7 +19,7 @@ impl WarmBase {
         // to open /dev/tty (sudo, ssh, psql) fail fast rather than hang.
         // setsid() returns EPERM if the process is already a session leader.
         let _ = sys::setsid();
-        Self { engine_state }
+        Self { engine_state, mode }
     }
 }
 

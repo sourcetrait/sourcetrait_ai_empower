@@ -1,6 +1,6 @@
 use crate::*;
 
-pub(crate) fn serve(warm_base: &WarmBase) -> io::Result<()> {
+pub(crate) fn serve(warm_base: &mut WarmBase) -> io::Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut stdin_lock = stdin.lock();
@@ -56,12 +56,10 @@ pub(crate) fn serve(warm_base: &WarmBase) -> io::Result<()> {
 }
 
 fn eval_source(
-    warm_base: &WarmBase,
+    warm_base: &mut WarmBase,
     log_dir: &std::path::Path,
     source: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut engine_state = warm_base.engine_state.clone();
-    engine_state.set_signals(nu::Signals::new(Arc::new(AtomicBool::new(false))));
     // Redirect external command stdout/stderr at the engine layer so they
     // never reach the worker process's fd 1, which `serve` above uses
     // exclusively for length-prefixed msgpack IPC frames. Without this, a
@@ -78,7 +76,20 @@ fn eval_source(
         .stdout_file(stdout_file)
         .stderr_file(stderr_file)
         .capture_all();
-    let mut working_set = nu::StateWorkingSet::new(&engine_state);
+    // Stateless: clone engine_state per call so merge_delta side effects
+    // disappear when the local clone is dropped. Stateful: eval against
+    // warm_base.engine_state directly, then merge the call's Stack back so
+    // env mutations and cd survive.
+    let mut local_clone: Option<nu::EngineState> = match warm_base.mode {
+        Mode::Stateless => Some(warm_base.engine_state.clone()),
+        Mode::Stateful => None,
+    };
+    let engine_state: &mut nu::EngineState = match &mut local_clone {
+        Some(es) => es,
+        None => &mut warm_base.engine_state,
+    };
+    engine_state.set_signals(nu::Signals::new(Arc::new(AtomicBool::new(false))));
+    let mut working_set = nu::StateWorkingSet::new(engine_state);
     let block = nu::parse(&mut working_set, None, source.as_bytes(), false);
     if !working_set.parse_errors.is_empty() {
         let msgs: Vec<String> = working_set
@@ -99,7 +110,7 @@ fn eval_source(
     let delta = working_set.render();
     engine_state.merge_delta(delta).map_err(|e| format!("merge_delta: {e}"))?;
     let pipeline = nu::eval_block::<nu::WithoutDebug>(
-        &engine_state,
+        engine_state,
         &mut stack,
         &block,
         nu::PipelineData::Empty,
@@ -109,6 +120,15 @@ fn eval_source(
         .body
         .into_value(nu::Span::unknown())
         .map_err(|e| format!("into_value: {e}"))?;
+    // Stateful mode: merge env mutations from the call's Stack into the
+    // persistent engine_state so $env.X = ... and `cd` survive into the
+    // next interact() call. Stateless mode skips this -- the local clone
+    // is about to be dropped anyway.
+    if matches!(warm_base.mode, Mode::Stateful) {
+        engine_state
+            .merge_env(&mut stack)
+            .map_err(|e| format!("merge_env: {e}"))?;
+    }
     // Convert the nushell Value to a JSON value via nu_json (the same
     // converter the `to json` command uses, so the semantics match what
     // a nushell user would see). Per the_user 2026-05-31 design call:

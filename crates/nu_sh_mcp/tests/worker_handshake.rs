@@ -23,6 +23,8 @@ fn worker_handshake_and_stub_response() {
     let worker_bin = env!("CARGO_BIN_EXE_nu_sh_mcp_worker");
     let spawn_start = Instant::now();
     let mut child = Command::new(worker_bin)
+        .arg("--mode")
+        .arg("stateless")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

@@ -1,6 +1,6 @@
 [package]
 name = "nu_sh_mcp"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 description = "Nushell-engine MCP server for sourcetrait_empower"
 authors = ["SourceTrait <development@sourcetrait.com>"]
@@ -19,6 +19,7 @@ name = "nu_sh_mcp_worker"
 path = "src/bin/nu_sh_mcp_worker.rs"
 
 [dependencies]
+clap.workspace = true
 directories.workspace = true
 nix.workspace = true
 nu-cmd-lang.workspace = true

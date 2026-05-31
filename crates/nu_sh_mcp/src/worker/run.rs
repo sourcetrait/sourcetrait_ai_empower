@@ -1,7 +1,7 @@
 use crate::*;
 
-pub fn run_worker() {
-    let warm_base = WarmBase::new();
+pub fn run_worker(mode: Mode) {
+    let mut warm_base = WarmBase::new(mode);
     let stdout = io::stdout();
     let mut stdout_lock = stdout.lock();
     let hello = Hello { protocol_version: PROTOCOL_VERSION };
@@ -12,7 +12,7 @@ pub fn run_worker() {
         process::exit(1);
     }
     drop(stdout_lock);
-    match worker::request_loop::serve(&warm_base) {
+    match worker::request_loop::serve(&mut warm_base) {
         Ok(()) => {}
         Err(e) => {
             eprintln!("nu_sh_mcp_worker: {e}");

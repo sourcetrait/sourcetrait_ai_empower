@@ -5,8 +5,9 @@ use crate::*;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CacheKind {
     Runs,
+    Interacts,
     /// `Calls` is reserved for the `call()` tool that lands in post-MTP
-    /// slice 2; pre-defined here so the partitioning is fixed at the type
+    /// slice 3; pre-defined here so the partitioning is fixed at the type
     /// level rather than added retroactively.
     #[allow(dead_code)]
     Calls,
@@ -16,6 +17,7 @@ impl CacheKind {
     fn dir_name(self) -> &'static str {
         match self {
             Self::Runs => "runs",
+            Self::Interacts => "interacts",
             Self::Calls => "calls",
         }
     }

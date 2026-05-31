@@ -92,13 +92,13 @@ fn host_tools_list_and_run_stub() {
     let tools = list_resp["result"]["tools"]
         .as_array()
         .expect("tools array in tools/list result");
-    assert_eq!(tools.len(), 1, "expected exactly 1 tool, got {tools:?}");
-    assert_eq!(
-        tools[0]["name"].as_str(),
-        Some("run"),
-        "expected the one tool to be named 'run', got {:?}",
-        tools[0]["name"],
-    );
+    assert_eq!(tools.len(), 2, "expected exactly 2 tools, got {tools:?}");
+    let names: Vec<&str> = tools
+        .iter()
+        .map(|t| t["name"].as_str().expect("tool name"))
+        .collect();
+    assert!(names.contains(&"run"), "missing 'run' in {names:?}");
+    assert!(names.contains(&"interact"), "missing 'interact' in {names:?}");
 
     // tools/call run with a stub closure body
     let call_start = Instant::now();

@@ -12,6 +12,7 @@ pub(crate) mod worker {
 pub(crate) mod ipc {
     pub(crate) mod framing;
 }
+pub(crate) mod mode;
 pub(crate) mod wire;
 pub(crate) mod template;
 
@@ -35,7 +36,10 @@ pub(crate) use crate::{
         },
         worker_handle::WorkerHandle,
     },
-    template::build_run_source,
+    template::{
+        build_interact_source,
+        build_run_source,
+    },
     wire::{
         Hello,
         PROTOCOL_VERSION,
@@ -152,6 +156,7 @@ pub(crate) mod tk {
         },
         runtime::Runtime,
         sync::Mutex as AsyncMutex,
+        try_join,
     };
 }
 
@@ -165,6 +170,7 @@ pub(crate) mod json {
 }
 
 pub use crate::{
+    mode::Mode,
     server::run::run_server,
     worker::run::run_worker,
 };

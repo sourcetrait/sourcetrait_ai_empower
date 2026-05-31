@@ -26,7 +26,8 @@ pub struct RunParams {
 }
 
 pub struct NuSh {
-    worker: Arc<tk::AsyncMutex<WorkerHandle>>,
+    runs_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
+    interact_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
     nonce_gen: Arc<lib_empower::NonceGen>,
     #[allow(dead_code)]
     tool_router: mcp::ToolRouter<NuSh>,
@@ -35,74 +36,94 @@ pub struct NuSh {
 #[mcp::tool_router]
 impl NuSh {
     pub(crate) fn new(
-        worker: WorkerHandle,
+        runs_worker: WorkerHandle,
+        interact_worker: WorkerHandle,
         nonce_gen: Arc<lib_empower::NonceGen>,
     ) -> Self {
         Self {
-            worker: Arc::new(tk::AsyncMutex::new(worker)),
+            runs_worker: Arc::new(tk::AsyncMutex::new(runs_worker)),
+            interact_worker: Arc::new(tk::AsyncMutex::new(interact_worker)),
             nonce_gen,
             tool_router: Self::tool_router(),
         }
     }
 
     #[mcp::tool(
-        description = "Evaluate a typed nushell closure on a worker. \
-                       Builds a do-scoped __exec/__resolve template from \
-                       args_schema, result_schema, args, optional helper \
-                       functions, and the closure body. Returns the typed \
-                       result plus a nonce and a rerun_id. Per-call \
-                       stdout/stderr captured at \
-                       $XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/runs/<nonce>/."
+        description = "Evaluate a typed nushell closure on a stateless worker."
     )]
     async fn run(
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<String, mcp::ErrorData> {
-        let payload_bytes = json::to_vec(&p).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("serialize RunParams for nonce: {e}"),
-                None,
-            )
-        })?;
-        let nonce = self.nonce_gen.next(&payload_bytes);
-        let log_dir = cache_dir(CacheKind::Runs, nonce);
-        fs::create_dir_all(&log_dir).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("create_dir_all {}: {e}", log_dir.display()),
-                None,
-            )
-        })?;
         let source = build_run_source(&p);
-        let mut worker = self.worker.lock().await;
-        let response = worker
-            .send_request(log_dir, source)
-            .await
-            .map_err(|e| {
-                mcp::ErrorData::internal_error(e.to_string(), None)
-            })?;
-        drop(worker);
-        if response.ok {
-            let value: json::Value = msgpack::from_slice(&response.value)
-                .unwrap_or(json::Value::Null);
-            let envelope = json::json!({
-                "result": value,
-                "nonce": nonce.to_string(),
-                "rerun_id": "0",
-            });
-            json::to_string_json(&envelope).map_err(|e| {
-                mcp::ErrorData::internal_error(
-                    format!("envelope serialize: {e}"),
-                    None,
-                )
-            })
-        } else {
-            Err(mcp::ErrorData::internal_error(
-                response.error.unwrap_or_else(|| {
-                    "worker returned ok=false with no error".to_string()
-                }),
+        dispatch(&self.runs_worker, &self.nonce_gen, CacheKind::Runs, &p, source).await
+    }
+
+    #[mcp::tool(
+        description = "Evaluate a typed administrative nushell closure on a persistent stateful worker."
+    )]
+    async fn interact(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<RunParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let source = build_interact_source(&p);
+        dispatch(&self.interact_worker, &self.nonce_gen, CacheKind::Interacts, &p, source).await
+    }
+}
+
+/// Shared dispatch path for `run()` and `interact()`. Handles nonce
+/// derivation, log dir creation, worker round-trip, and result envelope
+/// construction. The only per-tool variation lives at the call site:
+/// which worker handle, which CacheKind, and which template builder
+/// produced the source.
+async fn dispatch(
+    worker: &Arc<tk::AsyncMutex<WorkerHandle>>,
+    nonce_gen: &lib_empower::NonceGen,
+    kind: CacheKind,
+    p: &RunParams,
+    source: String,
+) -> Result<String, mcp::ErrorData> {
+    let payload_bytes = json::to_vec(p).map_err(|e| {
+        mcp::ErrorData::internal_error(
+            format!("serialize RunParams for nonce: {e}"),
+            None,
+        )
+    })?;
+    let nonce = nonce_gen.next(&payload_bytes);
+    let log_dir = cache_dir(kind, nonce);
+    fs::create_dir_all(&log_dir).map_err(|e| {
+        mcp::ErrorData::internal_error(
+            format!("create_dir_all {}: {e}", log_dir.display()),
+            None,
+        )
+    })?;
+    let mut worker_guard = worker.lock().await;
+    let response = worker_guard
+        .send_request(log_dir, source)
+        .await
+        .map_err(|e| mcp::ErrorData::internal_error(e.to_string(), None))?;
+    drop(worker_guard);
+    if response.ok {
+        let value: json::Value = msgpack::from_slice(&response.value)
+            .unwrap_or(json::Value::Null);
+        let envelope = json::json!({
+            "result": value,
+            "nonce": nonce.to_string(),
+            "rerun_id": "0",
+        });
+        json::to_string_json(&envelope).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("envelope serialize: {e}"),
                 None,
-            ))
-        }
+            )
+        })
+    } else {
+        Err(mcp::ErrorData::internal_error(
+            response.error.unwrap_or_else(|| {
+                "worker returned ok=false with no error".to_string()
+            }),
+            None,
+        ))
     }
 }
 
@@ -127,6 +148,11 @@ impl mcp::ServerHandler for NuSh {
             env!("CARGO_PKG_VERSION"),
         )
         .with_title("nushell");
+        info.instructions = Some(
+            "Evaluation artifacts are cached at \
+             $XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/{runs,interacts}/<nonce>/{stdout,stderr}."
+                .to_string(),
+        );
         info
     }
 }

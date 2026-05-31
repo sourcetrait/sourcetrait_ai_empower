@@ -9,9 +9,15 @@ pub(crate) struct WorkerHandle {
 }
 
 impl WorkerHandle {
-    pub(crate) async fn spawn() -> io::Result<Self> {
+    pub(crate) async fn spawn(mode: Mode) -> io::Result<Self> {
         let worker_bin = resolve_worker_bin()?;
+        let mode_arg = match mode {
+            Mode::Stateless => "stateless",
+            Mode::Stateful => "stateful",
+        };
         let mut child = tk::Command::new(&worker_bin)
+            .arg("--mode")
+            .arg(mode_arg)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())

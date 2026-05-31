@@ -20,9 +20,12 @@ path = "src/bin/nu_sh_mcp_worker.rs"
 
 [dependencies]
 nix.workspace = true
+nu-cmd-lang.workspace = true
+nu-command.workspace = true
 nu-engine.workspace = true
 nu-parser.workspace = true
 nu-protocol.workspace = true
+nuon.workspace = true
 rmcp.workspace = true
 rmp-serde.workspace = true
 schemars.workspace = true

@@ -55,11 +55,25 @@ fn worker_handshake_and_stub_response() {
     let response: serde_json::Value =
         rmp_serde::from_slice(&response_frame).expect("decode RunResponse");
     assert_eq!(response["id"].as_u64(), Some(42));
-    assert_eq!(response["ok"].as_bool(), Some(true));
+    assert_eq!(response["ok"].as_bool(), Some(true), "worker error: {:?}", response["error"]);
     assert!(response["error"].is_null());
     eprintln!(
-        "IPC round-trip (RunRequest -> stubbed RunResponse): {:.3} ms",
+        "IPC round-trip (RunRequest -> RunResponse, real eval `1 + 1`): {:.3} ms",
         rt_elapsed.as_secs_f64() * 1000.0,
+    );
+
+    // Verify the value field decodes to NUON "2".
+    let value_bytes: Vec<u8> = response["value"]
+        .as_array()
+        .expect("value is byte array")
+        .iter()
+        .map(|v| v.as_u64().expect("byte") as u8)
+        .collect();
+    let nuon_str: String = rmp_serde::from_slice(&value_bytes)
+        .expect("decode value as msgpack string");
+    assert_eq!(
+        nuon_str.trim(), "2",
+        "real eval of `1 + 1` should yield NUON \"2\", got {nuon_str:?}",
     );
 
     drop(stdin);

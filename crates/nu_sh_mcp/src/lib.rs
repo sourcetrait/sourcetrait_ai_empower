@@ -50,7 +50,29 @@ pub(crate) use std::{
 };
 
 pub(crate) mod nu {
-    pub(crate) use nu_protocol::engine::EngineState;
+    pub(crate) use nu_cmd_lang::create_default_context;
+    pub(crate) use nu_command::add_shell_command_context;
+    pub(crate) use nu_engine::eval_block;
+    pub(crate) use nu_parser::parse;
+    pub(crate) use nu_protocol::{
+        PipelineData,
+        Signals,
+        Span,
+        debugger::WithoutDebug,
+        engine::{
+            EngineState,
+            Stack,
+            StateWorkingSet,
+        },
+    };
+    pub(crate) use nuon::{
+        ToNuonConfig,
+        to_nuon,
+    };
+}
+
+pub(crate) mod sys {
+    pub(crate) use nix::unistd::setsid;
 }
 
 pub(crate) mod ser {

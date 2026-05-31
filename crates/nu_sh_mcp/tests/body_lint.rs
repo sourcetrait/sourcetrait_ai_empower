@@ -1,9 +1,13 @@
-//! Slice 5.1 integration tests: run() handler short-circuits on lint
-//! violations with the agent-fixable `lint::<class> [L:C]` report shape.
-//! Helper-function lint + interact/define/import wire-ups land in slice
-//! 5.2 + 5.3 -- not covered here.
+//! Slice 5.1 + 5.2 integration tests for the AST body linter. Each
+//! handler that accepts agent-authored body source short-circuits on
+//! lint violations with the agent-fixable `lint::<class> [L:C]`
+//! report shape (with optional ` mod <rel_path>` source tag for
+//! library import paths). Helper-function lint lands in slice 5.3 --
+//! not covered here. `rerun()` does NOT re-lint per the_user
+//! 2026-05-31 design call (trust the cache).
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -16,6 +20,7 @@ struct Host {
     data_dir: tempfile::TempDir,
     #[allow(dead_code)]
     cache_dir: tempfile::TempDir,
+    source_root: tempfile::TempDir,
 }
 
 impl Host {
@@ -24,6 +29,7 @@ impl Host {
         let worker_bin = env!("CARGO_BIN_EXE_nu_sh_mcp_worker");
         let data_dir = tempfile::tempdir().expect("data tempdir");
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
+        let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
             .env("NU_SH_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
@@ -42,9 +48,14 @@ impl Host {
             next_id: 1,
             data_dir,
             cache_dir,
+            source_root,
         };
         host.initialize();
         host
+    }
+
+    fn source_dir(&self, name: &str) -> PathBuf {
+        self.source_root.path().join(name)
     }
 
     fn initialize(&mut self) {
@@ -104,16 +115,42 @@ impl Host {
         }
     }
 
-    fn run(&mut self, args: serde_json::Value) -> serde_json::Value {
+    fn call_tool(&mut self, tool: &str, args: serde_json::Value) -> serde_json::Value {
         let id = self.next_id();
         let req = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": "tools/call",
-            "params": {"name": "run", "arguments": args}
+            "params": {"name": tool, "arguments": args}
         });
         self.send(&req);
         self.read_id(id)
+    }
+
+    fn run(&mut self, args: serde_json::Value) -> serde_json::Value {
+        self.call_tool("run", args)
+    }
+
+    fn interact(&mut self, args: serde_json::Value) -> serde_json::Value {
+        self.call_tool("interact", args)
+    }
+
+    fn register(&mut self, name: &str, path: &str) -> serde_json::Value {
+        self.call_tool("register_library", serde_json::json!({
+            "name": name,
+            "path": path,
+        }))
+    }
+
+    fn define_function(&mut self, args: serde_json::Value) -> serde_json::Value {
+        self.call_tool("define_function", args)
+    }
+
+    fn import(&mut self, name: &str, path: &str) -> serde_json::Value {
+        self.call_tool("import_library", serde_json::json!({
+            "name": name,
+            "path": path,
+        }))
     }
 }
 
@@ -215,4 +252,181 @@ cd \"/a/b\"
     // Both violations appear in one message, newline-joined.
     assert!(msg.contains("lint::blacklisted_command"), "got {msg:?}");
     assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+}
+
+// ----------------------------------------------------------------------------
+// Slice 5.2: interact() body lint
+// ----------------------------------------------------------------------------
+
+#[test]
+fn lint_interact_rejects_hardcoded_path() {
+    let mut host = Host::spawn();
+    let resp = host.interact(serde_json::json!({
+        "args_schema": "noop: int",
+        "result_schema": "out: int",
+        "args": {"noop": 0},
+        "closure": "{ p: \"/home/box/x\", out: 0 }",
+        "functions": []
+    }));
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
+    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+}
+
+#[test]
+fn lint_interact_rejects_blacklisted_external() {
+    let mut host = Host::spawn();
+    let resp = host.interact(serde_json::json!({
+        "args_schema": "noop: int",
+        "result_schema": "out: int",
+        "args": {"noop": 0},
+        "closure": "{ x: (^awk 'x' | str trim), out: 0 }",
+        "functions": []
+    }));
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
+    assert!(msg.contains("lint::blacklisted_command"), "got {msg:?}");
+}
+
+// ----------------------------------------------------------------------------
+// Slice 5.2: define_function body lint
+// ----------------------------------------------------------------------------
+
+#[test]
+fn lint_define_function_rejects_hardcoded_path() {
+    let mut host = Host::spawn();
+    let mirror = host.source_dir("mirror");
+    std::fs::create_dir_all(&mirror).expect("mkdir mirror");
+    let reg = host.register("lib1", mirror.to_str().unwrap());
+    assert!(reg.get("error").is_none(), "register failed: {reg}");
+    let resp = host.define_function(serde_json::json!({
+        "library": "lib1",
+        "module_path": "",
+        "name": "bad",
+        "args_schema": "noop: int",
+        "result_schema": "out: int",
+        "body": "{ p: \"/home/box/x\", out: 0 }"
+    }));
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
+    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+}
+
+#[test]
+fn lint_define_function_rejects_blacklisted_external() {
+    let mut host = Host::spawn();
+    let mirror = host.source_dir("mirror2");
+    std::fs::create_dir_all(&mirror).expect("mkdir mirror");
+    let reg = host.register("lib2", mirror.to_str().unwrap());
+    assert!(reg.get("error").is_none(), "register failed: {reg}");
+    let resp = host.define_function(serde_json::json!({
+        "library": "lib2",
+        "module_path": "",
+        "name": "bad",
+        "args_schema": "noop: int",
+        "result_schema": "out: int",
+        "body": "{ x: (^rm -rf /; 0) }"
+    }));
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
+    assert!(msg.contains("lint::blacklisted_command"), "got {msg:?}");
+}
+
+#[test]
+fn lint_define_function_passes_clean_body() {
+    let mut host = Host::spawn();
+    let mirror = host.source_dir("mirror3");
+    std::fs::create_dir_all(&mirror).expect("mkdir mirror");
+    let reg = host.register("lib3", mirror.to_str().unwrap());
+    assert!(reg.get("error").is_none(), "register failed: {reg}");
+    let resp = host.define_function(serde_json::json!({
+        "library": "lib3",
+        "module_path": "",
+        "name": "good",
+        "args_schema": "x: int",
+        "result_schema": "out: int",
+        "body": "{ out: ($args.x + 1) }"
+    }));
+    // Expect ok envelope, not an error.
+    assert!(resp.get("error").is_none(), "define rejected: {resp}");
+    let result = resp.get("result").unwrap_or_else(|| {
+        panic!("expected ok result; got {resp}");
+    });
+    let content = result
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or_else(|| panic!("expected text content; got {resp}"));
+    assert!(content.contains("\"ok\":true"), "got {content}");
+}
+
+// ----------------------------------------------------------------------------
+// Slice 5.2: import_library body lint (source-tagged with `mod <rel_path>`)
+// ----------------------------------------------------------------------------
+
+fn write_library_with_path_in_main(root: &std::path::Path) {
+    std::fs::create_dir_all(root).expect("mkdir lib root");
+    let mod_nu = "export use ./bad.nu\n";
+    std::fs::write(root.join("mod.nu"), mod_nu).expect("write mod.nu");
+    // Hardcoded path inside main's body; resolve passthrough.
+    let bad_nu = "\
+export def main [args: record<noop: int>] {
+    cd \"/home/box/proj/x\"
+    { out: 0 }
+}
+
+export def resolve [args: record<out: int>] {
+    $args
+}
+";
+    std::fs::write(root.join("bad.nu"), bad_nu).expect("write bad.nu");
+}
+
+#[test]
+fn lint_import_library_reports_main_body_violation() {
+    let mut host = Host::spawn();
+    let lib = host.source_dir("liblint1");
+    write_library_with_path_in_main(&lib);
+    let resp = host.import("liblint1", lib.to_str().unwrap());
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
+    // Lint section is present and source-tagged with `mod bad.nu`.
+    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+    assert!(msg.contains("mod bad.nu"), "got {msg:?}");
+}
+
+#[test]
+fn lint_import_library_combines_structural_and_lint() {
+    let mut host = Host::spawn();
+    let lib = host.source_dir("liblint2");
+    std::fs::create_dir_all(&lib).expect("mkdir lib");
+    // Structural violation: mod.nu has an inline def.
+    let mod_nu = "\
+export use ./bad.nu
+def helper [] { 1 }
+";
+    std::fs::write(lib.join("mod.nu"), mod_nu).expect("write mod.nu");
+    // Lint violation: bad.nu has hardcoded path in main.
+    let bad_nu = "\
+export def main [args: record<noop: int>] {
+    cd \"/home/box/x\"
+    { out: 0 }
+}
+
+export def resolve [args: record<out: int>] {
+    $args
+}
+";
+    std::fs::write(lib.join("bad.nu"), bad_nu).expect("write bad.nu");
+    let resp = host.import("liblint2", lib.to_str().unwrap());
+    let msg = error_text(&resp)
+        .unwrap_or_else(|| panic!("expected error; got {resp}"));
+    // Structural section header + bullet.
+    assert!(msg.contains("validation failed:"), "got {msg:?}");
+    assert!(msg.contains("mod.nu"), "got {msg:?}");
+    // Lint section.
+    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+    assert!(msg.contains("mod bad.nu"), "got {msg:?}");
 }

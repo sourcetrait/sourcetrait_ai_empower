@@ -797,29 +797,67 @@ pub(crate) struct Violation {
     pub message: String,
 }
 
+/// What: pairs the structural-validator findings with the body-lint
+/// findings from a single `validate_library_source` walk. Both vectors
+/// are independent; a library can fail one set, the other, or both.
+///
+/// Why: slice 5.2 broadens the strict library validator to also lint
+/// each function file's `export def main` body. Structural and lint
+/// violations have different render shapes (the former is
+/// `<path>:<line>: <message>` per `format_violations`; the latter is
+/// `lint::<class> [L:C] mod <rel_path>` per the skill format
+/// discipline), so they stay in separate vectors all the way to the
+/// rmcp-error mapping seam.
+///
+/// Where: produced by `validate_library_source`; consumed by
+/// `import_library_impl` / `reimport_library_impl` (folded into
+/// `ImportError::Violations(ValidationResult)` when non-empty) and by
+/// `server::tool::import_error_to_mcp_error` which renders both
+/// sections together.
+#[derive(Debug, Clone)]
+pub(crate) struct ValidationResult {
+    pub structural: Vec<Violation>,
+    pub lint: Vec<LintViolation>,
+}
+
+impl ValidationResult {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.structural.is_empty() && self.lint.is_empty()
+    }
+}
+
 /// Walk every `.nu` under `root`. Apply the strict per-file shape:
 /// - `mod.nu`: only `export use ./<file>.nu` or `export module <name>` lines
-///   (plus blank lines and `#` comments).
+///   (plus blank lines and `#` comments). Body-lint NOT applied (no agent
+///   code lives in mod.nu).
 /// - Function files: exactly two exports named `main` and `resolve`;
 ///   both have `args: record<...>` typed positionals; resolve's body is
-///   exactly the expression `$args`.
-/// 0.0.14+: each file is also passed through `nu_parser::parse` (in a
+///   exactly the expression `$args`. Additionally (slice 5.2) main's
+///   body is body-linted for hardcoded paths and blacklisted externals,
+///   with source tag `mod <rel_path>`.
+///
+/// Each file is parsed through `nu_parser::parse` (in a
 /// `module __v_<stem> { ... }` wrapper) so syntax errors land as
-/// violations with line numbers. Dotfile entries (e.g. `.git`,
-/// `.nu_sh_mcp_meta.json`) are skipped. Returns ALL violations -- no
-/// bail-on-first; no auto-fix.
-pub(crate) fn validate_library_source(root: &std::path::Path) -> io::Result<Vec<Violation>> {
-    let engine = ParseEngine::new();
-    let mut violations = Vec::new();
-    validate_walk(root, root, &engine, &mut violations)?;
-    Ok(violations)
+/// structural violations with line numbers. Dotfile entries (e.g.
+/// `.git`, `.nu_sh_mcp_meta.json`) are skipped. Returns ALL violations
+/// (structural + lint) -- no bail-on-first; no auto-fix.
+pub(crate) fn validate_library_source(
+    root: &std::path::Path,
+    engine: &ParseEngine,
+) -> io::Result<ValidationResult> {
+    let mut result = ValidationResult {
+        structural: Vec::new(),
+        lint: Vec::new(),
+    };
+    validate_walk(root, root, engine, &mut result)?;
+    Ok(result)
 }
 
 fn validate_walk(
     root: &std::path::Path,
     dir: &std::path::Path,
     engine: &ParseEngine,
-    violations: &mut Vec<Violation>,
+    result: &mut ValidationResult,
 ) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -831,11 +869,11 @@ fn validate_walk(
         let path = entry.path();
         let ft = entry.file_type()?;
         if ft.is_dir() {
-            validate_walk(root, &path, engine, violations)?;
+            validate_walk(root, &path, engine, result)?;
         } else if ft.is_file()
             && path.extension().map(|e| e == "nu").unwrap_or(false)
         {
-            validate_one_file(root, &path, engine, violations)?;
+            validate_one_file(root, &path, engine, result)?;
         }
     }
     Ok(())
@@ -845,7 +883,7 @@ fn validate_one_file(
     root: &std::path::Path,
     path: &std::path::Path,
     engine: &ParseEngine,
-    violations: &mut Vec<Violation>,
+    result: &mut ValidationResult,
 ) -> io::Result<()> {
     let source = fs::read_to_string(path)?;
     let rel = path
@@ -860,9 +898,17 @@ fn validate_one_file(
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
     let is_mod = path.file_name().map(|n| n == "mod.nu").unwrap_or(false);
     if is_mod {
-        validate_mod_nu_ast(&rel, stem, &source, parent, engine, violations);
+        validate_mod_nu_ast(&rel, stem, &source, parent, engine, &mut result.structural);
     } else {
-        validate_function_file_ast(&rel, stem, &source, parent, engine, violations);
+        validate_function_file_ast(
+            &rel,
+            stem,
+            &source,
+            parent,
+            engine,
+            &mut result.structural,
+            &mut result.lint,
+        );
     }
     Ok(())
 }
@@ -1039,6 +1085,7 @@ fn validate_function_file_ast(
     parent: &std::path::Path,
     engine: &ParseEngine,
     violations: &mut Vec<Violation>,
+    lint: &mut Vec<LintViolation>,
 ) {
     let wrapper_name = format!("__v_{stem}");
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
@@ -1148,6 +1195,27 @@ fn validate_function_file_ast(
             prefix_len,
             violations,
         );
+    }
+
+    // 6. Slice 5.2: lint main's body for hardcoded paths and blacklisted
+    //    externals. Source tag is `mod <rel_path>` so the rendered line
+    //    has the file context per the_user 2026-05-31 format choice.
+    //    Skipped when main wasn't found or its body block isn't resolvable
+    //    (those cases already pushed structural violations).
+    if let Some(id) = main_decl {
+        let decl = working_set.get_decl(id);
+        if let Some(main_block_id) = decl.block_id() {
+            let main_block = working_set.get_block(main_block_id);
+            let source_tag = format!("mod {rel}");
+            let mut lvs = lint_block(
+                main_block,
+                &working_set,
+                source,
+                prefix_len,
+                Some(&source_tag),
+            );
+            lint.append(&mut lvs);
+        }
     }
 }
 
@@ -1465,6 +1533,7 @@ fn extract_def_body(source: &str, fn_name: &str) -> Option<String> {
 pub(crate) fn import_library_impl(
     name: &str,
     source_path: &std::path::Path,
+    engine: &ParseEngine,
 ) -> Result<(), ImportError> {
     if !is_valid_ident(name) {
         return Err(ImportError::InvalidLibraryName(name.to_string()));
@@ -1472,10 +1541,10 @@ pub(crate) fn import_library_impl(
     if !source_path.exists() || !source_path.is_dir() {
         return Err(ImportError::SourceMissing(source_path.to_path_buf()));
     }
-    let violations =
-        validate_library_source(source_path).map_err(ImportError::Io)?;
-    if !violations.is_empty() {
-        return Err(ImportError::Violations(violations));
+    let result =
+        validate_library_source(source_path, engine).map_err(ImportError::Io)?;
+    if !result.is_empty() {
+        return Err(ImportError::Violations(result));
     }
     let dest = library_dir(name);
     if dest.exists() {
@@ -1508,7 +1577,10 @@ pub(crate) fn import_library_impl(
 ///
 /// Where: called by `NuSh::reimport_library` under the per-library
 /// write lock; same error-mapping seam as import_library_impl.
-pub(crate) fn reimport_library_impl(name: &str) -> Result<(), ImportError> {
+pub(crate) fn reimport_library_impl(
+    name: &str,
+    engine: &ParseEngine,
+) -> Result<(), ImportError> {
     if !is_valid_ident(name) {
         return Err(ImportError::InvalidLibraryName(name.to_string()));
     }
@@ -1527,10 +1599,10 @@ pub(crate) fn reimport_library_impl(name: &str) -> Result<(), ImportError> {
     if !source_path.exists() || !source_path.is_dir() {
         return Err(ImportError::SourceMissing(source_path));
     }
-    let violations =
-        validate_library_source(&source_path).map_err(ImportError::Io)?;
-    if !violations.is_empty() {
-        return Err(ImportError::Violations(violations));
+    let result =
+        validate_library_source(&source_path, engine).map_err(ImportError::Io)?;
+    if !result.is_empty() {
+        return Err(ImportError::Violations(result));
     }
     if lib_root.exists() {
         fs::remove_dir_all(&lib_root).map_err(ImportError::Io)?;
@@ -1563,7 +1635,7 @@ pub(crate) enum ImportError {
     SourceMissing(PathBuf),
     NotRegistered(String),
     WrongKind,
-    Violations(Vec<Violation>),
+    Violations(ValidationResult),
 }
 
 /// What: copies a directory tree recursively. Skips dotfile entries

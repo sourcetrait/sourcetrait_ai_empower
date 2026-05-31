@@ -38,6 +38,7 @@ pub(crate) use crate::{
         library::{
             ImportError,
             LibraryLocks,
+            ValidationResult,
             Violation,
             call_file_path,
             define_function_impl,
@@ -49,7 +50,9 @@ pub(crate) use crate::{
             unregister_library_impl,
         },
         lint::{
+            LintViolation,
             format_lint_violations,
+            lint_block,
             lint_body,
         },
         parse_engine::{

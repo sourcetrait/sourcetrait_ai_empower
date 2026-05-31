@@ -20,24 +20,6 @@ pub(crate) struct ParseEngine {
 }
 
 impl ParseEngine {
-    /// What: constructs a fresh `ParseEngine` with the keyword-only
-    /// `nu_cmd_lang` context, `is_interactive = false`, and
-    /// `is_mcp = true`. Returns by value; the caller owns the state.
-    ///
-    /// Why: `is_interactive = false` suppresses banner + reedline
-    /// behaviors; `is_mcp = true` routes nu-cli `print` to stderr so
-    /// any prints from parser-side code don't corrupt host stdio.
-    /// Both flags are safe defaults for any non-REPL nu parsing.
-    ///
-    /// Where: called once per `validate_library_source` invocation
-    /// inside `library::validate_library_source`.
-    pub(crate) fn new() -> Self {
-        let mut engine_state = nu::create_default_context();
-        engine_state.is_interactive = false;
-        engine_state.is_mcp = true;
-        Self { engine_state }
-    }
-
     /// What: constructs a fresh `ParseEngine` carrying the full shell
     /// command set (`nu_cmd_lang::create_default_context` +
     /// `nu_command::add_shell_command_context`) plus the same

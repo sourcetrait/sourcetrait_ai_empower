@@ -372,6 +372,15 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<String, mcp::ErrorData> {
+        // Slice 5.2: lint applies to interact() bodies on the same shape
+        // as run(); the stateful substrate is irrelevant for static lint.
+        let violations = lint_body(&self.lint_engine, &p.args_schema, &p.closure, None);
+        if !violations.is_empty() {
+            return Err(mcp::ErrorData::invalid_params(
+                format_lint_violations(&violations),
+                None,
+            ));
+        }
         let source = build_interact_source(&p);
         let payload_bytes = json::to_vec(&p).map_err(|e| {
             mcp::ErrorData::internal_error(
@@ -433,6 +442,16 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<DefineFunctionParams>,
     ) -> Result<String, mcp::ErrorData> {
+        // Slice 5.2: lint the body BEFORE acquiring the lock or touching
+        // disk; lint failure should be a fast client-side reject, not a
+        // half-committed write.
+        let violations = lint_body(&self.lint_engine, &p.args_schema, &p.body, None);
+        if !violations.is_empty() {
+            return Err(mcp::ErrorData::invalid_params(
+                format_lint_violations(&violations),
+                None,
+            ));
+        }
         let lock = self.library_locks.lookup(&p.library).await.ok_or_else(|| {
             mcp::ErrorData::invalid_params(
                 format!("library `{}` is not registered", p.library),
@@ -559,7 +578,7 @@ impl NuSh {
                 )
             })?;
         let _guard = lock.write().await;
-        import_library_impl(&p.name, std::path::Path::new(&p.path))
+        import_library_impl(&p.name, std::path::Path::new(&p.path), &self.lint_engine)
             .map_err(import_error_to_mcp_error)?;
         Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
     }
@@ -578,7 +597,7 @@ impl NuSh {
             )
         })?;
         let _guard = lock.write().await;
-        reimport_library_impl(&p.name).map_err(import_error_to_mcp_error)?;
+        reimport_library_impl(&p.name, &self.lint_engine).map_err(import_error_to_mcp_error)?;
         Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
     }
 
@@ -818,8 +837,8 @@ fn import_error_to_mcp_error(e: ImportError) -> mcp::ErrorData {
             "reimport_library only applies to libraries imported via import_library; this one was created via register_library".to_string(),
             None,
         ),
-        ImportError::Violations(v) => mcp::ErrorData::invalid_params(
-            format_violations(&v),
+        ImportError::Violations(result) => mcp::ErrorData::invalid_params(
+            format_validation_result(&result),
             None,
         ),
         ImportError::Io(e) => mcp::ErrorData::internal_error(
@@ -829,19 +848,17 @@ fn import_error_to_mcp_error(e: ImportError) -> mcp::ErrorData {
     }
 }
 
-/// What: renders a slice of `Violation` records into a multi-line
-/// human-readable report with one bullet per violation. Lines with
-/// line=0 are file-level (no specific line); lines with line>0 print
-/// `<path>:<line>: <message>`.
+/// What: renders a slice of structural `Violation` records into a
+/// multi-line human-readable report with one bullet per violation.
+/// Lines with line=0 are file-level (no specific line); lines with
+/// line>0 print `<path>:<line>: <message>`.
 ///
-/// Why: import_library + reimport_library aggregate all violations
-/// across a source tree and report them in one error; the agent
-/// needs a stable rendering it can parse or display. The text shape
-/// is intentionally simple so it round-trips through MCP error
-/// messages without escaping.
+/// Why: structural import-validation findings have always rendered in
+/// this bulleted-with-header shape; preserved verbatim so existing
+/// agents and tests stay compatible.
 ///
-/// Where: called by `import_error_to_mcp_error` when wrapping
-/// `ImportError::Violations(vec)` into an `ErrorData::invalid_params`.
+/// Where: called by `format_validation_result` (slice 5.2) when the
+/// structural section is non-empty.
 fn format_violations(v: &[Violation]) -> String {
     let mut out = format!("validation failed: {} violation(s):", v.len());
     for vio in v {
@@ -850,6 +867,34 @@ fn format_violations(v: &[Violation]) -> String {
         } else {
             out.push_str(&format!("\n  - {}:{}: {}", vio.path, vio.line, vio.message));
         }
+    }
+    out
+}
+
+/// What: renders a `ValidationResult` into a single multi-line message
+/// combining the structural section (bulleted, via `format_violations`)
+/// and the lint section (flat, via `format_lint_violations`), separated
+/// by a blank line when both are present.
+///
+/// Why: slice 5.2 surfaces both kinds of findings from one
+/// import_library / reimport_library call. The two render styles serve
+/// different purposes -- structural errors describe shape problems
+/// agents must restructure; lint findings name specific token-level
+/// issues the agent must lift -- and keeping them in distinct
+/// sections preserves both readers' workflows.
+///
+/// Where: called by `import_error_to_mcp_error` for the
+/// `ImportError::Violations(ValidationResult)` arm.
+fn format_validation_result(r: &ValidationResult) -> String {
+    let mut out = String::new();
+    if !r.structural.is_empty() {
+        out.push_str(&format_violations(&r.structural));
+    }
+    if !r.lint.is_empty() {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(&format_lint_violations(&r.lint));
     }
     out
 }

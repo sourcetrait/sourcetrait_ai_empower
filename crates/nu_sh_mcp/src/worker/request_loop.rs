@@ -1,5 +1,21 @@
 use crate::*;
 
+/// What: the worker's request-handling loop. Acquires stdin + stdout
+/// locks for the worker's lifetime, then loops: read one length-
+/// prefixed msgpack frame, decode as RunRequest, call eval_source
+/// inside `catch_unwind` (so a panic during eval doesn't kill the
+/// worker), and write back a RunResponse. Returns Ok on
+/// `UnexpectedEof` (clean shutdown when host closes stdin).
+///
+/// Why: holding the stdin/stdout locks for the loop's lifetime is
+/// safe because the worker is single-threaded; the `catch_unwind`
+/// wrapping each eval lets one bad closure body fail one call
+/// without bringing down the whole worker. Malformed RunRequests
+/// also return a structured error instead of crashing.
+///
+/// Where: called once from `worker::run::run_worker` right after the
+/// worker writes its Hello frame. Owns the entire worker process's
+/// execution until the host closes the channel.
 pub(crate) fn serve(warm_base: &mut WarmBase) -> io::Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -55,6 +71,24 @@ pub(crate) fn serve(warm_base: &mut WarmBase) -> io::Result<()> {
     }
 }
 
+/// What: parses and evaluates `source` against the worker's
+/// `warm_base.engine_state`. Opens `<log_dir>/{stdout,stderr}` files
+/// and routes external commands' output to them via
+/// `Stack::stdout_file`/`stderr_file`. Branches on `warm_base.mode`:
+/// stateless clones engine_state per call, stateful mutates the
+/// persistent state. On success, converts the result Value to JSON
+/// via `nu_json` and msgpack-encodes the bytes.
+///
+/// Why: the engine-layer file redirect keeps external command
+/// chatter from corrupting the worker's fd 1 (which serve() uses
+/// exclusively for IPC). The mode-branch matches run()'s stateless
+/// vs interact()'s stateful contracts. The JSON conversion at the
+/// end lets the agent see structured data; nu_json::Value::from_value
+/// gives the same shape as nushell's `to json` command.
+///
+/// Where: called by `serve` inside `catch_unwind` for each
+/// RunRequest; the returned `Vec<u8>` becomes `RunResponse.value`,
+/// the Err(msg) becomes `RunResponse.error`.
 fn eval_source(
     warm_base: &mut WarmBase,
     log_dir: &std::path::Path,

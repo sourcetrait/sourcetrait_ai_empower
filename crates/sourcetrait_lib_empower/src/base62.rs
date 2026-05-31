@@ -4,9 +4,18 @@
 pub(crate) const ALPHABET: &[u8; 62] =
     b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-/// Format a u64 into a Formatter using the shared base62 alphabet.
-/// Zero renders as `"0"`; otherwise as the minimal digit sequence
-/// (most significant first). A u64's worst case is 11 ASCII chars.
+/// What: format a u64 into a `std::fmt::Formatter` using the shared
+/// base62 alphabet. Zero renders as `"0"`; otherwise as the minimal
+/// digit sequence (most significant first). A u64's worst case is 11
+/// ASCII chars.
+///
+/// Why: `Nonce` and `RerunHash` both wrap u64 and both render via this
+/// helper so their string forms are interchangeable as filename
+/// fragments + URL components + agent-facing ids. Centralizing the
+/// alphabet here keeps the two types from drifting apart.
+///
+/// Where: called by the `Display` impls of `nonce::Nonce` and
+/// `rerun::RerunHash`. Not used directly outside the crate.
 pub(crate) fn fmt_base62(
     mut n: u64,
     f: &mut std::fmt::Formatter<'_>,

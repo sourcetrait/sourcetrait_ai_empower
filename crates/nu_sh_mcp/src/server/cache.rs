@@ -10,10 +10,7 @@ pub(crate) enum CacheKind {
     /// `run()` so that `rerun()` can re-evaluate the same closure with
     /// new args without the agent re-sending the body.
     Closure,
-    /// `Calls` is reserved for the `call()` tool (slice 3 closing
-    /// commit); pre-defined here so the partitioning is fixed at the
-    /// type level.
-    #[allow(dead_code)]
+    /// `call()` per-invocation logs at `calls/<nonce>/{stdout,stderr}`.
     Calls,
 }
 

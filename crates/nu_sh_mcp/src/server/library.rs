@@ -608,6 +608,31 @@ fn function_id(library: &str, module_path: &str, name: &str) -> String {
     }
 }
 
+/// Resolve `<library>/<module_path>/<name>.nu` into an absolute path
+/// under the MCP libraries dir. Returns None if any name component is
+/// invalid (path traversal defense). Does NOT verify the file exists;
+/// caller checks.
+pub(crate) fn call_file_path(
+    library: &str,
+    module_path: &str,
+    name: &str,
+) -> Option<PathBuf> {
+    if !is_valid_ident(library) {
+        return None;
+    }
+    if !is_valid_module_path(module_path) {
+        return None;
+    }
+    if !is_valid_ident(name) {
+        return None;
+    }
+    let mut path = library_dir(library);
+    if !module_path.is_empty() {
+        path = path.join(module_path);
+    }
+    Some(path.join(format!("{name}.nu")))
+}
+
 // ============================================================================
 // Strict library source validator (for import_library / reimport_library)
 // ============================================================================

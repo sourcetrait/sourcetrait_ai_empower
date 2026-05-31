@@ -218,7 +218,7 @@ fn tools_list_has_five() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 9, "expected 9 tools; got {names:?}");
+    assert_eq!(names.len(), 10, "expected 10 tools; got {names:?}");
     for expected in [
         "run",
         "interact",
@@ -229,6 +229,7 @@ fn tools_list_has_five() {
         "undefine_function",
         "import_library",
         "reimport_library",
+        "call",
     ] {
         assert!(
             names.contains(&expected),

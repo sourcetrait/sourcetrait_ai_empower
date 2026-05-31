@@ -37,6 +37,7 @@ pub(crate) use crate::{
             ImportError,
             LibraryLocks,
             Violation,
+            call_file_path,
             define_function_impl,
             ensure_substrate,
             import_library_impl,

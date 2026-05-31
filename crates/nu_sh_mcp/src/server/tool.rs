@@ -106,6 +106,17 @@ pub struct ReimportLibraryParams {
     pub name: String,
 }
 
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct CallParams {
+    pub library: String,
+    pub module_path: String,
+    pub name: String,
+    /// JSON object passed as `$args` to the function. Schema match is
+    /// enforced by the function's `main` signature at parse time inside
+    /// the worker (typed positional binding on a literal record).
+    pub args: mcp::JsonObject,
+}
+
 pub struct NuSh {
     runs_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
     interact_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
@@ -281,6 +292,73 @@ impl NuSh {
             mcp::ErrorData::internal_error(format!("undefine_function: {e}"), None)
         })?;
         Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+    }
+
+    #[mcp::tool(
+        description = "Invoke a registered library function on a stateless worker. Builds `use <abs path to function file>.nu; <name> resolve (<name> $args)` so the function's `resolve` typecheck runs on the call's result. HEAD-only -- no version pinning."
+    )]
+    async fn call(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<CallParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let lock = self.library_locks.lookup(&p.library).await.ok_or_else(|| {
+            mcp::ErrorData::invalid_params(
+                format!("library `{}` is not registered", p.library),
+                None,
+            )
+        })?;
+        let _guard = lock.read().await;
+        let file_path = call_file_path(&p.library, &p.module_path, &p.name).ok_or_else(|| {
+            mcp::ErrorData::invalid_params(
+                "invalid library / module_path / name (must satisfy identifier rules)".to_string(),
+                None,
+            )
+        })?;
+        if !file_path.exists() {
+            return Err(mcp::ErrorData::invalid_params(
+                format!(
+                    "function not defined: {}",
+                    if p.module_path.is_empty() {
+                        format!("{}/{}", p.library, p.name)
+                    } else {
+                        format!("{}/{}/{}", p.library, p.module_path, p.name)
+                    },
+                ),
+                None,
+            ));
+        }
+        let args_json = json::to_string_json(&p.args).unwrap_or_else(|_| "{}".to_string());
+        let source = format!(
+            "use {}\n{} resolve ({} {})\n",
+            file_path.display(),
+            p.name,
+            p.name,
+            args_json,
+        );
+        let payload_bytes = json::to_vec(&p).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("serialize CallParams for nonce: {e}"),
+                None,
+            )
+        })?;
+        let outcome = dispatch_to_worker(
+            &self.runs_worker,
+            &self.nonce_gen,
+            CacheKind::Calls,
+            &payload_bytes,
+            source,
+        )
+        .await?;
+        let envelope = json::json!({
+            "result": outcome.result,
+            "nonce": outcome.nonce.to_string(),
+        });
+        json::to_string_json(&envelope).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("envelope serialize: {e}"),
+                None,
+            )
+        })
     }
 
     #[mcp::tool(
@@ -554,7 +632,7 @@ impl mcp::ServerHandler for NuSh {
         .with_title("nushell");
         info.instructions = Some(
             "Evaluation artifacts are cached at \
-             $XDG_CACHE_HOME/nu_sh_mcp/{runs,interacts}/<nonce>/{stdout,stderr}; \
+             $XDG_CACHE_HOME/nu_sh_mcp/{runs,interacts,calls}/<nonce>/{stdout,stderr}; \
              closures cached at $XDG_CACHE_HOME/nu_sh_mcp/closures/<rerun_id>.json. \
              Registered libraries live in a signed git repo at \
              $XDG_DATA_HOME/nu_sh_mcp/libraries/; signing keypair at \

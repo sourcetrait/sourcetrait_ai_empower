@@ -19,3 +19,13 @@ name = "nu_sh_mcp_worker"
 path = "src/bin/nu_sh_mcp_worker.rs"
 
 [dependencies]
+nix.workspace = true
+nu-engine.workspace = true
+nu-parser.workspace = true
+nu-protocol.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+sourcetrait_testing.workspace = true

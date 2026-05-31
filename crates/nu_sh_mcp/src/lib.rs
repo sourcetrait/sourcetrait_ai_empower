@@ -17,8 +17,18 @@ pub(crate) mod template;
 pub(crate) use crate::{
     ipc::framing::{
         read_frame,
+        read_frame_async,
         write_frame,
+        write_frame_async,
     },
+    server::{
+        tool::{
+            NuSh,
+            RunParams,
+        },
+        worker_handle::WorkerHandle,
+    },
+    template::build_run_source,
     wire::{
         Hello,
         PROTOCOL_VERSION,
@@ -34,7 +44,9 @@ pub(crate) use std::{
         Read,
         Write,
     },
+    path::PathBuf,
     process,
+    sync::Arc,
 };
 
 pub(crate) mod nu {
@@ -48,10 +60,53 @@ pub(crate) mod ser {
     };
 }
 
+pub(crate) mod schema {
+    pub(crate) use schemars::JsonSchema;
+}
+
 pub(crate) mod msgpack {
     pub(crate) use rmp_serde::{
         from_slice,
         to_vec_named,
+    };
+}
+
+pub(crate) mod mcp {
+    pub(crate) use rmcp::{
+        ErrorData,
+        ServerHandler,
+        ServiceExt,
+        handler::server::router::tool::ToolRouter,
+        handler::server::wrapper::Parameters,
+        tool,
+        tool_handler,
+        tool_router,
+        transport::stdio,
+    };
+}
+
+pub(crate) mod tk {
+    pub(crate) use tokio::{
+        io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        },
+        process::{
+            Child,
+            ChildStdin,
+            ChildStdout,
+            Command,
+        },
+        runtime::Runtime,
+        sync::Mutex as AsyncMutex,
+    };
+}
+
+pub(crate) mod json {
+    pub(crate) use serde_json::{
+        Value,
+        json,
+        to_string as to_string_json,
     };
 }
 

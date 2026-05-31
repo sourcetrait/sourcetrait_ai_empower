@@ -23,9 +23,12 @@ nix.workspace = true
 nu-engine.workspace = true
 nu-parser.workspace = true
 nu-protocol.workspace = true
+rmcp.workspace = true
 rmp-serde.workspace = true
+schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 sourcetrait_testing.workspace = true

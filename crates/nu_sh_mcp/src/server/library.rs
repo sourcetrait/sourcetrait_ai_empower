@@ -653,17 +653,22 @@ pub(crate) struct Violation {
 /// - Function files: exactly two exports named `main` and `resolve`;
 ///   both have `args: record<...>` typed positionals; resolve's body is
 ///   exactly the expression `$args`.
-/// Dotfile entries (e.g. `.git`, `.nu_sh_mcp_meta.json`) are skipped.
-/// Returns ALL violations -- no bail-on-first; no auto-fix.
+/// 0.0.14+: each file is also passed through `nu_parser::parse` (in a
+/// `module __v_<stem> { ... }` wrapper) so syntax errors land as
+/// violations with line numbers. Dotfile entries (e.g. `.git`,
+/// `.nu_sh_mcp_meta.json`) are skipped. Returns ALL violations -- no
+/// bail-on-first; no auto-fix.
 pub(crate) fn validate_library_source(root: &std::path::Path) -> io::Result<Vec<Violation>> {
+    let engine = ParseEngine::new();
     let mut violations = Vec::new();
-    validate_walk(root, root, &mut violations)?;
+    validate_walk(root, root, &engine, &mut violations)?;
     Ok(violations)
 }
 
 fn validate_walk(
     root: &std::path::Path,
     dir: &std::path::Path,
+    engine: &ParseEngine,
     violations: &mut Vec<Violation>,
 ) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
@@ -676,11 +681,11 @@ fn validate_walk(
         let path = entry.path();
         let ft = entry.file_type()?;
         if ft.is_dir() {
-            validate_walk(root, &path, violations)?;
+            validate_walk(root, &path, engine, violations)?;
         } else if ft.is_file()
             && path.extension().map(|e| e == "nu").unwrap_or(false)
         {
-            validate_one_file(root, &path, violations)?;
+            validate_one_file(root, &path, engine, violations)?;
         }
     }
     Ok(())
@@ -689,6 +694,7 @@ fn validate_walk(
 fn validate_one_file(
     root: &std::path::Path,
     path: &std::path::Path,
+    engine: &ParseEngine,
     violations: &mut Vec<Violation>,
 ) -> io::Result<()> {
     let source = fs::read_to_string(path)?;
@@ -697,12 +703,270 @@ fn validate_one_file(
         .unwrap_or(path)
         .to_string_lossy()
         .into_owned();
-    if path.file_name().map(|n| n == "mod.nu").unwrap_or(false) {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    let is_mod = path.file_name().map(|n| n == "mod.nu").unwrap_or(false);
+    if is_mod {
+        // mod.nu files reference sibling/child modules via `export use
+        // ./<file>.nu` and `export module <subdir>`. nu_parser resolves
+        // these at parse time; running it standalone surfaces noisy
+        // ModuleNotFound errors that aren't real violations. mod.nu's
+        // grammar is narrow enough that a tokenized line scan is both
+        // sufficient and accurate.
         validate_mod_nu(&rel, &source, violations);
     } else {
-        validate_function_file(&rel, &source, violations);
+        validate_function_file_ast(&rel, stem, &source, engine, violations);
     }
     Ok(())
+}
+
+/// AST-based function file validator. Wraps `source` in
+/// `module __v_<stem> { ... }`, runs nu_parser, then walks the
+/// resulting `Module` to enforce:
+///   - parse cleanly (no syntax errors)
+///   - exactly two exports named `main` and `resolve`
+///   - main has a typed `args: record<...>` positional
+///   - resolve has a typed `args: record<...>` positional AND its body
+///     block is exactly the expression `$args` (passthrough)
+fn validate_function_file_ast(
+    rel: &str,
+    stem: &str,
+    source: &str,
+    engine: &ParseEngine,
+    violations: &mut Vec<Violation>,
+) {
+    let wrapper_name = format!("__v_{stem}");
+    let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
+    let mut working_set = nu::StateWorkingSet::new(engine.engine_state());
+    let _ = nu::parse(&mut working_set, Some(rel), wrapped.as_bytes(), false);
+
+    // 1. Surface parse errors with source-relative line numbers.
+    for err in &working_set.parse_errors {
+        let span_start = err.span().start.saturating_sub(prefix_len);
+        let (line, _col) = span_to_line_col(source, span_start);
+        violations.push(Violation {
+            path: rel.to_string(),
+            line,
+            message: format!("parse error: {err:?}"),
+        });
+    }
+    if !working_set.parse_errors.is_empty() {
+        // Don't try to walk a half-parsed AST. Leave structural checks
+        // for the next round; parse errors already cover the file.
+        return;
+    }
+
+    // 2. Find the wrapper module. The parser registers it under
+    //    `wrapper_name` in the working set; `find_module` walks delta + base.
+    let wrapper_name_bytes = wrapper_name.as_bytes();
+    let module_id = match working_set.find_module(wrapper_name_bytes) {
+        Some(id) => id,
+        None => {
+            violations.push(Violation {
+                path: rel.to_string(),
+                line: 0,
+                message: "internal: wrapper module not found after parse".to_string(),
+            });
+            return;
+        }
+    };
+    let module: &nu::Module = working_set.get_module(module_id);
+
+    // 3. Enumerate the wrapper's exports. nu's Module type tracks `main`
+    //    as Option<DeclId> separately from the `decls` map (which holds
+    //    everything else). For the strict "exactly main + resolve" rule
+    //    we require BOTH to be set, and `decls` to contain exactly one
+    //    entry named "resolve" (plus `main` may or may not appear in
+    //    decls depending on parser version -- normalize).
+    let main_decl = module.main;
+    let mut other_decls: Vec<(String, nu::DeclId)> = module
+        .decls
+        .iter()
+        .filter(|(name_bytes, _)| name_bytes.as_slice() != b"main")
+        .map(|(name_bytes, decl_id)| {
+            (
+                String::from_utf8_lossy(name_bytes).into_owned(),
+                *decl_id,
+            )
+        })
+        .collect();
+    other_decls.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if main_decl.is_none() {
+        violations.push(Violation {
+            path: rel.to_string(),
+            line: 0,
+            message: "function file must contain `export def main [args: record<...>]`"
+                .to_string(),
+        });
+    }
+    let resolve_decl = other_decls
+        .iter()
+        .find(|(name, _)| name == "resolve")
+        .map(|(_, id)| *id);
+    if resolve_decl.is_none() {
+        violations.push(Violation {
+            path: rel.to_string(),
+            line: 0,
+            message: "function file must contain `export def resolve [args: record<...>] { $args }`"
+                .to_string(),
+        });
+    }
+    for (name, _) in &other_decls {
+        if name != "resolve" {
+            violations.push(Violation {
+                path: rel.to_string(),
+                line: 0,
+                message: format!(
+                    "function file may only export `main` and `resolve`; saw `export def {name}`",
+                ),
+            });
+        }
+    }
+
+    // 4. Check signatures. Both main and resolve must have a single
+    //    typed positional named `args` of shape Record.
+    if let Some(id) = main_decl {
+        check_args_record_positional(rel, &working_set, id, "main", source, prefix_len, violations);
+    }
+    if let Some(id) = resolve_decl {
+        let resolve_args_var =
+            check_args_record_positional(rel, &working_set, id, "resolve", source, prefix_len, violations);
+        // 5. resolve's body must be exactly `$args` (passthrough).
+        check_resolve_body_is_args(
+            rel,
+            &working_set,
+            id,
+            resolve_args_var,
+            source,
+            prefix_len,
+            violations,
+        );
+    }
+}
+
+/// Confirm the decl's first required positional is named `args` with a
+/// `record<...>` shape. Returns the positional's VarId so the caller can
+/// match it against resolve's body `$args` expression.
+fn check_args_record_positional(
+    rel: &str,
+    working_set: &nu::StateWorkingSet,
+    decl_id: nu::DeclId,
+    fn_name: &str,
+    source: &str,
+    prefix_len: usize,
+    violations: &mut Vec<Violation>,
+) -> Option<nu::VarId> {
+    let decl = working_set.get_decl(decl_id);
+    let sig = decl.signature();
+    let positional = sig.required_positional.first();
+    let (bad, var_id) = match positional {
+        None => (true, None),
+        Some(p) => {
+            let shape_ok = matches!(p.shape, nu::SyntaxShape::Record(_));
+            ((p.name != "args" || !shape_ok), p.var_id)
+        }
+    };
+    if bad {
+        let line = decl_line(working_set, decl_id, source, prefix_len);
+        violations.push(Violation {
+            path: rel.to_string(),
+            line,
+            message: format!(
+                "{fn_name} must take a typed positional `args: record<...>`",
+            ),
+        });
+    }
+    var_id
+}
+
+/// Confirm `resolve`'s body block contains exactly one pipeline with one
+/// element whose expression is `$args` (passthrough). The expression's
+/// AST shape for `$args` is `Expr::FullCellPath` wrapping a head that is
+/// `Expr::Var(args_var_id)` with no tail.
+fn check_resolve_body_is_args(
+    rel: &str,
+    working_set: &nu::StateWorkingSet,
+    decl_id: nu::DeclId,
+    args_var_id: Option<nu::VarId>,
+    source: &str,
+    prefix_len: usize,
+    violations: &mut Vec<Violation>,
+) {
+    let decl = working_set.get_decl(decl_id);
+    let block_id = match decl.block_id() {
+        Some(id) => id,
+        None => {
+            violations.push(Violation {
+                path: rel.to_string(),
+                line: 0,
+                message: "resolve must be a user-defined `def`".to_string(),
+            });
+            return;
+        }
+    };
+    let block = working_set.get_block(block_id);
+    let line_of_decl = decl_line(working_set, decl_id, source, prefix_len);
+    let mut ok = false;
+    if block.pipelines.len() == 1 {
+        let pipeline = &block.pipelines[0];
+        if pipeline.elements.len() == 1 {
+            let elem = &pipeline.elements[0];
+            ok = is_args_var(&elem.expr, args_var_id);
+        }
+    }
+    if !ok {
+        violations.push(Violation {
+            path: rel.to_string(),
+            line: line_of_decl,
+            message: "resolve's body must be exactly `$args`".to_string(),
+        });
+    }
+}
+
+/// Recognize the AST shape of the literal expression `$args`: a
+/// `FullCellPath` with a `Var(args_var_id)` head and an empty tail.
+fn is_args_var(expr: &nu::Expression, args_var_id: Option<nu::VarId>) -> bool {
+    let expected = match args_var_id {
+        Some(id) => id,
+        None => return false,
+    };
+    let var_id = match &expr.expr {
+        nu::Expr::FullCellPath(fcp) if fcp.tail.is_empty() => match &fcp.head.expr {
+            nu::Expr::Var(id) => *id,
+            _ => return false,
+        },
+        nu::Expr::Var(id) => *id,
+        _ => return false,
+    };
+    var_id == expected
+}
+
+/// Best-effort: locate the source line where a Decl's `def` lives via
+/// its name span. Falls back to line 0 if the span is in the wrapper
+/// prefix or otherwise unrecoverable.
+fn decl_line(
+    working_set: &nu::StateWorkingSet,
+    decl_id: nu::DeclId,
+    source: &str,
+    prefix_len: usize,
+) -> usize {
+    let decl = working_set.get_decl(decl_id);
+    let span = decl.signature().name.is_empty();
+    let _ = span;
+    // Decl doesn't expose its span via Command trait; signature span lives
+    // on the block. As a best-effort, walk the block's span.
+    if let Some(block_id) = decl.block_id() {
+        let block = working_set.get_block(block_id);
+        if let Some(span) = block.span {
+            let src_offset = span.start.saturating_sub(prefix_len);
+            let (line, _col) = span_to_line_col(source, src_offset);
+            return line;
+        }
+    }
+    0
 }
 
 fn validate_mod_nu(rel: &str, source: &str, violations: &mut Vec<Violation>) {
@@ -724,6 +988,7 @@ fn validate_mod_nu(rel: &str, source: &str, violations: &mut Vec<Violation>) {
     }
 }
 
+#[allow(dead_code)]
 fn validate_function_file(rel: &str, source: &str, violations: &mut Vec<Violation>) {
     let lines: Vec<&str> = source.lines().collect();
 
@@ -819,6 +1084,7 @@ fn validate_function_file(rel: &str, source: &str, violations: &mut Vec<Violatio
 /// between the body's opening `{` and its matching `}`. Skips the
 /// parameter list (handles balanced `[ ]`). Returns None if the
 /// brackets/braces are imbalanced or the def isn't found.
+#[allow(dead_code)]
 fn extract_def_body(source: &str, fn_name: &str) -> Option<String> {
     let pat = format!("export def {fn_name}");
     let pos = source.find(&pat)?;

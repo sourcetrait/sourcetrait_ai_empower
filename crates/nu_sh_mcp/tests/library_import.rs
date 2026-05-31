@@ -213,6 +213,59 @@ fn import_happy_path_writes_repo_and_meta() {
 }
 
 #[test]
+fn import_accepts_multiline_def_signature() {
+    // Text-based validator would have FAILED this -- the `args: record<...>`
+    // sits on a different line from `export def main`, so the line-level
+    // signature check missed it. AST validator finds the positional via
+    // nu_parser's Signature.required_positional inspection regardless of
+    // formatting.
+    let mut host = Host::spawn();
+    let src = host.source_dir("multilinelib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "");
+    write_source(
+        &src,
+        "thing.nu",
+        "export def main [\n    args: record<x: int>\n] {\n    { out: ($args.x * 2) }\n}\n\nexport def resolve [\n    args: record<out: int>\n] {\n    $args\n}\n",
+    );
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({
+            "name": "multilinelib",
+            "path": src.to_str().unwrap(),
+        }),
+    );
+    assert!(!has_error_path(&resp), "multi-line signature should pass; got {resp}");
+}
+
+#[test]
+fn import_rejects_function_with_syntax_error() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("syntaxlib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "");
+    // Unbalanced brace -- nu_parser surfaces a parse error.
+    write_source(
+        &src,
+        "broken.nu",
+        "export def main [args: record<x: int>] {\n    { out: ($args.x * 2) \nexport def resolve [args: record<out: int>] { $args }\n",
+    );
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({
+            "name": "syntaxlib",
+            "path": src.to_str().unwrap(),
+        }),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(
+        msg.contains("parse error"),
+        "expected parse error violation; got {msg:?}",
+    );
+}
+
+#[test]
 fn import_rejects_function_missing_resolve() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib1");

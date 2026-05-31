@@ -1,6 +1,7 @@
 pub(crate) mod server {
     pub(crate) mod cache;
     pub(crate) mod library;
+    pub(crate) mod parse_engine;
     pub(crate) mod run;
     pub(crate) mod tool;
     pub(crate) mod worker_handle;
@@ -45,6 +46,11 @@ pub(crate) use crate::{
             reimport_library_impl,
             undefine_function_impl,
             unregister_library_impl,
+        },
+        parse_engine::{
+            ParseEngine,
+            span_to_line_col,
+            wrap_as_module,
         },
         tool::{
             NuSh,
@@ -103,11 +109,19 @@ pub(crate) mod nu {
     pub(crate) use nu_json::Value as JsonValue;
     pub(crate) use nu_parser::parse;
     pub(crate) use nu_protocol::{
+        DeclId,
         FromValue,
+        Module,
         PipelineData,
         Signals,
         Span,
+        SyntaxShape,
         Value,
+        VarId,
+        ast::{
+            Expr,
+            Expression,
+        },
         debugger::WithoutDebug,
         engine::{
             EngineState,

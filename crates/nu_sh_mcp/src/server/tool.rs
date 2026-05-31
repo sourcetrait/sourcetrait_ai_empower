@@ -25,6 +25,28 @@ pub struct RunParams {
     pub closure: String,
 }
 
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct RerunParams {
+    /// base62 rerun_id returned by a prior `run()` invocation. Names a
+    /// `closures/<rerun_id>.json` cache file under
+    /// `$XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/`.
+    pub rerun_id: String,
+    /// Per-call args. The args_schema baked into the cached closure
+    /// gates this at parse time inside the worker.
+    pub args: mcp::JsonObject,
+}
+
+/// On-disk shape of `closures/<rerun_id>.json`. Mirrors the relevant
+/// subset of `RunParams` that uniquely identifies the closure.
+/// Additive for future fields (`functions` lands here when the hash
+/// grows to include them).
+#[derive(Debug, ser::Deserialize, ser::Serialize)]
+struct ClosureCacheBody {
+    args_schema: String,
+    result_schema: String,
+    closure: String,
+}
+
 pub struct NuSh {
     runs_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
     interact_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
@@ -56,7 +78,38 @@ impl NuSh {
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<String, mcp::ErrorData> {
         let source = build_run_source(&p);
-        dispatch(&self.runs_worker, &self.nonce_gen, CacheKind::Runs, &p, source).await
+        let payload_bytes = json::to_vec(&p).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("serialize RunParams for nonce: {e}"),
+                None,
+            )
+        })?;
+        let outcome = dispatch_to_worker(
+            &self.runs_worker,
+            &self.nonce_gen,
+            CacheKind::Runs,
+            &payload_bytes,
+            source,
+        )
+        .await?;
+        let rerun_id = lib_empower::RerunHash::of(&(
+            p.args_schema.as_str(),
+            p.result_schema.as_str(),
+            p.closure.as_str(),
+        ))
+        .to_string();
+        write_closure_cache(&rerun_id, &p)?;
+        let envelope = json::json!({
+            "result": outcome.result,
+            "nonce": outcome.nonce.to_string(),
+            "rerun_id": rerun_id,
+        });
+        json::to_string_json(&envelope).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("envelope serialize: {e}"),
+                None,
+            )
+        })
     }
 
     #[mcp::tool(
@@ -67,30 +120,113 @@ impl NuSh {
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<String, mcp::ErrorData> {
         let source = build_interact_source(&p);
-        dispatch(&self.interact_worker, &self.nonce_gen, CacheKind::Interacts, &p, source).await
+        let payload_bytes = json::to_vec(&p).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("serialize RunParams for nonce: {e}"),
+                None,
+            )
+        })?;
+        let outcome = dispatch_to_worker(
+            &self.interact_worker,
+            &self.nonce_gen,
+            CacheKind::Interacts,
+            &payload_bytes,
+            source,
+        )
+        .await?;
+        let envelope = json::json!({
+            "result": outcome.result,
+            "nonce": outcome.nonce.to_string(),
+        });
+        json::to_string_json(&envelope).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("envelope serialize: {e}"),
+                None,
+            )
+        })
+    }
+
+    #[mcp::tool(
+        description = "Re-evaluate a cached stateless closure by rerun_id with new args."
+    )]
+    async fn rerun(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<RerunParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        if !lib_empower::is_base62(&p.rerun_id) {
+            return Err(mcp::ErrorData::invalid_params(
+                format!("rerun_id must be base62; got {:?}", p.rerun_id),
+                None,
+            ));
+        }
+        let path = closure_cache_file(&p.rerun_id);
+        let cached_bytes = fs::read(&path).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("read {}: {e}", path.display()),
+                None,
+            )
+        })?;
+        let cached: ClosureCacheBody = json::from_slice(&cached_bytes).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("decode cached closure {}: {e}", path.display()),
+                None,
+            )
+        })?;
+        // Touch mtime for the LRU signal future pruning will use.
+        // Idempotent overwrite -- content is deterministic.
+        let _ = fs::write(&path, &cached_bytes);
+        let reconstructed = RunParams {
+            args_schema: cached.args_schema,
+            result_schema: cached.result_schema,
+            args: p.args,
+            functions: Vec::new(),
+            closure: cached.closure,
+        };
+        let source = build_run_source(&reconstructed);
+        let payload_bytes = json::to_vec(&reconstructed).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("serialize reconstructed RunParams for nonce: {e}"),
+                None,
+            )
+        })?;
+        let outcome = dispatch_to_worker(
+            &self.runs_worker,
+            &self.nonce_gen,
+            CacheKind::Runs,
+            &payload_bytes,
+            source,
+        )
+        .await?;
+        let envelope = json::json!({
+            "result": outcome.result,
+            "nonce": outcome.nonce.to_string(),
+        });
+        json::to_string_json(&envelope).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("envelope serialize: {e}"),
+                None,
+            )
+        })
     }
 }
 
-/// Shared dispatch path for `run()` and `interact()`. Handles nonce
-/// derivation, log dir creation, worker round-trip, and result envelope
-/// construction. The only per-tool variation lives at the call site:
-/// which worker handle, which CacheKind, and which template builder
-/// produced the source.
-async fn dispatch(
+/// Result of one worker round-trip plus its per-call log dir creation.
+/// Each handler builds its own envelope on top because the envelope
+/// shape varies (run includes rerun_id; interact + rerun don't).
+struct DispatchOutcome {
+    nonce: lib_empower::Nonce,
+    result: json::Value,
+}
+
+async fn dispatch_to_worker(
     worker: &Arc<tk::AsyncMutex<WorkerHandle>>,
     nonce_gen: &lib_empower::NonceGen,
-    kind: CacheKind,
-    p: &RunParams,
+    log_kind: CacheKind,
+    payload_for_nonce: &[u8],
     source: String,
-) -> Result<String, mcp::ErrorData> {
-    let payload_bytes = json::to_vec(p).map_err(|e| {
-        mcp::ErrorData::internal_error(
-            format!("serialize RunParams for nonce: {e}"),
-            None,
-        )
-    })?;
-    let nonce = nonce_gen.next(&payload_bytes);
-    let log_dir = cache_dir(kind, nonce);
+) -> Result<DispatchOutcome, mcp::ErrorData> {
+    let nonce = nonce_gen.next(&payload_for_nonce);
+    let log_dir = cache_dir(log_kind, nonce);
     fs::create_dir_all(&log_dir).map_err(|e| {
         mcp::ErrorData::internal_error(
             format!("create_dir_all {}: {e}", log_dir.display()),
@@ -103,28 +239,50 @@ async fn dispatch(
         .await
         .map_err(|e| mcp::ErrorData::internal_error(e.to_string(), None))?;
     drop(worker_guard);
-    if response.ok {
-        let value: json::Value = msgpack::from_slice(&response.value)
-            .unwrap_or(json::Value::Null);
-        let envelope = json::json!({
-            "result": value,
-            "nonce": nonce.to_string(),
-            "rerun_id": "0",
-        });
-        json::to_string_json(&envelope).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("envelope serialize: {e}"),
-                None,
-            )
-        })
-    } else {
-        Err(mcp::ErrorData::internal_error(
+    if !response.ok {
+        return Err(mcp::ErrorData::internal_error(
             response.error.unwrap_or_else(|| {
                 "worker returned ok=false with no error".to_string()
             }),
             None,
-        ))
+        ));
     }
+    let result: json::Value = msgpack::from_slice(&response.value)
+        .unwrap_or(json::Value::Null);
+    Ok(DispatchOutcome { nonce, result })
+}
+
+fn write_closure_cache(
+    rerun_id: &str,
+    p: &RunParams,
+) -> Result<(), mcp::ErrorData> {
+    let path = closure_cache_file(rerun_id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("create_dir_all {}: {e}", parent.display()),
+                None,
+            )
+        })?;
+    }
+    let body = ClosureCacheBody {
+        args_schema: p.args_schema.clone(),
+        result_schema: p.result_schema.clone(),
+        closure: p.closure.clone(),
+    };
+    let bytes = json::to_vec(&body).map_err(|e| {
+        mcp::ErrorData::internal_error(
+            format!("serialize ClosureCacheBody: {e}"),
+            None,
+        )
+    })?;
+    fs::write(&path, &bytes).map_err(|e| {
+        mcp::ErrorData::internal_error(
+            format!("write {}: {e}", path.display()),
+            None,
+        )
+    })?;
+    Ok(())
 }
 
 #[mcp::tool_handler]
@@ -150,7 +308,8 @@ impl mcp::ServerHandler for NuSh {
         .with_title("nushell");
         info.instructions = Some(
             "Evaluation artifacts are cached at \
-             $XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/{runs,interacts}/<nonce>/{stdout,stderr}."
+             $XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/{runs,interacts}/<nonce>/{stdout,stderr}; \
+             closures cached at $XDG_CACHE_HOME/sourcetrait/nu_sh_mcp/closures/<rerun_id>.json."
                 .to_string(),
         );
         info

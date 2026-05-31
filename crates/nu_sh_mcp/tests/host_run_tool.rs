@@ -92,13 +92,14 @@ fn host_tools_list_and_run_stub() {
     let tools = list_resp["result"]["tools"]
         .as_array()
         .expect("tools array in tools/list result");
-    assert_eq!(tools.len(), 2, "expected exactly 2 tools, got {tools:?}");
+    assert_eq!(tools.len(), 3, "expected exactly 3 tools, got {tools:?}");
     let names: Vec<&str> = tools
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
     assert!(names.contains(&"run"), "missing 'run' in {names:?}");
     assert!(names.contains(&"interact"), "missing 'interact' in {names:?}");
+    assert!(names.contains(&"rerun"), "missing 'rerun' in {names:?}");
 
     // tools/call run with a stub closure body
     let call_start = Instant::now();
@@ -132,10 +133,15 @@ fn host_tools_list_and_run_stub() {
         .expect("first content block has text");
     let envelope: serde_json::Value = serde_json::from_str(text)
         .unwrap_or_else(|e| panic!("envelope parses as JSON ({e}): {text:?}"));
-    assert_eq!(
-        envelope["rerun_id"].as_str(),
-        Some("0"),
-        "rerun_id should be \"0\" per MTP scope",
+    // 0.0.9+: rerun_id is a content-derived base62 hash, not the
+    // pre-cache placeholder "0". Spot-check shape: non-empty,
+    // alphanumeric.
+    let rerun_id = envelope["rerun_id"]
+        .as_str()
+        .expect("envelope has rerun_id");
+    assert!(
+        !rerun_id.is_empty() && rerun_id.chars().all(|c| c.is_ascii_alphanumeric()),
+        "rerun_id should be non-empty base62; got {rerun_id:?}",
     );
     // 0.0.7+: result is a structured JSON object (via nu_json::Value
     // conversion in the worker), not a NUON string. Closure

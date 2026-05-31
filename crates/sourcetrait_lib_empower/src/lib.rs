@@ -1,6 +1,8 @@
+pub(crate) mod base62;
 pub(crate) mod error;
 pub mod consts;
 pub mod nonce;
+pub mod rerun;
 
 pub(crate) use std::{
     fmt::Display,
@@ -23,6 +25,7 @@ pub(crate) mod xxh3 {
 }
 
 pub use crate::{
+    base62::is_base62,
     error::{
         LibEmpowerError,
         LibEmpowerResult,
@@ -31,4 +34,5 @@ pub use crate::{
         Nonce,
         NonceGen,
     },
+    rerun::RerunHash,
 };

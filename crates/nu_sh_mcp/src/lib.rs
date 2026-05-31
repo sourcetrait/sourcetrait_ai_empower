@@ -29,6 +29,7 @@ pub(crate) use crate::{
         cache::{
             CacheKind,
             cache_dir,
+            closure_cache_file,
         },
         tool::{
             NuSh,
@@ -163,6 +164,7 @@ pub(crate) mod tk {
 pub(crate) mod json {
     pub(crate) use serde_json::{
         Value,
+        from_slice,
         json,
         to_string as to_string_json,
         to_vec,

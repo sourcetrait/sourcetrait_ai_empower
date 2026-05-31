@@ -142,9 +142,10 @@ fn interact_lists_both_run_and_interact_tools() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 2, "expected 2 tools; got {names:?}");
+    assert_eq!(names.len(), 3, "expected 3 tools; got {names:?}");
     assert!(names.contains(&"run"), "missing 'run' in {names:?}");
     assert!(names.contains(&"interact"), "missing 'interact' in {names:?}");
+    assert!(names.contains(&"rerun"), "missing 'rerun' in {names:?}");
 }
 
 #[test]

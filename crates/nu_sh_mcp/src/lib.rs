@@ -58,6 +58,7 @@ pub(crate) mod nu {
         PipelineData,
         Signals,
         Span,
+        Value,
         debugger::WithoutDebug,
         engine::{
             EngineState,

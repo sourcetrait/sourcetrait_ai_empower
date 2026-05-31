@@ -128,7 +128,7 @@ fn smoke_2_runtime_arg_typecheck_error() {
         "args_schema": "x: int",
         "result_schema": "out: int",
         "args": {"x": "five"},
-        "closure_body": "{ out: ($args.x + 1) }",
+        "closure": "{ out: ($args.x + 1) }",
         "functions": []
     });
     let resp = host.run(args);
@@ -156,7 +156,7 @@ fn smoke_3_runtime_result_typecheck_error() {
         "args_schema": "x: int",
         "result_schema": "out: int",
         "args": {"x": 5},
-        "closure_body": "{ out: \"five\" }",
+        "closure": "{ out: \"five\" }",
         "functions": []
     });
     let resp = host.run(args);
@@ -181,7 +181,7 @@ fn smoke_4_function_helpers_in_scope() {
         "args_schema": "x: int",
         "result_schema": "out: int",
         "args": {"x": 5},
-        "closure_body": "{ out: ((double {x: $args.x}).out + 1) }",
+        "closure": "{ out: ((double {x: $args.x}).out + 1) }",
         "functions": [{
             "name": "double",
             "args_schema": "x: int",
@@ -211,7 +211,7 @@ fn smoke_5_external_command() {
         "args_schema": "noop: int",
         "result_schema": "out: string",
         "args": {"noop": 0},
-        "closure_body": "{ out: (^echo hello | str trim) }",
+        "closure": "{ out: (^echo hello | str trim) }",
         "functions": []
     });
     let resp = host.run(args);
@@ -237,7 +237,7 @@ fn smoke_6_worker_death_via_exit() {
         "args_schema": "noop: int",
         "result_schema": "out: int",
         "args": {"noop": 0},
-        "closure_body": "{ out: (exit 1; 0) }",
+        "closure": "{ out: (exit 1; 0) }",
         "functions": []
     });
     let resp = host.run(args);
@@ -266,7 +266,7 @@ fn smoke_7_multi_call_stability_and_scoping() {
             "args_schema": "x: int",
             "result_schema": "out: int",
             "args": {"x": i as i64},
-            "closure_body": "{ out: ($args.x + 100) }",
+            "closure": "{ out: ($args.x + 100) }",
             "functions": []
         });
         let resp = host.run(args);
@@ -288,7 +288,7 @@ fn smoke_7_multi_call_stability_and_scoping() {
         "args_schema": "noop: int",
         "result_schema": "leaked: int",
         "args": {"noop": 0},
-        "closure_body": "{ leaked: (scope commands | where name == \"__exec\" | length) }",
+        "closure": "{ leaked: (scope commands | where name == \"__exec\" | length) }",
         "functions": []
     });
     let resp = host.run(intro);

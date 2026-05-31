@@ -22,7 +22,7 @@ pub struct RunParams {
     pub args: mcp::JsonObject,
     #[serde(default)]
     pub functions: Vec<Function>,
-    pub closure_body: String,
+    pub closure: String,
 }
 
 pub struct NuSh {

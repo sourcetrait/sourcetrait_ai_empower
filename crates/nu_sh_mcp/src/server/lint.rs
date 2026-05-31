@@ -272,7 +272,10 @@ fn walk_expr(
             }
         }
         // Internal call: walk every argument. The regex-receiver skip
-        // gates path-rule on positional Strings when --regex flag is set.
+        // applies tightly: only positional[0] of String/RawString type
+        // gets the skip in a REGEX_RECEIVERS call with `--regex` present
+        // (slice 5.5 tightening; previously skipped ALL positional Strings
+        // which over-skipped the replacement arg of `str replace --regex`).
         nu::Expr::Call(call) => {
             let decl = ws.get_decl(call.decl_id);
             let name = decl.name();
@@ -280,15 +283,18 @@ fn walk_expr(
                 && call.arguments.iter().any(|a| {
                     matches!(a, nu::Argument::Named((n, _, _)) if n.item == "regex")
                 });
+            let mut positional_idx = 0usize;
             for arg in &call.arguments {
                 match arg {
                     nu::Argument::Positional(ae) => {
-                        if regex_skip
+                        let skip_this = regex_skip
+                            && positional_idx == 0
                             && matches!(
                                 ae.expr,
                                 nu::Expr::String(_) | nu::Expr::RawString(_),
-                            )
-                        {
+                            );
+                        positional_idx += 1;
+                        if skip_this {
                             continue;
                         }
                         walk_expr(ae, ws, body, prefix_len, source, violations);
@@ -304,9 +310,12 @@ fn walk_expr(
                 }
             }
         }
-        // External call: blacklist check on head + recurse into ext args.
+        // External call: blacklist on head (basename-aware so an
+        // absolute-path head like `^/usr/bin/awk` doesn't bypass) +
+        // walk head through path-rule + recurse into ext args.
         nu::Expr::ExternalCall(head, ext_args) => {
             check_external_head(head, body, prefix_len, source, violations);
+            walk_expr(head, ws, body, prefix_len, source, violations);
             for arg in ext_args.iter() {
                 let inner = match arg {
                     nu::ExternalArgument::Regular(e) | nu::ExternalArgument::Spread(e) => e,
@@ -336,7 +345,11 @@ fn walk_expr(
             }
         }
         // Block-like Exprs: descend into the resolved block's pipelines.
-        nu::Expr::Block(id) | nu::Expr::Closure(id) | nu::Expr::Subexpression(id) => {
+        // RowCondition (slice 5.5) is also a BlockId.
+        nu::Expr::Block(id)
+        | nu::Expr::Closure(id)
+        | nu::Expr::Subexpression(id)
+        | nu::Expr::RowCondition(id) => {
             let b = ws.get_block(*id);
             walk_block(b, ws, body, prefix_len, source, violations);
         }
@@ -344,14 +357,29 @@ fn walk_expr(
         nu::Expr::UnaryNot(inner) => {
             walk_expr(inner, ws, body, prefix_len, source, violations);
         }
+        // Collect (slice 5.5): wraps an inner Expression with a var
+        // binding; the inner is where any literal lives.
+        nu::Expr::Collect(_, inner) => {
+            walk_expr(inner, ws, body, prefix_len, source, violations);
+        }
         // List literal: recurse on every item.
         nu::Expr::List(items) => {
             for item in items {
                 match item {
-                    nu_protocol::ast::ListItem::Item(ae)
-                    | nu_protocol::ast::ListItem::Spread(_, ae) => {
+                    nu::ListItem::Item(ae) | nu::ListItem::Spread(_, ae) => {
                         walk_expr(ae, ws, body, prefix_len, source, violations);
                     }
+                }
+            }
+        }
+        // Table literal (slice 5.5): walk columns + every row's cells.
+        nu::Expr::Table(t) => {
+            for col in t.columns.iter() {
+                walk_expr(col, ws, body, prefix_len, source, violations);
+            }
+            for row in t.rows.iter() {
+                for cell in row.iter() {
+                    walk_expr(cell, ws, body, prefix_len, source, violations);
                 }
             }
         }
@@ -370,14 +398,87 @@ fn walk_expr(
                 }
             }
         }
+        // Range (slice 5.5): walk from / next / to bounds when present.
+        nu::Expr::Range(r) => {
+            if let Some(e) = &r.from {
+                walk_expr(e, ws, body, prefix_len, source, violations);
+            }
+            if let Some(e) = &r.next {
+                walk_expr(e, ws, body, prefix_len, source, violations);
+            }
+            if let Some(e) = &r.to {
+                walk_expr(e, ws, body, prefix_len, source, violations);
+            }
+        }
+        // Match block (slice 5.5): each arm is (pattern, body). Walk
+        // the body always; walk the pattern's literal-match subexpressions
+        // via walk_pattern so a path inside `match x { "/foo/bar" => ... }`
+        // surfaces.
+        nu::Expr::MatchBlock(arms) => {
+            for (pat, arm_body) in arms {
+                walk_pattern(&pat.pattern, ws, body, prefix_len, source, violations);
+                walk_expr(arm_body, ws, body, prefix_len, source, violations);
+            }
+        }
+        // Attribute block (slice 5.5): walk every attribute's wrapped
+        // expression plus the attribute block's item.
+        nu::Expr::AttributeBlock(ab) => {
+            for attr in &ab.attributes {
+                walk_expr(&attr.expr, ws, body, prefix_len, source, violations);
+            }
+            walk_expr(&ab.item, ws, body, prefix_len, source, violations);
+        }
+        // Glob interpolation (slice 5.5): same shape as StringInterpolation
+        // -- a Vec<Expression> whose literal-String parts can carry path
+        // shape.
+        nu::Expr::GlobInterpolation(parts, _) => {
+            for part in parts {
+                walk_expr(part, ws, body, prefix_len, source, violations);
+            }
+        }
         // Keyword-wrapped expression (some parse-time forms): recurse on
         // the inner Expression.
         nu::Expr::Keyword(kw) => {
             walk_expr(&kw.expr, ws, body, prefix_len, source, violations);
         }
-        // All other variants are either non-lintable (no literal content
-        // a path-rule could match) or rare enough that slice 5.x can add
-        // explicit handling when a probe surfaces them. Skip silently.
+        // All remaining variants carry no walkable Expression with a
+        // literal a path-rule could match (Var, VarDecl, Int, Float,
+        // Bool, Binary, Operator, Nothing, Garbage, Signature,
+        // ImportPattern, Overlay, CellPath, DateTime, ValueWithUnit).
+        // Skip silently.
+        _ => {}
+    }
+}
+
+/// Walk a match-arm `Pattern`, recursing into any literal expressions
+/// the pattern contains. Most pattern forms (Variable, IgnoreValue,
+/// Garbage, etc.) carry no walkable expression; `Pattern::Expression`
+/// wraps an Expression we should walk; record/list/or patterns nest
+/// further MatchPatterns whose `.pattern` field we recurse on.
+fn walk_pattern(
+    pat: &nu::Pattern,
+    ws: &nu::StateWorkingSet,
+    body: &str,
+    prefix_len: usize,
+    source: Option<&str>,
+    violations: &mut Vec<LintViolation>,
+) {
+    match pat {
+        nu::Pattern::Expression(e) => {
+            walk_expr(e, ws, body, prefix_len, source, violations);
+        }
+        nu::Pattern::Record(items) => {
+            for (_key, sub) in items {
+                walk_pattern(&sub.pattern, ws, body, prefix_len, source, violations);
+            }
+        }
+        nu::Pattern::List(subs) | nu::Pattern::Or(subs) => {
+            for sub in subs {
+                walk_pattern(&sub.pattern, ws, body, prefix_len, source, violations);
+            }
+        }
+        // Value, Variable, Rest, IgnoreRest, IgnoreValue, Garbage: no
+        // walkable expression.
         _ => {}
     }
 }
@@ -411,19 +512,15 @@ fn check_path(
             return;
         }
     }
-    let flag = if let Some(rest) = trimmed.strip_prefix('/') {
-        // Absolute path needs at least one more `/` to count as a
-        // multi-segment path; bare `/` is not a hardcoded location.
-        rest.contains('/')
-    } else if trimmed.starts_with("~/") {
-        // Tilde path encodes the user's home -- lift to args.
-        true
-    } else if trimmed.starts_with("./") || trimmed.starts_with("../") {
-        // Relative path still encodes local state.
-        true
-    } else {
-        false
-    };
+    // Slice 5.5 tightening: drop the "requires a second `/`" check.
+    // Strict-uniform per `[[empower-correctness-priority]]` rev 2 says
+    // `/tmp` should flag exactly as much as `/home/box/proj` does --
+    // the legacy second-`/` carve-out is the same shape as the
+    // pedagogy-framing slop pattern the_user already cataloged.
+    let flag = trimmed.starts_with('/')
+        || trimmed.starts_with("~/")
+        || trimmed.starts_with("./")
+        || trimmed.starts_with("../");
     if flag {
         let body_offset = span_start.saturating_sub(prefix_len);
         let (line, col) = span_to_line_col(body, body_offset);
@@ -438,9 +535,16 @@ fn check_path(
 
 /// Apply the blacklisted-external rule to the `head` Expression of an
 /// `ExternalCall`. Push a `BlacklistedCommand` violation if the head
-/// is a literal whose name appears in `BLACKLIST_EXTERNALS`; skip
-/// silently if the head is a variable / cell-path / anything non-literal
-/// (those are lifted external heads, the desired pattern).
+/// is a literal whose BASENAME (the final `/`-separated segment, so
+/// `^/usr/bin/awk` reduces to `awk`) appears in `BLACKLIST_EXTERNALS`;
+/// skip silently if the head is a variable / cell-path / anything
+/// non-literal (those are lifted external heads, the desired pattern).
+///
+/// Slice 5.5: basename normalization closes the absolute-path bypass
+/// surfaced by the slice 5.4 audit (`^/usr/bin/awk` previously slipped
+/// the blacklist because the literal name match required the bare
+/// command). Path-rule still fires for the absolute head independently
+/// via `walk_expr`'s ExternalCall arm.
 fn check_external_head(
     head: &nu::Expression,
     body: &str,
@@ -451,10 +555,13 @@ fn check_external_head(
     let name = match &head.expr {
         nu::Expr::GlobPattern(s, _)
         | nu::Expr::String(s)
-        | nu::Expr::RawString(s) => s.as_str(),
+        | nu::Expr::RawString(s)
+        | nu::Expr::Filepath(s, _)
+        | nu::Expr::Directory(s, _) => s.as_str(),
         _ => return,
     };
-    if BLACKLIST_EXTERNALS.contains(&name) {
+    let basename = name.rsplit('/').next().unwrap_or(name);
+    if BLACKLIST_EXTERNALS.contains(&basename) {
         let body_offset = head.span.start.saturating_sub(prefix_len);
         let (line, col) = span_to_line_col(body, body_offset);
         violations.push(LintViolation {
@@ -719,5 +826,117 @@ cd ~/y
         assert_eq!(v.len(), 1, "got {v:?}");
         assert_eq!(v[0].line, 1);
         assert_eq!(v[0].col, 4);
+    }
+
+    // ----- slice 5.5: stricter rules + widened walker ------------------
+
+    #[test]
+    fn flags_single_segment_abs_path() {
+        // Slice 5.5: `/tmp`, `/x` previously slipped because the
+        // path-rule required a second `/`. Strict-uniform per the
+        // pedagogy correction now flags them too.
+        let v = lint("cd \"/tmp\"; { out: 0 }");
+        assert_eq!(v.len(), 1, "got {v:?}");
+        assert_eq!(v[0].kind, LintKind::HardcodedVariable);
+    }
+
+    #[test]
+    fn flags_single_segment_abs_path_bare() {
+        let v = lint("cd /tmp; { out: 0 }");
+        assert_eq!(v.len(), 1, "got {v:?}");
+        assert_eq!(v[0].kind, LintKind::HardcodedVariable);
+    }
+
+    #[test]
+    fn allowlist_still_passes_under_strict_rule() {
+        // The new strict rule must NOT regress the allowlist: `/etc`
+        // doesn't match the allowlist prefix `/etc/` literally but it
+        // also doesn't appear in real-world hardcoded-path usage in a
+        // way the the_user wants flagged. Document the current behavior:
+        // bare `/etc` (no trailing slash) DOES flag because allowlist
+        // requires the trailing slash. Trailing-slash form `/etc/`
+        // passes.
+        let with_slash = lint("cd /etc/; { out: 0 }");
+        assert!(with_slash.is_empty(), "got {with_slash:?}");
+        let without_slash = lint("cd /etc; { out: 0 }");
+        // Currently flagged because allowlist prefixes include the
+        // trailing /. This is a coherent design call (allowlist is
+        // about the directory contents, not the root entry).
+        assert_eq!(without_slash.len(), 1, "got {without_slash:?}");
+    }
+
+    #[test]
+    fn flags_abs_path_external_head_blacklist() {
+        // Slice 5.5: `^/usr/bin/awk` should fire BlacklistedCommand
+        // via basename normalization. The path-rule ALSO fires
+        // independently because the head is an absolute path.
+        let v = lint("^/usr/bin/awk 'x'; { out: 0 }");
+        let blacklist_count = v
+            .iter()
+            .filter(|x| x.kind == LintKind::BlacklistedCommand)
+            .count();
+        let path_count = v
+            .iter()
+            .filter(|x| x.kind == LintKind::HardcodedVariable)
+            .count();
+        assert!(blacklist_count >= 1, "no blacklist fired; got {v:?}");
+        assert!(path_count >= 1, "no path fired; got {v:?}");
+    }
+
+    #[test]
+    fn flags_replacement_in_str_replace_regex() {
+        // Slice 5.5 tightening: the regex skip only covers positional[0]
+        // of REGEX_RECEIVERS, so a hardcoded replacement at positional[1]
+        // surfaces. The pattern at positional[0] continues to skip.
+        let v = lint(
+            "let x = (\"abc\" | str replace --regex '/x/' '/replacement/path'); { out: 0 }",
+        );
+        // The pattern '/x/' is skipped; the replacement '/replacement/path'
+        // is flagged.
+        assert_eq!(v.len(), 1, "got {v:?}");
+        assert_eq!(v[0].kind, LintKind::HardcodedVariable);
+    }
+
+    #[test]
+    fn walks_table_cell_paths() {
+        let v = lint("[[c1 c2]; [\"/a/b\" 1] [2 \"/c/d\"]]; { out: 0 }");
+        // Two table cells contain hardcoded paths.
+        assert_eq!(v.len(), 2, "got {v:?}");
+        assert!(v.iter().all(|x| x.kind == LintKind::HardcodedVariable));
+    }
+
+    #[test]
+    fn walks_match_arm_body_paths() {
+        let v = lint(
+            "match $args.noop { 0 => { cd \"/a/b\" } _ => { 0 } }; { out: 0 }",
+        );
+        // The match arm's body contains a hardcoded path.
+        assert_eq!(v.len(), 1, "got {v:?}");
+        assert_eq!(v[0].kind, LintKind::HardcodedVariable);
+    }
+
+    #[test]
+    fn walks_where_row_condition_paths() {
+        // `where p == "/a/b"` lowers to a RowCondition block; the body
+        // block contains a hardcoded path in the comparison's rhs.
+        let v = lint(
+            "[{p: \"x\"}] | where p == \"/a/b\"; { out: 0 }",
+        );
+        assert!(
+            v.iter().any(|x| x.kind == LintKind::HardcodedVariable),
+            "got {v:?}",
+        );
+    }
+
+    #[test]
+    fn walks_range_bounds() {
+        // Subexpression at a Range bound: the walker must descend
+        // through Range -> Subexpression's Block -> Call("cd") ->
+        // Directory("/a/b").
+        let v = lint("let r = (cd \"/a/b\"; 1)..5; { out: 0 }");
+        assert!(
+            v.iter().any(|x| x.kind == LintKind::HardcodedVariable),
+            "got {v:?}",
+        );
     }
 }

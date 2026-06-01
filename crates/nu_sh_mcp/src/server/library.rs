@@ -492,6 +492,51 @@ pub(crate) fn synthesize_function_source(
     out
 }
 
+/// What: synthesizes the on-disk function source via
+/// `synthesize_function_source` and parse-checks it through the supplied
+/// `ParseEngine`, returning any parse errors as `Violation`s with
+/// source-relative line numbers.
+///
+/// Why: `lint_body` reports rule violations but silently returns an empty
+/// `Vec` when the wrapper parse fails (`find_def_body_id` early-return).
+/// For `define_function` no downstream worker eval runs before disk write,
+/// so a syntactically broken body would otherwise be committed to the
+/// canonical libraries repo + mirror + signed commit, with the error only
+/// surfacing at `call()` time. This helper closes the gap by surfacing
+/// parse errors at the agent-facing seam. Mirrors the parse-correctness
+/// check `validate_function_file_ast` already performs for
+/// `import_library` / `reimport_library`.
+///
+/// Where: called by `server::tool::NuSh::define_function` after
+/// `lint_body` passes but before `library_locks.lookup`. Non-empty result
+/// triggers `-32602 invalid_params` with `format_violations`.
+pub(crate) fn parse_check_function_source(
+    engine: &ParseEngine,
+    name: &str,
+    args_schema: &str,
+    result_schema: &str,
+    body: &str,
+) -> Vec<Violation> {
+    let source = synthesize_function_source(args_schema, result_schema, body);
+    let wrapper_name = format!("__pc_{name}");
+    let (wrapped, prefix_len) = wrap_as_module(&source, &wrapper_name);
+    let engine_state = engine.engine_state();
+    let mut working_set = nu::StateWorkingSet::new(engine_state);
+    let virtual_name = format!("{name}.nu");
+    let _ = nu::parse(&mut working_set, Some(&virtual_name), wrapped.as_bytes(), false);
+    let mut violations = Vec::new();
+    for err in &working_set.parse_errors {
+        let span_start = err.span().start.saturating_sub(prefix_len);
+        let (line, _col) = span_to_line_col(&source, span_start);
+        violations.push(Violation {
+            path: virtual_name.clone(),
+            line,
+            message: format!("parse error: {err:?}"),
+        });
+    }
+    violations
+}
+
 // ============================================================================
 // LibraryMeta load helper
 // ============================================================================
@@ -1671,6 +1716,63 @@ fn copy_dir_recursive(
         }
     }
     Ok(())
+}
+
+// ============================================================================
+// Inline tests -- direct unit coverage of parse_check_function_source
+// against representative broken-body shapes. Integration coverage via
+// tests/library_define.rs exercises the rmcp handler wire-up end-to-end.
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn engine() -> ParseEngine {
+        ParseEngine::new_full()
+    }
+
+    fn pc(body: &str) -> Vec<Violation> {
+        parse_check_function_source(&engine(), "probe", "x: int", "out: int", body)
+    }
+
+    #[test]
+    fn clean_body_no_violations() {
+        let v = pc("{ out: ($args.x * 2) }");
+        assert!(v.is_empty(), "expected no violations, got {v:?}");
+    }
+
+    #[test]
+    fn flags_unclosed_string() {
+        let v = pc("\"unclosed");
+        assert!(!v.is_empty(), "unclosed string should be a parse error");
+    }
+
+    #[test]
+    fn flags_unbalanced_braces() {
+        let v = pc("}}}");
+        assert!(!v.is_empty(), "extra close braces should be a parse error");
+    }
+
+    #[test]
+    fn flags_shell_and_and() {
+        let v = pc("true && false");
+        assert!(!v.is_empty(), "&& should be rejected as shell_and_and");
+    }
+
+    #[test]
+    fn flags_trailing_assignment() {
+        let v = pc("let z =");
+        assert!(!v.is_empty(), "incomplete let assignment should parse error");
+    }
+
+    #[test]
+    fn let_without_eq() {
+        // Nushell may or may not accept this; document actual behavior.
+        let v = pc("let z");
+        // Whatever the result, log it.
+        eprintln!("let_without_eq: violations={v:?}");
+    }
 }
 
 // ============================================================================

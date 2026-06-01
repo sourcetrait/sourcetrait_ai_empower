@@ -442,18 +442,33 @@ impl NuSh {
             timeout_ms,
         )
         .await?;
-        let rerun_id = lib_empower::RerunHash::of(&(
+        let computed_rerun_id = lib_empower::RerunHash::of(&(
             p.args_schema.as_str(),
             p.result_schema.as_str(),
             p.closure.as_str(),
         ))
         .to_string();
-        write_closure_cache(&rerun_id, &p)?;
-        let envelope = json::json!({
+        // Slice 6.0: cache write is non-fatal. A successful eval whose
+        // closure couldn't be cached (disk full, permission, etc.) still
+        // returns the result to the agent; the envelope omits `rerun_id`
+        // so the agent knows replay is unavailable. Loss is logged to
+        // host stderr for observability.
+        let rerun_id_opt = match write_closure_cache(&computed_rerun_id, &p) {
+            Ok(()) => Some(computed_rerun_id),
+            Err(e) => {
+                eprintln!(
+                    "nu_sh_mcp: write_closure_cache failed for {computed_rerun_id}: {e}",
+                );
+                None
+            }
+        };
+        let mut envelope = json::json!({
             "result": outcome.result,
             "nonce": outcome.nonce.to_string(),
-            "rerun_id": rerun_id,
         });
+        if let Some(id) = rerun_id_opt {
+            envelope["rerun_id"] = json::Value::String(id);
+        }
         json::to_string_json(&envelope).map_err(|e| {
             mcp::ErrorData::internal_error(
                 format!("envelope serialize: {e}"),
@@ -552,6 +567,25 @@ impl NuSh {
         if !violations.is_empty() {
             return Err(mcp::ErrorData::invalid_params(
                 format_lint_violations(&violations),
+                None,
+            ));
+        }
+        // Slice 6.0: parse-check the synthesized source BEFORE acquiring
+        // the lock or touching disk. lint_body returns no violations when
+        // the wrapper parse fails (find_def_body_id early-return), so a
+        // syntactically broken body would otherwise be committed and only
+        // surface at call() time. Mirrors the parse-correctness check
+        // import_library already performs via validate_function_file_ast.
+        let parse_violations = parse_check_function_source(
+            &self.lint_engine,
+            &p.name,
+            &p.args_schema,
+            &p.result_schema,
+            &p.body,
+        );
+        if !parse_violations.is_empty() {
+            return Err(mcp::ErrorData::invalid_params(
+                format_violations(&parse_violations),
                 None,
             ));
         }
@@ -1156,7 +1190,10 @@ fn timeout_error(timeout_ms: u64) -> mcp::ErrorData {
 /// Why: rerun() needs a deterministic place to look up the cached
 /// closure by its content-derived id. The unconditional overwrite
 /// touches mtime even on identical content, which sets up future
-/// LRU-style pruning.
+/// LRU-style pruning. Returns `io::Result<()>` (slice 6.0): the caller
+/// treats failures as non-fatal -- the agent still gets the successful
+/// eval result, with the `rerun_id` field omitted from the envelope so
+/// the agent knows replay is unavailable for this call.
 ///
 /// Where: called by `NuSh::run` after `dispatch_to_worker` succeeds
 /// and `RerunHash::of` produces the rerun_id. The matching read
@@ -1164,15 +1201,10 @@ fn timeout_error(timeout_ms: u64) -> mcp::ErrorData {
 fn write_closure_cache(
     rerun_id: &str,
     p: &RunParams,
-) -> Result<(), mcp::ErrorData> {
+) -> io::Result<()> {
     let path = closure_cache_file(rerun_id);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("create_dir_all {}: {e}", parent.display()),
-                None,
-            )
-        })?;
+        fs::create_dir_all(parent)?;
     }
     let body = ClosureCacheBody {
         args_schema: p.args_schema.clone(),
@@ -1180,17 +1212,9 @@ fn write_closure_cache(
         closure: p.closure.clone(),
     };
     let bytes = json::to_vec(&body).map_err(|e| {
-        mcp::ErrorData::internal_error(
-            format!("serialize ClosureCacheBody: {e}"),
-            None,
-        )
+        io::Error::other(format!("serialize ClosureCacheBody: {e}"))
     })?;
-    fs::write(&path, &bytes).map_err(|e| {
-        mcp::ErrorData::internal_error(
-            format!("write {}: {e}", path.display()),
-            None,
-        )
-    })?;
+    fs::write(&path, &bytes)?;
     Ok(())
 }
 

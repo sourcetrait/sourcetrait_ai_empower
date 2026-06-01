@@ -45,6 +45,7 @@ pub(crate) use crate::{
             define_function_impl,
             ensure_substrate,
             import_library_impl,
+            parse_check_function_source,
             register_library_impl,
             reimport_library_impl,
             undefine_function_impl,

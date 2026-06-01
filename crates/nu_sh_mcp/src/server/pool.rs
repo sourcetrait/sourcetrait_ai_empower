@@ -99,7 +99,7 @@ impl Pool {
         Ok(PooledGuard {
             pool: self.clone(),
             handle: Some(handle),
-            _permit: permit,
+            permit: Some(permit),
         })
     }
 
@@ -130,15 +130,19 @@ impl Pool {
 ///
 /// Why: ties worker check-out to a value the dispatch function holds;
 /// when the function returns / panics / cancels, the guard's Drop
-/// either restores the worker or accounts for its death.
+/// either restores the worker or accounts for its death. Slice 6.0:
+/// `permit` is `Option` so the Drop impl can move it into the spawned
+/// release task; the permit drops AFTER `pool.release` completes the
+/// free-list push, so a concurrent `acquire` can't grab the permit
+/// while the free list is still empty (which would lazy-spawn an
+/// unnecessary worker).
 ///
 /// Where: returned from `Pool::acquire`; held by
-/// `server::tool::dispatch_to_worker` for the duration of one tool
-/// call.
+/// `server::tool::dispatch_pooled` for the duration of one tool call.
 pub(crate) struct PooledGuard {
     pool: Arc<Pool>,
     handle: Option<WorkerHandle>,
-    _permit: tk::OwnedSemaphorePermit,
+    permit: Option<tk::OwnedSemaphorePermit>,
 }
 
 impl PooledGuard {
@@ -174,11 +178,24 @@ impl PooledGuard {
 impl Drop for PooledGuard {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
+            // Normal release: push to free list BEFORE the permit becomes
+            // available to the next acquirer. Without this ordering, the
+            // OwnedSemaphorePermit would drop at field-drop time (after
+            // this user Drop body) and a concurrent acquire could grab
+            // the permit, lock the free list, see it still empty (release
+            // task hasn't pushed yet), and lazy-spawn an unnecessary
+            // worker. Moving the permit into the spawned task ensures it
+            // releases AFTER the push completes.
             let pool = self.pool.clone();
+            let permit = self.permit.take();
             tk::spawn(async move {
                 pool.release(handle).await;
+                drop(permit);
             });
         }
+        // drop_handle path: handle is None, no spawned release; the
+        // permit drops as a field-drop releasing the slot immediately,
+        // which is correct because no free-list push needs ordering.
     }
 }
 

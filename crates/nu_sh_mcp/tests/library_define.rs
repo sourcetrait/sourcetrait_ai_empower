@@ -386,6 +386,50 @@ fn path_traversal_rejected() {
 }
 
 #[test]
+fn define_rejects_syntactically_broken_body() {
+    // Slice 6.0 fix 1: lint_body silently returns empty when wrapper
+    // parse fails, so without parse_check_function_source a broken body
+    // would be committed to disk + cascade + signed commit and only
+    // surface at call() time. With the fix, broken bodies are rejected
+    // at the seam with -32602 invalid_params.
+    let mut host = Host::spawn();
+    let client_dir = host.client_dir("brokenlib");
+    let _ = host.call(
+        "register_library",
+        serde_json::json!({
+            "name": "brokenlib",
+            "path": client_dir.to_str().expect("client_dir to str"),
+        }),
+    );
+    let resp = host.call(
+        "define_function",
+        serde_json::json!({
+            "library": "brokenlib",
+            "module_path": "",
+            "name": "broken",
+            "args_schema": "x: int",
+            "result_schema": "out: int",
+            // `let z =` is an incomplete let assignment (no rhs); the
+            // synthesized function source parses to a parse error.
+            // (`let z` without `=` actually parses cleanly in nushell;
+            // confirmed via library.rs unit probe.)
+            "body": "let z =",
+        }),
+    );
+    assert!(has_error_path(&resp), "broken body should error; got {resp}");
+    let msg = resp.to_string();
+    assert!(
+        msg.contains("parse error"),
+        "error message should mention parse error; got {msg}",
+    );
+    // No file written, no commit landed.
+    assert!(
+        !host.library_dir("brokenlib").join("broken.nu").exists(),
+        "broken function file should not exist on disk",
+    );
+}
+
+#[test]
 fn standalone_driver_invokes_defined_function() {
     let mut host = Host::spawn();
     let client_dir = host.client_dir("drvlib");

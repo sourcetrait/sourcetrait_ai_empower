@@ -101,7 +101,18 @@ fn load_plugins_best_effort(engine_state: &mut nu::EngineState) {
         return;
     };
     let mut working_set = nu::StateWorkingSet::new(engine_state);
-    let _failures = nu::load_plugin_file(&mut working_set, &contents, None);
+    // nu_plugin_engine::load_plugin_file returns the count of plugins that
+    // failed to load; per-plugin errors are already routed to stderr via
+    // report_shell_error inside the call. Slice 6.0: surface the summary so
+    // a partial load is visible to the host operator alongside the
+    // pre-printed per-plugin errors.
+    let error_count = nu::load_plugin_file(&mut working_set, &contents, None);
+    if error_count > 0 {
+        eprintln!(
+            "nu_sh_mcp_worker: {error_count} plugin(s) failed to load from {}; see preceding error reports",
+            path.display(),
+        );
+    }
     let delta = working_set.render();
     let _ = engine_state.merge_delta(delta);
 }

@@ -117,12 +117,15 @@ pub(crate) mod nu {
     pub(crate) use nu_engine::eval_block;
     pub(crate) use nu_json::Value as JsonValue;
     pub(crate) use nu_parser::parse;
+    pub(crate) use nu_path::nu_config_dir;
+    pub(crate) use nu_plugin_engine::load_plugin_file;
     pub(crate) use nu_protocol::{
         BlockId,
         DeclId,
         FromValue,
         Module,
         PipelineData,
+        PluginRegistryFile,
         Signals,
         Span,
         SyntaxShape,

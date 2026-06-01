@@ -262,6 +262,35 @@ fn smoke_6_worker_death_via_exit() {
 }
 
 #[test]
+fn smoke_8_plugin_path_resolves() {
+    // Slice 5.7: the worker's WarmBase::new sets engine_state.plugin_path
+    // to <nu_config_dir>/plugin.msgpackz so that `$nu.plugin-path` returns
+    // a string instead of `nothing`. Tests that this is visible from inside
+    // a closure -- proves the load_plugins_best_effort path ran without
+    // crashing AND the field assignment took effect.
+    let mut host = Host::spawn();
+    let args = serde_json::json!({
+        "args_schema": "noop: int",
+        "result_schema": "path: string",
+        "args": {"noop": 0},
+        "closure": "{ path: $nu.plugin-path }",
+        "functions": []
+    });
+    let resp = host.run(args);
+    let envelope = extract_envelope(&resp)
+        .unwrap_or_else(|| panic!("expected envelope; got {resp}"));
+    let path = envelope["result"]["path"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected string; got {:?}", envelope["result"]));
+    // The resolved path should end with plugin.msgpackz (modulo platform
+    // path separators). Non-empty and ends with the canonical filename.
+    assert!(
+        path.ends_with("plugin.msgpackz"),
+        "expected $nu.plugin-path to end with plugin.msgpackz; got {path:?}",
+    );
+}
+
+#[test]
 fn smoke_7_multi_call_stability_and_scoping() {
     // Ten distinct closures in sequence on the same worker. Each call's def
     // for __exec lives only inside the do block, so the worker's EngineState

@@ -18,7 +18,7 @@ use crate::*;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LintKind {
     HardcodedVariable,
-    BlacklistedCommand,
+    DeniedCommand,
 }
 
 impl LintKind {
@@ -28,7 +28,7 @@ impl LintKind {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::HardcodedVariable => "hardcoded_variable",
-            Self::BlacklistedCommand => "blacklisted_command",
+            Self::DeniedCommand => "denied_command",
         }
     }
 }
@@ -76,16 +76,20 @@ impl LintViolation {
 // ============================================================================
 
 /// Path prefixes whose location is contract-fixed; the agent has no
-/// alternative and the lint should pass these uniformly.
+/// alternative and the lint should pass these uniformly. `/run/` is
+/// intentionally NOT here -- runtime sockets/state live under
+/// `$XDG_RUNTIME_DIR` which the agent should lift to args (the_user
+/// 2026-05-31).
 const ALLOWLIST_PATH_PREFIXES: &[&str] = &[
     "/dev/",
     "/etc/",
     "/proc/",
+    "/sys/",
 ];
 
 /// External commands the agent should not invoke. The fix is to use
 /// idiomatic nushell or lift the work to typed args/helpers.
-const BLACKLIST_EXTERNALS: &[&str] = &[
+const DENYLIST_EXTERNALS: &[&str] = &[
     "awk",
     "bash",
     "cp",
@@ -106,12 +110,20 @@ const BLACKLIST_EXTERNALS: &[&str] = &[
 
 /// Internal-decl names that accept a `--regex` named flag. Presence of
 /// the flag on a call to one of these decls gates skip of the path-rule
-/// on every positional `String`/`RawString` arg in that call (those are
-/// regex pattern or replacement strings, not paths).
+/// on positional[0] (the regex pattern). Slice 5.5 tightened to
+/// positional[0] only so a hardcoded path at later positionals (e.g.
+/// the replacement arg of `str replace`) still surfaces.
+///
+/// Slice 5.6 audit of `nu-command/src/` at tag 0.113.1 confirmed the
+/// canonical list: every Signature with `.switch("regex", ...)` or
+/// `.named("regex", ...)`. Plugins not covered (probe per-plugin if
+/// adding plugin-aware lint surfaces).
 const REGEX_RECEIVERS: &[&str] = &[
     "find",
+    "idx search",
     "parse",
     "split column",
+    "split list",
     "split row",
     "str replace",
 ];
@@ -120,7 +132,7 @@ const REGEX_RECEIVERS: &[&str] = &[
 // Entry point
 // ============================================================================
 
-/// What: lint `body` against the hardcoded-path and blacklisted-external
+/// What: lint `body` against the hardcoded-path and denied-external
 /// rules and return aggregated violations. Wraps the body in
 /// `def __lint_body [args: record<args_schema>] { <body> }`, parses via
 /// the supplied full-shell `ParseEngine`, locates the def's body block,
@@ -310,7 +322,7 @@ fn walk_expr(
                 }
             }
         }
-        // External call: blacklist on head (basename-aware so an
+        // External call: denylist on head (basename-aware so an
         // absolute-path head like `^/usr/bin/awk` doesn't bypass) +
         // walk head through path-rule + recurse into ext args.
         nu::Expr::ExternalCall(head, ext_args) => {
@@ -533,16 +545,16 @@ fn check_path(
     }
 }
 
-/// Apply the blacklisted-external rule to the `head` Expression of an
-/// `ExternalCall`. Push a `BlacklistedCommand` violation if the head
+/// Apply the denied-external rule to the `head` Expression of an
+/// `ExternalCall`. Push a `DeniedCommand` violation if the head
 /// is a literal whose BASENAME (the final `/`-separated segment, so
-/// `^/usr/bin/awk` reduces to `awk`) appears in `BLACKLIST_EXTERNALS`;
+/// `^/usr/bin/awk` reduces to `awk`) appears in `DENYLIST_EXTERNALS`;
 /// skip silently if the head is a variable / cell-path / anything
 /// non-literal (those are lifted external heads, the desired pattern).
 ///
 /// Slice 5.5: basename normalization closes the absolute-path bypass
 /// surfaced by the slice 5.4 audit (`^/usr/bin/awk` previously slipped
-/// the blacklist because the literal name match required the bare
+/// the denylist because the literal name match required the bare
 /// command). Path-rule still fires for the absolute head independently
 /// via `walk_expr`'s ExternalCall arm.
 fn check_external_head(
@@ -561,11 +573,11 @@ fn check_external_head(
         _ => return,
     };
     let basename = name.rsplit('/').next().unwrap_or(name);
-    if BLACKLIST_EXTERNALS.contains(&basename) {
+    if DENYLIST_EXTERNALS.contains(&basename) {
         let body_offset = head.span.start.saturating_sub(prefix_len);
         let (line, col) = span_to_line_col(body, body_offset);
         violations.push(LintViolation {
-            kind: LintKind::BlacklistedCommand,
+            kind: LintKind::DeniedCommand,
             line,
             col,
             source: source.map(str::to_string),
@@ -654,10 +666,10 @@ mod tests {
     }
 
     #[test]
-    fn flags_blacklisted_external() {
+    fn flags_denied_external() {
         let v = lint("^awk '{print $1}'; { out: 0 }");
         assert_eq!(v.len(), 1, "got {v:?}");
-        assert_eq!(v[0].kind, LintKind::BlacklistedCommand);
+        assert_eq!(v[0].kind, LintKind::DeniedCommand);
     }
 
     #[test]
@@ -740,13 +752,13 @@ cd ~/y
         let v = lint(body);
         assert_eq!(v.len(), 4, "got {v:?}");
         // First violation -> ^awk on line 1
-        assert_eq!(v[0].kind, LintKind::BlacklistedCommand);
+        assert_eq!(v[0].kind, LintKind::DeniedCommand);
         assert_eq!(v[0].line, 1);
         // Second -> cd "/a/b" on line 2
         assert_eq!(v[1].kind, LintKind::HardcodedVariable);
         assert_eq!(v[1].line, 2);
         // Third -> ^grep on line 3
-        assert_eq!(v[2].kind, LintKind::BlacklistedCommand);
+        assert_eq!(v[2].kind, LintKind::DeniedCommand);
         assert_eq!(v[2].line, 3);
         // Fourth -> cd ~/y on line 4
         assert_eq!(v[3].kind, LintKind::HardcodedVariable);
@@ -767,12 +779,12 @@ cd ~/y
     #[test]
     fn render_with_source() {
         let v = LintViolation {
-            kind: LintKind::BlacklistedCommand,
+            kind: LintKind::DeniedCommand,
             line: 12,
             col: 1,
             source: Some("fn double".to_string()),
         };
-        assert_eq!(v.render(), "lint::blacklisted_command [12:1] fn double");
+        assert_eq!(v.render(), "lint::denied_command [12:1] fn double");
     }
 
     #[test]
@@ -785,7 +797,7 @@ cd ~/y
                 source: None,
             },
             LintViolation {
-                kind: LintKind::BlacklistedCommand,
+                kind: LintKind::DeniedCommand,
                 line: 3,
                 col: 1,
                 source: None,
@@ -794,7 +806,7 @@ cd ~/y
         let s = format_lint_violations(&vs);
         assert_eq!(
             s,
-            "lint::hardcoded_variable [1:4]\nlint::blacklisted_command [3:1]",
+            "lint::hardcoded_variable [1:4]\nlint::denied_command [3:1]",
         );
     }
 
@@ -866,20 +878,20 @@ cd ~/y
     }
 
     #[test]
-    fn flags_abs_path_external_head_blacklist() {
-        // Slice 5.5: `^/usr/bin/awk` should fire BlacklistedCommand
+    fn flags_abs_path_external_head_denylist() {
+        // Slice 5.5: `^/usr/bin/awk` should fire DeniedCommand
         // via basename normalization. The path-rule ALSO fires
         // independently because the head is an absolute path.
         let v = lint("^/usr/bin/awk 'x'; { out: 0 }");
-        let blacklist_count = v
+        let denylist_count = v
             .iter()
-            .filter(|x| x.kind == LintKind::BlacklistedCommand)
+            .filter(|x| x.kind == LintKind::DeniedCommand)
             .count();
         let path_count = v
             .iter()
             .filter(|x| x.kind == LintKind::HardcodedVariable)
             .count();
-        assert!(blacklist_count >= 1, "no blacklist fired; got {v:?}");
+        assert!(denylist_count >= 1, "no denylist fired; got {v:?}");
         assert!(path_count >= 1, "no path fired; got {v:?}");
     }
 
@@ -934,6 +946,46 @@ cd ~/y
         // through Range -> Subexpression's Block -> Call("cd") ->
         // Directory("/a/b").
         let v = lint("let r = (cd \"/a/b\"; 1)..5; { out: 0 }");
+        assert!(
+            v.iter().any(|x| x.kind == LintKind::HardcodedVariable),
+            "got {v:?}",
+        );
+    }
+
+    // ----- slice 5.6: /sys/ allowlist + /run/ explicit deny --------------
+
+    #[test]
+    fn passes_allowlist_sys() {
+        // sysfs is location-fixed contract like /proc -- the_user
+        // 2026-05-31 explicit add.
+        assert!(lint("cd /sys/class/net; { out: 0 }").is_empty());
+        assert!(lint("cd \"/sys/class/net\"; { out: 0 }").is_empty());
+    }
+
+    #[test]
+    fn flags_run_path() {
+        // /run/ stays denied per the_user 2026-05-31: agents should use
+        // $XDG_RUNTIME_DIR for runtime sockets/state, not hardcode /run/.
+        let v = lint("cd /run/foo; { out: 0 }");
+        assert_eq!(v.len(), 1, "got {v:?}");
+        assert_eq!(v[0].kind, LintKind::HardcodedVariable);
+    }
+
+    // ----- slice 5.6 REGEX_RECEIVERS additions --------------------------
+
+    #[test]
+    fn passes_regex_named_flag_split_list() {
+        // split list --regex with path-shaped separator: positional[0]
+        // is the separator, --regex marks it as a regex, walker skips.
+        let v = lint("let xs = ([\"a/b\" \"c\"] | split list --regex '/'); { out: 0 }");
+        assert!(v.is_empty(), "got {v:?}");
+    }
+
+    #[test]
+    fn flags_split_list_without_regex() {
+        // Without --regex, the separator is a literal value and the
+        // path-rule fires on path-shaped String separators.
+        let v = lint("let xs = ([\"x\"] | split list \"/a/b\"); { out: 0 }");
         assert!(
             v.iter().any(|x| x.kind == LintKind::HardcodedVariable),
             "got {v:?}",

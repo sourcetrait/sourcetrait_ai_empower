@@ -833,7 +833,7 @@ impl ValidationResult {
 /// - Function files: exactly two exports named `main` and `resolve`;
 ///   both have `args: record<...>` typed positionals; resolve's body is
 ///   exactly the expression `$args`. Additionally (slice 5.2) main's
-///   body is body-linted for hardcoded paths and blacklisted externals,
+///   body is body-linted for hardcoded paths and denied externals,
 ///   with source tag `mod <rel_path>`.
 ///
 /// Each file is parsed through `nu_parser::parse` (in a
@@ -1197,7 +1197,7 @@ fn validate_function_file_ast(
         );
     }
 
-    // 6. Slice 5.2: lint main's body for hardcoded paths and blacklisted
+    // 6. Slice 5.2: lint main's body for hardcoded paths and denied
     //    externals. Source tag is `mod <rel_path>` so the rendered line
     //    has the file context per the_user 2026-05-31 format choice.
     //    Skipped when main wasn't found or its body block isn't resolvable

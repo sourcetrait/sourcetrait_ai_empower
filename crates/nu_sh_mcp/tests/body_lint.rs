@@ -189,7 +189,7 @@ fn lint_rejects_closure_with_hardcoded_path() {
 }
 
 #[test]
-fn lint_rejects_closure_with_blacklisted_external() {
+fn lint_rejects_closure_with_denied_external() {
     let mut host = Host::spawn();
     let resp = host.run(serde_json::json!({
         "args_schema": "noop: int",
@@ -201,8 +201,8 @@ fn lint_rejects_closure_with_blacklisted_external() {
     let msg = error_text(&resp)
         .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
     assert!(
-        msg.contains("lint::blacklisted_command"),
-        "expected lint::blacklisted_command token; got {msg:?}",
+        msg.contains("lint::denied_command"),
+        "expected lint::denied_command token; got {msg:?}",
     );
 }
 
@@ -250,7 +250,7 @@ cd \"/a/b\"
     let msg = error_text(&resp)
         .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
     // Both violations appear in one message, newline-joined.
-    assert!(msg.contains("lint::blacklisted_command"), "got {msg:?}");
+    assert!(msg.contains("lint::denied_command"), "got {msg:?}");
     assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
 }
 
@@ -274,7 +274,7 @@ fn lint_interact_rejects_hardcoded_path() {
 }
 
 #[test]
-fn lint_interact_rejects_blacklisted_external() {
+fn lint_interact_rejects_denied_external() {
     let mut host = Host::spawn();
     let resp = host.interact(serde_json::json!({
         "args_schema": "noop: int",
@@ -285,7 +285,7 @@ fn lint_interact_rejects_blacklisted_external() {
     }));
     let msg = error_text(&resp)
         .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    assert!(msg.contains("lint::blacklisted_command"), "got {msg:?}");
+    assert!(msg.contains("lint::denied_command"), "got {msg:?}");
 }
 
 // ----------------------------------------------------------------------------
@@ -313,7 +313,7 @@ fn lint_define_function_rejects_hardcoded_path() {
 }
 
 #[test]
-fn lint_define_function_rejects_blacklisted_external() {
+fn lint_define_function_rejects_denied_external() {
     let mut host = Host::spawn();
     let mirror = host.source_dir("mirror2");
     std::fs::create_dir_all(&mirror).expect("mkdir mirror");
@@ -329,7 +329,7 @@ fn lint_define_function_rejects_blacklisted_external() {
     }));
     let msg = error_text(&resp)
         .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    assert!(msg.contains("lint::blacklisted_command"), "got {msg:?}");
+    assert!(msg.contains("lint::denied_command"), "got {msg:?}");
 }
 
 #[test]
@@ -423,7 +423,7 @@ fn lint_helper_hardcoded_path_tagged() {
 }
 
 #[test]
-fn lint_helper_blacklisted_external_tagged() {
+fn lint_helper_denied_external_tagged() {
     let mut host = Host::spawn();
     let resp = host.run(serde_json::json!({
         "args_schema": "noop: int",
@@ -439,7 +439,7 @@ fn lint_helper_blacklisted_external_tagged() {
     }));
     let msg = error_text(&resp)
         .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    assert!(msg.contains("lint::blacklisted_command"), "got {msg:?}");
+    assert!(msg.contains("lint::denied_command"), "got {msg:?}");
     assert!(msg.contains("fn evil"), "got {msg:?}");
 }
 

@@ -319,7 +319,7 @@ impl NuSh {
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<String, mcp::ErrorData> {
         // Slice 5.1 (closure) + slice 5.3 (helpers): AST body lint runs
-        // BEFORE template synthesis so any hardcoded-path or blacklisted-
+        // BEFORE template synthesis so any hardcoded-path or denied-
         // external violation surfaces as -32602 invalid_params with the
         // agent-fixable `lint::<class> [L:C]` report shape. Helpers
         // contribute lines tagged ` fn <name>` so the agent can spot

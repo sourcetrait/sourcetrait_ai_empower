@@ -131,8 +131,7 @@ fn host_tools_list_and_run_stub() {
                 "args_schema": "x: int",
                 "result_schema": "out: int",
                 "args": {"x": 5},
-                "closure": "{ out: ($args.x + 1) }",
-                "functions": []
+                "body": "{ out: ($args.x + 1) }",
             }
         }
     });

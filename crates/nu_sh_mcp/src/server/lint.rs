@@ -146,8 +146,7 @@ const REGEX_RECEIVERS: &[&str] = &[
 ///
 /// Where: called by `server::tool::NuSh::run` immediately before
 /// `template::build_run_source`. Slice 5.2 will broaden the call sites
-/// (interact + define_function + import_library + reimport_library);
-/// slice 5.3 will iterate over `RunParams.functions` for helper bodies.
+/// (interact + define_function + import_library + reimport_library).
 pub(crate) fn lint_body(
     parse_engine: &ParseEngine,
     args_schema: &str,

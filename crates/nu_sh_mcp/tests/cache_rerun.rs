@@ -148,8 +148,7 @@ fn run_returns_deterministic_rerun_id() {
         "args_schema": "x: int",
         "result_schema": "out: int",
         "args": {"x": 1},
-        "closure": "{ out: ($args.x + 100) }",
-        "functions": []
+        "body": "{ out: ($args.x + 100) }",
     });
     let r1 = extract_rerun_id(&host.call("run", closure_a.clone()));
     let r2 = extract_rerun_id(&host.call("run", closure_a));
@@ -168,11 +167,10 @@ fn rerun_id_differs_when_closure_changes() {
         "args_schema": "x: int",
         "result_schema": "out: int",
         "args": {"x": 1},
-        "closure": "{ out: ($args.x + 100) }",
-        "functions": []
+        "body": "{ out: ($args.x + 100) }",
     });
     let mut altered = base.clone();
-    altered["closure"] = serde_json::json!("{ out: ($args.x + 200) }");
+    altered["body"] = serde_json::json!("{ out: ($args.x + 200) }");
     let r_base = extract_rerun_id(&host.call("run", base));
     let r_alt = extract_rerun_id(&host.call("run", altered));
     assert_ne!(r_base, r_alt, "different closure body -> different rerun_id");
@@ -187,8 +185,7 @@ fn rerun_roundtrip_with_new_args() {
             "args_schema": "x: int",
             "result_schema": "out: int",
             "args": {"x": 5},
-            "closure": "{ out: ($args.x * 3) }",
-            "functions": []
+            "body": "{ out: ($args.x * 3) }",
         }),
     );
     let first_env = extract_envelope(&first)
@@ -265,8 +262,7 @@ fn interact_envelope_has_no_rerun_id() {
             "args_schema": "x: int",
             "result_schema": "out: int",
             "args": {"x": 4},
-            "closure": "{ out: ($args.x * 2) }",
-            "functions": []
+            "body": "{ out: ($args.x * 2) }",
         }),
     );
     let env = extract_envelope(&resp)

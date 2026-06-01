@@ -1,13 +1,8 @@
-//! Interact() cross-call persistence smoke tests.
+//! Interact() tool surface smoke.
 //!
-//! interact() pairs `build_interact_source` (no `do { ... }` wrapper) with
-//! a stateful worker that does NOT clone engine_state per call and calls
-//! merge_env after each eval. Verifies that:
-//!   1. Helper functions registered via `functions` persist across calls.
-//!   2. `cd` inside a closure body propagates to subsequent calls via
-//!      merge_env.
-//!   3. Sequential run() calls (separate stateless worker) are unaffected
-//!      by interact() state.
+//! Full persistence coverage lives in `tests/interact_persistence.rs`
+//! (env + cd across calls). This file only verifies the tool surface
+//! advertised by `#[tool_router]`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -103,6 +98,7 @@ impl Host {
         }
     }
 
+    #[allow(dead_code)]
     fn call(&mut self, tool: &str, args: serde_json::Value) -> serde_json::Value {
         let id = self.next_id();
         let req = serde_json::json!({
@@ -123,6 +119,7 @@ impl Drop for Host {
     }
 }
 
+#[allow(dead_code)]
 fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Value> {
     let result = call_response.get("result")?;
     let content = result.get("content")?.as_array()?;
@@ -170,98 +167,3 @@ fn interact_lists_both_run_and_interact_tools() {
     }
 }
 
-#[test]
-fn helper_persists_across_interact_calls() {
-    // First interact() call registers a helper `foo`. Second interact()
-    // call (no helpers) invokes `foo` and expects to find it.
-    let mut host = Host::spawn();
-    let first = host.call(
-        "interact",
-        serde_json::json!({
-            "args_schema": "noop: int",
-            "result_schema": "out: int",
-            "args": {"noop": 0},
-            "closure": "{ out: ((foo {n: 7}).out) }",
-            "functions": [{
-                "name": "foo",
-                "args_schema": "n: int",
-                "result_schema": "out: int",
-                "body": "{ out: ($args.n * 6) }"
-            }]
-        }),
-    );
-    let envelope = extract_envelope(&first)
-        .unwrap_or_else(|| panic!("call 1 envelope; got {first}"));
-    assert_eq!(
-        envelope["result"]["out"].as_i64(),
-        Some(42),
-        "call 1: expected 42; got {:?}",
-        envelope["result"],
-    );
-
-    // Second call: no helpers, but `foo` should still be defined in the
-    // stateful worker's engine_state from the first call.
-    let second = host.call(
-        "interact",
-        serde_json::json!({
-            "args_schema": "n: int",
-            "result_schema": "out: int",
-            "args": {"n": 5},
-            "closure": "{ out: ((foo {n: $args.n}).out) }",
-            "functions": []
-        }),
-    );
-    let envelope = extract_envelope(&second)
-        .unwrap_or_else(|| panic!("call 2 envelope; got {second}"));
-    assert_eq!(
-        envelope["result"]["out"].as_i64(),
-        Some(30),
-        "call 2: expected 30 (5 * 6 via persisted foo); got {:?}",
-        envelope["result"],
-    );
-}
-
-#[test]
-fn interact_state_does_not_leak_into_run() {
-    // Helper registered via interact() should NOT be visible to run(),
-    // which routes through a separate stateless worker.
-    let mut host = Host::spawn();
-    let _ = host.call(
-        "interact",
-        serde_json::json!({
-            "args_schema": "noop: int",
-            "result_schema": "out: int",
-            "args": {"noop": 0},
-            "closure": "{ out: 0 }",
-            "functions": [{
-                "name": "leaked",
-                "args_schema": "noop: int",
-                "result_schema": "out: int",
-                "body": "{ out: 999 }"
-            }]
-        }),
-    );
-
-    // Now invoke `leaked` via run(). The stateless worker should NOT
-    // have it; this should surface as an error from the worker.
-    let resp = host.call(
-        "run",
-        serde_json::json!({
-            "args_schema": "noop: int",
-            "result_schema": "out: int",
-            "args": {"noop": 0},
-            "closure": "{ out: ((leaked {noop: 0}).out) }",
-            "functions": []
-        }),
-    );
-    let has_error_path = resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true);
-    assert!(
-        has_error_path,
-        "expected run() to NOT see interact()'s `leaked` helper; got {resp}",
-    );
-}

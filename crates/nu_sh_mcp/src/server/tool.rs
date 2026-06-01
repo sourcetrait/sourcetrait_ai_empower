@@ -1,32 +1,9 @@
 use crate::*;
 
-/// What: agent-facing shape of one helper function passed as an
-/// optional element of `RunParams.functions`. Carries the function
-/// name, the args + result schemas, and the body.
-///
-/// Why: agents sometimes need helpers in scope inside a closure
-/// (e.g. a shared transformation called from multiple expressions).
-/// Allowing helpers as separate entries instead of forcing the agent
-/// to inline the source into the closure body keeps the closure
-/// itself focused on the call site logic.
-///
-/// Where: deserialized as part of `RunParams.functions` from the
-/// agent's `run` / `interact` tool call; consumed by
-/// `template::build_run_source` and `build_interact_source` which
-/// emit one `def NAME [args: record<...>] { BODY }` per helper above
-/// the `__exec` def.
-#[derive(Debug, Clone, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
-pub struct Function {
-    pub name: String,
-    pub args_schema: String,
-    pub result_schema: String,
-    pub body: String,
-}
-
 /// What: agent-facing parameters for `run()` and (because it has the
 /// same shape) `interact()`. Carries the args + result schemas, the
-/// JSON object that becomes `$args`, optional helper functions, and
-/// the closure body that becomes `__exec`'s body.
+/// JSON object that becomes `$args`, and the body that becomes the
+/// agent's submission.
 ///
 /// Why: a single struct shared between run and interact keeps the
 /// two tools' surface identical to the agent -- the only diff is
@@ -50,9 +27,7 @@ pub struct RunParams {
     /// as `{"type": "object"}`. Semantically correct anyway: args MUST be
     /// an object because it has to deserialize into a nushell record.
     pub args: mcp::JsonObject,
-    #[serde(default)]
-    pub functions: Vec<Function>,
-    pub closure: String,
+    pub body: String,
     /// Optional per-call timeout in milliseconds. When the worker
     /// round-trip exceeds this, the call returns -32001 and the worker
     /// is killed (runs-pool worker is reaped, interact worker is
@@ -93,14 +68,11 @@ pub struct RerunParams {
 
 /// What: on-disk JSON shape of `closures/<rerun_id>.json`. Mirrors
 /// the relevant subset of `RunParams` that uniquely identifies the
-/// closure: schemas + body, no per-call args, no nonce, no helpers
-/// (yet).
+/// closure: schemas + body, no per-call args, no nonce.
 ///
 /// Why: rerun() needs enough to reconstruct a `RunParams` and
 /// dispatch through the stateless worker; the schemas are the
-/// typecheck inputs, the body is the executable surface. Additive
-/// for future fields -- `functions` will land here when the rerun
-/// hash grows to include them.
+/// typecheck inputs, the body is the executable surface.
 ///
 /// Where: serialized by `write_closure_cache` after a successful
 /// `NuSh::run`; deserialized by `NuSh::rerun` via
@@ -109,7 +81,7 @@ pub struct RerunParams {
 struct ClosureCacheBody {
     args_schema: String,
     result_schema: String,
-    closure: String,
+    body: String,
 }
 
 /// What: agent-facing parameters for `register_library`. Carries the
@@ -445,7 +417,7 @@ impl NuSh {
         let computed_rerun_id = lib_empower::RerunHash::of(&(
             p.args_schema.as_str(),
             p.result_schema.as_str(),
-            p.closure.as_str(),
+            p.body.as_str(),
         ))
         .to_string();
         // Slice 6.0: cache write is non-fatal. A successful eval whose
@@ -809,8 +781,7 @@ impl NuSh {
             args_schema: cached.args_schema,
             result_schema: cached.result_schema,
             args: p.args.clone(),
-            functions: Vec::new(),
-            closure: cached.closure,
+            body: cached.body,
             timeout_ms: p.timeout_ms,
         };
         let source = build_run_source(&reconstructed);
@@ -904,31 +875,20 @@ impl NuSh {
     }
 }
 
-/// What: aggregate lint of a `RunParams` -- the agent's closure body
-/// PLUS each helper in `p.functions`. Closure violations carry no
-/// source tag (single context); helper violations are tagged
-/// `fn <name>` so the agent can attribute a finding to the right body
-/// when several helpers ship together.
+/// What: lint of a `RunParams` -- a single pass over the agent's
+/// body. Returns the aggregated `LintViolation` vector with no source
+/// tag (the body is the only context).
 ///
-/// Why: slice 5.1 covered the closure entry; slice 5.3 broadens to
-/// helpers so a submission like `{run, functions: [{name: double,
-/// body: cd "/x"; ...}]}` no longer slips a hardcoded path through
-/// just because the lint stopped at the closure boundary. Helpers
-/// land as top-level defs in the worker's submission template, so
-/// linting them is a 1:1 mapping of the closure rule.
+/// Why: keeping this as a thin wrapper around `lint_body` (rather
+/// than inlining into the handlers) leaves a clear seam for any
+/// future per-tool diff in lint coverage; today the wrapper is a
+/// straight pass-through.
 ///
 /// Where: called by `NuSh::run` and `NuSh::interact` before any
 /// template synthesis. The result feeds `format_lint_violations` on
 /// non-empty.
 fn lint_run_params(engine: &ParseEngine, p: &RunParams) -> Vec<LintViolation> {
-    let mut violations = lint_body(engine, &p.args_schema, &p.closure, None);
-    for helper in &p.functions {
-        let source_tag = format!("fn {}", helper.name);
-        let helper_violations =
-            lint_body(engine, &helper.args_schema, &helper.body, Some(&source_tag));
-        violations.extend(helper_violations);
-    }
-    violations
+    lint_body(engine, &p.args_schema, &p.body, None)
 }
 
 /// What: the shape returned by `dispatch_pooled` / `dispatch_interact`.
@@ -1209,7 +1169,7 @@ fn write_closure_cache(
     let body = ClosureCacheBody {
         args_schema: p.args_schema.clone(),
         result_schema: p.result_schema.clone(),
-        closure: p.closure.clone(),
+        body: p.body.clone(),
     };
     let bytes = json::to_vec(&body).map_err(|e| {
         io::Error::other(format!("serialize ClosureCacheBody: {e}"))

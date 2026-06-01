@@ -1,12 +1,11 @@
 use crate::*;
 
 /// What: builds the nushell source the stateless worker will eval for
-/// a `run()` call. Emits a `do { ... }` block containing each helper
-/// `def` from `p.functions`, then the `__exec` def carrying the
-/// agent's closure body, then a `__resolve` def that gates the return
-/// value against `result_schema`, and finally invokes
-/// `__resolve (__exec ARGS_JSON)` where ARGS_JSON is the agent's args
-/// serialized as a record literal.
+/// a `run()` call. Emits a `do { ... }` block containing an `__exec`
+/// def carrying the agent's body, a `__resolve` def that gates the
+/// return value against `result_schema`, and a final
+/// `__resolve (__exec ARGS_JSON)` invocation where ARGS_JSON is the
+/// agent's args serialized as a record literal.
 ///
 /// Why: the outer `do { ... }` is load-bearing -- nushell's
 /// Arc::make_mut COW on blocks means defs declared inside a do-block
@@ -23,19 +22,10 @@ use crate::*;
 pub(crate) fn build_run_source(p: &RunParams) -> String {
     let mut out = String::with_capacity(256);
     out.push_str("do {\n");
-    for helper in &p.functions {
-        out.push_str("    def ");
-        out.push_str(&helper.name);
-        out.push_str(" [args: record<");
-        out.push_str(&helper.args_schema);
-        out.push_str(">] {\n");
-        out.push_str(&helper.body);
-        out.push_str("\n    }\n");
-    }
     out.push_str("    def __exec [args: record<");
     out.push_str(&p.args_schema);
     out.push_str(">] {\n");
-    out.push_str(&p.closure);
+    out.push_str(&p.body);
     out.push_str("\n    }\n");
     out.push_str("    def __resolve [result: record<");
     out.push_str(&p.result_schema);
@@ -52,16 +42,15 @@ pub(crate) fn build_run_source(p: &RunParams) -> String {
 }
 
 /// What: same shape as `build_run_source` but with NO outer
-/// `do { ... }` wrapper. The helper defs, `__exec`, and `__resolve`
-/// land at the top level of the worker's persistent `engine_state`
-/// so they survive into the next `interact()` call (re-defined each
-/// call, which nushell allows).
+/// `do { ... }` wrapper. `__exec` and `__resolve` land at the top
+/// level of the worker's persistent `engine_state` so they survive
+/// into the next `interact()` call (re-defined each call, which
+/// nushell allows).
 ///
-/// Why: `interact()` advertises stateful semantics -- defs, env
-/// mutations, and `cd` persist across calls. Omitting the do-block
-/// is the substrate-level change that delivers def persistence;
-/// `merge_env` after `eval_block` (in `worker::request_loop::
-/// eval_source`'s Stateful branch) delivers env and cd persistence.
+/// Why: `interact()` advertises stateful semantics -- `merge_env`
+/// after `eval_block` (in `worker::request_loop:: eval_source`'s
+/// Stateful branch) propagates env mutations and `cd` from each call
+/// to the persistent engine state.
 ///
 /// Where: called by `server::tool::NuSh::interact` to produce the
 /// source string that gets shipped to the stateful worker process.
@@ -69,19 +58,10 @@ pub(crate) fn build_run_source(p: &RunParams) -> String {
 /// eval_source`.
 pub(crate) fn build_interact_source(p: &RunParams) -> String {
     let mut out = String::with_capacity(256);
-    for helper in &p.functions {
-        out.push_str("def ");
-        out.push_str(&helper.name);
-        out.push_str(" [args: record<");
-        out.push_str(&helper.args_schema);
-        out.push_str(">] {\n");
-        out.push_str(&helper.body);
-        out.push_str("\n}\n");
-    }
     out.push_str("def __exec [args: record<");
     out.push_str(&p.args_schema);
     out.push_str(">] {\n");
-    out.push_str(&p.closure);
+    out.push_str(&p.body);
     out.push_str("\n}\n");
     out.push_str("def __resolve [result: record<");
     out.push_str(&p.result_schema);

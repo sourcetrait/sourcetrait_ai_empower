@@ -148,8 +148,7 @@ fn smoke_2_runtime_arg_typecheck_error() {
         "args_schema": "x: int",
         "result_schema": "out: int",
         "args": {"x": "five"},
-        "closure": "{ out: ($args.x + 1) }",
-        "functions": []
+        "body": "{ out: ($args.x + 1) }",
     });
     let resp = host.run(args);
     // We expect either an error result (rmcp's CallToolResult with is_error=true)
@@ -176,8 +175,7 @@ fn smoke_3_runtime_result_typecheck_error() {
         "args_schema": "x: int",
         "result_schema": "out: int",
         "args": {"x": 5},
-        "closure": "{ out: \"five\" }",
-        "functions": []
+        "body": "{ out: \"five\" }",
     });
     let resp = host.run(args);
     let has_error_path = resp.get("error").is_some()
@@ -193,35 +191,6 @@ fn smoke_3_runtime_result_typecheck_error() {
 }
 
 #[test]
-fn smoke_4_function_helpers_in_scope() {
-    // Helper closure registered in `functions` should be in scope inside the
-    // do-block while __exec runs. The closure body invokes the helper.
-    let mut host = Host::spawn();
-    let args = serde_json::json!({
-        "args_schema": "x: int",
-        "result_schema": "out: int",
-        "args": {"x": 5},
-        "closure": "{ out: ((double {x: $args.x}).out + 1) }",
-        "functions": [{
-            "name": "double",
-            "args_schema": "x: int",
-            "result_schema": "out: int",
-            "body": "{ out: ($args.x * 2) }"
-        }]
-    });
-    let resp = host.run(args);
-    let envelope = extract_envelope(&resp)
-        .unwrap_or_else(|| panic!("expected envelope; got {resp}"));
-    // double(5) -> {out: 10}; (10) + 1 -> 11; outer envelope -> {out: 11}
-    assert_eq!(
-        envelope["result"]["out"].as_i64(),
-        Some(11),
-        "expected {{out: 11}}; got {:?}",
-        envelope["result"],
-    );
-}
-
-#[test]
 fn smoke_5_external_command() {
     // External `^printf "hello"` should round-trip the stdout. The closure
     // captures the output as a string and emits {out: <captured>}.
@@ -232,8 +201,7 @@ fn smoke_5_external_command() {
         "args_schema": "noop: int",
         "result_schema": "out: string",
         "args": {"noop": 0},
-        "closure": "{ out: (^printf hello | str trim) }",
-        "functions": []
+        "body": "{ out: (^printf hello | str trim) }",
     });
     let resp = host.run(args);
     let envelope = extract_envelope(&resp)
@@ -257,8 +225,7 @@ fn smoke_6_worker_death_via_exit() {
         "args_schema": "noop: int",
         "result_schema": "out: int",
         "args": {"noop": 0},
-        "closure": "{ out: (exit 1; 0) }",
-        "functions": []
+        "body": "{ out: (exit 1; 0) }",
     });
     let resp = host.run(args);
     let has_error_path = resp.get("error").is_some()
@@ -287,7 +254,7 @@ fn smoke_9_timeout_fires() {
         // Multi-statement body without outer braces; inserted by the
         // template as the def body. `sleep 5sec` blocks the worker for
         // 5 seconds; the 200ms timeout fires first.
-        "closure": "sleep 5sec\n{ out: 0 }",
+        "body": "sleep 5sec\n{ out: 0 }",
         "functions": [],
         "timeout_ms": 200u64
     });
@@ -305,8 +272,7 @@ fn smoke_9_timeout_fires() {
         "args_schema": "x: int",
         "result_schema": "out: int",
         "args": {"x": 7},
-        "closure": "{ out: ($args.x + 1) }",
-        "functions": []
+        "body": "{ out: ($args.x + 1) }",
     });
     let resp2 = host.run(args2);
     let env = extract_envelope(&resp2)
@@ -368,8 +334,7 @@ fn smoke_8_plugin_path_resolves() {
         "args_schema": "noop: int",
         "result_schema": "path: string",
         "args": {"noop": 0},
-        "closure": "{ path: $nu.plugin-path }",
-        "functions": []
+        "body": "{ path: $nu.plugin-path }",
     });
     let resp = host.run(args);
     let envelope = extract_envelope(&resp)
@@ -398,8 +363,7 @@ fn smoke_7_multi_call_stability_and_scoping() {
             "args_schema": "x: int",
             "result_schema": "out: int",
             "args": {"x": i as i64},
-            "closure": "{ out: ($args.x + 100) }",
-            "functions": []
+            "body": "{ out: ($args.x + 100) }",
         });
         let resp = host.run(args);
         let envelope = extract_envelope(&resp).unwrap_or_else(|| {
@@ -419,8 +383,7 @@ fn smoke_7_multi_call_stability_and_scoping() {
         "args_schema": "noop: int",
         "result_schema": "leaked: int",
         "args": {"noop": 0},
-        "closure": "{ leaked: (scope commands | where name == \"__exec\" | length) }",
-        "functions": []
+        "body": "{ leaked: (scope commands | where name == \"__exec\" | length) }",
     });
     let resp = host.run(intro);
     let envelope = extract_envelope(&resp)

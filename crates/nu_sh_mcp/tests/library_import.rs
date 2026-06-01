@@ -152,6 +152,13 @@ fn error_message(resp: &serde_json::Value) -> String {
             return m.to_string();
         }
     }
+    // C3: success envelopes are emitted via structured_content only;
+    // fall back to the legacy content[].text shape (no longer produced
+    // by nu_sh_mcp >= 0.0.27, but kept for robustness across mixed
+    // versions during the transition).
+    if let Some(sc) = resp.get("result").and_then(|r| r.get("structuredContent")) {
+        return sc.to_string();
+    }
     if let Some(c) = resp
         .get("result")
         .and_then(|r| r.get("content"))

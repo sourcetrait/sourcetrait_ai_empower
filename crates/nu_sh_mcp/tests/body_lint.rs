@@ -340,14 +340,11 @@ fn lint_define_function_passes_clean_body() {
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
-    let content = result
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|a| a.first())
-        .and_then(|c| c.get("text"))
-        .and_then(|t| t.as_str())
-        .unwrap_or_else(|| panic!("expected text content; got {resp}"));
-    assert!(content.contains("\"ok\":true"), "got {content}");
+    // C3: define_function emits structured_content only.
+    let env = result
+        .get("structuredContent")
+        .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
+    assert_eq!(env["ok"].as_bool(), Some(true), "got {env}");
 }
 
 // ----------------------------------------------------------------------------

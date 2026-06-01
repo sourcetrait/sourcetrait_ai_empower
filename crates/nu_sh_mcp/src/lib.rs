@@ -247,7 +247,6 @@ pub(crate) mod json {
     pub(crate) use serde_json::{
         Value,
         from_slice,
-        json,
         to_string as to_string_json,
         to_value,
         to_vec,

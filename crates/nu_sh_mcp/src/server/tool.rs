@@ -95,6 +95,67 @@ pub(crate) struct RunEnvelope {
     pub rerun_id: Option<String>,
 }
 
+/// Success envelope for `interact()`. Same shape as `RunEnvelope`
+/// minus `rerun_id` -- interact() does not cache closures (stateful
+/// session bodies don't make sense to replay independently).
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub(crate) struct InteractEnvelope {
+    pub result: mcp::JsonObject,
+    pub nonce: String,
+}
+
+/// Success envelope for `call()`. Carries the registered library
+/// function's typed return value plus the per-call nonce. No
+/// `rerun_id` (library calls are themselves the replayable unit;
+/// recipe is `call(library, module_path, name, args)`).
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub(crate) struct CallEnvelope {
+    pub result: mcp::JsonObject,
+    pub nonce: String,
+}
+
+/// Success envelope for `rerun()`. The agent supplied the rerun_id
+/// so we don't echo it back; just the result + a fresh nonce.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub(crate) struct RerunEnvelope {
+    pub result: mcp::JsonObject,
+    pub nonce: String,
+}
+
+/// Success envelope for the 6 library-lifecycle tools
+/// (`register_library`, `unregister_library`, `define_function`,
+/// `undefine_function`, `import_library`, `reimport_library`) and
+/// for `kill()`. `ok: true` on success; errors return through the
+/// `Err(ErrorData)` JSON-RPC error path instead.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub(crate) struct OkEnvelope {
+    pub ok: bool,
+}
+
+/// Per-tool-call entry returned in the `processes()` snapshot.
+/// `args` is always object-shaped (matches the agent's submission
+/// shape for run/interact/call/rerun). `rerun_id` populated only
+/// for rerun calls; `path` only for call calls.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub(crate) struct ProcessEntry {
+    pub nonce: String,
+    pub tool: String,
+    pub started_at: u64,
+    pub args: mcp::JsonObject,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rerun_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// Success envelope for `processes()`. The snapshot field carries
+/// zero or more `ProcessEntry` records, one per in-flight tool
+/// call.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub(crate) struct ProcessesEnvelope {
+    pub processes: Vec<ProcessEntry>,
+}
+
 /// What: on-disk JSON shape of `closures/<rerun_id>.json`. Mirrors
 /// the relevant subset of `RunParams` that uniquely identifies the
 /// closure: schemas + body, no per-call args, no nonce.
@@ -477,37 +538,21 @@ impl NuSh {
             nonce: outcome.nonce.to_string(),
             rerun_id: rerun_id_opt,
         };
-        let value = json::to_value(&envelope).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("envelope serialize: {e}"),
-                None,
-            )
-        })?;
-        // 2026-06-01 C2 probe: emit ONLY `structured_content` -- no
-        // `content[]` text mirror. Per the_user direction, we are not
-        // developing for older clients, so the spec's
-        // SHOULD-include-content-for-backcompat is not load-bearing.
-        // If Claude Code rejects the structured-only shape, fall back
-        // to `CallToolResult::structured(value)` which sets
-        // `content = [Content::text(value.to_string())]` as the spec-
-        // recommended mirror.
-        let mut result = mcp::CallToolResult::default();
-        result.structured_content = Some(value);
-        result.is_error = Some(false);
-        Ok(result)
+        envelope_to_structured(&envelope)
     }
 
     #[mcp::tool(
-        description = "Evaluate a typed administrative nushell closure on a persistent stateful worker."
+        description = "Evaluate a typed administrative nushell closure on a persistent stateful worker.",
+        output_schema = mcp::schema_for_type::<InteractEnvelope>()
     )]
     async fn interact(
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
-    ) -> Result<String, mcp::ErrorData> {
-        // Slice 5.2 (closure) + slice 5.3 (helpers): lint applies to
-        // interact() bodies on the same shape as run(); the stateful
-        // substrate is irrelevant for static lint, so both paths share
-        // the same `lint_run_params` aggregator.
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
+        // Slice 5.2: lint applies to interact() bodies on the same
+        // shape as run(); the stateful substrate is irrelevant for
+        // static lint, so both paths share the same `lint_run_params`
+        // aggregator.
         let violations = lint_run_params(&self.lint_engine, &p);
         if !violations.is_empty() {
             return Err(mcp::ErrorData::invalid_params(
@@ -534,25 +579,22 @@ impl NuSh {
             timeout_ms,
         )
         .await?;
-        let envelope = json::json!({
-            "result": outcome.result,
-            "nonce": outcome.nonce.to_string(),
-        });
-        json::to_string_json(&envelope).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("envelope serialize: {e}"),
-                None,
-            )
-        })
+        let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
+        let envelope = InteractEnvelope {
+            result: result_obj,
+            nonce: outcome.nonce.to_string(),
+        };
+        envelope_to_structured(&envelope)
     }
 
     #[mcp::tool(
-        description = "Register an empty library namespace; subsequent define_function calls populate it on both the MCP-managed canonical repo and the agent's local mirror at `path`."
+        description = "Register an empty library namespace; subsequent define_function calls populate it on both the MCP-managed canonical repo and the agent's local mirror at `path`.",
+        output_schema = mcp::schema_for_type::<OkEnvelope>()
     )]
     async fn register_library(
         &self,
         mcp::Parameters(p): mcp::Parameters<RegisterLibraryParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let lock = self
             .library_locks
             .register(&p.name)
@@ -570,16 +612,17 @@ impl NuSh {
                 None,
             )
         })?;
-        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+        envelope_to_structured(&OkEnvelope { ok: true })
     }
 
     #[mcp::tool(
-        description = "Define (or replace) a single function inside a registered library. Writes `<library>/<module_path>/<name>.nu` with the `export def main` + `export def resolve` envelope, updates the `mod.nu` cascade up to the library root, mirrors to the agent's local copy, and commits."
+        description = "Define (or replace) a single function inside a registered library. Writes `<library>/<module_path>/<name>.nu` with the `export def main` + `export def resolve` envelope, updates the `mod.nu` cascade up to the library root, mirrors to the agent's local copy, and commits.",
+        output_schema = mcp::schema_for_type::<OkEnvelope>()
     )]
     async fn define_function(
         &self,
         mcp::Parameters(p): mcp::Parameters<DefineFunctionParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         // Slice 5.2: lint the body BEFORE acquiring the lock or touching
         // disk; lint failure should be a fast client-side reject, not a
         // half-committed write.
@@ -627,16 +670,17 @@ impl NuSh {
         .map_err(|e| {
             mcp::ErrorData::internal_error(format!("define_function: {e}"), None)
         })?;
-        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+        envelope_to_structured(&OkEnvelope { ok: true })
     }
 
     #[mcp::tool(
-        description = "Remove a function from a registered library. Updates the `mod.nu` cascade, prunes any now-empty intermediate directories, mirrors the removal, and commits."
+        description = "Remove a function from a registered library. Updates the `mod.nu` cascade, prunes any now-empty intermediate directories, mirrors the removal, and commits.",
+        output_schema = mcp::schema_for_type::<OkEnvelope>()
     )]
     async fn undefine_function(
         &self,
         mcp::Parameters(p): mcp::Parameters<UndefineFunctionParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let lock = self.library_locks.lookup(&p.library).await.ok_or_else(|| {
             mcp::ErrorData::invalid_params(
                 format!("library `{}` is not registered", p.library),
@@ -647,16 +691,17 @@ impl NuSh {
         undefine_function_impl(&p.library, &p.module_path, &p.name).map_err(|e| {
             mcp::ErrorData::internal_error(format!("undefine_function: {e}"), None)
         })?;
-        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+        envelope_to_structured(&OkEnvelope { ok: true })
     }
 
     #[mcp::tool(
-        description = "Invoke a registered library function on a stateless worker. Builds `use <abs path to function file>.nu; <name> resolve (<name> $args)` so the function's `resolve` typecheck runs on the call's result. HEAD-only -- no version pinning."
+        description = "Invoke a registered library function on a stateless worker. Builds `use <abs path to function file>.nu; <name> resolve (<name> $args)` so the function's `resolve` typecheck runs on the call's result. HEAD-only -- no version pinning.",
+        output_schema = mcp::schema_for_type::<CallEnvelope>()
     )]
     async fn call(
         &self,
         mcp::Parameters(p): mcp::Parameters<CallParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let lock = self.library_locks.lookup(&p.library).await.ok_or_else(|| {
             mcp::ErrorData::invalid_params(
                 format!("library `{}` is not registered", p.library),
@@ -716,25 +761,21 @@ impl NuSh {
             p.timeout_ms,
         )
         .await?;
-        let envelope = json::json!({
-            "result": outcome.result,
-            "nonce": outcome.nonce.to_string(),
-        });
-        json::to_string_json(&envelope).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("envelope serialize: {e}"),
-                None,
-            )
+        let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
+        envelope_to_structured(&CallEnvelope {
+            result: result_obj,
+            nonce: outcome.nonce.to_string(),
         })
     }
 
     #[mcp::tool(
-        description = "Import a pre-authored library from a client path into the MCP-managed canonical repo. Strict validation: each function file must have exactly `export def main [args: record<...>]` + `export def resolve [args: record<...>] { $args }`; each `mod.nu` may only re-export children. All violations are reported at once; no auto-fix."
+        description = "Import a pre-authored library from a client path into the MCP-managed canonical repo. Strict validation: each function file must have exactly `export def main [args: record<...>]` + `export def resolve [args: record<...>] { $args }`; each `mod.nu` may only re-export children. All violations are reported at once; no auto-fix.",
+        output_schema = mcp::schema_for_type::<OkEnvelope>()
     )]
     async fn import_library(
         &self,
         mcp::Parameters(p): mcp::Parameters<ImportLibraryParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let lock = self
             .library_locks
             .register(&p.name)
@@ -748,16 +789,17 @@ impl NuSh {
         let _guard = lock.write().await;
         import_library_impl(&p.name, std::path::Path::new(&p.path), &self.lint_engine)
             .map_err(import_error_to_mcp_error)?;
-        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+        envelope_to_structured(&OkEnvelope { ok: true })
     }
 
     #[mcp::tool(
-        description = "Re-import a library from the path it was originally imported from. Reads source_path from the library's metadata; re-runs strict validation; replaces the canonical copy with a fresh snapshot. Errors if the library was register_library-style (kind=registered) instead of import_library-style."
+        description = "Re-import a library from the path it was originally imported from. Reads source_path from the library's metadata; re-runs strict validation; replaces the canonical copy with a fresh snapshot. Errors if the library was register_library-style (kind=registered) instead of import_library-style.",
+        output_schema = mcp::schema_for_type::<OkEnvelope>()
     )]
     async fn reimport_library(
         &self,
         mcp::Parameters(p): mcp::Parameters<ReimportLibraryParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let lock = self.library_locks.lookup(&p.name).await.ok_or_else(|| {
             mcp::ErrorData::invalid_params(
                 format!("library `{}` is not registered", p.name),
@@ -766,16 +808,17 @@ impl NuSh {
         })?;
         let _guard = lock.write().await;
         reimport_library_impl(&p.name, &self.lint_engine).map_err(import_error_to_mcp_error)?;
-        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+        envelope_to_structured(&OkEnvelope { ok: true })
     }
 
     #[mcp::tool(
-        description = "Drop a library and all its functions from the MCP-managed canonical repo. Does not touch the agent's local mirror."
+        description = "Drop a library and all its functions from the MCP-managed canonical repo. Does not touch the agent's local mirror.",
+        output_schema = mcp::schema_for_type::<OkEnvelope>()
     )]
     async fn unregister_library(
         &self,
         mcp::Parameters(p): mcp::Parameters<UnregisterLibraryParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let lock = self
             .library_locks
             .unregister(&p.name)
@@ -793,16 +836,17 @@ impl NuSh {
                 None,
             )
         })?;
-        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+        envelope_to_structured(&OkEnvelope { ok: true })
     }
 
     #[mcp::tool(
-        description = "Re-evaluate a cached stateless closure by rerun_id with new args."
+        description = "Re-evaluate a cached stateless closure by rerun_id with new args.",
+        output_schema = mcp::schema_for_type::<RerunEnvelope>()
     )]
     async fn rerun(
         &self,
         mcp::Parameters(p): mcp::Parameters<RerunParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         if !lib_empower::is_base62(&p.rerun_id) {
             return Err(mcp::ErrorData::invalid_params(
                 format!("rerun_id must be base62; got {:?}", p.rerun_id),
@@ -853,74 +897,91 @@ impl NuSh {
             p.timeout_ms,
         )
         .await?;
-        let envelope = json::json!({
-            "result": outcome.result,
-            "nonce": outcome.nonce.to_string(),
-        });
-        json::to_string_json(&envelope).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("envelope serialize: {e}"),
-                None,
-            )
+        let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
+        envelope_to_structured(&RerunEnvelope {
+            result: result_obj,
+            nonce: outcome.nonce.to_string(),
         })
     }
 
     #[mcp::tool(
-        description = "Snapshot every in-flight tool call on the host. Returns an array of entries with the shape {nonce, tool, started_at, args, ...tool-specific}: for `run`/`interact` no extras; for `rerun` includes `rerun_id`; for `call` includes a flat `path` string `library:module/path:name` (with `library::name` when module_path is empty). Pair with `kill(nonce)` to cancel a specific call."
+        description = "Snapshot every in-flight tool call on the host. Returns an array of entries with the shape {nonce, tool, started_at, args, ...tool-specific}: for `run`/`interact` no extras; for `rerun` includes `rerun_id`; for `call` includes a flat `path` string `library:module/path:name` (with `library::name` when module_path is empty). Pair with `kill(nonce)` to cancel a specific call.",
+        output_schema = mcp::schema_for_type::<ProcessesEnvelope>()
     )]
     async fn processes(
         &self,
         mcp::Parameters(_p): mcp::Parameters<ProcessesParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let map = self.in_flight.lock().await;
-        let entries: Vec<serde_json::Value> = map
+        let entries: Vec<ProcessEntry> = map
             .iter()
             .map(|(nonce_str, entry)| {
-                let mut obj = json::json!({
-                    "nonce": nonce_str,
-                    "tool": entry.tool,
-                    "started_at": entry.started_at,
-                    "args": entry.args,
-                });
-                match &entry.kind {
-                    InFlightKind::Run | InFlightKind::Interact => {}
-                    InFlightKind::Rerun { rerun_id } => {
-                        obj["rerun_id"] = json::Value::String(rerun_id.clone());
-                    }
-                    InFlightKind::Call { path } => {
-                        obj["path"] = json::Value::String(path.clone());
-                    }
+                let args_obj = entry
+                    .args
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default();
+                let (rerun_id, path) = match &entry.kind {
+                    InFlightKind::Run | InFlightKind::Interact => (None, None),
+                    InFlightKind::Rerun { rerun_id } => (Some(rerun_id.clone()), None),
+                    InFlightKind::Call { path } => (None, Some(path.clone())),
+                };
+                ProcessEntry {
+                    nonce: nonce_str.clone(),
+                    tool: entry.tool.to_string(),
+                    started_at: entry.started_at,
+                    args: args_obj,
+                    rerun_id,
+                    path,
                 }
-                obj
             })
             .collect();
         drop(map);
-        let envelope = json::json!({
-            "processes": entries,
-        });
-        json::to_string_json(&envelope).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("envelope serialize: {e}"),
-                None,
-            )
-        })
+        envelope_to_structured(&ProcessesEnvelope { processes: entries })
     }
 
     #[mcp::tool(
-        description = "Cancel an in-flight call by its nonce. SIGKILLs the worker holding the call; runs-pool workers are reaped and the next acquire spawns a fresh worker, interact respawn loses session state. Returns {ok: true} silently if the nonce is unknown or already completed (race-safe)."
+        description = "Cancel an in-flight call by its nonce. SIGKILLs the worker holding the call; runs-pool workers are reaped and the next acquire spawns a fresh worker, interact respawn loses session state. Returns {ok: true} silently if the nonce is unknown or already completed (race-safe).",
+        output_schema = mcp::schema_for_type::<OkEnvelope>()
     )]
     async fn kill(
         &self,
         mcp::Parameters(p): mcp::Parameters<KillParams>,
-    ) -> Result<String, mcp::ErrorData> {
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let map = self.in_flight.lock().await;
         if let Some(entry) = map.get(&p.nonce) {
             let pid = entry.pid;
             drop(map);
             kill_worker_pid(pid);
         }
-        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
+        envelope_to_structured(&OkEnvelope { ok: true })
     }
+}
+
+/// What: serializes any envelope struct into a `CallToolResult`
+/// carrying only `structured_content` (no `content[]` text mirror).
+/// Returns the rmcp shape Claude Code accepts directly via its
+/// 2025-11-25 `outputSchema` validator.
+///
+/// Why: every C2 / C3 handler emits its typed envelope through this
+/// seam so the structured-only choice (no content[] mirror) lives in
+/// one place. If we ever need to flip to the spec-recommended
+/// `structured + text mirror`, the swap is a one-line change to
+/// `CallToolResult::structured`.
+///
+/// Where: called by every `#[mcp::tool]` handler in `NuSh` on the
+/// success path. Errors still flow through `Err(ErrorData)`.
+fn envelope_to_structured<T: ser::Serialize>(envelope: &T) -> Result<mcp::CallToolResult, mcp::ErrorData> {
+    let value = json::to_value(envelope).map_err(|e| {
+        mcp::ErrorData::internal_error(
+            format!("envelope serialize: {e}"),
+            None,
+        )
+    })?;
+    let mut result = mcp::CallToolResult::default();
+    result.structured_content = Some(value);
+    result.is_error = Some(false);
+    Ok(result)
 }
 
 /// What: lint of a `RunParams` -- a single pass over the agent's

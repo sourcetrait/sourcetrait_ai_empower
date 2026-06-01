@@ -292,15 +292,10 @@ fn smoke_10_processes_empty_when_idle() {
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
-    let text = result
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|a| a.first())
-        .and_then(|c| c.get("text"))
-        .and_then(|t| t.as_str())
-        .unwrap_or_else(|| panic!("expected text; got {resp}"));
-    let env: serde_json::Value = serde_json::from_str(text)
-        .unwrap_or_else(|e| panic!("parse: {e}"));
+    // C3: processes() emits structured_content only.
+    let env = result
+        .get("structuredContent")
+        .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
     let list = env["processes"]
         .as_array()
         .unwrap_or_else(|| panic!("expected processes array; got {env}"));
@@ -315,14 +310,11 @@ fn smoke_11_kill_unknown_nonce_silent_ok() {
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
-    let text = result
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|a| a.first())
-        .and_then(|c| c.get("text"))
-        .and_then(|t| t.as_str())
-        .unwrap_or_else(|| panic!("expected text; got {resp}"));
-    assert!(text.contains("\"ok\":true"), "got {text}");
+    // C3: kill() emits structured_content only.
+    let env = result
+        .get("structuredContent")
+        .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
+    assert_eq!(env["ok"].as_bool(), Some(true), "got {env}");
 }
 
 #[test]

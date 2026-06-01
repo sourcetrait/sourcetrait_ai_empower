@@ -82,7 +82,14 @@ pub struct RerunParams {
 /// `#[mcp::tool]` attribute via `schema_for_type::<RunEnvelope>()`.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct RunEnvelope {
-    pub result: serde_json::Value,
+    /// Worker-evaluated return value of the body. Always a JSON object
+    /// because the worker template runs `__resolve [result: record<...>]
+    /// $result` which forces a record-shaped return. `mcp::JsonObject`
+    /// (not `serde_json::Value`) keeps the schemars rendering as
+    /// `{"type": "object"}` -- the `true` rendering Value would produce
+    /// is rejected by Claude Code's MCP client schema validator (same
+    /// gotcha as `RunParams.args`).
+    pub result: mcp::JsonObject,
     pub nonce: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rerun_id: Option<String>,
@@ -455,8 +462,18 @@ impl NuSh {
                 None
             }
         };
+        // outcome.result is always a JSON object because the worker's
+        // `__resolve [result: record<RESULT_SCHEMA>] { $result }` binding
+        // forces a record-shaped return. If the typed binding ever fails,
+        // the worker emits ok=false with the cant_convert error and we
+        // bail before this point; here we trust the shape.
+        let result_obj = outcome
+            .result
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         let envelope = RunEnvelope {
-            result: outcome.result,
+            result: result_obj,
             nonce: outcome.nonce.to_string(),
             rerun_id: rerun_id_opt,
         };

@@ -3,6 +3,7 @@ pub(crate) mod server {
     pub(crate) mod library;
     pub(crate) mod lint;
     pub(crate) mod parse_engine;
+    pub(crate) mod pool;
     pub(crate) mod run;
     pub(crate) mod tool;
     pub(crate) mod worker_handle;
@@ -61,11 +62,15 @@ pub(crate) use crate::{
             wrap_as_def_body,
             wrap_as_module,
         },
+        pool::Pool,
         tool::{
             NuSh,
             RunParams,
         },
-        worker_handle::WorkerHandle,
+        worker_handle::{
+            WorkerHandle,
+            kill_worker_pid,
+        },
     },
     template::{
         build_interact_source,
@@ -100,8 +105,13 @@ pub(crate) use std::{
         atomic::{
             AtomicBool,
             AtomicU64,
+            AtomicUsize,
             Ordering,
         },
+    },
+    time::{
+        SystemTime,
+        UNIX_EPOCH,
     },
 };
 
@@ -153,7 +163,14 @@ pub(crate) mod nu {
 }
 
 pub(crate) mod sys {
-    pub(crate) use nix::unistd::setsid;
+    pub(crate) use nix::sys::signal::{
+        Signal,
+        kill,
+    };
+    pub(crate) use nix::unistd::{
+        Pid,
+        setsid,
+    };
 }
 
 pub(crate) mod ser {
@@ -182,6 +199,7 @@ pub(crate) mod mcp {
         handler::server::router::tool::ToolRouter,
         handler::server::wrapper::Parameters,
         model::{
+            ErrorCode,
             Implementation,
             JsonObject,
             ServerCapabilities,
@@ -207,11 +225,18 @@ pub(crate) mod tk {
             Command,
         },
         runtime::Runtime,
+        spawn,
         sync::{
             Mutex as AsyncMutex,
+            OwnedSemaphorePermit,
             RwLock as AsyncRwLock,
+            Semaphore,
         },
-        try_join,
+        time::{
+            Duration as TkDuration,
+            interval,
+            timeout,
+        },
     };
 }
 

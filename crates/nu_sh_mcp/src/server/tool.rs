@@ -53,6 +53,13 @@ pub struct RunParams {
     #[serde(default)]
     pub functions: Vec<Function>,
     pub closure: String,
+    /// Optional per-call timeout in milliseconds. When the worker
+    /// round-trip exceeds this, the call returns -32001 and the worker
+    /// is killed (runs-pool worker is reaped, interact worker is
+    /// respawned losing session state). Defaults to 120000 (2 minutes)
+    /// when omitted. No upper cap -- agent picks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 /// What: agent-facing parameters for `rerun()`. Carries the rerun_id
@@ -78,6 +85,10 @@ pub struct RerunParams {
     /// Per-call args. The args_schema baked into the cached closure
     /// gates this at parse time inside the worker.
     pub args: mcp::JsonObject,
+    /// Optional per-call timeout in milliseconds. Same semantics as
+    /// `RunParams.timeout_ms`. Defaults to 120000 when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 /// What: on-disk JSON shape of `closures/<rerun_id>.json`. Mirrors
@@ -249,7 +260,41 @@ pub struct CallParams {
     /// enforced by the function's `main` signature at parse time inside
     /// the worker (typed positional binding on a literal record).
     pub args: mcp::JsonObject,
+    /// Optional per-call timeout in milliseconds. Same semantics as
+    /// `RunParams.timeout_ms`. Defaults to 120000 when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
+
+/// What: agent-facing parameters for `kill`. The `nonce` is the value
+/// returned in a prior tool envelope (the per-call id rendered as a
+/// base62 string).
+///
+/// Why: cancellation needs to address one specific in-flight call;
+/// `nonce` is the existing per-call id we already give the agent in
+/// every envelope, so no new identifier is needed. Agent uses
+/// `processes()` to discover live nonces, matches against their own
+/// send-set via `args`, picks the right one, calls `kill(nonce)`.
+///
+/// Where: extracted in `NuSh::kill`; looks up the in-flight map and
+/// SIGKILLs the holding worker via `kill_worker_pid`.
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct KillParams {
+    pub nonce: String,
+}
+
+/// What: agent-facing parameters for `processes`. Empty -- the tool
+/// takes no input. Returns a snapshot of every in-flight call on the
+/// host.
+///
+/// Why: an empty params struct (`{}`) is the schemars-friendly shape
+/// rmcp expects for a no-arg tool; not having any params keeps the
+/// tool surface explicit.
+///
+/// Where: extracted in `NuSh::processes`; the body just snapshots the
+/// in-flight map and serializes per-tool entry shapes.
+#[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
+pub struct ProcessesParams {}
 
 /// What: the rmcp server-side state. Owns Arc-wrapped handles to the
 /// two worker subprocesses (stateless + stateful), the NonceGen for
@@ -268,13 +313,56 @@ pub struct CallParams {
 /// runs the MCP protocol against the host's stdin/stdout. Every
 /// `#[mcp::tool]` method on this impl is a tool surface entry.
 pub struct NuSh {
-    runs_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
-    interact_worker: Arc<tk::AsyncMutex<WorkerHandle>>,
+    runs_pool: Arc<Pool>,
+    interact_worker: Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
     nonce_gen: Arc<lib_empower::NonceGen>,
     library_locks: Arc<LibraryLocks>,
     lint_engine: Arc<ParseEngine>,
+    in_flight: Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     #[allow(dead_code)]
     tool_router: mcp::ToolRouter<NuSh>,
+}
+
+/// Default per-call timeout when `timeout_ms` is omitted (the_user
+/// 2026-06-01: 120s catches hangs without imposing an upper cap).
+const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+
+/// JSON-RPC error code returned when a call exceeds `timeout_ms`
+/// (the_user 2026-06-01: `-32001` chosen from the JSON-RPC
+/// implementation-defined server-error range, distinct from -32603
+/// internal_error so agents can branch).
+const TIMEOUT_ERROR_CODE: i32 = -32001;
+
+/// What: snapshot of one in-flight tool call. Lives in `NuSh::in_flight`
+/// keyed by the call's nonce string; `processes()` serializes it,
+/// `kill(nonce)` looks up the worker pid through it.
+///
+/// Why: identification + cancellation (slice 5.9) requires the host to
+/// remember which worker process is handling which logical call. `args`
+/// is the agent-supplied data the agent uses to match entries against
+/// their own send-set (the_user 2026-06-01: "if it's doing things
+/// correctly, args should always be different").
+///
+/// Where: inserted at the top of each dispatch (run/interact/rerun/
+/// call), removed via `InFlightGuard::drop` when dispatch returns.
+/// Read by `NuSh::processes` and `NuSh::kill`.
+pub(crate) struct InFlightEntry {
+    pub tool: &'static str,
+    pub started_at: u64,
+    pub args: serde_json::Value,
+    pub pid: u32,
+    pub kind: InFlightKind,
+}
+
+/// Tool-specific extra fields per the_user 2026-06-01 per-tool entry
+/// shape lock: run/interact have nothing extra; rerun carries the
+/// `rerun_id` it was invoked with; call carries the
+/// `library:module/path:name` flat string.
+pub(crate) enum InFlightKind {
+    Run,
+    Interact,
+    Rerun { rerun_id: String },
+    Call { path: String },
 }
 
 #[mcp::tool_router]
@@ -295,18 +383,19 @@ impl NuSh {
     /// substrate + worker spawn. Tests spawn their own NuSh
     /// indirectly via the host binary.
     pub(crate) fn new(
-        runs_worker: WorkerHandle,
+        runs_pool: Arc<Pool>,
         interact_worker: WorkerHandle,
         nonce_gen: Arc<lib_empower::NonceGen>,
         library_locks: Arc<LibraryLocks>,
         lint_engine: Arc<ParseEngine>,
     ) -> Self {
         Self {
-            runs_worker: Arc::new(tk::AsyncMutex::new(runs_worker)),
-            interact_worker: Arc::new(tk::AsyncMutex::new(interact_worker)),
+            runs_pool,
+            interact_worker: Arc::new(tk::AsyncMutex::new(Some(interact_worker))),
             nonce_gen,
             library_locks,
             lint_engine,
+            in_flight: Arc::new(tk::AsyncMutex::new(HashMap::new())),
             tool_router: Self::tool_router(),
         }
     }
@@ -338,12 +427,19 @@ impl NuSh {
                 None,
             )
         })?;
-        let outcome = dispatch_to_worker(
-            &self.runs_worker,
+        let args_json = serde_json::Value::Object(p.args.clone());
+        let timeout_ms = p.timeout_ms;
+        let outcome = dispatch_pooled(
+            &self.runs_pool,
             &self.nonce_gen,
+            &self.in_flight,
             CacheKind::Runs,
             &payload_bytes,
             source,
+            "run",
+            args_json,
+            InFlightKind::Run,
+            timeout_ms,
         )
         .await?;
         let rerun_id = lib_empower::RerunHash::of(&(
@@ -391,12 +487,16 @@ impl NuSh {
                 None,
             )
         })?;
-        let outcome = dispatch_to_worker(
+        let args_json = serde_json::Value::Object(p.args.clone());
+        let timeout_ms = p.timeout_ms;
+        let outcome = dispatch_interact(
             &self.interact_worker,
             &self.nonce_gen,
-            CacheKind::Interacts,
+            &self.in_flight,
             &payload_bytes,
             source,
+            args_json,
+            timeout_ms,
         )
         .await?;
         let envelope = json::json!({
@@ -529,13 +629,13 @@ impl NuSh {
                 None,
             ));
         }
-        let args_json = json::to_string_json(&p.args).unwrap_or_else(|_| "{}".to_string());
+        let args_json_str = json::to_string_json(&p.args).unwrap_or_else(|_| "{}".to_string());
         let source = format!(
             "use {}\n{} resolve ({} {})\n",
             file_path.display(),
             p.name,
             p.name,
-            args_json,
+            args_json_str,
         );
         let payload_bytes = json::to_vec(&p).map_err(|e| {
             mcp::ErrorData::internal_error(
@@ -543,12 +643,23 @@ impl NuSh {
                 None,
             )
         })?;
-        let outcome = dispatch_to_worker(
-            &self.runs_worker,
+        let path_str = if p.module_path.is_empty() {
+            format!("{}::{}", p.library, p.name)
+        } else {
+            format!("{}:{}:{}", p.library, p.module_path, p.name)
+        };
+        let args_json = serde_json::Value::Object(p.args.clone());
+        let outcome = dispatch_pooled(
+            &self.runs_pool,
             &self.nonce_gen,
+            &self.in_flight,
             CacheKind::Calls,
             &payload_bytes,
             source,
+            "call",
+            args_json,
+            InFlightKind::Call { path: path_str },
+            p.timeout_ms,
         )
         .await?;
         let envelope = json::json!({
@@ -663,9 +774,10 @@ impl NuSh {
         let reconstructed = RunParams {
             args_schema: cached.args_schema,
             result_schema: cached.result_schema,
-            args: p.args,
+            args: p.args.clone(),
             functions: Vec::new(),
             closure: cached.closure,
+            timeout_ms: p.timeout_ms,
         };
         let source = build_run_source(&reconstructed);
         let payload_bytes = json::to_vec(&reconstructed).map_err(|e| {
@@ -674,12 +786,18 @@ impl NuSh {
                 None,
             )
         })?;
-        let outcome = dispatch_to_worker(
-            &self.runs_worker,
+        let args_json = serde_json::Value::Object(p.args);
+        let outcome = dispatch_pooled(
+            &self.runs_pool,
             &self.nonce_gen,
+            &self.in_flight,
             CacheKind::Runs,
             &payload_bytes,
             source,
+            "rerun",
+            args_json,
+            InFlightKind::Rerun { rerun_id: p.rerun_id.clone() },
+            p.timeout_ms,
         )
         .await?;
         let envelope = json::json!({
@@ -692,6 +810,63 @@ impl NuSh {
                 None,
             )
         })
+    }
+
+    #[mcp::tool(
+        description = "Snapshot every in-flight tool call on the host. Returns an array of entries with the shape {nonce, tool, started_at, args, ...tool-specific}: for `run`/`interact` no extras; for `rerun` includes `rerun_id`; for `call` includes a flat `path` string `library:module/path:name` (with `library::name` when module_path is empty). Pair with `kill(nonce)` to cancel a specific call."
+    )]
+    async fn processes(
+        &self,
+        mcp::Parameters(_p): mcp::Parameters<ProcessesParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let map = self.in_flight.lock().await;
+        let entries: Vec<serde_json::Value> = map
+            .iter()
+            .map(|(nonce_str, entry)| {
+                let mut obj = json::json!({
+                    "nonce": nonce_str,
+                    "tool": entry.tool,
+                    "started_at": entry.started_at,
+                    "args": entry.args,
+                });
+                match &entry.kind {
+                    InFlightKind::Run | InFlightKind::Interact => {}
+                    InFlightKind::Rerun { rerun_id } => {
+                        obj["rerun_id"] = json::Value::String(rerun_id.clone());
+                    }
+                    InFlightKind::Call { path } => {
+                        obj["path"] = json::Value::String(path.clone());
+                    }
+                }
+                obj
+            })
+            .collect();
+        drop(map);
+        let envelope = json::json!({
+            "processes": entries,
+        });
+        json::to_string_json(&envelope).map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("envelope serialize: {e}"),
+                None,
+            )
+        })
+    }
+
+    #[mcp::tool(
+        description = "Cancel an in-flight call by its nonce. SIGKILLs the worker holding the call; runs-pool workers are reaped and the next acquire spawns a fresh worker, interact respawn loses session state. Returns {ok: true} silently if the nonce is unknown or already completed (race-safe)."
+    )]
+    async fn kill(
+        &self,
+        mcp::Parameters(p): mcp::Parameters<KillParams>,
+    ) -> Result<String, mcp::ErrorData> {
+        let map = self.in_flight.lock().await;
+        if let Some(entry) = map.get(&p.nonce) {
+            let pid = entry.pid;
+            drop(map);
+            kill_worker_pid(pid);
+        }
+        Ok(json::to_string_json(&json::json!({"ok": true})).expect("envelope serializes"))
     }
 }
 
@@ -722,8 +897,8 @@ fn lint_run_params(engine: &ParseEngine, p: &RunParams) -> Vec<LintViolation> {
     violations
 }
 
-/// What: the shape returned by `dispatch_to_worker`. Pairs the
-/// per-call `Nonce` with the decoded JSON `result` value.
+/// What: the shape returned by `dispatch_pooled` / `dispatch_interact`.
+/// Pairs the per-call `Nonce` with the decoded JSON `result` value.
 ///
 /// Why: each handler (run/interact/rerun/call) builds its own
 /// envelope on top of this because the envelope shape varies (run
@@ -739,30 +914,33 @@ struct DispatchOutcome {
     result: json::Value,
 }
 
-/// What: shared worker round-trip path used by run/interact/rerun/
-/// call. Computes the per-call nonce from the payload, creates the
-/// per-call log dir under `$XDG_CACHE_HOME/nu_sh_mcp/<kind>/<nonce>/`,
-/// acquires the worker mutex, sends the RunRequest, releases the
-/// mutex, decodes the response, and returns the `DispatchOutcome`
-/// (or an MCP-shaped error on any failure).
+/// What: dispatch one tool call against the stateless `runs_pool`.
+/// Acquires a worker from the pool, registers an in-flight entry,
+/// wraps the round-trip in `tk::timeout`, kills the worker on
+/// timeout, returns the `DispatchOutcome` or an MCP-shaped error.
 ///
-/// Why: the four handlers all need the same plumbing (nonce + log
-/// dir + worker round-trip + error mapping); factoring it out keeps
-/// the handlers small and forces consistent error mapping at the
-/// rmcp seam. Releasing the worker mutex before computing the
-/// envelope keeps the lock held for the shortest possible window.
+/// Why: replaces the prior single-worker `dispatch_to_worker` for
+/// run/rerun/call. The pool gives concurrent execution; in-flight
+/// tracking lets `kill(nonce)` and timeouts target a specific call's
+/// worker; timeout wrap caps every call by the_user 2026-06-01
+/// default of 120s when `timeout_ms` is omitted.
 ///
-/// Where: called by `NuSh::run`, `NuSh::interact`, `NuSh::rerun`,
-/// and `NuSh::call`. Each handler picks the worker (`runs_worker`
-/// or `interact_worker`) + `CacheKind` for its own semantics.
-async fn dispatch_to_worker(
-    worker: &Arc<tk::AsyncMutex<WorkerHandle>>,
-    nonce_gen: &lib_empower::NonceGen,
+/// Where: called by `NuSh::run`, `NuSh::rerun`, `NuSh::call` (all
+/// stateless surfaces).
+async fn dispatch_pooled(
+    pool: &Arc<Pool>,
+    nonce_gen: &Arc<lib_empower::NonceGen>,
+    in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     log_kind: CacheKind,
     payload_for_nonce: &[u8],
     source: String,
+    tool_name: &'static str,
+    args_json: serde_json::Value,
+    kind: InFlightKind,
+    timeout_ms: Option<u64>,
 ) -> Result<DispatchOutcome, mcp::ErrorData> {
     let nonce = nonce_gen.next(&payload_for_nonce);
+    let nonce_str = nonce.to_string();
     let log_dir = cache_dir(log_kind, nonce);
     fs::create_dir_all(&log_dir).map_err(|e| {
         mcp::ErrorData::internal_error(
@@ -770,12 +948,43 @@ async fn dispatch_to_worker(
             None,
         )
     })?;
-    let mut worker_guard = worker.lock().await;
-    let response = worker_guard
-        .send_request(log_dir, source)
-        .await
-        .map_err(|e| mcp::ErrorData::internal_error(e.to_string(), None))?;
-    drop(worker_guard);
+    let mut guard = pool.acquire().await.map_err(|e| {
+        mcp::ErrorData::internal_error(format!("pool acquire: {e}"), None)
+    })?;
+    let pid = guard.pid();
+    register_in_flight(
+        in_flight,
+        nonce_str.clone(),
+        tool_name,
+        args_json,
+        pid,
+        kind,
+    )
+    .await;
+    let _flight_cleanup = InFlightCleanup {
+        map: in_flight.clone(),
+        key: nonce_str,
+    };
+    let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
+    let send_fut = guard.send_request(log_dir, source);
+    let timed = tk::timeout(
+        tk::TkDuration::from_millis(effective_timeout),
+        send_fut,
+    )
+    .await;
+    let response = match timed {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => {
+            guard.drop_handle();
+            return Err(mcp::ErrorData::internal_error(e.to_string(), None));
+        }
+        Err(_) => {
+            kill_worker_pid(pid);
+            guard.drop_handle();
+            return Err(timeout_error(effective_timeout));
+        }
+    };
+    drop(guard);
     if !response.ok {
         return Err(mcp::ErrorData::internal_error(
             response.error.unwrap_or_else(|| {
@@ -787,6 +996,155 @@ async fn dispatch_to_worker(
     let result: json::Value = msgpack::from_slice(&response.value)
         .unwrap_or(json::Value::Null);
     Ok(DispatchOutcome { nonce, result })
+}
+
+/// What: dispatch one `interact()` call against the single
+/// stateful worker. Acquires the mutex, lazily respawns the worker if
+/// None (after a prior kill / timeout / death cleared it), registers
+/// in-flight, wraps in `tk::timeout`, kills + clears on timeout or
+/// io error so the NEXT call lazy-respawns.
+///
+/// Why: the stateful worker is a singleton -- it can't pool because
+/// session state is per-worker. Lazy-respawn lets kill/timeout clear
+/// the handle without leaving callers stuck on a dead worker; the
+/// next interact() spawns a fresh one (losing session state, as
+/// the_user 2026-06-01 confirmed).
+///
+/// Where: called only by `NuSh::interact`.
+async fn dispatch_interact(
+    interact: &Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
+    nonce_gen: &Arc<lib_empower::NonceGen>,
+    in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
+    payload_for_nonce: &[u8],
+    source: String,
+    args_json: serde_json::Value,
+    timeout_ms: Option<u64>,
+) -> Result<DispatchOutcome, mcp::ErrorData> {
+    let nonce = nonce_gen.next(&payload_for_nonce);
+    let nonce_str = nonce.to_string();
+    let log_dir = cache_dir(CacheKind::Interacts, nonce);
+    fs::create_dir_all(&log_dir).map_err(|e| {
+        mcp::ErrorData::internal_error(
+            format!("create_dir_all {}: {e}", log_dir.display()),
+            None,
+        )
+    })?;
+    let mut worker_lock = interact.lock().await;
+    if worker_lock.is_none() {
+        let spawned = WorkerHandle::spawn(Mode::Stateful).await.map_err(|e| {
+            mcp::ErrorData::internal_error(
+                format!("interact respawn: {e}"),
+                None,
+            )
+        })?;
+        *worker_lock = Some(spawned);
+    }
+    let pid = worker_lock
+        .as_ref()
+        .expect("interact handle present after spawn")
+        .pid();
+    register_in_flight(
+        in_flight,
+        nonce_str.clone(),
+        "interact",
+        args_json,
+        pid,
+        InFlightKind::Interact,
+    )
+    .await;
+    let _flight_cleanup = InFlightCleanup {
+        map: in_flight.clone(),
+        key: nonce_str,
+    };
+    let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
+    let handle = worker_lock
+        .as_mut()
+        .expect("interact handle present after spawn");
+    let send_fut = handle.send_request(log_dir, source);
+    let timed = tk::timeout(
+        tk::TkDuration::from_millis(effective_timeout),
+        send_fut,
+    )
+    .await;
+    let response = match timed {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => {
+            *worker_lock = None;
+            return Err(mcp::ErrorData::internal_error(e.to_string(), None));
+        }
+        Err(_) => {
+            kill_worker_pid(pid);
+            *worker_lock = None;
+            return Err(timeout_error(effective_timeout));
+        }
+    };
+    drop(worker_lock);
+    if !response.ok {
+        return Err(mcp::ErrorData::internal_error(
+            response.error.unwrap_or_else(|| {
+                "worker returned ok=false with no error".to_string()
+            }),
+            None,
+        ));
+    }
+    let result: json::Value = msgpack::from_slice(&response.value)
+        .unwrap_or(json::Value::Null);
+    Ok(DispatchOutcome { nonce, result })
+}
+
+async fn register_in_flight(
+    in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
+    nonce_str: String,
+    tool_name: &'static str,
+    args_json: serde_json::Value,
+    pid: u32,
+    kind: InFlightKind,
+) {
+    let mut map = in_flight.lock().await;
+    map.insert(
+        nonce_str,
+        InFlightEntry {
+            tool: tool_name,
+            started_at: now_millis(),
+            args: args_json,
+            pid,
+            kind,
+        },
+    );
+}
+
+struct InFlightCleanup {
+    map: Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
+    key: String,
+}
+
+impl Drop for InFlightCleanup {
+    fn drop(&mut self) {
+        let map = self.map.clone();
+        let key = std::mem::take(&mut self.key);
+        tk::spawn(async move {
+            let mut g = map.lock().await;
+            g.remove(&key);
+        });
+    }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn timeout_error(timeout_ms: u64) -> mcp::ErrorData {
+    mcp::ErrorData {
+        code: mcp::ErrorCode(TIMEOUT_ERROR_CODE),
+        message: format!(
+            "timeout: closure exceeded {timeout_ms}ms; worker was killed",
+        )
+        .into(),
+        data: None,
+    }
 }
 
 /// What: writes the closure cache file at `closures/<rerun_id>.json`

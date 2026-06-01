@@ -150,7 +150,7 @@ fn interact_lists_both_run_and_interact_tools() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 10, "expected 10 tools; got {names:?}");
+    assert_eq!(names.len(), 12, "expected 12 tools; got {names:?}");
     for expected in [
         "run",
         "interact",

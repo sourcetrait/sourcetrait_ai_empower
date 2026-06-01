@@ -20,6 +20,43 @@ pub(crate) struct WorkerHandle {
     stdin: tk::ChildStdin,
     stdout: tk::ChildStdout,
     next_id: AtomicU64,
+    pid: u32,
+    mode: Mode,
+}
+
+impl WorkerHandle {
+    /// Process id of the spawned worker. Stable for the handle's life;
+    /// snapshotted at spawn so external killers (slice 5.9's
+    /// `kill(nonce)` and slice 5.10's timeout) can target the worker
+    /// via `nix::sys::signal::kill` WITHOUT having to lock the handle.
+    pub(crate) fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    /// Mode this worker was spawned with (`Stateless` for the runs pool,
+    /// `Stateful` for the interact worker). Pool uses this on respawn.
+    #[allow(dead_code)]
+    pub(crate) fn mode(&self) -> Mode {
+        self.mode
+    }
+}
+
+/// What: send SIGKILL to the worker process identified by `pid`. Fire-
+/// and-forget; the worker's serve loop EOF-completes, the host's pending
+/// `send_request` returns Err, and the dispatch path cleans up.
+///
+/// Why: slice 5.9 `kill(nonce)` and slice 5.10 timeout both need to
+/// terminate a specific worker WITHOUT holding the `WorkerHandle`'s
+/// mutex (the mutex is held by the in-flight call). Targeting by pid
+/// via `nix::sys::signal::kill` is the only way to interrupt from
+/// outside the borrow. SIGKILL (not SIGINT) is used because plugin
+/// subprocesses of the worker also need to die cleanly; SIGINT would
+/// only interrupt nushell eval, leaving plugin children running.
+///
+/// Where: called by `server::tool::NuSh::kill` (slice 5.9) and by the
+/// timeout branch of `dispatch_to_worker` (slice 5.10).
+pub(crate) fn kill_worker_pid(pid: u32) {
+    let _ = sys::kill(sys::Pid::from_raw(pid as i32), sys::Signal::SIGKILL);
 }
 
 impl WorkerHandle {
@@ -67,11 +104,16 @@ impl WorkerHandle {
                 hello.protocol_version, PROTOCOL_VERSION,
             )));
         }
+        let pid = child.id().ok_or_else(|| {
+            io::Error::other("worker child pid missing")
+        })?;
         Ok(Self {
             child,
             stdin,
             stdout,
             next_id: AtomicU64::new(1),
+            pid,
+            mode,
         })
     }
 

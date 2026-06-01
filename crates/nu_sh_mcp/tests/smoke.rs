@@ -109,6 +109,18 @@ impl Host {
         self.send(&req);
         self.read_id(id)
     }
+
+    fn call_tool(&mut self, tool: &str, args: serde_json::Value) -> serde_json::Value {
+        let id = self.next_id();
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": args}
+        });
+        self.send(&req);
+        self.read_id(id)
+    }
 }
 
 impl Drop for Host {
@@ -259,6 +271,89 @@ fn smoke_6_worker_death_via_exit() {
         has_error_path,
         "expected worker exit to surface as error; got {resp}",
     );
+}
+
+#[test]
+fn smoke_9_timeout_fires() {
+    // Slice 5.10: timeout_ms wraps the round-trip in tokio::time::timeout.
+    // A closure that sleeps longer than the timeout should return code
+    // -32001 with a "timeout:" message; the worker is killed and the
+    // next call succeeds on a fresh pool worker.
+    let mut host = Host::spawn();
+    let args = serde_json::json!({
+        "args_schema": "noop: int",
+        "result_schema": "out: int",
+        "args": {"noop": 0},
+        // Multi-statement body without outer braces; inserted by the
+        // template as the def body. `sleep 5sec` blocks the worker for
+        // 5 seconds; the 200ms timeout fires first.
+        "closure": "sleep 5sec\n{ out: 0 }",
+        "functions": [],
+        "timeout_ms": 200u64
+    });
+    let resp = host.run(args);
+    let err = resp.get("error").unwrap_or_else(|| {
+        panic!("expected error envelope; got {resp}");
+    });
+    assert_eq!(err["code"].as_i64(), Some(-32001), "got {err}");
+    assert!(
+        err["message"].as_str().unwrap_or("").contains("timeout"),
+        "expected 'timeout' in message; got {err}",
+    );
+    // Next call against the (respawned) pool worker should succeed.
+    let args2 = serde_json::json!({
+        "args_schema": "x: int",
+        "result_schema": "out: int",
+        "args": {"x": 7},
+        "closure": "{ out: ($args.x + 1) }",
+        "functions": []
+    });
+    let resp2 = host.run(args2);
+    let env = extract_envelope(&resp2)
+        .unwrap_or_else(|| panic!("expected envelope; got {resp2}"));
+    assert_eq!(env["result"]["out"].as_i64(), Some(8), "got {env}");
+}
+
+#[test]
+fn smoke_10_processes_empty_when_idle() {
+    // Slice 5.9: processes() returns the in-flight list. When nothing
+    // is running, the list is empty.
+    let mut host = Host::spawn();
+    let resp = host.call_tool("processes", serde_json::json!({}));
+    let result = resp.get("result").unwrap_or_else(|| {
+        panic!("expected ok result; got {resp}");
+    });
+    let text = result
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or_else(|| panic!("expected text; got {resp}"));
+    let env: serde_json::Value = serde_json::from_str(text)
+        .unwrap_or_else(|e| panic!("parse: {e}"));
+    let list = env["processes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected processes array; got {env}"));
+    assert!(list.is_empty(), "expected empty in-flight; got {list:?}");
+}
+
+#[test]
+fn smoke_11_kill_unknown_nonce_silent_ok() {
+    // Slice 5.9: kill() with an unknown nonce returns {ok: true} silently.
+    let mut host = Host::spawn();
+    let resp = host.call_tool("kill", serde_json::json!({"nonce": "doesnotexist"}));
+    let result = resp.get("result").unwrap_or_else(|| {
+        panic!("expected ok result; got {resp}");
+    });
+    let text = result
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or_else(|| panic!("expected text; got {resp}"));
+    assert!(text.contains("\"ok\":true"), "got {text}");
 }
 
 #[test]

@@ -31,11 +31,23 @@ pub fn run_server() {
         // handshake) errors, the server refuses to start. Both worker
         // processes are needed: the stateless one drives run(), the
         // stateful one drives interact().
-        let (runs_worker, interact_worker) = tk::try_join!(
-            WorkerHandle::spawn(Mode::Stateless),
-            WorkerHandle::spawn(Mode::Stateful),
-        )
-        .expect("spawn both workers");
+        // Slice 5.8 substrate: pool the stateless `runs` workers. Cap
+        // = max(1, available_parallelism - 3) matches the_user
+        // 2026-06-01 lock (warm parity); min 1 always available; idle
+        // reap at 60s. Interact stays single-worker because stateful
+        // sessions can't be sensibly pooled.
+        let cap = std::thread::available_parallelism()
+            .map(|n| n.get().saturating_sub(3).max(1))
+            .unwrap_or(1);
+        let runs_pool = Pool::new(
+            Mode::Stateless,
+            cap,
+            1,
+            tk::TkDuration::from_secs(60),
+        );
+        let interact_worker = WorkerHandle::spawn(Mode::Stateful)
+            .await
+            .expect("spawn interact worker");
         let nonce_gen = Arc::new(lib_empower::NonceGen::new());
         // Slice 5.1 substrate: a full-shell `ParseEngine` shared across
         // every body-lint pass. The slice 4.x function-file validator's
@@ -45,7 +57,7 @@ pub fn run_server() {
         // requires the full shell decl table (slice 5.0 probe).
         let lint_engine = Arc::new(ParseEngine::new_full());
         let server = NuSh::new(
-            runs_worker,
+            runs_pool,
             interact_worker,
             nonce_gen,
             library_locks,

@@ -66,6 +66,28 @@ pub struct RerunParams {
     pub timeout_ms: Option<u64>,
 }
 
+/// What: agent-facing success envelope for `run()`. Carries the
+/// closure's typed return value (per `result_schema`), the per-call
+/// nonce, and the content-derived `rerun_id` when caching succeeded.
+///
+/// Why: a typed struct (rather than ad-hoc `serde_json::json!`)
+/// gives schemars an outputSchema to publish on `run`'s tool
+/// descriptor, lets rmcp emit the value via `structured_content`,
+/// and lets future-me reason about the envelope by name rather than
+/// by JSON key lookup.
+///
+/// Where: returned from `NuSh::run` wrapped in a `CallToolResult`
+/// whose `structured_content` field carries the serialized
+/// envelope. The matching `outputSchema` is declared on the
+/// `#[mcp::tool]` attribute via `schema_for_type::<RunEnvelope>()`.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub(crate) struct RunEnvelope {
+    pub result: serde_json::Value,
+    pub nonce: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rerun_id: Option<String>,
+}
+
 /// What: on-disk JSON shape of `closures/<rerun_id>.json`. Mirrors
 /// the relevant subset of `RunParams` that uniquely identifies the
 /// closure: schemas + body, no per-call args, no nonce.
@@ -373,18 +395,17 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Evaluate a typed nushell closure on a stateless worker."
+        description = "Evaluate a typed nushell closure on a stateless worker.",
+        output_schema = mcp::schema_for_type::<RunEnvelope>()
     )]
     async fn run(
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
-    ) -> Result<String, mcp::ErrorData> {
-        // Slice 5.1 (closure) + slice 5.3 (helpers): AST body lint runs
-        // BEFORE template synthesis so any hardcoded-path or denied-
-        // external violation surfaces as -32602 invalid_params with the
-        // agent-fixable `lint::<class> [L:C]` report shape. Helpers
-        // contribute lines tagged ` fn <name>` so the agent can spot
-        // which body in a multi-helper submission failed.
+    ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
+        // Slice 5.1: AST body lint runs BEFORE template synthesis so any
+        // hardcoded-path or denied-external violation surfaces as -32602
+        // invalid_params with the agent-fixable `lint::<class> [L:C]`
+        // report shape.
         let violations = lint_run_params(&self.lint_engine, &p);
         if !violations.is_empty() {
             return Err(mcp::ErrorData::invalid_params(
@@ -434,19 +455,29 @@ impl NuSh {
                 None
             }
         };
-        let mut envelope = json::json!({
-            "result": outcome.result,
-            "nonce": outcome.nonce.to_string(),
-        });
-        if let Some(id) = rerun_id_opt {
-            envelope["rerun_id"] = json::Value::String(id);
-        }
-        json::to_string_json(&envelope).map_err(|e| {
+        let envelope = RunEnvelope {
+            result: outcome.result,
+            nonce: outcome.nonce.to_string(),
+            rerun_id: rerun_id_opt,
+        };
+        let value = json::to_value(&envelope).map_err(|e| {
             mcp::ErrorData::internal_error(
                 format!("envelope serialize: {e}"),
                 None,
             )
-        })
+        })?;
+        // 2026-06-01 C2 probe: emit ONLY `structured_content` -- no
+        // `content[]` text mirror. Per the_user direction, we are not
+        // developing for older clients, so the spec's
+        // SHOULD-include-content-for-backcompat is not load-bearing.
+        // If Claude Code rejects the structured-only shape, fall back
+        // to `CallToolResult::structured(value)` which sets
+        // `content = [Content::text(value.to_string())]` as the spec-
+        // recommended mirror.
+        let mut result = mcp::CallToolResult::default();
+        result.structured_content = Some(value);
+        result.is_error = Some(false);
+        Ok(result)
     }
 
     #[mcp::tool(

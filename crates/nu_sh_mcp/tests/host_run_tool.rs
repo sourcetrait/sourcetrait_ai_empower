@@ -141,15 +141,11 @@ fn host_tools_list_and_run_stub() {
     let result = call_resp
         .get("result")
         .unwrap_or_else(|| panic!("tools/call response missing result: {call_resp}"));
-    let content = result["content"]
-        .as_array()
-        .expect("content array in tools/call result");
-    assert!(!content.is_empty(), "content array should not be empty");
-    let text = content[0]["text"]
-        .as_str()
-        .expect("first content block has text");
-    let envelope: serde_json::Value = serde_json::from_str(text)
-        .unwrap_or_else(|e| panic!("envelope parses as JSON ({e}): {text:?}"));
+    // C2: `run` emits structured_content only (no content[] mirror).
+    let envelope = result
+        .get("structuredContent")
+        .cloned()
+        .unwrap_or_else(|| panic!("expected structuredContent on run result: {call_resp}"));
     // 0.0.9+: rerun_id is a content-derived base62 hash, not the
     // pre-cache placeholder "0". Spot-check shape: non-empty,
     // alphanumeric.

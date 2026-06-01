@@ -198,8 +198,10 @@ pub(crate) mod mcp {
         ServerHandler,
         ServiceExt,
         handler::server::router::tool::ToolRouter,
+        handler::server::tool::schema_for_type,
         handler::server::wrapper::Parameters,
         model::{
+            CallToolResult,
             ErrorCode,
             Implementation,
             JsonObject,
@@ -247,6 +249,7 @@ pub(crate) mod json {
         from_slice,
         json,
         to_string as to_string_json,
+        to_value,
         to_vec,
     };
 }

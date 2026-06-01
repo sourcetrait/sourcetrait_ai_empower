@@ -127,6 +127,9 @@ impl Drop for Host {
 
 fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Value> {
     let result = call_response.get("result")?;
+    if let Some(sc) = result.get("structuredContent") {
+        return Some(sc.clone());
+    }
     let content = result.get("content")?.as_array()?;
     let text = content.first()?.get("text")?.as_str()?;
     serde_json::from_str(text).ok()

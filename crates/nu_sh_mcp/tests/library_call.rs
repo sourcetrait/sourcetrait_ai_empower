@@ -147,6 +147,9 @@ fn has_error_path(resp: &serde_json::Value) -> bool {
 
 fn extract_envelope(resp: &serde_json::Value) -> Option<serde_json::Value> {
     let result = resp.get("result")?;
+    if let Some(sc) = result.get("structuredContent") {
+        return Some(sc.clone());
+    }
     let content = result.get("content")?.as_array()?;
     let text = content.first()?.get("text")?.as_str()?;
     serde_json::from_str(text).ok()

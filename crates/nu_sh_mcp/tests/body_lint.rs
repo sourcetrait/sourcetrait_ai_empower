@@ -214,20 +214,14 @@ fn lint_passes_clean_closure() {
         "args": {"x": 5},
         "body": "{ out: ($args.x + 1) }",
     }));
-    // Either a normal result envelope or rmcp's CallToolResult shape;
-    // both wrap a JSON text content carrying the worker envelope.
+    // C2: `run` emits structured_content only (no content[] mirror).
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
-    let content = result
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|a| a.first())
-        .and_then(|c| c.get("text"))
-        .and_then(|t| t.as_str())
-        .unwrap_or_else(|| panic!("expected text content; got {resp}"));
-    let env: serde_json::Value = serde_json::from_str(content)
-        .unwrap_or_else(|e| panic!("parse envelope: {e}; got {content:?}"));
+    let env = result
+        .get("structuredContent")
+        .cloned()
+        .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
     assert_eq!(env["result"]["out"].as_i64(), Some(6), "got {env}");
 }
 

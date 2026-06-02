@@ -122,16 +122,6 @@ pub(crate) struct RerunEnvelope {
     pub nonce: String,
 }
 
-/// Success envelope for the 6 library-lifecycle tools
-/// (`register_library`, `unregister_library`, `define_function`,
-/// `undefine_function`, `import_library`, `reimport_library`) and
-/// for `kill()`. `ok: true` on success; errors return through the
-/// `Err(ErrorData)` JSON-RPC error path instead.
-#[derive(Debug, ser::Serialize, schema::JsonSchema)]
-pub(crate) struct OkEnvelope {
-    pub ok: bool,
-}
-
 /// Per-tool-call entry returned in the `processes()` snapshot.
 /// `args` is always object-shaped (matches the agent's submission
 /// shape for run/interact/call/rerun). `rerun_id` populated only
@@ -588,8 +578,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Register an empty library namespace; subsequent define_function calls populate it on both the MCP-managed canonical repo and the agent's local mirror at `path`.",
-        output_schema = mcp::schema_for_type::<OkEnvelope>()
+        description = "Register an empty library namespace; subsequent define_function calls populate it on both the MCP-managed canonical repo and the agent's local mirror at `path`."
     )]
     async fn register_library(
         &self,
@@ -612,12 +601,11 @@ impl NuSh {
                 None,
             )
         })?;
-        envelope_to_structured(&OkEnvelope { ok: true })
+        Ok(mcp::CallToolResult::default())
     }
 
     #[mcp::tool(
-        description = "Define (or replace) a single function inside a registered library. Writes `<library>/<module_path>/<name>.nu` with the `export def main` + `export def resolve` envelope, updates the `mod.nu` cascade up to the library root, mirrors to the agent's local copy, and commits.",
-        output_schema = mcp::schema_for_type::<OkEnvelope>()
+        description = "Define (or replace) a single function inside a registered library. Writes `<library>/<module_path>/<name>.nu` with the `export def main` + `export def resolve` envelope, updates the `mod.nu` cascade up to the library root, mirrors to the agent's local copy, and commits."
     )]
     async fn define_function(
         &self,
@@ -670,12 +658,11 @@ impl NuSh {
         .map_err(|e| {
             mcp::ErrorData::internal_error(format!("define_function: {e}"), None)
         })?;
-        envelope_to_structured(&OkEnvelope { ok: true })
+        Ok(mcp::CallToolResult::default())
     }
 
     #[mcp::tool(
-        description = "Remove a function from a registered library. Updates the `mod.nu` cascade, prunes any now-empty intermediate directories, mirrors the removal, and commits.",
-        output_schema = mcp::schema_for_type::<OkEnvelope>()
+        description = "Remove a function from a registered library. Updates the `mod.nu` cascade, prunes any now-empty intermediate directories, mirrors the removal, and commits."
     )]
     async fn undefine_function(
         &self,
@@ -691,7 +678,7 @@ impl NuSh {
         undefine_function_impl(&p.library, &p.module_path, &p.name).map_err(|e| {
             mcp::ErrorData::internal_error(format!("undefine_function: {e}"), None)
         })?;
-        envelope_to_structured(&OkEnvelope { ok: true })
+        Ok(mcp::CallToolResult::default())
     }
 
     #[mcp::tool(
@@ -769,8 +756,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Import a pre-authored library from a client path into the MCP-managed canonical repo. Strict validation: each function file must have exactly `export def main [args: record<...>]` + `export def resolve [args: record<...>] { $args }`; each `mod.nu` may only re-export children. All violations are reported at once; no auto-fix.",
-        output_schema = mcp::schema_for_type::<OkEnvelope>()
+        description = "Import a pre-authored library from a client path into the MCP-managed canonical repo. Strict validation: each function file must have exactly `export def main [args: record<...>]` + `export def resolve [args: record<...>] { $args }`; each `mod.nu` may only re-export children. All violations are reported at once; no auto-fix."
     )]
     async fn import_library(
         &self,
@@ -789,12 +775,11 @@ impl NuSh {
         let _guard = lock.write().await;
         import_library_impl(&p.name, std::path::Path::new(&p.path), &self.lint_engine)
             .map_err(import_error_to_mcp_error)?;
-        envelope_to_structured(&OkEnvelope { ok: true })
+        Ok(mcp::CallToolResult::default())
     }
 
     #[mcp::tool(
-        description = "Re-import a library from the path it was originally imported from. Reads source_path from the library's metadata; re-runs strict validation; replaces the canonical copy with a fresh snapshot. Errors if the library was register_library-style (kind=registered) instead of import_library-style.",
-        output_schema = mcp::schema_for_type::<OkEnvelope>()
+        description = "Re-import a library from the path it was originally imported from. Reads source_path from the library's metadata; re-runs strict validation; replaces the canonical copy with a fresh snapshot. Errors if the library was register_library-style (kind=registered) instead of import_library-style."
     )]
     async fn reimport_library(
         &self,
@@ -808,12 +793,11 @@ impl NuSh {
         })?;
         let _guard = lock.write().await;
         reimport_library_impl(&p.name, &self.lint_engine).map_err(import_error_to_mcp_error)?;
-        envelope_to_structured(&OkEnvelope { ok: true })
+        Ok(mcp::CallToolResult::default())
     }
 
     #[mcp::tool(
-        description = "Drop a library and all its functions from the MCP-managed canonical repo. Does not touch the agent's local mirror.",
-        output_schema = mcp::schema_for_type::<OkEnvelope>()
+        description = "Drop a library and all its functions from the MCP-managed canonical repo. Does not touch the agent's local mirror."
     )]
     async fn unregister_library(
         &self,
@@ -836,7 +820,7 @@ impl NuSh {
                 None,
             )
         })?;
-        envelope_to_structured(&OkEnvelope { ok: true })
+        Ok(mcp::CallToolResult::default())
     }
 
     #[mcp::tool(
@@ -941,8 +925,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Cancel an in-flight call by its nonce. SIGKILLs the worker holding the call; runs-pool workers are reaped and the next acquire spawns a fresh worker, interact respawn loses session state. Returns {ok: true} silently if the nonce is unknown or already completed (race-safe).",
-        output_schema = mcp::schema_for_type::<OkEnvelope>()
+        description = "Cancel an in-flight call by its nonce. SIGKILLs the worker holding the call; runs-pool workers are reaped and the next acquire spawns a fresh worker, interact respawn loses session state. Returns {ok: true} silently if the nonce is unknown or already completed (race-safe)."
     )]
     async fn kill(
         &self,
@@ -954,7 +937,7 @@ impl NuSh {
             drop(map);
             kill_worker_pid(pid);
         }
-        envelope_to_structured(&OkEnvelope { ok: true })
+        Ok(mcp::CallToolResult::default())
     }
 }
 
@@ -980,7 +963,6 @@ fn envelope_to_structured<T: ser::Serialize>(envelope: &T) -> Result<mcp::CallTo
     })?;
     let mut result = mcp::CallToolResult::default();
     result.structured_content = Some(value);
-    result.is_error = Some(false);
     Ok(result)
 }
 

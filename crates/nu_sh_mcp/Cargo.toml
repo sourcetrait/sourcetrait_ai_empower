@@ -1,6 +1,6 @@
 [package]
 name = "nu_sh_mcp"
-version = "0.0.30"
+version = "0.0.31"
 edition = "2024"
 description = "Nushell-engine MCP server for sourcetrait_empower"
 authors = ["SourceTrait <development@sourcetrait.com>"]

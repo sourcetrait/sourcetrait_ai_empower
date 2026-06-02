@@ -310,11 +310,11 @@ fn smoke_11_kill_unknown_nonce_silent_ok() {
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
-    // C3: kill() emits structured_content only.
-    let env = result
-        .get("structuredContent")
-        .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
-    assert_eq!(env["ok"].as_bool(), Some(true), "got {env}");
+    // C6.1: kill emits no structured_content; absence of error == success.
+    assert!(
+        result.get("structuredContent").is_none(),
+        "no-return tools should not emit structuredContent; got {result}",
+    );
 }
 
 #[test]

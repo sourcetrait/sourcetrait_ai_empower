@@ -335,16 +335,16 @@ fn lint_define_function_passes_clean_body() {
         "result_schema": "out: int",
         "body": "{ out: ($args.x + 1) }"
     }));
-    // Expect ok envelope, not an error.
+    // Expect success (no error), no structured payload after C6.1 dropped
+    // OkEnvelope -- absence of error IS the success signal.
     assert!(resp.get("error").is_none(), "define rejected: {resp}");
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
-    // C3: define_function emits structured_content only.
-    let env = result
-        .get("structuredContent")
-        .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
-    assert_eq!(env["ok"].as_bool(), Some(true), "got {env}");
+    assert!(
+        result.get("structuredContent").is_none(),
+        "no-return tools should not emit structuredContent; got {result}",
+    );
 }
 
 // ----------------------------------------------------------------------------

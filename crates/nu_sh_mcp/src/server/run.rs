@@ -1,23 +1,34 @@
 use crate::*;
 
-/// What: the host binary's entry point. Builds a fresh tokio runtime,
-/// runs the slice-3 substrate (keypair + libraries repo + lock
-/// registry) to completion, spawns both workers (stateless and
-/// stateful) in parallel, constructs the `NuSh` rmcp server, and
-/// blocks on `service.waiting()` until the rmcp connection closes.
-/// Side effects: writes `$XDG_DATA_HOME/nu_sh_mcp/{keypair,libraries}`
-/// on first startup; binds stdin/stdout for MCP JSON-RPC framing via
+/// What: the host binary's entry point, parameterized on `target`
+/// (`BuildTarget::Main` for `nu_sh_mcp`, `BuildTarget::Test` for
+/// `nu_sh_mcp_test`). Sets `BUILD_TARGET` first so every downstream
+/// path helper / serverInfo / validator sees the target. Then builds
+/// a fresh tokio runtime, runs the slice-3 substrate (keypair +
+/// libraries repo + lock registry) to completion, spawns both
+/// workers (stateless pool + stateful) in parallel, constructs the
+/// `NuSh` rmcp server, and blocks on `service.waiting()` until the
+/// rmcp connection closes. Side effects: writes
+/// `$XDG_DATA_HOME/<target_name>/{keypair,libraries}` on first
+/// startup; binds stdin/stdout for MCP JSON-RPC framing via
 /// `mcp::stdio()`.
 ///
 /// Why: pulling the runtime + substrate + spawn + serve choreography
-/// into a single pub fn lets `src/main.rs` stay a one-liner. Running
-/// substrate BEFORE workers spawn means a substrate failure (e.g.
-/// bad keypair perms) surfaces cleanly instead of leaving orphan
-/// worker processes alive.
+/// into a single pub fn lets the binary entries stay one-liners.
+/// Setting `BUILD_TARGET` as the very first action keeps the
+/// per-binary target available to every reader before any substrate
+/// path resolves. Running substrate BEFORE workers spawn means a
+/// substrate failure (e.g. bad keypair perms) surfaces cleanly
+/// instead of leaving orphan worker processes alive.
 ///
-/// Where: called from `src/main.rs::main`. Not invoked anywhere else;
-/// it owns the server process's main thread.
-pub fn run_server() {
+/// Where: called from `src/main.rs::main` (with `BuildTarget::Main`)
+/// and `src/bin/nu_sh_mcp_test.rs::main` (with `BuildTarget::Test`).
+/// Not invoked anywhere else; it owns the server process's main
+/// thread.
+pub fn run_server(target: BuildTarget) {
+    build_target::BUILD_TARGET
+        .set(target)
+        .expect("BUILD_TARGET set once at startup");
     let rt = tk::Runtime::new().expect("tokio Runtime::new");
     rt.block_on(async {
         // Run the one-time-per-startup substrate: keypair gen, libraries

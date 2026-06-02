@@ -982,7 +982,7 @@ impl NuSh {
         mcp::Parameters(_p): mcp::Parameters<InfoParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         envelope_to_structured(&InfoEnvelope {
-            name: env!("CARGO_PKG_NAME").to_string(),
+            name: build_target().name().to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             nu_version: env!("NU_VERSION").to_string(),
             plugins: list_registered_plugins(),
@@ -1428,10 +1428,13 @@ impl mcp::ServerHandler for NuSh {
             .enable_tools()
             .build();
         info.server_info = mcp::Implementation::new(
-            env!("CARGO_PKG_NAME"),
+            build_target().name(),
             env!("CARGO_PKG_VERSION"),
         )
-        .with_title("nushell");
+        .with_title(match build_target() {
+            BuildTarget::Main => "nushell",
+            BuildTarget::Test => "nushell (test)",
+        });
         info.instructions = Some(
             "Evaluation artifacts are cached at \
              $XDG_CACHE_HOME/nu_sh_mcp/{runs,interacts,calls}/<nonce>/{stdout,stderr}; \

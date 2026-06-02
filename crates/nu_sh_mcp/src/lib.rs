@@ -16,12 +16,16 @@ pub(crate) mod worker {
 pub(crate) mod ipc {
     pub(crate) mod framing;
 }
+pub(crate) mod build_target;
+pub(crate) mod cli;
 pub(crate) mod mode;
 pub(crate) mod wire;
 pub(crate) mod template;
 pub(crate) mod plugins;
 
 pub(crate) use crate::{
+    build_target::build_target,
+    cli::parse_worker_mode,
     ipc::framing::{
         read_frame,
         read_frame_async,
@@ -105,6 +109,7 @@ pub(crate) use std::{
     sync::{
         Arc,
         LazyLock,
+        OnceLock,
         atomic::{
             AtomicBool,
             AtomicU64,
@@ -117,6 +122,8 @@ pub(crate) use std::{
         UNIX_EPOCH,
     },
 };
+
+pub(crate) use clap::Parser;
 
 pub(crate) use sourcetrait_lib_empower as lib_empower;
 
@@ -262,7 +269,8 @@ pub(crate) mod json {
 }
 
 pub use crate::{
+    build_target::BuildTarget,
     mode::Mode,
     server::run::run_server,
-    worker::run::run_worker,
+    worker::run::worker_main,
 };

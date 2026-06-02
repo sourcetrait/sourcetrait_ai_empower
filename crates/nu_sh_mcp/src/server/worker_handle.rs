@@ -180,7 +180,12 @@ fn resolve_worker_bin() -> io::Result<PathBuf> {
     let dir = current.parent().ok_or_else(|| {
         io::Error::other("current_exe has no parent directory")
     })?;
-    Ok(dir.join("nu_sh_mcp_worker"))
+    let host_name = current
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| io::Error::other("current_exe basename not utf-8"))?;
+    let worker_name = format!("{host_name}_worker");
+    Ok(dir.join(&worker_name))
 }
 
 const _: fn() = || {

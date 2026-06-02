@@ -18,6 +18,14 @@ path = "src/main.rs"
 name = "nu_sh_mcp_worker"
 path = "src/bin/nu_sh_mcp_worker.rs"
 
+[[bin]]
+name = "nu_sh_mcp_test"
+path = "src/bin/nu_sh_mcp_test.rs"
+
+[[bin]]
+name = "nu_sh_mcp_test_worker"
+path = "src/bin/nu_sh_mcp_test_worker.rs"
+
 [dependencies]
 clap.workspace = true
 directories.workspace = true

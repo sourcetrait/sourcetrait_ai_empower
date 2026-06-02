@@ -390,6 +390,16 @@ pub(crate) fn register_library_impl(
     name: &str,
     client_path: &std::path::Path,
 ) -> io::Result<()> {
+    if !is_valid_ident(name) {
+        return Err(io::Error::other(format!(
+            "invalid library name: {name:?}"
+        )));
+    }
+    if build_target().is_test() && !name.ends_with("_test") {
+        return Err(io::Error::other(format!(
+            "library names on _test builds must end with '_test'; got {name:?}",
+        )));
+    }
     let lib_dir = library_dir(name);
     fs::create_dir_all(&lib_dir)?;
     // Empty cascade -- mod.nu re-exports nothing until define_function
@@ -1582,6 +1592,11 @@ pub(crate) fn import_library_impl(
 ) -> Result<(), ImportError> {
     if !is_valid_ident(name) {
         return Err(ImportError::InvalidLibraryName(name.to_string()));
+    }
+    if build_target().is_test() && !name.ends_with("_test") {
+        return Err(ImportError::InvalidLibraryName(format!(
+            "library names on _test builds must end with '_test'; got {name:?}",
+        )));
     }
     if !source_path.exists() || !source_path.is_dir() {
         return Err(ImportError::SourceMissing(source_path.to_path_buf()));

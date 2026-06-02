@@ -1,5 +1,23 @@
 use crate::*;
 
+/// What: the worker binary's main entry point. Parses `--mode` via
+/// the shared CLI parser in `crate::cli`, then delegates to
+/// `run_worker` for the actual lifecycle. Public so the worker bin
+/// files (`nu_sh_mcp_worker.rs` + `nu_sh_mcp_test_worker.rs`) can
+/// dispatch through it as one-liners.
+///
+/// Why: factoring the CLI parse out of `run_worker` lets a single
+/// shared entry point drive both the prod and the `_test` worker
+/// subprocesses -- they share one parse path. `BuildTarget` plays
+/// no role in workers (see `crate::build_target`); the worker just
+/// reads `Mode` and starts evaluating IPC frames.
+///
+/// Where: called from `src/bin/nu_sh_mcp_worker.rs::main` and
+/// `src/bin/nu_sh_mcp_test_worker.rs::main`.
+pub fn worker_main() {
+    run_worker(parse_worker_mode());
+}
+
 /// What: the worker binary's main loop entry point. Builds the
 /// `WarmBase` for the given `Mode`, writes the Hello handshake frame
 /// to stdout, and enters the request-handling loop in
@@ -12,9 +30,9 @@ use crate::*;
 /// from `serve` keeps the request loop testable without the
 /// process-exit semantics.
 ///
-/// Where: called from `src/bin/nu_sh_mcp_worker.rs::main` after
-/// parsing the `--mode` CLI flag and translating CliMode -> Mode.
-pub fn run_worker(mode: Mode) {
+/// Where: called from `worker_main` (the public entry the worker bin
+/// files dispatch through). Not exposed beyond the crate.
+pub(crate) fn run_worker(mode: Mode) {
     let mut warm_base = WarmBase::new(mode);
     let stdout = io::stdout();
     let mut stdout_lock = stdout.lock();

@@ -254,31 +254,24 @@ impl schema::JsonSchema for WhereSource {
     }
 }
 
-/// What: build a SUCCESS-shape `CallToolResult` carrying the typed
+/// What: builds a SUCCESS-shape `CallToolResult` carrying the typed
 /// error envelope in `structured_content`. No `is_error` set; no
 /// `Err(ErrorData)` returned. The agent receives a successful tool
 /// response with `structuredContent.error.kind == "<X>::<Y>"` and an
-/// empty `content` array.
+/// empty `content` array. Domain error path; deviates from MCP
+/// 2025-11-25 `server/tools.md` SHOULD identically to
+/// `envelope_to_structured` -- see the "Content::text omission
+/// deviation note" block in `server/tool.rs` for the policy.
 ///
-/// Why: this seam matches the success-path emission shape
-/// (`envelope_to_structured` in `server/tool.rs`) so error and success
-/// responses share the same `structured_content`-only wire shape; see
-/// the "Content::text omission deviation note" comment block in
-/// `server/tool.rs` for the spec-deviation framing. A prior probe
-/// round (the_user 2026-06-02) found Claude Code's CLI rendered
-/// JSON-RPC errors and `is_error=true` as red-bullet-with-no-body
-/// while success-shape + structured payload rendered visibly on
-/// click-expand; we picked success-shape on that basis. That probe
-/// finding is now contested by a recall of `warm_nushell_mcp`
-/// rendering red-bullet + visible body; the active probe campaign
-/// at `nushell_expert notes/nu_sh_mcp/followups.md` item 13 is the
-/// open work to resolve it. Treat this seam as a pragmatic working
-/// state, not a settled architectural decision.
+/// Why: pairs with `envelope_to_structured` to give one uniform
+/// `structured_content`-only wire shape across success and error
+/// semantics, so agents read fields from one place regardless of
+/// outcome. `Err(mcp::ErrorData)` JSON-RPC errors are reserved for
+/// genuine MCP-layer protocol failures (the current handler set
+/// never hits that path).
 ///
 /// Where: called by every tool handler in `server::tool.rs` on any
-/// tool-execution error path. JSON-RPC errors (`Err(ErrorData)`)
-/// remain reserved for genuinely protocol-level cases (the
-/// current handler set hits none of those after the migration).
+/// tool-execution error path.
 pub(crate) fn error_to_call_result(
     error: Error,
     nonce: Option<lib_empower::Nonce>,

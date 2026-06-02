@@ -67,10 +67,10 @@ impl WarmBase {
     }
 }
 
-/// What: sets `engine_state.plugin_path` to the canonical
-/// `<nu_config_dir>/plugin.msgpackz` location (which `$nu.plugin-path`
-/// also resolves to), opens that file, deserializes its
-/// `PluginRegistryFile` contents, and registers each plugin's decls
+/// What: sets `engine_state.plugin_path` to the canonical registry
+/// location (resolved by `plugins::registry_path`, mirroring what
+/// `$nu.plugin-path` resolves to), reads + deserializes the registry
+/// via `plugins::read_registry`, and registers each plugin's decls
 /// into a fresh `StateWorkingSet` via `nu_plugin_engine::load_plugin_file`.
 /// Merges the resulting delta back into `engine_state` so plugin decls
 /// are visible to subsequent parse + eval. Every step is best-effort:
@@ -79,25 +79,20 @@ impl WarmBase {
 ///
 /// Why: the worker is the agent's nushell engine; without plugins
 /// loaded, agent closures that invoke `from xlsx`, `query db`, or any
-/// other plugin command would parse-fail on unknown decls. Mirroring
-/// the nu binary's startup load (`nu_cli::read_plugin_file`'s shell
-/// minus the migration + reedline-noise paths) gives parity with the
-/// agent's local nu shell. is_mcp on the engine_state stays compatible
-/// with plugin loading -- the load step doesn't gate on it.
+/// other plugin command would parse-fail on unknown decls. Path
+/// resolution + read share `crate::plugins` with the host-side
+/// `info()` tool so the worker's view and the agent's view of the
+/// registry can never drift.
 ///
 /// Where: called once in `WarmBase::new` after `add_shell_command_context`
 /// but before `seed_env`. Both `Mode::Stateless` and `Mode::Stateful`
 /// workers run this -- plugins load symmetrically per the_user 2026-06-01.
 fn load_plugins_best_effort(engine_state: &mut nu::EngineState) {
-    let Some(config_dir) = nu::nu_config_dir() else {
+    let Some(path) = plugins::registry_path() else {
         return;
     };
-    let path = config_dir.join("plugin.msgpackz");
     engine_state.plugin_path = Some(path.clone().into());
-    let Ok(mut file) = fs::File::open(&path) else {
-        return;
-    };
-    let Ok(contents) = nu::PluginRegistryFile::read_from(&mut file, None) else {
+    let Some(contents) = plugins::read_registry() else {
         return;
     };
     let mut working_set = nu::StateWorkingSet::new(engine_state);

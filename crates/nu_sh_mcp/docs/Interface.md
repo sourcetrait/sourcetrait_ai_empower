@@ -13,6 +13,7 @@
 - [`reimport_library()`](#reimport_library) Re-import a library from its saved source path.
 - [`processes()`](#processes) Snapshot every in-flight tool call on the host.
 - [`kill()`](#kill) Cancel an in-flight call by its nonce.
+- [`info()`](#info) Name, version, nu version, and nu plugins.
 
 ## `run()`
 *Evaluate a typed nushell body on a stateless worker.*
@@ -545,5 +546,45 @@ Output (partial):
 ```json
 {
   "result": { "content": [] }
+}
+```
+
+## `info()`
+*Name, version, nu version, and nu plugins.*
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {},
+  "required": []
+}
+```
+
+### Example
+
+MCP (partial):
+```json
+{
+  "arguments": {}
+}
+```
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "name": "nu_sh_mcp",
+      "version": "0.0.33",
+      "nu_version": "0.113.1",
+      "plugins": [
+        { "name": "query", "version": "0.117.0" },
+        { "name": "polars" }
+      ]
+    },
+    "content": []
+  }
 }
 ```

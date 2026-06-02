@@ -1,8 +1,10 @@
-//! Interact() tool surface smoke.
+//! info() tool surface test.
 //!
-//! Full persistence coverage lives in `tests/interact_persistence.rs`
-//! (env + cd across calls). This file only verifies the tool surface
-//! advertised by `#[tool_router]`.
+//! Verifies:
+//! - `info` appears in tools/list (count bumps with the new tool).
+//! - envelope shape: name == "nu_sh_mcp", version matches the crate's
+//!   CARGO_PKG_VERSION, nu_version is non-empty semver-shaped,
+//!   plugins is a list of records each carrying at least `name`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -36,7 +38,14 @@ impl Host {
             .expect("spawn host");
         let stdin = child.stdin.take().expect("host stdin");
         let stdout = BufReader::new(child.stdout.take().expect("host stdout"));
-        let mut host = Self { child, stdin, stdout, next_id: 1, data_dir, cache_dir };
+        let mut host = Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+            data_dir,
+            cache_dir,
+        };
         host.initialize();
         host
     }
@@ -50,7 +59,7 @@ impl Host {
             "params": {
                 "protocolVersion": "2025-06-18",
                 "capabilities": {},
-                "clientInfo": {"name": "interact_state", "version": "0.0.1"}
+                "clientInfo": {"name": "info_tool", "version": "0.0.1"}
             }
         });
         self.send(&init);
@@ -98,14 +107,24 @@ impl Host {
         }
     }
 
-    #[allow(dead_code)]
-    fn call(&mut self, tool: &str, args: serde_json::Value) -> serde_json::Value {
+    fn call_tool(&mut self, tool: &str, args: serde_json::Value) -> serde_json::Value {
         let id = self.next_id();
         let req = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": "tools/call",
             "params": {"name": tool, "arguments": args}
+        });
+        self.send(&req);
+        self.read_id(id)
+    }
+
+    fn list_tools(&mut self) -> serde_json::Value {
+        let id = self.next_id();
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/list",
         });
         self.send(&req);
         self.read_id(id)
@@ -119,30 +138,10 @@ impl Drop for Host {
     }
 }
 
-#[allow(dead_code)]
-fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Value> {
-    let result = call_response.get("result")?;
-    if let Some(sc) = result.get("structuredContent") {
-        return Some(sc.clone());
-    }
-    let content = result.get("content")?.as_array()?;
-    let text = content.first()?.get("text")?.as_str()?;
-    serde_json::from_str(text).ok()
-}
-
 #[test]
-fn interact_lists_both_run_and_interact_tools() {
-    // Sanity check on the tool surface: tools/list should show exactly the
-    // two tool names (`run` and `interact`) registered by `#[tool_router]`.
+fn info_tool_in_list() {
     let mut host = Host::spawn();
-    let id = host.next_id();
-    let req = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "tools/list",
-    });
-    host.send(&req);
-    let resp = host.read_id(id);
+    let resp = host.list_tools();
     let tools = resp["result"]["tools"]
         .as_array()
         .expect("tools array");
@@ -150,23 +149,51 @@ fn interact_lists_both_run_and_interact_tools() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 13, "expected 13 tools; got {names:?}");
-    for expected in [
-        "run",
-        "interact",
-        "rerun",
-        "register_library",
-        "unregister_library",
-        "define_function",
-        "undefine_function",
-        "import_library",
-        "reimport_library",
-        "call",
-    ] {
-        assert!(
-            names.contains(&expected),
-            "missing `{expected}` in {names:?}",
-        );
-    }
+    assert!(
+        names.contains(&"info"),
+        "info missing from tools/list; got {names:?}",
+    );
 }
 
+#[test]
+fn info_returns_static_server_state() {
+    let mut host = Host::spawn();
+    let resp = host.call_tool("info", serde_json::json!({}));
+    let result = resp.get("result").unwrap_or_else(|| {
+        panic!("expected ok result; got {resp}")
+    });
+    let env = result
+        .get("structuredContent")
+        .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
+
+    assert_eq!(
+        env["name"].as_str(),
+        Some("nu_sh_mcp"),
+        "name should be nu_sh_mcp; got {env}",
+    );
+
+    let version = env["version"].as_str().expect("version field");
+    assert_eq!(
+        version,
+        env!("CARGO_PKG_VERSION"),
+        "version should match crate CARGO_PKG_VERSION",
+    );
+
+    let nu_version = env["nu_version"].as_str().expect("nu_version field");
+    assert!(
+        !nu_version.is_empty() && nu_version.contains('.'),
+        "nu_version should be non-empty + semver-shaped; got {nu_version:?}",
+    );
+
+    let plugins = env["plugins"]
+        .as_array()
+        .expect("plugins should be an array");
+    for p in plugins {
+        let name = p["name"].as_str().expect("each plugin has name");
+        assert!(!name.is_empty(), "plugin name should be non-empty");
+        // version is Option<String>; absent on the wire when None.
+        if let Some(v) = p.get("version") {
+            assert!(v.is_string(), "version (when present) should be a string");
+        }
+    }
+}

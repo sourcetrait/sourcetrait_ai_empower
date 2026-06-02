@@ -19,6 +19,7 @@ pub(crate) mod ipc {
 pub(crate) mod mode;
 pub(crate) mod wire;
 pub(crate) mod template;
+pub(crate) mod plugins;
 
 pub(crate) use crate::{
     ipc::framing::{
@@ -29,6 +30,7 @@ pub(crate) use crate::{
     },
     mcp::ServiceExt,
     nu::FromValue,
+    plugins::list_registered_plugins,
     server::{
         cache::{
             CacheKind,
@@ -137,6 +139,7 @@ pub(crate) mod nu {
         Module,
         PipelineData,
         PluginRegistryFile,
+        PluginRegistryItemData,
         Record,
         Signals,
         Span,

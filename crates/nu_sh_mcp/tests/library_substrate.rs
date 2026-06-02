@@ -218,7 +218,7 @@ fn tools_list_has_five() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 12, "expected 12 tools; got {names:?}");
+    assert_eq!(names.len(), 13, "expected 13 tools; got {names:?}");
     for expected in [
         "run",
         "interact",

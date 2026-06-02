@@ -228,12 +228,10 @@ fn rerun_unknown_id_errors() {
             "args": {"x": 0}
         }),
     );
-    let has_error = resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true);
+    let has_error = resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .is_some();
     assert!(has_error, "expected error for unknown rerun_id; got {resp}");
 }
 
@@ -247,12 +245,10 @@ fn rerun_rejects_non_base62_id() {
             "args": {"x": 0}
         }),
     );
-    let has_error = resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true);
+    let has_error = resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .is_some();
     assert!(has_error, "expected error for non-base62 rerun_id; got {resp}");
 }
 

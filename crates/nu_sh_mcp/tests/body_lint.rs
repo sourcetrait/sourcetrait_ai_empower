@@ -161,13 +161,27 @@ impl Drop for Host {
     }
 }
 
-fn error_text(resp: &serde_json::Value) -> Option<String> {
-    // rmcp surfaces Err(ErrorData::invalid_params) as a JSON-RPC error
-    // object at the top level: {"error": {"code": -32602, "message": ...}}.
-    resp.get("error")
-        .and_then(|e| e.get("message"))
-        .and_then(|m| m.as_str())
-        .map(str::to_string)
+fn envelope_error<'a>(resp: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
+    resp.get("result")?.get("structuredContent")?.get("error")
+}
+
+fn has_envelope_error(resp: &serde_json::Value) -> bool {
+    envelope_error(resp).is_some()
+}
+
+fn envelope_error_kind(resp: &serde_json::Value) -> Option<&str> {
+    envelope_error(resp)?.get("kind")?.as_str()
+}
+
+fn lint_violation_kinds(resp: &serde_json::Value) -> Vec<String> {
+    envelope_error(resp)
+        .and_then(|e| e.get("data"))
+        .and_then(|d| d.get("violations"))
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter()
+            .filter_map(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_string))
+            .collect())
+        .unwrap_or_default()
 }
 
 #[test]
@@ -179,12 +193,10 @@ fn lint_rejects_closure_with_hardcoded_path() {
         "args": {"noop": 0},
         "body": "{ p: \"/home/box/proj/x\", out: 0 }",
     }));
-    let msg = error_text(&resp)
-        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    assert!(
-        msg.contains("lint::hardcoded_variable"),
-        "expected lint::hardcoded_variable token; got {msg:?}",
-    );
+    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    let kinds = lint_violation_kinds(&resp);
+    assert!(kinds.iter().any(|k| k == "hardcoded_variable"),
+        "expected hardcoded_variable in violations; got {kinds:?}");
 }
 
 #[test]
@@ -196,12 +208,10 @@ fn lint_rejects_closure_with_denied_external() {
         "args": {"noop": 0},
         "body": "{ x: (^awk '{print $1}' | str trim), out: 0 }",
     }));
-    let msg = error_text(&resp)
-        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    assert!(
-        msg.contains("lint::denied_command"),
-        "expected lint::denied_command token; got {msg:?}",
-    );
+    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    let kinds = lint_violation_kinds(&resp);
+    assert!(kinds.iter().any(|k| k == "denied_command"),
+        "expected denied_command in violations; got {kinds:?}");
 }
 
 #[test]
@@ -237,11 +247,10 @@ fn lint_aggregates_multiple_violations() {
 cd \"/a/b\"
 { out: 0 }",
     }));
-    let msg = error_text(&resp)
-        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    // Both violations appear in one message, newline-joined.
-    assert!(msg.contains("lint::denied_command"), "got {msg:?}");
-    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    let kinds = lint_violation_kinds(&resp);
+    assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
+    assert!(kinds.iter().any(|k| k == "hardcoded_variable"), "got {kinds:?}");
 }
 
 // ----------------------------------------------------------------------------
@@ -257,9 +266,9 @@ fn lint_interact_rejects_hardcoded_path() {
         "args": {"noop": 0},
         "body": "{ p: \"/home/box/x\", out: 0 }",
     }));
-    let msg = error_text(&resp)
-        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    let kinds = lint_violation_kinds(&resp);
+    assert!(kinds.iter().any(|k| k == "hardcoded_variable"), "got {kinds:?}");
 }
 
 #[test]
@@ -271,9 +280,9 @@ fn lint_interact_rejects_denied_external() {
         "args": {"noop": 0},
         "body": "{ x: (^awk 'x' | str trim), out: 0 }",
     }));
-    let msg = error_text(&resp)
-        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    assert!(msg.contains("lint::denied_command"), "got {msg:?}");
+    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    let kinds = lint_violation_kinds(&resp);
+    assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
 }
 
 // ----------------------------------------------------------------------------
@@ -286,7 +295,7 @@ fn lint_define_function_rejects_hardcoded_path() {
     let mirror = host.source_dir("mirror");
     std::fs::create_dir_all(&mirror).expect("mkdir mirror");
     let reg = host.register("lib1", mirror.to_str().unwrap());
-    assert!(reg.get("error").is_none(), "register failed: {reg}");
+    assert!(!has_envelope_error(&reg), "register failed: {reg}");
     let resp = host.define_function(serde_json::json!({
         "library": "lib1",
         "module_path": "",
@@ -295,9 +304,9 @@ fn lint_define_function_rejects_hardcoded_path() {
         "result_schema": "out: int",
         "body": "{ p: \"/home/box/x\", out: 0 }"
     }));
-    let msg = error_text(&resp)
-        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
+    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    let kinds = lint_violation_kinds(&resp);
+    assert!(kinds.iter().any(|k| k == "hardcoded_variable"), "got {kinds:?}");
 }
 
 #[test]
@@ -306,7 +315,7 @@ fn lint_define_function_rejects_denied_external() {
     let mirror = host.source_dir("mirror2");
     std::fs::create_dir_all(&mirror).expect("mkdir mirror");
     let reg = host.register("lib2", mirror.to_str().unwrap());
-    assert!(reg.get("error").is_none(), "register failed: {reg}");
+    assert!(!has_envelope_error(&reg), "register failed: {reg}");
     let resp = host.define_function(serde_json::json!({
         "library": "lib2",
         "module_path": "",
@@ -315,9 +324,9 @@ fn lint_define_function_rejects_denied_external() {
         "result_schema": "out: int",
         "body": "{ x: (^rm -rf /; 0) }"
     }));
-    let msg = error_text(&resp)
-        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    assert!(msg.contains("lint::denied_command"), "got {msg:?}");
+    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    let kinds = lint_violation_kinds(&resp);
+    assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
 }
 
 #[test]
@@ -335,9 +344,10 @@ fn lint_define_function_passes_clean_body() {
         "result_schema": "out: int",
         "body": "{ out: ($args.x + 1) }"
     }));
-    // Expect success (no error), no structured payload after C6.1 dropped
-    // OkEnvelope -- absence of error IS the success signal.
-    assert!(resp.get("error").is_none(), "define rejected: {resp}");
+    // Expect success: no envelope error, no structuredContent on the
+    // result (no-return tools omit structuredContent on success per the
+    // C6.1 / 0.0.34 design).
+    assert!(!has_envelope_error(&resp), "define rejected: {resp}");
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
@@ -375,11 +385,12 @@ fn lint_import_library_reports_main_body_violation() {
     let lib = host.source_dir("liblint1");
     write_library_with_path_in_main(&lib);
     let resp = host.import("liblint1", lib.to_str().unwrap());
-    let msg = error_text(&resp)
-        .unwrap_or_else(|| panic!("expected lint error; got {resp}"));
-    // Lint section is present and source-tagged with `mod bad.nu`.
-    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
-    assert!(msg.contains("mod bad.nu"), "got {msg:?}");
+    assert_eq!(envelope_error_kind(&resp), Some("library::violations"), "got {resp}");
+    let env = envelope_error(&resp).unwrap();
+    let lint = env["data"]["lint"].as_array().unwrap();
+    let has_hardcoded = lint.iter().any(|v| v["kind"] == "hardcoded_variable"
+        && v["source"].as_str() == Some("mod bad.nu"));
+    assert!(has_hardcoded, "expected hardcoded_variable lint with mod bad.nu source; got {env}");
 }
 
 #[test]
@@ -406,12 +417,13 @@ export def resolve [args: record<out: int>] {
 ";
     std::fs::write(lib.join("bad.nu"), bad_nu).expect("write bad.nu");
     let resp = host.import("liblint2", lib.to_str().unwrap());
-    let msg = error_text(&resp)
-        .unwrap_or_else(|| panic!("expected error; got {resp}"));
-    // Structural section header + bullet.
-    assert!(msg.contains("validation failed:"), "got {msg:?}");
-    assert!(msg.contains("mod.nu"), "got {msg:?}");
-    // Lint section.
-    assert!(msg.contains("lint::hardcoded_variable"), "got {msg:?}");
-    assert!(msg.contains("mod bad.nu"), "got {msg:?}");
+    assert_eq!(envelope_error_kind(&resp), Some("library::violations"), "got {resp}");
+    let env = envelope_error(&resp).unwrap();
+    let structural = env["data"]["structural"].as_array().unwrap();
+    assert!(structural.iter().any(|v| v["path"].as_str() == Some("mod.nu")),
+        "expected a structural violation on mod.nu; got {env}");
+    let lint = env["data"]["lint"].as_array().unwrap();
+    let has_hardcoded = lint.iter().any(|v| v["kind"] == "hardcoded_variable"
+        && v["source"].as_str() == Some("mod bad.nu"));
+    assert!(has_hardcoded, "expected hardcoded_variable lint with mod bad.nu source; got {env}");
 }

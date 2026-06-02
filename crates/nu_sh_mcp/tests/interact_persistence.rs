@@ -273,12 +273,10 @@ fn interact_state_does_not_leak_into_run() {
             "body": "{ out: (leaked) }",
         }),
     );
-    let has_error_path = resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true);
+    let has_error_path = resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .is_some();
     assert!(
         has_error_path,
         "expected run() to NOT see interact()'s `leaked` def; got {resp}",

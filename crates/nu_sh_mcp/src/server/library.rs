@@ -389,16 +389,17 @@ pub(crate) fn run_git(
 pub(crate) fn register_library_impl(
     name: &str,
     client_path: &std::path::Path,
-) -> io::Result<()> {
+) -> Result<(), Error> {
     if !is_valid_ident(name) {
-        return Err(io::Error::other(format!(
-            "invalid library name: {name:?}"
-        )));
+        return Err(Error::LibraryInvalidName {
+            library: name.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
     }
     if build_target().is_test() && !name.ends_with("_test") {
-        return Err(io::Error::other(format!(
-            "library names on _test builds must end with '_test'; got {name:?}",
-        )));
+        return Err(Error::LibraryTestSuffixRequired {
+            library: name.to_string(),
+        });
     }
     let lib_dir = library_dir(name);
     fs::create_dir_all(&lib_dir)?;
@@ -409,8 +410,9 @@ pub(crate) fn register_library_impl(
         kind: LibraryKind::Registered,
         source_path: client_path.to_path_buf(),
     };
-    let meta_bytes = json::to_vec(&meta).map_err(|e| {
-        io::Error::other(format!("serialize meta: {e}"))
+    let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
+        phase: "register_library::serialize_meta".to_string(),
+        reason: e.to_string(),
     })?;
     fs::write(library_meta_path(name), &meta_bytes)?;
     // Mirror the (empty) library at the client path.
@@ -427,7 +429,7 @@ pub(crate) fn register_library_impl(
 /// library subtree from the MCP repo and commits. Does NOT touch
 /// the client mirror (the_user 2026-05-31 design -- unregister is
 /// MCP-side only; client manages its own copies).
-pub(crate) fn unregister_library_impl(name: &str) -> io::Result<()> {
+pub(crate) fn unregister_library_impl(name: &str) -> Result<(), Error> {
     let lib_dir = library_dir(name);
     if lib_dir.exists() {
         fs::remove_dir_all(&lib_dir)?;
@@ -695,27 +697,30 @@ pub(crate) fn define_function_impl(
     args_schema: &str,
     result_schema: &str,
     body: &str,
-) -> io::Result<()> {
+) -> Result<(), Error> {
     if !is_valid_ident(library) {
-        return Err(io::Error::other(format!(
-            "invalid library name: {library:?}"
-        )));
+        return Err(Error::LibraryInvalidName {
+            library: library.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
     }
     if !is_valid_module_path(module_path) {
-        return Err(io::Error::other(format!(
-            "invalid module_path: {module_path:?}"
-        )));
+        return Err(Error::LibraryInvalidModulePath {
+            module_path: module_path.to_string(),
+            reason: "slash-separated identifier segments; no `..`, no leading/trailing/double slash".to_string(),
+        });
     }
     if !is_valid_ident(name) {
-        return Err(io::Error::other(format!(
-            "invalid function name: {name:?}"
-        )));
+        return Err(Error::FunctionInvalidName {
+            name: name.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
     }
     let lib_root = library_dir(library);
     if !lib_root.exists() {
-        return Err(io::Error::other(format!(
-            "library not registered: {library}"
-        )));
+        return Err(Error::LibraryNotRegistered {
+            library: library.to_string(),
+        });
     }
     let meta = load_meta(library)?;
     let rel_dir = if module_path.is_empty() {
@@ -745,27 +750,30 @@ pub(crate) fn undefine_function_impl(
     library: &str,
     module_path: &str,
     name: &str,
-) -> io::Result<()> {
+) -> Result<(), Error> {
     if !is_valid_ident(library) {
-        return Err(io::Error::other(format!(
-            "invalid library name: {library:?}"
-        )));
+        return Err(Error::LibraryInvalidName {
+            library: library.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
     }
     if !is_valid_module_path(module_path) {
-        return Err(io::Error::other(format!(
-            "invalid module_path: {module_path:?}"
-        )));
+        return Err(Error::LibraryInvalidModulePath {
+            module_path: module_path.to_string(),
+            reason: "slash-separated identifier segments; no `..`, no leading/trailing/double slash".to_string(),
+        });
     }
     if !is_valid_ident(name) {
-        return Err(io::Error::other(format!(
-            "invalid function name: {name:?}"
-        )));
+        return Err(Error::FunctionInvalidName {
+            name: name.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
     }
     let lib_root = library_dir(library);
     if !lib_root.exists() {
-        return Err(io::Error::other(format!(
-            "library not registered: {library}"
-        )));
+        return Err(Error::LibraryNotRegistered {
+            library: library.to_string(),
+        });
     }
     let meta = load_meta(library)?;
     let rel_dir = if module_path.is_empty() {
@@ -776,8 +784,11 @@ pub(crate) fn undefine_function_impl(
     let file_name = format!("{name}.nu");
     let mcp_target_file = lib_root.join(&rel_dir).join(&file_name);
     if !mcp_target_file.exists() {
-        let id = function_id(library, module_path, name);
-        return Err(io::Error::other(format!("function not defined: {id}")));
+        return Err(Error::FunctionNotDefined {
+            library: library.to_string(),
+            module_path: module_path.to_string(),
+            name: name.to_string(),
+        });
     }
     fs::remove_file(&mcp_target_file)?;
     cascade_up_and_prune(&lib_root, &rel_dir)?;
@@ -842,8 +853,8 @@ pub(crate) fn call_file_path(
 // Strict library source validator (for import_library / reimport_library)
 // ============================================================================
 
-#[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
-pub(crate) struct Violation {
+#[derive(Debug, Clone, ser::Serialize, ser::Deserialize, schema::JsonSchema)]
+pub struct Violation {
     /// Path relative to the source root.
     pub path: String,
     /// 1-based line number; 0 means "file-level" (no specific line).
@@ -1261,13 +1272,13 @@ fn validate_function_file_ast(
         let decl = working_set.get_decl(id);
         if let Some(main_block_id) = decl.block_id() {
             let main_block = working_set.get_block(main_block_id);
-            let source_tag = format!("mod {rel}");
+            let source_tag = WhereSource::Mod(rel.to_string());
             let mut lvs = lint_block(
                 main_block,
                 &working_set,
                 source,
                 prefix_len,
-                Some(&source_tag),
+                Some(source_tag),
             );
             lint.append(&mut lvs);
         }
@@ -1589,38 +1600,47 @@ pub(crate) fn import_library_impl(
     name: &str,
     source_path: &std::path::Path,
     engine: &ParseEngine,
-) -> Result<(), ImportError> {
+) -> Result<(), Error> {
     if !is_valid_ident(name) {
-        return Err(ImportError::InvalidLibraryName(name.to_string()));
+        return Err(Error::LibraryInvalidName {
+            library: name.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
     }
     if build_target().is_test() && !name.ends_with("_test") {
-        return Err(ImportError::InvalidLibraryName(format!(
-            "library names on _test builds must end with '_test'; got {name:?}",
-        )));
+        return Err(Error::LibraryTestSuffixRequired {
+            library: name.to_string(),
+        });
     }
     if !source_path.exists() || !source_path.is_dir() {
-        return Err(ImportError::SourceMissing(source_path.to_path_buf()));
+        return Err(Error::LibrarySourceMissing {
+            path: source_path.display().to_string(),
+        });
     }
-    let result =
-        validate_library_source(source_path, engine).map_err(ImportError::Io)?;
+    let result = validate_library_source(source_path, engine)?;
     if !result.is_empty() {
-        return Err(ImportError::Violations(result));
+        return Err(Error::LibraryViolations {
+            structural: result.structural,
+            lint: result.lint,
+        });
     }
     let dest = library_dir(name);
     if dest.exists() {
-        fs::remove_dir_all(&dest).map_err(ImportError::Io)?;
+        fs::remove_dir_all(&dest)?;
     }
-    copy_dir_recursive(source_path, &dest).map_err(ImportError::Io)?;
+    copy_dir_recursive(source_path, &dest)?;
     let meta = LibraryMeta {
         kind: LibraryKind::Imported,
         source_path: source_path.to_path_buf(),
     };
-    let meta_bytes = json::to_vec(&meta)
-        .map_err(|e| ImportError::Io(io::Error::other(format!("serialize meta: {e}"))))?;
-    fs::write(library_meta_path(name), &meta_bytes).map_err(ImportError::Io)?;
-    run_git(&libraries_dir(), &["add", "--", name]).map_err(ImportError::Io)?;
+    let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
+        phase: "import_library::serialize_meta".to_string(),
+        reason: e.to_string(),
+    })?;
+    fs::write(library_meta_path(name), &meta_bytes)?;
+    run_git(&libraries_dir(), &["add", "--", name])?;
     let msg = format!("import library {name} from {}", source_path.display());
-    run_git(&libraries_dir(), &["commit", "-m", &msg]).map_err(ImportError::Io)?;
+    run_git(&libraries_dir(), &["commit", "-m", &msg])?;
     Ok(())
 }
 
@@ -1640,62 +1660,54 @@ pub(crate) fn import_library_impl(
 pub(crate) fn reimport_library_impl(
     name: &str,
     engine: &ParseEngine,
-) -> Result<(), ImportError> {
+) -> Result<(), Error> {
     if !is_valid_ident(name) {
-        return Err(ImportError::InvalidLibraryName(name.to_string()));
+        return Err(Error::LibraryInvalidName {
+            library: name.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
     }
     let lib_root = library_dir(name);
     if !lib_root.exists() {
-        return Err(ImportError::NotRegistered(name.to_string()));
+        return Err(Error::LibraryNotRegistered {
+            library: name.to_string(),
+        });
     }
-    let meta = load_meta(name).map_err(ImportError::Io)?;
+    let meta = load_meta(name)?;
     match meta.kind {
         LibraryKind::Imported => {}
         LibraryKind::Registered => {
-            return Err(ImportError::WrongKind);
+            return Err(Error::LibraryWrongKind {
+                library: name.to_string(),
+            });
         }
     }
     let source_path = meta.source_path.clone();
     if !source_path.exists() || !source_path.is_dir() {
-        return Err(ImportError::SourceMissing(source_path));
+        return Err(Error::LibrarySourceMissing {
+            path: source_path.display().to_string(),
+        });
     }
-    let result =
-        validate_library_source(&source_path, engine).map_err(ImportError::Io)?;
+    let result = validate_library_source(&source_path, engine)?;
     if !result.is_empty() {
-        return Err(ImportError::Violations(result));
+        return Err(Error::LibraryViolations {
+            structural: result.structural,
+            lint: result.lint,
+        });
     }
     if lib_root.exists() {
-        fs::remove_dir_all(&lib_root).map_err(ImportError::Io)?;
+        fs::remove_dir_all(&lib_root)?;
     }
-    copy_dir_recursive(&source_path, &lib_root).map_err(ImportError::Io)?;
-    let meta_bytes = json::to_vec(&meta)
-        .map_err(|e| ImportError::Io(io::Error::other(format!("serialize meta: {e}"))))?;
-    fs::write(library_meta_path(name), &meta_bytes).map_err(ImportError::Io)?;
-    run_git(&libraries_dir(), &["add", "--", name]).map_err(ImportError::Io)?;
+    copy_dir_recursive(&source_path, &lib_root)?;
+    let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
+        phase: "reimport_library::serialize_meta".to_string(),
+        reason: e.to_string(),
+    })?;
+    fs::write(library_meta_path(name), &meta_bytes)?;
+    run_git(&libraries_dir(), &["add", "--", name])?;
     let msg = format!("reimport library {name} from {}", source_path.display());
-    run_git(&libraries_dir(), &["commit", "-m", &msg]).map_err(ImportError::Io)?;
+    run_git(&libraries_dir(), &["commit", "-m", &msg])?;
     Ok(())
-}
-
-/// What: typed error variants for `import_library_impl` and
-/// `reimport_library_impl`. Carries the offending value where
-/// useful so the tool handler can build a precise message.
-///
-/// Why: keeping the typed error internal lets the library module
-/// stay testable without rmcp; the mapping to `mcp::ErrorData` at
-/// the seam preserves JSON-RPC error code semantics.
-///
-/// Where: returned by import + reimport impls; mapped by
-/// `import_error_to_mcp_error` in `server::tool` to invalid_params
-/// (client) or internal_error (server) variants.
-#[derive(Debug)]
-pub(crate) enum ImportError {
-    Io(io::Error),
-    InvalidLibraryName(String),
-    SourceMissing(PathBuf),
-    NotRegistered(String),
-    WrongKind,
-    Violations(ValidationResult),
 }
 
 /// What: copies a directory tree recursively. Skips dotfile entries

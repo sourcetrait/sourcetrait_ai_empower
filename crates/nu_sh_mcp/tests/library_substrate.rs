@@ -169,12 +169,10 @@ impl Drop for Host {
 }
 
 fn has_error_path(resp: &serde_json::Value) -> bool {
-    resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true)
+    resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .is_some()
 }
 
 #[test]

@@ -138,37 +138,33 @@ impl Drop for Host {
 }
 
 fn has_error_path(resp: &serde_json::Value) -> bool {
-    resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true)
+    envelope_error(resp).is_some()
 }
 
+fn envelope_error<'a>(resp: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
+    resp.get("result")?.get("structuredContent")?.get("error")
+}
+
+fn envelope_error_kind(resp: &serde_json::Value) -> Option<&str> {
+    envelope_error(resp)?.get("kind")?.as_str()
+}
+
+fn structural_messages(resp: &serde_json::Value) -> Vec<String> {
+    envelope_error(resp)
+        .and_then(|e| e.get("data"))
+        .and_then(|d| d.get("structural"))
+        .and_then(|s| s.as_array())
+        .map(|arr| arr.iter()
+            .filter_map(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string))
+            .collect())
+        .unwrap_or_default()
+}
+
+/// Greppable JSON-serialized form of the error envelope for tests
+/// that match substrings against error messages. Returns the full
+/// response string when no envelope error is present.
 fn error_message(resp: &serde_json::Value) -> String {
-    if let Some(e) = resp.get("error") {
-        if let Some(m) = e.get("message").and_then(|v| v.as_str()) {
-            return m.to_string();
-        }
-    }
-    // C3: success envelopes are emitted via structured_content only;
-    // fall back to the legacy content[].text shape (no longer produced
-    // by nu_sh_mcp >= 0.0.27, but kept for robustness across mixed
-    // versions during the transition).
-    if let Some(sc) = resp.get("result").and_then(|r| r.get("structuredContent")) {
-        return sc.to_string();
-    }
-    if let Some(c) = resp
-        .get("result")
-        .and_then(|r| r.get("content"))
-        .and_then(|c| c.as_array())
-    {
-        if let Some(t) = c.first().and_then(|t| t.get("text")).and_then(|t| t.as_str()) {
-            return t.to_string();
-        }
-    }
-    resp.to_string()
+    envelope_error(resp).map(|e| e.to_string()).unwrap_or_else(|| resp.to_string())
 }
 
 fn write_source(dir: &Path, rel: &str, contents: &str) {
@@ -527,12 +523,16 @@ fn import_aggregates_multiple_violations() {
             "path": src.to_str().unwrap(),
         }),
     );
-    assert!(has_error_path(&resp));
-    let msg = error_message(&resp);
-    // At least three distinct violation messages should appear.
-    assert!(msg.contains("mod.nu may only contain"));
-    assert!(msg.contains("export def main"));
-    assert!(msg.contains("export def resolve"));
+    assert_eq!(envelope_error_kind(&resp), Some("library::violations"), "got {resp}");
+    let messages = structural_messages(&resp);
+    // At least three distinct violation messages should appear in the
+    // structural section.
+    assert!(messages.iter().any(|m| m.contains("mod.nu may only contain")),
+        "got {messages:?}");
+    assert!(messages.iter().any(|m| m.contains("export def main")),
+        "got {messages:?}");
+    assert!(messages.iter().any(|m| m.contains("export def resolve")),
+        "got {messages:?}");
 }
 
 #[test]
@@ -607,12 +607,8 @@ fn reimport_rejects_when_kind_is_registered() {
         "reimport_library",
         serde_json::json!({"name": "registered_lib"}),
     );
-    assert!(has_error_path(&resp));
-    let msg = error_message(&resp);
-    assert!(
-        msg.contains("only applies to libraries imported"),
-        "expected wrong-kind violation; got {msg:?}",
-    );
+    assert_eq!(envelope_error_kind(&resp), Some("library::wrong_kind"),
+        "expected library::wrong_kind; got {resp}");
 }
 
 #[test]

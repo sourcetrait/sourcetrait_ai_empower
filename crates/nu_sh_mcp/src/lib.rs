@@ -1,5 +1,6 @@
 pub(crate) mod server {
     pub(crate) mod cache;
+    pub(crate) mod error;
     pub(crate) mod library;
     pub(crate) mod lint;
     pub(crate) mod parse_engine;
@@ -42,10 +43,15 @@ pub(crate) use crate::{
             closure_cache_file,
             data_base_dir,
         },
+        error::{
+            Error,
+            ErrorEnvelope,
+            Where,
+            WhereSource,
+            error_to_call_result,
+        },
         library::{
-            ImportError,
             LibraryLocks,
-            ValidationResult,
             Violation,
             call_file_path,
             define_function_impl,
@@ -59,7 +65,6 @@ pub(crate) use crate::{
         },
         lint::{
             LintViolation,
-            format_lint_violations,
             lint_block,
             lint_body,
         },
@@ -100,6 +105,7 @@ pub(crate) use std::{
         Read,
         Write,
     },
+    ops::ControlFlow,
     panic::{
         AssertUnwindSafe,
         catch_unwind,
@@ -193,6 +199,7 @@ pub(crate) mod ser {
     pub(crate) use ::serde::{
         Deserialize,
         Serialize,
+        Serializer,
     };
 }
 
@@ -217,7 +224,6 @@ pub(crate) mod mcp {
         handler::server::wrapper::Parameters,
         model::{
             CallToolResult,
-            ErrorCode,
             Implementation,
             JsonObject,
             ServerCapabilities,

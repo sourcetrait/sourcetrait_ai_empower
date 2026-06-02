@@ -137,22 +137,22 @@ impl Drop for Host {
 }
 
 fn has_error_path(resp: &serde_json::Value) -> bool {
-    resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true)
+    resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .is_some()
 }
 
 fn extract_envelope(resp: &serde_json::Value) -> Option<serde_json::Value> {
-    let result = resp.get("result")?;
-    if let Some(sc) = result.get("structuredContent") {
-        return Some(sc.clone());
+    // Success envelopes are inside structuredContent at the top level
+    // (no `error` key). Error envelopes have `error`; this helper is
+    // for the success path. Returns None when an error envelope sits
+    // there instead.
+    let sc = resp.get("result")?.get("structuredContent")?.clone();
+    if sc.get("error").is_some() {
+        return None;
     }
-    let content = result.get("content")?.as_array()?;
-    let text = content.first()?.get("text")?.as_str()?;
-    serde_json::from_str(text).ok()
+    Some(sc)
 }
 
 fn write_source(dir: &Path, rel: &str, contents: &str) {

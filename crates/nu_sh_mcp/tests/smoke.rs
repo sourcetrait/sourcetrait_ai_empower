@@ -156,12 +156,10 @@ fn smoke_2_runtime_arg_typecheck_error() {
     let resp = host.run(args);
     // We expect either an error result (rmcp's CallToolResult with is_error=true)
     // OR a JSON-RPC error object. Both are valid representations.
-    let has_error_path = resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true);
+    let has_error_path = resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .is_some();
     assert!(
         has_error_path,
         "expected parse-time arg mismatch to surface as error; got {resp}",
@@ -181,12 +179,10 @@ fn smoke_3_runtime_result_typecheck_error() {
         "body": "{ out: \"five\" }",
     });
     let resp = host.run(args);
-    let has_error_path = resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true);
+    let has_error_path = resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .is_some();
     assert!(
         has_error_path,
         "expected runtime result mismatch to surface as error; got {resp}",
@@ -231,12 +227,10 @@ fn smoke_6_worker_death_via_exit() {
         "body": "{ out: (exit 1; 0) }",
     });
     let resp = host.run(args);
-    let has_error_path = resp.get("error").is_some()
-        || resp
-            .get("result")
-            .and_then(|r| r.get("isError"))
-            .and_then(|v| v.as_bool())
-            == Some(true);
+    let has_error_path = resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .is_some();
     assert!(
         has_error_path,
         "expected worker exit to surface as error; got {resp}",
@@ -262,14 +256,13 @@ fn smoke_9_timeout_fires() {
         "timeout_ms": 200u64
     });
     let resp = host.run(args);
-    let err = resp.get("error").unwrap_or_else(|| {
-        panic!("expected error envelope; got {resp}");
-    });
-    assert_eq!(err["code"].as_i64(), Some(-32001), "got {err}");
-    assert!(
-        err["message"].as_str().unwrap_or("").contains("timeout"),
-        "expected 'timeout' in message; got {err}",
-    );
+    let env = resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .unwrap_or_else(|| panic!("expected error envelope; got {resp}"));
+    assert_eq!(env["kind"].as_str(), Some("worker::timeout"), "got {env}");
+    assert_eq!(env["data"]["timeout_ms"].as_u64(), Some(200), "got {env}");
+    assert!(env["nonce"].as_str().is_some(), "expected nonce; got {env}");
     // Next call against the (respawned) pool worker should succeed.
     let args2 = serde_json::json!({
         "args_schema": "x: int",

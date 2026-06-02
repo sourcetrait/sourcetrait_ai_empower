@@ -381,6 +381,20 @@ pub(crate) struct InfoEnvelope {
     pub plugins: Vec<crate::plugins::PluginInfo>,
 }
 
+// outputSchema deviation note (the_user 2026-06-02): a `oneOf(Success,
+// ErrorEnvelope)` wrapper was attempted to formally cover both branches
+// of each tool's wire shape, but Claude Code's MCP client rejected the
+// resulting schemas (root-level `oneOf` lacks `type: "object"`). The
+// pragmatic outcome: per-tool `output_schema` declares the SUCCESS
+// envelope shape only. Error responses at runtime emit
+// `structuredContent.error.{kind, data, nonce?}` per the new error
+// envelope; they don't validate against the declared schema but
+// transit + render fine (Claude Code does not enforce validation on
+// tool results at the structured-content layer). The
+// `Error`/`ErrorEnvelope`/`Where` types are still typed Rust internals
+// (built by handlers + serialized to JSON); only the schema-declaration
+// side of the wire contract is success-only.
+
 /// What: the rmcp server-side state. Owns Arc-wrapped handles to the
 /// two worker subprocesses (stateless + stateful), the NonceGen for
 /// per-call ids, the per-library lock registry for slice-3
@@ -412,11 +426,10 @@ pub struct NuSh {
 /// 2026-06-01: 120s catches hangs without imposing an upper cap).
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 
-/// JSON-RPC error code returned when a call exceeds `timeout_ms`
-/// (the_user 2026-06-01: `-32001` chosen from the JSON-RPC
-/// implementation-defined server-error range, distinct from -32603
-/// internal_error so agents can branch).
-const TIMEOUT_ERROR_CODE: i32 = -32001;
+// TIMEOUT_ERROR_CODE retired in 0.0.34 -- timeouts now emit a typed
+// `Error::WorkerTimeout { timeout_ms }` envelope rather than a JSON-
+// RPC error code. Agent branches on `structuredContent.error.kind ==
+// "worker::timeout"` instead of `error.code == -32001`.
 
 /// What: snapshot of one in-flight tool call. Lives in `NuSh::in_flight`
 /// keyed by the call's nonce string; `processes()` serializes it,
@@ -493,27 +506,27 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // Slice 5.1: AST body lint runs BEFORE template synthesis so any
-        // hardcoded-path or denied-external violation surfaces as -32602
-        // invalid_params with the agent-fixable `lint::<class> [L:C]`
-        // report shape.
         let violations = lint_run_params(&self.lint_engine, &p);
         if !violations.is_empty() {
-            return Err(mcp::ErrorData::invalid_params(
-                format_lint_violations(&violations),
+            return Ok(error_to_call_result(
+                Error::LintViolations { violations },
                 None,
             ));
         }
         let source = build_run_source(&p);
-        let payload_bytes = json::to_vec(&p).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("serialize RunParams for nonce: {e}"),
+        let payload_bytes = match json::to_vec(&p) {
+            Ok(b) => b,
+            Err(e) => return Ok(error_to_call_result(
+                Error::Internal {
+                    phase: "run::serialize_payload".to_string(),
+                    reason: e.to_string(),
+                },
                 None,
-            )
-        })?;
+            )),
+        };
         let args_json = serde_json::Value::Object(p.args.clone());
         let timeout_ms = p.timeout_ms;
-        let outcome = dispatch_pooled(
+        let outcome = match dispatch_pooled(
             &self.runs_pool,
             &self.nonce_gen,
             &self.in_flight,
@@ -525,18 +538,17 @@ impl NuSh {
             InFlightKind::Run,
             timeout_ms,
         )
-        .await?;
+        .await
+        {
+            Ok(o) => o,
+            Err(de) => return Ok(error_to_call_result(de.error, de.nonce)),
+        };
         let computed_rerun_id = lib_empower::RerunHash::of(&(
             p.args_schema.as_str(),
             p.result_schema.as_str(),
             p.body.as_str(),
         ))
         .to_string();
-        // Slice 6.0: cache write is non-fatal. A successful eval whose
-        // closure couldn't be cached (disk full, permission, etc.) still
-        // returns the result to the agent; the envelope omits `rerun_id`
-        // so the agent knows replay is unavailable. Loss is logged to
-        // host stderr for observability.
         let rerun_id_opt = match write_closure_cache(&computed_rerun_id, &p) {
             Ok(()) => Some(computed_rerun_id),
             Err(e) => {
@@ -546,11 +558,6 @@ impl NuSh {
                 None
             }
         };
-        // outcome.result is always a JSON object because the worker's
-        // `__resolve [result: record<RESULT_SCHEMA>] { $result }` binding
-        // forces a record-shaped return. If the typed binding ever fails,
-        // the worker emits ok=false with the cant_convert error and we
-        // bail before this point; here we trust the shape.
         let result_obj = outcome
             .result
             .as_object()
@@ -572,27 +579,27 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // Slice 5.2: lint applies to interact() bodies on the same
-        // shape as run(); the stateful substrate is irrelevant for
-        // static lint, so both paths share the same `lint_run_params`
-        // aggregator.
         let violations = lint_run_params(&self.lint_engine, &p);
         if !violations.is_empty() {
-            return Err(mcp::ErrorData::invalid_params(
-                format_lint_violations(&violations),
+            return Ok(error_to_call_result(
+                Error::LintViolations { violations },
                 None,
             ));
         }
         let source = build_interact_source(&p);
-        let payload_bytes = json::to_vec(&p).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("serialize RunParams for nonce: {e}"),
+        let payload_bytes = match json::to_vec(&p) {
+            Ok(b) => b,
+            Err(e) => return Ok(error_to_call_result(
+                Error::Internal {
+                    phase: "interact::serialize_payload".to_string(),
+                    reason: e.to_string(),
+                },
                 None,
-            )
-        })?;
+            )),
+        };
         let args_json = serde_json::Value::Object(p.args.clone());
         let timeout_ms = p.timeout_ms;
-        let outcome = dispatch_interact(
+        let outcome = match dispatch_interact(
             &self.interact_worker,
             &self.nonce_gen,
             &self.in_flight,
@@ -601,7 +608,11 @@ impl NuSh {
             args_json,
             timeout_ms,
         )
-        .await?;
+        .await
+        {
+            Ok(o) => o,
+            Err(de) => return Ok(error_to_call_result(de.error, de.nonce)),
+        };
         let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
         let envelope = InteractEnvelope {
             result: result_obj,
@@ -611,55 +622,42 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Register an empty library namespace; subsequent define_function calls populate it on both the MCP-managed canonical repo and the agent's local mirror at `path`."
+        description = "Register an empty library namespace; subsequent define_function calls populate it on both the MCP-managed canonical repo and the agent's local mirror at `path`.",
+        output_schema = mcp::schema_for_type::<ErrorEnvelope>()
     )]
     async fn register_library(
         &self,
         mcp::Parameters(p): mcp::Parameters<RegisterLibraryParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let lock = self
-            .library_locks
-            .register(&p.name)
-            .await
-            .map_err(|_| {
-                mcp::ErrorData::invalid_params(
-                    format!("library `{}` is already registered", p.name),
-                    None,
-                )
-            })?;
-        let _guard = lock.write().await;
-        register_library_impl(&p.name, std::path::Path::new(&p.path)).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("register_library: {e}"),
+        let lock = match self.library_locks.register(&p.name).await {
+            Ok(l) => l,
+            Err(_) => return Ok(error_to_call_result(
+                Error::LibraryAlreadyRegistered { library: p.name.clone() },
                 None,
-            )
-        })?;
-        Ok(mcp::CallToolResult::default())
+            )),
+        };
+        let _guard = lock.write().await;
+        match register_library_impl(&p.name, std::path::Path::new(&p.path)) {
+            Ok(()) => Ok(mcp::CallToolResult::default()),
+            Err(error) => Ok(error_to_call_result(error, None)),
+        }
     }
 
     #[mcp::tool(
-        description = "Define (or replace) a single function inside a registered library. Writes `<library>/<module_path>/<name>.nu` with the `export def main` + `export def resolve` envelope, updates the `mod.nu` cascade up to the library root, mirrors to the agent's local copy, and commits."
+        description = "Define (or replace) a single function inside a registered library. Writes `<library>/<module_path>/<name>.nu` with the `export def main` + `export def resolve` envelope, updates the `mod.nu` cascade up to the library root, mirrors to the agent's local copy, and commits.",
+        output_schema = mcp::schema_for_type::<ErrorEnvelope>()
     )]
     async fn define_function(
         &self,
         mcp::Parameters(p): mcp::Parameters<DefineFunctionParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // Slice 5.2: lint the body BEFORE acquiring the lock or touching
-        // disk; lint failure should be a fast client-side reject, not a
-        // half-committed write.
         let violations = lint_body(&self.lint_engine, &p.args_schema, &p.body, None);
         if !violations.is_empty() {
-            return Err(mcp::ErrorData::invalid_params(
-                format_lint_violations(&violations),
+            return Ok(error_to_call_result(
+                Error::LintViolations { violations },
                 None,
             ));
         }
-        // Slice 6.0: parse-check the synthesized source BEFORE acquiring
-        // the lock or touching disk. lint_body returns no violations when
-        // the wrapper parse fails (find_def_body_id early-return), so a
-        // syntactically broken body would otherwise be committed and only
-        // surface at call() time. Mirrors the parse-correctness check
-        // import_library already performs via validate_function_file_ast.
         let parse_violations = parse_check_function_source(
             &self.lint_engine,
             &p.name,
@@ -668,50 +666,55 @@ impl NuSh {
             &p.body,
         );
         if !parse_violations.is_empty() {
-            return Err(mcp::ErrorData::invalid_params(
-                format_violations(&parse_violations),
+            return Ok(error_to_call_result(
+                Error::LibraryViolations {
+                    structural: parse_violations,
+                    lint: vec![],
+                },
                 None,
             ));
         }
-        let lock = self.library_locks.lookup(&p.library).await.ok_or_else(|| {
-            mcp::ErrorData::invalid_params(
-                format!("library `{}` is not registered", p.library),
+        let lock = match self.library_locks.lookup(&p.library).await {
+            Some(l) => l,
+            None => return Ok(error_to_call_result(
+                Error::LibraryNotRegistered { library: p.library.clone() },
                 None,
-            )
-        })?;
+            )),
+        };
         let _guard = lock.write().await;
-        define_function_impl(
+        match define_function_impl(
             &p.library,
             &p.module_path,
             &p.name,
             &p.args_schema,
             &p.result_schema,
             &p.body,
-        )
-        .map_err(|e| {
-            mcp::ErrorData::internal_error(format!("define_function: {e}"), None)
-        })?;
-        Ok(mcp::CallToolResult::default())
+        ) {
+            Ok(()) => Ok(mcp::CallToolResult::default()),
+            Err(error) => Ok(error_to_call_result(error, None)),
+        }
     }
 
     #[mcp::tool(
-        description = "Remove a function from a registered library. Updates the `mod.nu` cascade, prunes any now-empty intermediate directories, mirrors the removal, and commits."
+        description = "Remove a function from a registered library. Updates the `mod.nu` cascade, prunes any now-empty intermediate directories, mirrors the removal, and commits.",
+        output_schema = mcp::schema_for_type::<ErrorEnvelope>()
     )]
     async fn undefine_function(
         &self,
         mcp::Parameters(p): mcp::Parameters<UndefineFunctionParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let lock = self.library_locks.lookup(&p.library).await.ok_or_else(|| {
-            mcp::ErrorData::invalid_params(
-                format!("library `{}` is not registered", p.library),
+        let lock = match self.library_locks.lookup(&p.library).await {
+            Some(l) => l,
+            None => return Ok(error_to_call_result(
+                Error::LibraryNotRegistered { library: p.library.clone() },
                 None,
-            )
-        })?;
+            )),
+        };
         let _guard = lock.write().await;
-        undefine_function_impl(&p.library, &p.module_path, &p.name).map_err(|e| {
-            mcp::ErrorData::internal_error(format!("undefine_function: {e}"), None)
-        })?;
-        Ok(mcp::CallToolResult::default())
+        match undefine_function_impl(&p.library, &p.module_path, &p.name) {
+            Ok(()) => Ok(mcp::CallToolResult::default()),
+            Err(error) => Ok(error_to_call_result(error, None)),
+        }
     }
 
     #[mcp::tool(
@@ -722,29 +725,31 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<CallParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let lock = self.library_locks.lookup(&p.library).await.ok_or_else(|| {
-            mcp::ErrorData::invalid_params(
-                format!("library `{}` is not registered", p.library),
+        let lock = match self.library_locks.lookup(&p.library).await {
+            Some(l) => l,
+            None => return Ok(error_to_call_result(
+                Error::LibraryNotRegistered { library: p.library.clone() },
                 None,
-            )
-        })?;
+            )),
+        };
         let _guard = lock.read().await;
-        let file_path = call_file_path(&p.library, &p.module_path, &p.name).ok_or_else(|| {
-            mcp::ErrorData::invalid_params(
-                "invalid library / module_path / name (must satisfy identifier rules)".to_string(),
+        let file_path = match call_file_path(&p.library, &p.module_path, &p.name) {
+            Some(p) => p,
+            None => return Ok(error_to_call_result(
+                Error::LibraryInvalidModulePath {
+                    module_path: p.module_path.clone(),
+                    reason: "library / module_path / name must satisfy identifier rules".to_string(),
+                },
                 None,
-            )
-        })?;
+            )),
+        };
         if !file_path.exists() {
-            return Err(mcp::ErrorData::invalid_params(
-                format!(
-                    "function not defined: {}",
-                    if p.module_path.is_empty() {
-                        format!("{}/{}", p.library, p.name)
-                    } else {
-                        format!("{}/{}/{}", p.library, p.module_path, p.name)
-                    },
-                ),
+            return Ok(error_to_call_result(
+                Error::FunctionNotDefined {
+                    library: p.library.clone(),
+                    module_path: p.module_path.clone(),
+                    name: p.name.clone(),
+                },
                 None,
             ));
         }
@@ -756,19 +761,23 @@ impl NuSh {
             p.name,
             args_json_str,
         );
-        let payload_bytes = json::to_vec(&p).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("serialize CallParams for nonce: {e}"),
+        let payload_bytes = match json::to_vec(&p) {
+            Ok(b) => b,
+            Err(e) => return Ok(error_to_call_result(
+                Error::Internal {
+                    phase: "call::serialize_payload".to_string(),
+                    reason: e.to_string(),
+                },
                 None,
-            )
-        })?;
+            )),
+        };
         let path_str = if p.module_path.is_empty() {
             format!("{}::{}", p.library, p.name)
         } else {
             format!("{}:{}:{}", p.library, p.module_path, p.name)
         };
         let args_json = serde_json::Value::Object(p.args.clone());
-        let outcome = dispatch_pooled(
+        let outcome = match dispatch_pooled(
             &self.runs_pool,
             &self.nonce_gen,
             &self.in_flight,
@@ -780,7 +789,11 @@ impl NuSh {
             InFlightKind::Call { path: path_str },
             p.timeout_ms,
         )
-        .await?;
+        .await
+        {
+            Ok(o) => o,
+            Err(de) => return Ok(error_to_call_result(de.error, de.nonce)),
+        };
         let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
         envelope_to_structured(&CallEnvelope {
             result: result_obj,
@@ -789,71 +802,69 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Import a pre-authored library from a client path into the MCP-managed canonical repo. Strict validation: each function file must have exactly `export def main [args: record<...>]` + `export def resolve [args: record<...>] { $args }`; each `mod.nu` may only re-export children. All violations are reported at once; no auto-fix."
+        description = "Import a pre-authored library from a client path into the MCP-managed canonical repo. Strict validation: each function file must have exactly `export def main [args: record<...>]` + `export def resolve [args: record<...>] { $args }`; each `mod.nu` may only re-export children. All violations are reported at once; no auto-fix.",
+        output_schema = mcp::schema_for_type::<ErrorEnvelope>()
     )]
     async fn import_library(
         &self,
         mcp::Parameters(p): mcp::Parameters<ImportLibraryParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let lock = self
-            .library_locks
-            .register(&p.name)
-            .await
-            .map_err(|_| {
-                mcp::ErrorData::invalid_params(
-                    format!("library `{}` is already registered", p.name),
-                    None,
-                )
-            })?;
+        let lock = match self.library_locks.register(&p.name).await {
+            Ok(l) => l,
+            Err(_) => return Ok(error_to_call_result(
+                Error::LibraryAlreadyRegistered { library: p.name.clone() },
+                None,
+            )),
+        };
         let _guard = lock.write().await;
-        import_library_impl(&p.name, std::path::Path::new(&p.path), &self.lint_engine)
-            .map_err(import_error_to_mcp_error)?;
-        Ok(mcp::CallToolResult::default())
+        match import_library_impl(&p.name, std::path::Path::new(&p.path), &self.lint_engine) {
+            Ok(()) => Ok(mcp::CallToolResult::default()),
+            Err(error) => Ok(error_to_call_result(error, None)),
+        }
     }
 
     #[mcp::tool(
-        description = "Re-import a library from the path it was originally imported from. Reads source_path from the library's metadata; re-runs strict validation; replaces the canonical copy with a fresh snapshot. Errors if the library was register_library-style (kind=registered) instead of import_library-style."
+        description = "Re-import a library from the path it was originally imported from. Reads source_path from the library's metadata; re-runs strict validation; replaces the canonical copy with a fresh snapshot. Errors if the library was register_library-style (kind=registered) instead of import_library-style.",
+        output_schema = mcp::schema_for_type::<ErrorEnvelope>()
     )]
     async fn reimport_library(
         &self,
         mcp::Parameters(p): mcp::Parameters<ReimportLibraryParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let lock = self.library_locks.lookup(&p.name).await.ok_or_else(|| {
-            mcp::ErrorData::invalid_params(
-                format!("library `{}` is not registered", p.name),
+        let lock = match self.library_locks.lookup(&p.name).await {
+            Some(l) => l,
+            None => return Ok(error_to_call_result(
+                Error::LibraryNotRegistered { library: p.name.clone() },
                 None,
-            )
-        })?;
+            )),
+        };
         let _guard = lock.write().await;
-        reimport_library_impl(&p.name, &self.lint_engine).map_err(import_error_to_mcp_error)?;
-        Ok(mcp::CallToolResult::default())
+        match reimport_library_impl(&p.name, &self.lint_engine) {
+            Ok(()) => Ok(mcp::CallToolResult::default()),
+            Err(error) => Ok(error_to_call_result(error, None)),
+        }
     }
 
     #[mcp::tool(
-        description = "Drop a library and all its functions from the MCP-managed canonical repo. Does not touch the agent's local mirror."
+        description = "Drop a library and all its functions from the MCP-managed canonical repo. Does not touch the agent's local mirror.",
+        output_schema = mcp::schema_for_type::<ErrorEnvelope>()
     )]
     async fn unregister_library(
         &self,
         mcp::Parameters(p): mcp::Parameters<UnregisterLibraryParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let lock = self
-            .library_locks
-            .unregister(&p.name)
-            .await
-            .map_err(|_| {
-                mcp::ErrorData::invalid_params(
-                    format!("library `{}` is not registered", p.name),
-                    None,
-                )
-            })?;
-        let _guard = lock.write().await;
-        unregister_library_impl(&p.name).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("unregister_library: {e}"),
+        let lock = match self.library_locks.unregister(&p.name).await {
+            Ok(l) => l,
+            Err(_) => return Ok(error_to_call_result(
+                Error::LibraryNotRegistered { library: p.name.clone() },
                 None,
-            )
-        })?;
-        Ok(mcp::CallToolResult::default())
+            )),
+        };
+        let _guard = lock.write().await;
+        match unregister_library_impl(&p.name) {
+            Ok(()) => Ok(mcp::CallToolResult::default()),
+            Err(error) => Ok(error_to_call_result(error, None)),
+        }
     }
 
     #[mcp::tool(
@@ -865,24 +876,34 @@ impl NuSh {
         mcp::Parameters(p): mcp::Parameters<RerunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         if !lib_empower::is_base62(&p.rerun_id) {
-            return Err(mcp::ErrorData::invalid_params(
-                format!("rerun_id must be base62; got {:?}", p.rerun_id),
+            return Ok(error_to_call_result(
+                Error::ClosureInvalidRerunId {
+                    rerun_id: p.rerun_id.clone(),
+                    reason: "rerun_id must be base62".to_string(),
+                },
                 None,
             ));
         }
         let path = closure_cache_file(&p.rerun_id);
-        let cached_bytes = fs::read(&path).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("read {}: {e}", path.display()),
+        let cached_bytes = match fs::read(&path) {
+            Ok(b) => b,
+            Err(_) => return Ok(error_to_call_result(
+                Error::ClosureCacheMissing {
+                    rerun_id: p.rerun_id.clone(),
+                },
                 None,
-            )
-        })?;
-        let cached: ClosureCacheBody = json::from_slice(&cached_bytes).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("decode cached closure {}: {e}", path.display()),
+            )),
+        };
+        let cached: ClosureCacheBody = match json::from_slice(&cached_bytes) {
+            Ok(c) => c,
+            Err(e) => return Ok(error_to_call_result(
+                Error::ClosureCacheDecode {
+                    rerun_id: p.rerun_id.clone(),
+                    reason: e.to_string(),
+                },
                 None,
-            )
-        })?;
+            )),
+        };
         // Touch mtime for the LRU signal future pruning will use.
         // Idempotent overwrite -- content is deterministic.
         let _ = fs::write(&path, &cached_bytes);
@@ -894,14 +915,18 @@ impl NuSh {
             timeout_ms: p.timeout_ms,
         };
         let source = build_run_source(&reconstructed);
-        let payload_bytes = json::to_vec(&reconstructed).map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("serialize reconstructed RunParams for nonce: {e}"),
+        let payload_bytes = match json::to_vec(&reconstructed) {
+            Ok(b) => b,
+            Err(e) => return Ok(error_to_call_result(
+                Error::Internal {
+                    phase: "rerun::serialize_payload".to_string(),
+                    reason: e.to_string(),
+                },
                 None,
-            )
-        })?;
+            )),
+        };
         let args_json = serde_json::Value::Object(p.args);
-        let outcome = dispatch_pooled(
+        let outcome = match dispatch_pooled(
             &self.runs_pool,
             &self.nonce_gen,
             &self.in_flight,
@@ -913,7 +938,11 @@ impl NuSh {
             InFlightKind::Rerun { rerun_id: p.rerun_id.clone() },
             p.timeout_ms,
         )
-        .await?;
+        .await
+        {
+            Ok(o) => o,
+            Err(de) => return Ok(error_to_call_result(de.error, de.nonce)),
+        };
         let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
         envelope_to_structured(&RerunEnvelope {
             result: result_obj,
@@ -1040,24 +1069,46 @@ fn lint_run_params(engine: &ParseEngine, p: &RunParams) -> Vec<LintViolation> {
 /// rerun caching). Returning a struct instead of a tuple makes the
 /// per-field semantics readable at the call site.
 ///
-/// Where: returned by `dispatch_to_worker` to each `#[mcp::tool]`
-/// handler that wraps it into a json::json! envelope and serializes
-/// to String.
+/// Where: returned by `dispatch_pooled` / `dispatch_interact` to
+/// each `#[mcp::tool]` handler that wraps it into a typed envelope.
 struct DispatchOutcome {
     nonce: lib_empower::Nonce,
     result: json::Value,
 }
 
+/// What: error-side return value from `dispatch_pooled` /
+/// `dispatch_interact`. Pairs the typed `Error` with an optional
+/// `Nonce` -- present when a worker-side log dir at
+/// `$XDG_CACHE_HOME/nu_sh_mcp/<x>/<nonce>/` was created (the agent
+/// can fetch stdout/stderr by that nonce).
+///
+/// Why: the dispatch helpers may fail BEFORE or AFTER allocating a
+/// per-call nonce. Returning both `error` and optional `nonce`
+/// (rather than embedding the nonce into a specific Error variant)
+/// keeps the typed Error data shape uniform per kind while
+/// preserving the agent's path back to the cached log dir.
+///
+/// Where: produced internally by the dispatch helpers; the handler
+/// pipes through `error_to_call_result(error, nonce)` to convert
+/// into the wire envelope.
+struct DispatchError {
+    error: Error,
+    nonce: Option<lib_empower::Nonce>,
+}
+
 /// What: dispatch one tool call against the stateless `runs_pool`.
 /// Acquires a worker from the pool, registers an in-flight entry,
 /// wraps the round-trip in `tk::timeout`, kills the worker on
-/// timeout, returns the `DispatchOutcome` or an MCP-shaped error.
+/// timeout, returns the `DispatchOutcome` or a typed `DispatchError`
+/// (carrying both the `Error` and the per-call `Nonce` when present
+/// so the handler can attach it to the wire envelope).
 ///
-/// Why: replaces the prior single-worker `dispatch_to_worker` for
-/// run/rerun/call. The pool gives concurrent execution; in-flight
-/// tracking lets `kill(nonce)` and timeouts target a specific call's
-/// worker; timeout wrap caps every call by the_user 2026-06-01
-/// default of 120s when `timeout_ms` is omitted.
+/// Why: replaces the prior `Err(mcp::ErrorData)` shape so each
+/// error path emits a typed `Error` variant -- the handler then
+/// routes through `error_to_call_result` for visible CLI rendering.
+/// The pool gives concurrent execution; in-flight tracking lets
+/// `kill(nonce)` and timeouts target a specific call's worker;
+/// timeout wrap caps every call.
 ///
 /// Where: called by `NuSh::run`, `NuSh::rerun`, `NuSh::call` (all
 /// stateless surfaces).
@@ -1072,18 +1123,22 @@ async fn dispatch_pooled(
     args_json: serde_json::Value,
     kind: InFlightKind,
     timeout_ms: Option<u64>,
-) -> Result<DispatchOutcome, mcp::ErrorData> {
+) -> Result<DispatchOutcome, DispatchError> {
     let nonce = nonce_gen.next(&payload_for_nonce);
     let nonce_str = nonce.to_string();
     let log_dir = cache_dir(log_kind, nonce);
-    fs::create_dir_all(&log_dir).map_err(|e| {
-        mcp::ErrorData::internal_error(
-            format!("create_dir_all {}: {e}", log_dir.display()),
-            None,
-        )
+    fs::create_dir_all(&log_dir).map_err(|e| DispatchError {
+        error: Error::Internal {
+            phase: "dispatch_pooled::create_log_dir".to_string(),
+            reason: format!("create_dir_all {}: {e}", log_dir.display()),
+        },
+        nonce: None,
     })?;
-    let mut guard = pool.acquire().await.map_err(|e| {
-        mcp::ErrorData::internal_error(format!("pool acquire: {e}"), None)
+    let mut guard = pool.acquire().await.map_err(|e| DispatchError {
+        error: Error::WorkerDispatch {
+            reason: format!("pool acquire: {e}"),
+        },
+        nonce: None,
     })?;
     let pid = guard.pid();
     register_in_flight(
@@ -1110,22 +1165,34 @@ async fn dispatch_pooled(
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => {
             guard.drop_handle();
-            return Err(mcp::ErrorData::internal_error(e.to_string(), None));
+            return Err(DispatchError {
+                error: Error::WorkerDispatch {
+                    reason: e.to_string(),
+                },
+                nonce: Some(nonce),
+            });
         }
         Err(_) => {
             kill_worker_pid(pid);
             guard.drop_handle();
-            return Err(timeout_error(effective_timeout));
+            return Err(DispatchError {
+                error: Error::WorkerTimeout {
+                    timeout_ms: effective_timeout,
+                },
+                nonce: Some(nonce),
+            });
         }
     };
     drop(guard);
     if !response.ok {
-        return Err(mcp::ErrorData::internal_error(
-            response.error.unwrap_or_else(|| {
-                "worker returned ok=false with no error".to_string()
-            }),
-            None,
-        ));
+        return Err(DispatchError {
+            error: Error::WorkerReturnedError {
+                reason: response.error.unwrap_or_else(|| {
+                    "worker returned ok=false with no error".to_string()
+                }),
+            },
+            nonce: Some(nonce),
+        });
     }
     let result: json::Value = msgpack::from_slice(&response.value)
         .unwrap_or(json::Value::Null);
@@ -1153,23 +1220,26 @@ async fn dispatch_interact(
     source: String,
     args_json: serde_json::Value,
     timeout_ms: Option<u64>,
-) -> Result<DispatchOutcome, mcp::ErrorData> {
+) -> Result<DispatchOutcome, DispatchError> {
     let nonce = nonce_gen.next(&payload_for_nonce);
     let nonce_str = nonce.to_string();
     let log_dir = cache_dir(CacheKind::Interacts, nonce);
-    fs::create_dir_all(&log_dir).map_err(|e| {
-        mcp::ErrorData::internal_error(
-            format!("create_dir_all {}: {e}", log_dir.display()),
-            None,
-        )
+    fs::create_dir_all(&log_dir).map_err(|e| DispatchError {
+        error: Error::Internal {
+            phase: "dispatch_interact::create_log_dir".to_string(),
+            reason: format!("create_dir_all {}: {e}", log_dir.display()),
+        },
+        nonce: None,
     })?;
     let mut worker_lock = interact.lock().await;
     if worker_lock.is_none() {
         let spawned = WorkerHandle::spawn(Mode::Stateful).await.map_err(|e| {
-            mcp::ErrorData::internal_error(
-                format!("interact respawn: {e}"),
-                None,
-            )
+            DispatchError {
+                error: Error::WorkerDispatch {
+                    reason: format!("interact respawn: {e}"),
+                },
+                nonce: None,
+            }
         })?;
         *worker_lock = Some(spawned);
     }
@@ -1204,22 +1274,34 @@ async fn dispatch_interact(
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => {
             *worker_lock = None;
-            return Err(mcp::ErrorData::internal_error(e.to_string(), None));
+            return Err(DispatchError {
+                error: Error::WorkerDispatch {
+                    reason: e.to_string(),
+                },
+                nonce: Some(nonce),
+            });
         }
         Err(_) => {
             kill_worker_pid(pid);
             *worker_lock = None;
-            return Err(timeout_error(effective_timeout));
+            return Err(DispatchError {
+                error: Error::WorkerTimeout {
+                    timeout_ms: effective_timeout,
+                },
+                nonce: Some(nonce),
+            });
         }
     };
     drop(worker_lock);
     if !response.ok {
-        return Err(mcp::ErrorData::internal_error(
-            response.error.unwrap_or_else(|| {
-                "worker returned ok=false with no error".to_string()
-            }),
-            None,
-        ));
+        return Err(DispatchError {
+            error: Error::WorkerReturnedError {
+                reason: response.error.unwrap_or_else(|| {
+                    "worker returned ok=false with no error".to_string()
+                }),
+            },
+            nonce: Some(nonce),
+        });
     }
     let result: json::Value = msgpack::from_slice(&response.value)
         .unwrap_or(json::Value::Null);
@@ -1270,16 +1352,9 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-fn timeout_error(timeout_ms: u64) -> mcp::ErrorData {
-    mcp::ErrorData {
-        code: mcp::ErrorCode(TIMEOUT_ERROR_CODE),
-        message: format!(
-            "timeout: closure exceeded {timeout_ms}ms; worker was killed",
-        )
-        .into(),
-        data: None,
-    }
-}
+// (timeout_error and TIMEOUT_ERROR_CODE retired; timeouts now emit
+// Error::WorkerTimeout { timeout_ms } via DispatchError. See the
+// timeout branches in `dispatch_pooled` / `dispatch_interact`.)
 
 /// What: writes the closure cache file at `closures/<rerun_id>.json`
 /// after a successful `run()`. Creates the parent dir if needed,
@@ -1318,98 +1393,11 @@ fn write_closure_cache(
     Ok(())
 }
 
-/// What: maps the typed `library::ImportError` enum variants onto
-/// the rmcp `ErrorData` shapes the agent will see (invalid_params vs
-/// internal_error, each with a human-readable message). `Violations`
-/// variants are rendered as a multi-line report via
-/// `format_violations`.
-///
-/// Why: keeping the typed `ImportError` internal lets the library
-/// module be testable independent of rmcp; mapping at the seam
-/// preserves the JSON-RPC error code semantics (-32602 for client
-/// errors, -32603 for server errors).
-///
-/// Where: called by `NuSh::import_library` and `NuSh::reimport_library`
-/// in their `.map_err(import_error_to_mcp_error)` chains.
-fn import_error_to_mcp_error(e: ImportError) -> mcp::ErrorData {
-    match e {
-        ImportError::InvalidLibraryName(n) => mcp::ErrorData::invalid_params(
-            format!("invalid library name: {n:?}"),
-            None,
-        ),
-        ImportError::SourceMissing(p) => mcp::ErrorData::invalid_params(
-            format!("source path does not exist or is not a directory: {}", p.display()),
-            None,
-        ),
-        ImportError::NotRegistered(n) => mcp::ErrorData::invalid_params(
-            format!("library `{n}` is not registered"),
-            None,
-        ),
-        ImportError::WrongKind => mcp::ErrorData::invalid_params(
-            "reimport_library only applies to libraries imported via import_library; this one was created via register_library".to_string(),
-            None,
-        ),
-        ImportError::Violations(result) => mcp::ErrorData::invalid_params(
-            format_validation_result(&result),
-            None,
-        ),
-        ImportError::Io(e) => mcp::ErrorData::internal_error(
-            format!("import: {e}"),
-            None,
-        ),
-    }
-}
-
-/// What: renders a slice of structural `Violation` records into a
-/// multi-line human-readable report with one bullet per violation.
-/// Lines with line=0 are file-level (no specific line); lines with
-/// line>0 print `<path>:<line>: <message>`.
-///
-/// Why: structural import-validation findings have always rendered in
-/// this bulleted-with-header shape; preserved verbatim so existing
-/// agents and tests stay compatible.
-///
-/// Where: called by `format_validation_result` (slice 5.2) when the
-/// structural section is non-empty.
-fn format_violations(v: &[Violation]) -> String {
-    let mut out = format!("validation failed: {} violation(s):", v.len());
-    for vio in v {
-        if vio.line == 0 {
-            out.push_str(&format!("\n  - {}: {}", vio.path, vio.message));
-        } else {
-            out.push_str(&format!("\n  - {}:{}: {}", vio.path, vio.line, vio.message));
-        }
-    }
-    out
-}
-
-/// What: renders a `ValidationResult` into a single multi-line message
-/// combining the structural section (bulleted, via `format_violations`)
-/// and the lint section (flat, via `format_lint_violations`), separated
-/// by a blank line when both are present.
-///
-/// Why: slice 5.2 surfaces both kinds of findings from one
-/// import_library / reimport_library call. The two render styles serve
-/// different purposes -- structural errors describe shape problems
-/// agents must restructure; lint findings name specific token-level
-/// issues the agent must lift -- and keeping them in distinct
-/// sections preserves both readers' workflows.
-///
-/// Where: called by `import_error_to_mcp_error` for the
-/// `ImportError::Violations(ValidationResult)` arm.
-fn format_validation_result(r: &ValidationResult) -> String {
-    let mut out = String::new();
-    if !r.structural.is_empty() {
-        out.push_str(&format_violations(&r.structural));
-    }
-    if !r.lint.is_empty() {
-        if !out.is_empty() {
-            out.push_str("\n\n");
-        }
-        out.push_str(&format_lint_violations(&r.lint));
-    }
-    out
-}
+// (import_error_to_mcp_error / format_violations / format_validation_result
+// retired -- errors are now typed `Error` values routed through
+// `error_to_call_result` rather than rendered as text JSON-RPC errors.
+// The structural `Violation` list and `LintViolation` list now live as
+// typed data inside `Error::LibraryViolations` and `Error::LintViolations`.)
 
 #[mcp::tool_handler]
 impl mcp::ServerHandler for NuSh {

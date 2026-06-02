@@ -1,6 +1,6 @@
 ---
 name: rustdeep 
-description: Generate a durable, span-anchored architectural orientation for a large or unfamiliar Rust workspace. Use when you need to understand how a Rust codebase is structured before authoring non-trivial features — when asked to "orient", "map", "get up to speed on", "understand the architecture of", or "find the main pattern in" a Rust repo, monorepo, or Cargo workspace, especially nushell/bevy/helix/redox-scale codebases where reading top-to-bottom is infeasible. Also use to refresh that understanding after a clean session or context compaction. Produces two files (ORIENTATION.md + REFERENCE.md) on disk, not a chat answer.
+description: Generate a durable, span-anchored architectural orientation for a large or unfamiliar Rust workspace. Use when you need to understand how a Rust codebase is structured before authoring non-trivial features — when asked to "orient", "map", "get up to speed on", "understand the architecture of", or "find the main pattern in" a Rust repo, monorepo, or Cargo workspace, especially codebases where reading top-to-bottom is infeasible. Also use to refresh that understanding after a clean session or context compaction. Produces two files (ORIENTATION.md + REFERENCE.md) on disk, not a chat answer.
 ---
 
 # Repo Orientation

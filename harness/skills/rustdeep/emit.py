@@ -31,7 +31,7 @@ def sp(rec):
     return f"{f}:{ln}-{end}" if end and end != ln else f"{f}:{ln}"
 
 
-def provenance(root: Path, fp: dict):
+def provenance(root: Path, odir: Path, fp: dict):
     commit = "UNKNOWN"
     rustc = "UNKNOWN"
     try:
@@ -44,7 +44,7 @@ def provenance(root: Path, fp: dict):
                                timeout=10).stdout.strip() or "UNKNOWN"
     except Exception:
         pass
-    overlay = (root / ".orientation" / "rustdoc_overlay.json").exists()
+    overlay = (odir / "rustdoc_overlay.json").exists()
     return (f"commit: {commit}\nrustc: {rustc}\ntool_version: {fp.get('tool_version')}\n"
             f"rustdoc_overlay_present: {overlay}")
 
@@ -71,7 +71,7 @@ def emit_reference(root: Path, fp: dict, facts: dict, out: Path):
          "Exhaustive, span-anchored. Grep this; do not read it top to bottom. Every entry is",
          "a `file:line` you open in source to verify or extend. Spans the rustdoc overlay",
          "marks null (re-exports, blanket/synthesized/macro-generated impls) are flagged, not",
-         "dropped.", "", "```", provenance(root, fp), "```", ""]
+         "dropped.", "", "```", provenance(root, out.parent, fp), "```", ""]
     for crate in sorted(by_crate):
         c = by_crate[crate]
         L.append(f"## crate: {crate}")
@@ -187,7 +187,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
          "flow) then the worked slice (the authoring template), then guardrails, then the",
          "authoring guide. Every claim is a span you can open. Sections marked **[AGENT]** are",
          "filled by reading source at the cited spans — never from guesswork.", "",
-         "```", provenance(root, fp), "```", ""]
+         "```", provenance(root, out.parent, fp), "```", ""]
 
     # method-selection honesty
     L += ["## How this artifact was shaped", "",

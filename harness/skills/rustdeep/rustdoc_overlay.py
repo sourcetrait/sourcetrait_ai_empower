@@ -26,8 +26,10 @@ import sys
 from pathlib import Path
 
 # Format versions this overlay has been written against. If the toolchain emits a different
-# version, we degrade rather than risk misreading the schema.
-KNOWN_FORMAT_VERSIONS = {26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40}
+# version, we degrade rather than risk misreading the schema. Verified through 57 (nightly
+# 2026-05-15); reconcile() handles the format-57 rename of `trait.name` to `trait.path` by
+# accepting either key. Re-verify the impl/use/import shapes when extending past 57.
+KNOWN_FORMAT_VERSIONS = set(range(26, 58))
 
 
 def toolchain_available():
@@ -50,7 +52,11 @@ def run_rustdoc_json(root: Path, package: str | None):
     cmd = ["cargo", "+nightly", "rustdoc"]
     if package:
         cmd += ["-p", package]
-    cmd += ["--", "-Z", "unstable-options", "--output-format", "json"]
+    # rustdoc's extra-args (after `--`) require a single target filter when the package
+    # has multiple targets (lib + bin(s)); cargo rejects with error 101 otherwise. Default
+    # to --lib since rustdoc-JSON is overwhelmingly the library surface. Bin-only packages
+    # will need a caller-side fork to specify --bin NAME.
+    cmd += ["--lib", "--", "-Z", "unstable-options", "--output-format", "json"]
     subprocess.run(cmd, cwd=str(root), check=True, capture_output=True, text=True, timeout=900)
     # rustdoc writes target/doc/<crate>.json
     docdir = root / "target" / "doc"
@@ -82,7 +88,10 @@ def reconcile(floor_facts: dict, rustdoc: dict):
             overlay["null_span_items"].append({"name": name, "kind": kind})
         if kind == "impl" and isinstance(inner.get("impl"), dict):
             tr = inner["impl"].get("trait")
-            tr_name = tr.get("name") if isinstance(tr, dict) else None
+            # rustdoc JSON < ~v45 used `trait.name`; format 57 renamed the field to
+            # `trait.path` (still the bare name; full paths sit under inner["impl"]
+            # elsewhere). Accept either key so the overlay survives the rename.
+            tr_name = (tr.get("path") or tr.get("name")) if isinstance(tr, dict) else None
             if span is None and tr_name:
                 # impl with no span => blanket / synthesized / macro-generated
                 overlay["macro_generated"].append({"trait": tr_name, "span": None,

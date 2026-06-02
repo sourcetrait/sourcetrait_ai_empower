@@ -395,6 +395,39 @@ pub(crate) struct InfoEnvelope {
 // (built by handlers + serialized to JSON); only the schema-declaration
 // side of the wire contract is success-only.
 
+// Content::text omission deviation note (the_user 2026-06-02, campaign
+// active): the MCP 2025-11-25 spec (server/tools.md) says "a tool that
+// returns structured content SHOULD also return the serialized JSON in
+// a TextContent block." We deviate: every handler emits
+// `structured_content` only and leaves `content: vec![]`. Both
+// `envelope_to_structured` (success path, below) and
+// `error_to_call_result` (error path, in `server/error.rs`) enforce
+// this single-channel discipline.
+//
+// Rationale (provisional): a prior probe round on the 0.0.34 surface
+// found Claude Code's CLI rendered both JSON-RPC errors and
+// `is_error=true` responses as red bullet with NO body, while the
+// success-shape + structuredContent path rendered the body on
+// click-expand. We adopted structured-only to keep success and error
+// wire shapes consistent.
+//
+// Open question (active campaign at `nushell_expert
+// notes/nu_sh_mcp/followups.md` item 13): a recall of the retired
+// `warm_nushell_mcp` prototype suggests Claude Code DID render
+// red-bullet + visible body at some configuration. If a probe in
+// `rmcp_explore` reproduces that, the "JSON-RPC errors and
+// `is_error=true` are CLI-dropped" finding embedded in the rationale
+// above would be incorrect, and this deviation may not be necessary.
+// Until the probes resolve, treat structured-only as a pragmatic
+// working state, not a settled architectural decision.
+//
+// Flip cost: revisiting would mean adding
+// `Content::text(serialized JSON envelope)` alongside the existing
+// structured payload in `envelope_to_structured` (and possibly
+// `error_to_call_result`). Mechanically a small change; the
+// `Result<CallToolResult, mcp::ErrorData>` signature already permits
+// any rmcp `CallToolResult` shape.
+
 /// What: the rmcp server-side state. Owns Arc-wrapped handles to the
 /// two worker subprocesses (stateless + stateful), the NonceGen for
 /// per-call ids, the per-library lock registry for slice-3
@@ -1020,18 +1053,21 @@ impl NuSh {
 }
 
 /// What: serializes any envelope struct into a `CallToolResult`
-/// carrying only `structured_content` (no `content[]` text mirror).
-/// Returns the rmcp shape Claude Code accepts directly via its
-/// 2025-11-25 `outputSchema` validator.
+/// carrying only `structured_content`, leaving `content: vec![]`. The
+/// no-`Content::text()` discipline deviates from the
+/// MCP 2025-11-25 spec (`server/tools.md` SHOULD); see the
+/// "Content::text omission deviation note" comment block above
+/// `impl NuSh` for the spec-deviation framing, the provisional
+/// rationale, the open question driving the active probe campaign, and
+/// the flip cost.
 ///
-/// Why: every C2 / C3 handler emits its typed envelope through this
-/// seam so the structured-only choice (no content[] mirror) lives in
-/// one place. If we ever need to flip to the spec-recommended
-/// `structured + text mirror`, the swap is a one-line change to
-/// `CallToolResult::structured`.
+/// Why: every success-path handler emits its typed envelope through
+/// this seam, so the structured-only choice lives in one place. The
+/// matching error-side seam is `error_to_call_result` in
+/// `server/error.rs`; both share the same wire-shape discipline.
 ///
 /// Where: called by every `#[mcp::tool]` handler in `NuSh` on the
-/// success path. Errors still flow through `Err(ErrorData)`.
+/// success path (run, interact, rerun, call, info, processes, ...).
 fn envelope_to_structured<T: ser::Serialize>(envelope: &T) -> Result<mcp::CallToolResult, mcp::ErrorData> {
     let value = json::to_value(envelope).map_err(|e| {
         mcp::ErrorData::internal_error(

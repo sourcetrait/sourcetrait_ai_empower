@@ -114,7 +114,7 @@ but has no single source location" — which is itself a fact about how the item
 
 ## The finished orientation, checked with fresh eyes
 
-Before you call it done, re-read `ORIENTATION.md` as if you were the next agent:
+Before you call it done, re-read `orientation.md` as if you were the next agent:
 
 - Could you author a new instance of the dominant pattern from §5 + §7 alone, opening only the
   spans cited? If not, the worked slice is incomplete.

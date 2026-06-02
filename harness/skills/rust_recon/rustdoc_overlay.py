@@ -31,6 +31,18 @@ from pathlib import Path
 # accepting either key. Re-verify the impl/use/import shapes when extending past 57.
 KNOWN_FORMAT_VERSIONS = set(range(26, 58))
 
+# Standard-library blanket / auto-impl traits. The compiler synthesizes these for every type
+# satisfying their bounds, so they ALWAYS land in the disagreement list under the naive logic
+# (the source-text scanner cannot see compiler-synthesized impls). They confirm std coverage,
+# NOT a user-macro-registration seam. We split them off into a separate informational
+# disagreement entry so the loud `impls_only_in_rustdoc` signal surfaces only user-domain
+# macro registration (derive macros, attribute macros, registration!() expansions).
+STD_BLANKET_TRAITS = frozenset({
+    "Any", "Borrow", "BorrowMut", "CloneToUninit", "Freeze", "From", "Into",
+    "Receiver", "RefUnwindSafe", "Send", "Sync", "ToOwned", "ToString", "TryFrom",
+    "TryInto", "Unpin", "UnsafeUnpin", "UnwindSafe",
+})
+
 
 def toolchain_available():
     """Return (ok, reason). ok=False means degrade to floor-only."""
@@ -101,16 +113,32 @@ def reconcile(floor_facts: dict, rustdoc: dict):
             overlay["reexports"].append({"name": name,
                                          "source": tgt.get("source") if isinstance(tgt, dict) else None})
 
-    # Disagreement: items rustdoc has that the floor's impl set lacks (likely macro-generated)
+    # Disagreement: items rustdoc has that the floor's impl set lacks. Split into
+    # std-blanket-coverage (informational; compiler synthesizes these for every type
+    # satisfying the bounds) and user-domain macro generation (the real signal -- a
+    # derive macro, attribute macro, or reg_macro!() expansion landed an impl that the
+    # source scanner could not see).
     rustdoc_impl_traits = {it["trait"] for it in overlay["macro_generated"] if it.get("trait")}
     floor_traits = {t for t, _ in floor_impl_types if t}
     only_rustdoc = sorted(rustdoc_impl_traits - floor_traits)
-    if only_rustdoc:
+    std_blanket = sorted(t for t in only_rustdoc if t in STD_BLANKET_TRAITS)
+    user_macro = sorted(t for t in only_rustdoc if t not in STD_BLANKET_TRAITS)
+    if std_blanket:
+        overlay["disagreements"].append({
+            "kind": "std_blanket_coverage",
+            "traits": std_blanket,
+            "note": "Standard-library blanket / auto-impl coverage (Any/Send/Sync/From/Into/"
+                    "etc.) that the source-text scanner cannot see. Compiler-synthesized; "
+                    "NOT a user-macro-registration seam. Informational.",
+        })
+    if user_macro:
         overlay["disagreements"].append({
             "kind": "impls_only_in_rustdoc",
-            "traits": only_rustdoc,
-            "note": "rustdoc sees impls the source scanner did not — likely macro-generated; "
-                    "this confirms a macro-registration seam.",
+            "traits": user_macro,
+            "note": "rustdoc sees impls the source scanner did not -- likely user-domain "
+                    "macro-generated. Confirms a macro-registration seam (derive macros, "
+                    "attribute macros, or registration!() expansions). Verify by reading "
+                    "the macro invocation sites in reference.md.",
         })
     return overlay
 

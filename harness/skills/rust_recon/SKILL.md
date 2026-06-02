@@ -1,6 +1,6 @@
 ---
 name: rust_recon 
-description: Generate a durable, span-anchored architectural orientation for a large or unfamiliar Rust workspace. Use when you need to understand how a Rust codebase is structured before authoring non-trivial features — when asked to "orient", "map", "get up to speed on", "understand the architecture of", or "find the main pattern in" a Rust repo, monorepo, or Cargo workspace, especially codebases where reading top-to-bottom is infeasible. Also use to refresh that understanding after a clean session or context compaction. Produces two files (ORIENTATION.md + REFERENCE.md) on disk, not a chat answer.
+description: Generate a durable, span-anchored architectural orientation for a large or unfamiliar Rust workspace. Use when you need to understand how a Rust codebase is structured before authoring non-trivial features — when asked to "orient", "map", "get up to speed on", "understand the architecture of", or "find the main pattern in" a Rust repo, monorepo, or Cargo workspace, especially codebases where reading top-to-bottom is infeasible. Also use to refresh that understanding after a clean session or context compaction. Produces two files (orientation.md + reference.md) on disk, not a chat answer.
 ---
 
 # Repo Orientation
@@ -10,11 +10,11 @@ description: Generate a durable, span-anchored architectural orientation for a l
 This skill writes a two-file orientation artifact into a Rust workspace, anchored to the
 current commit:
 
-- **`.orientation/ORIENTATION.md`** — read-first. The map: crate/region structure, core type
+- **`.orientation/orientation.md`** — read-first. The map: crate/region structure, core type
   vocabulary, the seam-spine, a data-flow narrative, and ONE worked vertical slice of the
   workspace's dominant repeated pattern, traced across crate boundaries. It is small and
   relational; it never approaches source size.
-- **`.orientation/REFERENCE.md`** — exhaustive, span-anchored index. Grep into it; never read
+- **`.orientation/reference.md`** — exhaustive, span-anchored index. Grep into it; never read
   it linearly.
 
 The intended reader is a future agent (often you, after a clean session or a compaction) that
@@ -39,7 +39,7 @@ This skill is deliberately split between deterministic tooling and your judgment
   *always anchored to the spans the tool gives you*. Reading source at a provided `file:line`
   is how you stay honest. Writing a claim you did not open in source is how the artifact rots.
 
-The emitted `ORIENTATION.md` is a skeleton with sections marked **`[AGENT]`**. Those are
+The emitted `orientation.md` is a skeleton with sections marked **`[AGENT]`**. Those are
 yours to fill. Everything else is already grounded.
 
 ## Workflow
@@ -81,14 +81,14 @@ declared defaults, not validated constants — see the `thresholds` block in the
 python3 scripts/emit.py <repo_root> <repo_root>/.orientation
 ```
 
-This writes `REFERENCE.md` (complete) and `ORIENTATION.md` (skeleton with `[AGENT]` slots,
+This writes `reference.md` (complete) and `orientation.md` (skeleton with `[AGENT]` slots,
 pre-seeded with the dominant pattern, a candidate instance and all its sibling spans, the
 detected seams, and the UNRESOLVED guardrails). It prints the orientation/reference line
 ratio as a sanity check that the map stayed small.
 
 ### Step 4 — Fill the `[AGENT]` sections by reading source
 
-This is the core of the work. Open `ORIENTATION.md` and fill each `[AGENT]` slot **by opening
+This is the core of the work. Open `orientation.md` and fill each `[AGENT]` slot **by opening
 the cited spans in source** — never from memory or inference. The slots, in authoring order:
 
 1. **§1 crate/region roles** — what each core crate is for, where it sits.
@@ -132,7 +132,7 @@ running it, fold any resolved counts and disagreements into §5/§6 and flip the
 
 ### Step 6 — Finalize
 
-Re-read `ORIENTATION.md` end to end with fresh eyes. Every claim should be a span you could
+Re-read `orientation.md` end to end with fresh eyes. Every claim should be a span you could
 open, every gap should be marked, and the map should be readable in one sitting. The
 provenance header (commit, rustc, tool version, overlay flag) makes the snapshot
 self-describing — staleness is acceptable because the artifact says exactly what commit it

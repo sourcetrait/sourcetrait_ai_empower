@@ -1,8 +1,8 @@
 """emit.py — final phase. Reads fingerprint.json + facts.json and writes the two-file
 artifact:
 
-  REFERENCE.md   exhaustive, span-anchored, grep-into. Fully mechanical.
-  ORIENTATION.md read-first, map-first. The mechanical skeleton (provenance, crate/region
+  reference.md   exhaustive, span-anchored, grep-into. Fully mechanical.
+  orientation.md read-first, map-first. The mechanical skeleton (provenance, crate/region
                  map, core type vocabulary, seam-spine, dominant-pattern identification,
                  a candidate instance, detected-seam UNRESOLVED guardrails) plus clearly
                  marked [AGENT ...] slots that Claude Code fills BY READING SOURCE at the
@@ -112,13 +112,18 @@ def emit_reference(root: Path, fp: dict, facts: dict, out: Path):
 
 
 def core_vocabulary(fp: dict, facts: dict):
-    """Heuristic: the core types live in the most-depended-on crate (the one the most other
-    crates list as a dependency), surfaced for the agent to confirm."""
+    """Heuristic: the core types live in the most-depended-on crate. Prefer in-workspace
+    crates (those that appear in fp["per_crate"] keys) over external infra crates -- the §2
+    vocabulary should be the domain language other crates in the workspace speak in, not a
+    shared error-helper or utility crate from crates.io. Falls back to the global most-
+    depended-on pick only when no in-workspace crate has any dependents at all (unusual)."""
     dep_count = defaultdict(int)
     for c in fp["per_crate"].values():
         for d in c["deps"]:
             dep_count[d] += 1
-    core = max(dep_count, key=dep_count.get) if dep_count else None
+    in_workspace = {k: v for k, v in dep_count.items() if k in fp["per_crate"]}
+    pick_pool = in_workspace if in_workspace else dep_count
+    core = max(pick_pool, key=pick_pool.get) if pick_pool else None
     types = [t for t in facts["types"] if t.get("crate") == core]
     traits = [t for t in facts["traits"] if t.get("crate") == core]
     return core, types, traits
@@ -148,18 +153,34 @@ def candidate_instance(fp: dict, facts: dict):
     return {"kind": kind, "pattern": dom, "instance": None, "all_spans": []}
 
 
+def _is_src_file(file_path: str) -> bool:
+    """True if the file lives under src/ rather than tests/ / benches/ / examples/.
+    Architectural seams live in src/; test-harness seams crowd the seam list otherwise --
+    e.g. sourcetrait_empower's process_spawn signal was dominated by tests/*.rs Host
+    harnesses before this filter landed. Handles two layouts: per-crate tests under
+    `crates/<X>/tests/...` (slash-segment form) and workspace-top-level tests under
+    `tests/...` (path-prefix form, as nushell uses for integration tests). Used by
+    detected_seams to keep §3 focused on the architectural signal."""
+    excluded = ("tests/", "benches/", "examples/")
+    if any(file_path.startswith(p) for p in excluded):
+        return False
+    return all(f"/{p}" not in file_path for p in excluded)
+
+
 def detected_seams(fp: dict, facts: dict):
-    """Seams the static trace cannot cross — seeds for the UNRESOLVED guardrail list."""
+    """Seams the static trace cannot cross -- seeds for the UNRESOLVED guardrail list.
+    Spawn-site filtering is src/-only so test-harness sites do not crowd the architectural
+    signal (see _is_src_file)."""
     seeds = []
     inv = fp.get("seam_inventory", {})
     if inv.get("process_spawn") or inv.get("std_io_stream"):
-        ex = [sp(m) for m in facts["macros"] if False]  # placeholder
-        spawn_sites = [u for u in facts["uses"] if "process" in u.get("path", "")]
+        spawn_sites = [u for u in facts["uses"]
+                       if "process" in u.get("path", "") and _is_src_file(u.get("file", ""))]
         seeds.append(("process / IPC boundary",
                       "A child process or stdin/stdout protocol crosses an address-space "
                       "boundary; static tracing stops here. Verify the wire format in source "
                       "before authoring across it.",
-                      [u for u in spawn_sites][:5]))
+                      spawn_sites[:5]))
     if fp.get("registration_macros"):
         macs = ", ".join(fp["registration_macros"].keys())
         seeds.append((f"macro-mediated registration ({macs})",
@@ -182,7 +203,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     seams = detected_seams(fp, facts)
 
     L = ["# Orientation", "",
-         "Read-first. This is the map; the source is the territory and `REFERENCE.md` is the",
+         "Read-first. This is the map; the source is the territory and `reference.md` is the",
          "exhaustive index. Map-first ordering: skeleton (crate map, core vocabulary, seams,",
          "flow) then the worked slice (the authoring template), then guardrails, then the",
          "authoring guide. Every claim is a span you can open. Sections marked **[AGENT]** are",
@@ -262,7 +283,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     L += ["## 4. Data-flow narrative", "",
           "**[AGENT]** Trace how the core data type (from §2) moves from entry to result "
           "through the core crates. 1–2 short paragraphs, each sentence anchored to a span "
-          "from REFERENCE.md. Stop at any seam from §3 with an explicit UNRESOLVED.", ""]
+          "from reference.md. Stop at any seam from §3 with an explicit UNRESOLVED.", ""]
 
     # 5. worked slice (the protagonist; seeded)
     L += ["## 5. Worked slice — the authoring template", ""]
@@ -335,12 +356,12 @@ def main():
     odir = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root / ".orientation"
     fp = json.loads((odir / "fingerprint.json").read_text())
     facts = json.loads((odir / "facts.json").read_text())
-    emit_reference(root, fp, facts, odir / "REFERENCE.md")
-    emit_orientation(root, fp, facts, odir / "ORIENTATION.md")
-    orient_lines = (odir / "ORIENTATION.md").read_text().count("\n")
-    ref_lines = (odir / "REFERENCE.md").read_text().count("\n")
-    print(f"[emit] wrote ORIENTATION.md ({orient_lines} lines) and "
-          f"REFERENCE.md ({ref_lines} lines)")
+    emit_reference(root, fp, facts, odir / "reference.md")
+    emit_orientation(root, fp, facts, odir / "orientation.md")
+    orient_lines = (odir / "orientation.md").read_text().count("\n")
+    ref_lines = (odir / "reference.md").read_text().count("\n")
+    print(f"[emit] wrote orientation.md ({orient_lines} lines) and "
+          f"reference.md ({ref_lines} lines)")
     print(f"[emit] orientation/reference line ratio = {orient_lines/max(1,ref_lines):.2f} "
           f"(orientation must stay well below source size)")
     return 0

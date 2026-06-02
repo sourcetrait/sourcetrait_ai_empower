@@ -161,8 +161,8 @@ def test_emit_two_files_and_spans():
         r = subprocess.run([sys.executable, str(HERE / "emit.py"), str(root), str(out)],
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
-        orient = (out / "ORIENTATION.md").read_text()
-        ref = (out / "REFERENCE.md").read_text()
+        orient = (out / "orientation.md").read_text()
+        ref = (out / "reference.md").read_text()
         assert "[AGENT]" in orient and "Worked slice" in orient
         assert "src/lib.rs:" in ref  # spans present
         assert "trait_impl:Cmd" in orient  # dominant pattern surfaced

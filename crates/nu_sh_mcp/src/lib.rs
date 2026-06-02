@@ -137,6 +137,7 @@ pub(crate) mod nu {
         Module,
         PipelineData,
         PluginRegistryFile,
+        Record,
         Signals,
         Span,
         SyntaxShape,
@@ -160,6 +161,10 @@ pub(crate) mod nu {
             Stack,
             StateWorkingSet,
         },
+    };
+    pub(crate) use nuon::{
+        ToNuonConfig,
+        to_nuon,
     };
 }
 

@@ -265,7 +265,7 @@ fn interact_envelope_has_no_rerun_id() {
             "args_schema": "x: int",
             "result_schema": "out: int",
             "args": {"x": 4},
-            "body": "{ out: ($args.x * 2) }",
+            "body": "{ out: ($__args.x * 2) }",
         }),
     );
     let env = extract_envelope(&resp)

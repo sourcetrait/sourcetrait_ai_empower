@@ -158,7 +158,7 @@ fn env_mutation_persists_across_interact_calls() {
             "args_schema": "value: string",
             "result_schema": "wrote: string",
             "args": {"value": "alpha"},
-            "body": "$env.SHOT_DEMO = $__args.value\n{ wrote: $__args.value }",
+            "body": "$env.SHOT_DEMO = $args.value\n{ wrote: $args.value }",
         }),
     );
     let env1 = extract_envelope(&first)
@@ -192,7 +192,7 @@ fn cd_persists_across_interact_calls() {
             "args_schema": "target: string",
             "result_schema": "cwd: string",
             "args": {"target": "/tmp"},
-            "body": "cd $__args.target\n{ cwd: (pwd) }",
+            "body": "cd $args.target\n{ cwd: (pwd) }",
         }),
     );
 
@@ -235,7 +235,7 @@ fn agent_def_persists_across_interact_calls() {
             "args_schema": "n: int",
             "result_schema": "value: int",
             "args": {"n": 4},
-            "body": "{ value: (shot_helper $__args.n) }",
+            "body": "{ value: (shot_helper $args.n) }",
         }),
     );
     let env = extract_envelope(&second)
@@ -298,7 +298,7 @@ fn multi_line_body_with_command_then_record_parses() {
             "args_schema": "x: int",
             "result_schema": "y: int, slept_ms: int",
             "args": {"x": 7},
-            "body": "sleep 50ms\nlet doubled = ($__args.x * 2)\n{ y: $doubled, slept_ms: 50 }",
+            "body": "sleep 50ms\nlet doubled = ($args.x * 2)\n{ y: $doubled, slept_ms: 50 }",
         }),
     );
     let env = extract_envelope(&resp)

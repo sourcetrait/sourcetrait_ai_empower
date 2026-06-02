@@ -17,7 +17,7 @@ use crate::*;
 ///
 /// Where: called by `build_run_source` (substituting into the
 /// `__exec ARGS` call site) and `build_interact_source` (substituting
-/// into the `let __args: record<...> = ARGS` typed-let RHS) once per
+/// into the `let args: record<...> = ARGS` typed-let RHS) once per
 /// template emission.
 fn args_to_nuon(args: &mcp::JsonObject) -> String {
     let value = json_object_to_nu_value(args);
@@ -111,7 +111,7 @@ pub(crate) fn build_run_source(p: &RunParams) -> String {
 
 /// What: builds the nushell source the stateful worker will eval for
 /// an `interact()` call. Emits a top-level `__validate_result` def, a
-/// typed-let binding `$__args` against the agent-supplied args
+/// typed-let binding `$args` against the agent-supplied args
 /// literal, the agent's body at top level, and a trailing pipeline
 /// `| __validate_result | do {|x| hide __validate_result; $x}` that
 /// runtime-typechecks the body's terminating value and scrubs the
@@ -123,7 +123,7 @@ pub(crate) fn build_run_source(p: &RunParams) -> String {
 /// eval_source`'s Stateful branch). To deliver that contract, BODY
 /// must run at the top level of the eval'd source -- not inside a
 /// function-body scope (which would hide mutations from the outer
-/// Stack that merge_env reads). The typed-let on `$__args` keeps
+/// Stack that merge_env reads). The typed-let on `$args` keeps
 /// the args-schema parse-time check against the literal record
 /// substitution. Result validation moves from a typed positional def
 /// (impossible at top level without losing the multi-line body parse)
@@ -132,7 +132,7 @@ pub(crate) fn build_run_source(p: &RunParams) -> String {
 /// typed-let on `$in`. The trailing `do {|x| hide ...; $x}` closure
 /// cleans up the validator from engine_state so the agent's next
 /// call sees a fresh namespace (verified cross-eval via probe P10).
-/// `let __args` lives on the Stack (per-eval) so it doesn't persist
+/// `let args` lives on the Stack (per-eval) so it doesn't persist
 /// (verified via probe P9), no cleanup needed.
 ///
 /// Where: called by `server::tool::NuSh::interact` to produce the
@@ -147,7 +147,7 @@ pub(crate) fn build_interact_source(p: &RunParams) -> String {
     out.push_str("> = $in\n");
     out.push_str("    $r\n");
     out.push_str("}\n");
-    out.push_str("let __args: record<");
+    out.push_str("let args: record<");
     out.push_str(&p.args_schema);
     out.push_str("> = ");
     let args_nuon = args_to_nuon(&p.args);

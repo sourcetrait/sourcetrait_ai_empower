@@ -453,7 +453,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Evaluate a typed nushell closure on a stateless worker.",
+        description = "Evaluate a typed nushell body on a stateless worker.",
         output_schema = mcp::schema_for_type::<RunEnvelope>()
     )]
     async fn run(
@@ -532,7 +532,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Evaluate a typed administrative nushell closure on a persistent stateful worker.",
+        description = "Evaluate a typed administrative nushell body on a persistent stateful worker. Top-level defs, $env mutations, and cd persist into the next interact() call (body runs at top level via build_interact_source; merge_env + merge_delta into engine_state after eval).",
         output_schema = mcp::schema_for_type::<InteractEnvelope>()
     )]
     async fn interact(
@@ -925,7 +925,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Cancel an in-flight call by its nonce. SIGKILLs the worker holding the call; runs-pool workers are reaped and the next acquire spawns a fresh worker, interact respawn loses session state. Returns {ok: true} silently if the nonce is unknown or already completed (race-safe)."
+        description = "Cancel an in-flight call by its nonce. SIGKILLs the worker holding the call; runs-pool workers are reaped and the next acquire spawns a fresh worker, interact respawn loses session state. Returns no payload; silently no-ops if the nonce is unknown or already completed (race-safe)."
     )]
     async fn kill(
         &self,
@@ -1235,7 +1235,7 @@ fn timeout_error(timeout_ms: u64) -> mcp::ErrorData {
 /// What: writes the closure cache file at `closures/<rerun_id>.json`
 /// after a successful `run()`. Creates the parent dir if needed,
 /// serializes the closure metadata (`args_schema`, `result_schema`,
-/// `closure`) into `ClosureCacheBody`, and writes the JSON bytes.
+/// `body`) into `ClosureCacheBody`, and writes the JSON bytes.
 /// Idempotent: the same rerun_id always produces the same bytes.
 ///
 /// Why: rerun() needs a deterministic place to look up the cached

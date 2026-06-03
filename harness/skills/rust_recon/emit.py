@@ -17,10 +17,14 @@ the reference is exhaustive.
 
 from __future__ import annotations
 import json
+import re
 import subprocess
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
+
+# 0.0.4 patch 2 (s): word-bounded capitalized identifier for use-path scanning.
+_TYPE_IDENT_RE = re.compile(r'\b[A-Z]\w*\b')
 
 
 def sp(rec):
@@ -113,10 +117,18 @@ def emit_reference(root: Path, fp: dict, facts: dict, out: Path):
 
 def core_vocabulary(fp: dict, facts: dict):
     """Heuristic: the core types live in the most-depended-on crate. Prefer in-workspace
-    crates (those that appear in fp["per_crate"] keys) over external infra crates -- the S2
+    crates (those that appear in fp["per_crate"] keys) over external infra crates - the S2
     vocabulary should be the domain language other crates in the workspace speak in, not a
     shared error-helper or utility crate from crates.io. Falls back to the global most-
-    depended-on pick only when no in-workspace crate has any dependents at all (unusual)."""
+    depended-on pick only when no in-workspace crate has any dependents at all (unusual).
+
+    0.0.4 patch 2 (s): within the picked crate, traits and types are RANKED BY USAGE
+    (impl-block references) descending, with alphabetical-by-name as the tiebreaker. The
+    prior 0.0.3 behavior was alphabetical, which alphabetically-truncated the top-40 list
+    at A-through-C on big crates; the load-bearing nu-protocol types (Value, PipelineData,
+    Span, EngineState, Stack, Signature, IrBlock, etc.) all fell past the cutoff. Usage
+    ranking surfaces them instead. Each returned item is annotated with `_usage` (an int)
+    for emit_orientation to render alongside the entry."""
     dep_count = defaultdict(int)
     for c in fp["per_crate"].values():
         for d in c["deps"]:
@@ -124,13 +136,49 @@ def core_vocabulary(fp: dict, facts: dict):
     in_workspace = {k: v for k, v in dep_count.items() if k in fp["per_crate"]}
     pick_pool = in_workspace if in_workspace else dep_count
     core = max(pick_pool, key=pick_pool.get) if pick_pool else None
-    # Filter types/traits to src/ only -- the 0.0.2 #5 sweep partition for S3 seam sites,
+    # Filter types/traits to src/ only - the 0.0.2 #5 sweep partition for S3 seam sites,
     # now extended to S2 vocab so test-file types (ratatui/tests/*.rs, tokio/tests/*.rs)
     # do not pollute the listed core vocabulary.
     types = [t for t in facts["types"]
              if t.get("crate") == core and _is_src_file(t.get("file", ""))]
     traits = [t for t in facts["traits"]
               if t.get("crate") == core and _is_src_file(t.get("file", ""))]
+    # 0.0.4 patch 2 (s): rank by impl-block usage (trait_usage) AND use-statement
+    # occurrence (type_usage augmented with `use` references). Trait usage = count of
+    # `impl <T> for ...` blocks referencing the trait. Type usage starts at the count of
+    # `impl ... for <T>` impl-target appearances and is augmented by each `use ...::<T>`
+    # statement where the path's tail equals <T>. Generic args and module prefix are
+    # stripped so `Vec<T>` / `crate::foo::Vec` / `use foo::Vec` all contribute to bare
+    # `Vec`'s count. Catches inherent-method types (Span, Stack, Signature) that have few
+    # impl-targets but many cross-crate `use` references.
+    trait_usage = Counter()
+    type_usage = Counter()
+    for i in facts["impls"]:
+        if i.get("trait"):
+            trait_usage[i["trait"]] += 1
+        if i.get("type"):
+            t_str = str(i["type"])
+            bare = t_str.split("<", 1)[0].split("::")[-1].strip()
+            if bare:
+                type_usage[bare] += 1
+    # Augment type_usage with `use` path occurrences. Rustscan captures the full path
+    # including braced multi-item imports (e.g.
+    # `use nu_protocol::{Value, Span, EngineState, Stack, Signature}` is ONE path string
+    # with embedded braces and newlines). We pull every word-bounded capitalized
+    # identifier out of the path and count each as a use-occurrence; this picks up
+    # multi-item brace imports correctly.
+    for u in facts.get("uses", []):
+        path = u.get("path", "")
+        if not path:
+            continue
+        for ident in _TYPE_IDENT_RE.findall(path):
+            type_usage[ident] += 1
+    for t in traits:
+        t["_usage"] = trait_usage.get(t["name"], 0)
+    for t in types:
+        t["_usage"] = type_usage.get(t["name"], 0)
+    traits.sort(key=lambda t: (-t["_usage"], t["name"]))
+    types.sort(key=lambda t: (-t["_usage"], t["name"]))
     return core, types, traits
 
 
@@ -255,14 +303,26 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     # 2. core type vocabulary
     L += ["## 2. Core type vocabulary", "",
           f"Most-depended-on crate: **{core}** - its public types are the vocabulary other "
-          f"crates speak in. Confirm and describe each (what / where load-bearing; why from "
+          f"crates speak in. Items below are ranked by impl-block usage (descending) with "
+          f"alphabetical-by-name as the tiebreaker (0.0.4 patch 2; was alphabetical at "
+          f"0.0.3). Confirm and describe each (what / where load-bearing; why from "
           f"doc-comments else unverified):", ""]
-    for t in sorted(core_traits, key=lambda x: x["name"])[:40]:
-        doc = f" - doc: {t['doc'][:120]}" if t.get("doc") else "  *(why: unverified - no doc)*"
-        L.append(f"- trait `{t['name']}` - {sp(t)}{doc}")
-    for t in sorted(core_types, key=lambda x: x["name"])[:40]:
-        doc = f" - doc: {t['doc'][:120]}" if t.get("doc") else "  *(why: unverified - no doc)*"
-        L.append(f"- `{t['kind']} {t['name']}` - {sp(t)}{doc}")
+    for t in core_traits[:40]:
+        usage = t.get("_usage", 0)
+        usage_str = (f"  *({usage} impl{'s' if usage != 1 else ''})*"
+                     if usage > 0 else "")
+        doc = (f" - doc: {t['doc'][:120]}" if t.get("doc")
+               else "  *(why: unverified - no doc)*")
+        L.append(f"- trait `{t['name']}` - {sp(t)}{usage_str}{doc}")
+    for t in core_types[:40]:
+        usage = t.get("_usage", 0)
+        # Type usage is impl-target count + use-statement-occurrence count, mixed; label
+        # it as "usage" to avoid claiming all are impl-targets.
+        usage_str = (f"  *({usage} usage{'s' if usage != 1 else ''})*"
+                     if usage > 0 else "")
+        doc = (f" - doc: {t['doc'][:120]}" if t.get("doc")
+               else "  *(why: unverified - no doc)*")
+        L.append(f"- `{t['kind']} {t['name']}` - {sp(t)}{usage_str}{doc}")
     L.append("")
 
     # 3. seam-spine

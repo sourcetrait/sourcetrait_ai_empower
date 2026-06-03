@@ -80,6 +80,65 @@ def find_crates(root: Path):
     return crates, sorted(set(workspace_roots))
 
 
+def read_container_annotation(root: Path):
+    """0.0.8 patch 8d: read the workspace root Cargo.toml's
+    [workspace.metadata.rust_deep] table and return container annotation
+    state. Returns {is_container: bool, source: str, reason: str}.
+
+    Annotation shape:
+        [workspace.metadata.rust_deep]
+        container = true
+
+    When `container = true` is set, the orientation pipeline treats the
+    workspace as a pure container (sub-topic aggregator). The picker is
+    bypassed and a routing-doc orientation is emitted instead. Used for
+    workspaces like sourcetrait_common that are designed as topic
+    aggregators with no single architectural pattern - running heuristics
+    against them produces confidently-wrong output (the_user 2026-06-03).
+
+    Heuristic auto-detection is intentionally NOT performed: empirical
+    grounding showed that signals distinguishing pure containers
+    (sourcetrait_common) from no-dominant product workspaces (tokio with
+    its even kind distribution) are not reliable. Explicit opt-in via
+    annotation is the source-of-truth signal."""
+    cargo_path = root / "Cargo.toml"
+    if not cargo_path.exists():
+        return {"is_container": False, "source": "no_cargo_toml",
+                "reason": "no root Cargo.toml"}
+    try:
+        data = tomllib.loads(cargo_path.read_text(encoding="utf-8",
+                                                 errors="replace"))
+    except Exception as e:
+        return {"is_container": False, "source": "parse_error",
+                "reason": f"failed to parse root Cargo.toml: {e}"}
+    workspace = data.get("workspace", {})
+    if not isinstance(workspace, dict) or "workspace" not in data:
+        return {"is_container": False, "source": "not_annotated",
+                "reason": "no [workspace] table in root Cargo.toml"}
+    metadata = workspace.get("metadata")
+    if not isinstance(metadata, dict):
+        return {"is_container": False, "source": "not_annotated",
+                "reason": "no [workspace.metadata] table"}
+    rust_deep = metadata.get("rust_deep")
+    if not isinstance(rust_deep, dict):
+        return {"is_container": False, "source": "not_annotated",
+                "reason": "no [workspace.metadata.rust_deep] table"}
+    if "container" not in rust_deep:
+        return {"is_container": False, "source": "not_annotated",
+                "reason": "[workspace.metadata.rust_deep] table present but "
+                          "no container key"}
+    container = rust_deep["container"]
+    if container is True:
+        return {"is_container": True, "source": "annotated",
+                "reason": "[workspace.metadata.rust_deep] container = true"}
+    if container is False:
+        return {"is_container": False, "source": "annotated_false",
+                "reason": "[workspace.metadata.rust_deep] container = false"}
+    return {"is_container": False, "source": "annotated_invalid",
+            "reason": f"[workspace.metadata.rust_deep] container = "
+                      f"{container!r} (expected bool)"}
+
+
 class UnionFind:
     def __init__(self, items):
         self.parent = {x: x for x in items}
@@ -312,6 +371,8 @@ def main():
     seam_total = sum(all_facts["seams"].values())
     seam_density = seam_total / (total_loc / 1000.0)
 
+    container_annotation = read_container_annotation(root)
+
     fingerprint = {
         "tool_version": "0.1.0",
         "repo_root": str(root),
@@ -329,6 +390,7 @@ def main():
         "seam_inventory": dict(all_facts["seams"]),
         "seam_density_per_kloc": round(seam_density, 2),
         "selection": sel,
+        "container_detection": container_annotation,
         "thresholds": {
             "DOMINANCE_SHARE": DOMINANCE_SHARE, "COEQUAL_TOPK": COEQUAL_TOPK,
             "COEQUAL_SHARE": COEQUAL_SHARE, "AMBIGUOUS_BAND": AMBIGUOUS_BAND,

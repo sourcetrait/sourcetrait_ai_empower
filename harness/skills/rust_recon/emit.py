@@ -853,6 +853,73 @@ def detected_seams(fp: dict, facts: dict):
     return seeds
 
 
+def emit_container_routing(root: Path, fp: dict, facts: dict, out: Path):
+    """0.0.8 patch 8d: routing-doc orientation shape for workspaces
+    annotated as containers (sub-topic aggregators).
+
+    When the workspace's [workspace.metadata.rust_deep] table sets
+    container = true, the_user has explicitly declared that the
+    workspace has no single architectural pattern - each member is a
+    separate topical library. Running the picker against such a
+    workspace produces confidently-wrong output (sourcetrait_common as
+    the canonical case, per the_user 2026-06-03). This emitter produces
+    a routing-doc shape that points the agent at the per-member
+    sub-orientations instead.
+
+    The provenance + per-crate listing + histogram appendix are still
+    rendered (they remain auditable) but the worked-slice / authoring-
+    guide sections are replaced by a routing prompt."""
+    detection = fp.get("container_detection", {})
+    L = ["# Orientation: Container Workspace", "",
+         "This workspace is explicitly annotated as a container in its "
+         "root Cargo.toml's `[workspace.metadata.rust_deep]` table. "
+         "Architectural patterns belong to the individual sub-topics, "
+         "not the workspace as a whole; the picker is bypassed "
+         "accordingly. Each member is a separate topical library.", "",
+         "```", provenance(root, out.parent, fp), "```", ""]
+
+    L += ["## How this artifact was shaped", "",
+          "- mode: **container** (picker bypassed)",
+          f"- container annotation source: {detection.get('source', '?')}",
+          f"- container annotation reason: {detection.get('reason', '?')}",
+          ""]
+
+    # Workspace members listing
+    L += ["## Workspace members", "",
+          "Each member is a separate topical library. To produce an "
+          "architectural orientation for a specific topic, run rust_recon "
+          "against the sub-workspace of interest.", ""]
+    for name in sorted(fp["per_crate"]):
+        c = fp["per_crate"][name]
+        ideps = [d for d in c["deps"] if d in fp["per_crate"]]
+        dep_str = f" -> depends on: {', '.join(ideps)}" if ideps else ""
+        L.append(f"- **{name}** ({c['dir']}/, {c['loc']} LoC, "
+                 f"{c['n_impls']} impls, {c['n_types']} types){dep_str}")
+    L.append("")
+    L.append("**[AGENT]** Pick the member whose architectural pattern "
+             "you want to trace, then run rust_recon against that "
+             "member's directory. Open the corresponding orientation.md "
+             "for the per-topic worked slices and authoring guides. The "
+             "container workspace itself has no unifying architectural "
+             "pattern to trace; do not author across member boundaries "
+             "without first reading each member's individual orientation.")
+    L.append("")
+
+    # Histogram appendix (for auditing)
+    L += ["## Appendix: full pattern histogram", "",
+          "Reported for auditing the container annotation. If the "
+          "histogram surfaces a single dominant architectural pattern "
+          "that you believe IS the workspace's central pattern, consider "
+          "removing the `container = true` annotation. Otherwise the "
+          "flat distribution typical of containers should be visible "
+          "here.", ""]
+    for row in fp["pattern_histogram"][:25]:
+        L.append(f"- `{row['pattern']}` - {row['count']}")
+    L.append("")
+
+    out.write_text("\n".join(L))
+
+
 def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     sel = fp["selection"]
     core, core_types, core_traits = core_vocabulary(fp, facts)
@@ -1153,7 +1220,14 @@ def main():
     fp = json.loads((odir / "fingerprint.json").read_text())
     facts = json.loads((odir / "facts.json").read_text())
     emit_reference(root, fp, facts, odir / "reference.md")
-    emit_orientation(root, fp, facts, odir / "orientation.md")
+    # 0.0.8 patch 8d: container-annotated workspaces get a routing-doc
+    # orientation instead of the picker-driven worked-slice doc. The
+    # picker is bypassed because the_user has declared no single
+    # architectural pattern applies (sub-topic aggregator shape).
+    if fp.get("container_detection", {}).get("is_container"):
+        emit_container_routing(root, fp, facts, odir / "orientation.md")
+    else:
+        emit_orientation(root, fp, facts, odir / "orientation.md")
     orient_lines = (odir / "orientation.md").read_text().count("\n")
     ref_lines = (odir / "reference.md").read_text().count("\n")
     print(f"[emit] wrote orientation.md ({orient_lines} lines) and "

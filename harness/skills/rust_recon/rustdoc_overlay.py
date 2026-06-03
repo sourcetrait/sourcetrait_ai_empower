@@ -128,22 +128,32 @@ def run_rustdoc_json(root: Path, package: str | None, odir: Path | None = None):
     """Invoke nightly rustdoc JSON. Returns parsed dict or raises. THIS SHELLS OUT (the only
     phase permitted to) and requires network/toolchain — untested in the offline container."""
     resolved = _resolve_package(root, package, odir)
-    cmd = ["cargo", "+nightly", "rustdoc"]
+    cmd_base = ["cargo", "+nightly", "rustdoc"]
     if resolved:
-        cmd += ["-p", resolved]
-    # rustdoc's extra-args (after `--`) require a single target filter when the package
-    # has multiple targets (lib + bin(s)); cargo rejects with error 101 otherwise. Default
-    # to --lib since rustdoc-JSON is overwhelmingly the library surface. Bin-only packages
-    # will need a caller-side fork to specify --bin NAME.
-    cmd += ["--lib", "--", "-Z", "unstable-options", "--output-format", "json"]
+        cmd_base += ["-p", resolved]
+    extra = ["--", "-Z", "unstable-options", "--output-format", "json"]
     # Override RUSTDOCFLAGS to cap-lints-allow so strict-doc projects (iced ships with
     # `-F rustdoc::broken-intra-doc-links` enabled) don't error out the rustdoc build
     # before the JSON gets written. Doesn't change any source-level warnings; only loosens
     # the overlay-time rustdoc lint gate.
     env = os.environ.copy()
     env["RUSTDOCFLAGS"] = "--cap-lints allow"
-    subprocess.run(cmd, cwd=str(root), check=True, capture_output=True, text=True,
-                   timeout=900, env=env)
+
+    # rustdoc's extra-args (after `--`) require a single target filter when the package
+    # has multiple targets (lib + bin(s)); cargo rejects with error 101 otherwise. Default
+    # to --lib since rustdoc-JSON is overwhelmingly the library surface. If --lib fails
+    # because the package has no lib target (cosmic-comp is the canonical worked example;
+    # it's a Wayland compositor binary), retry once with --bin <package>.
+    cmd = cmd_base + ["--lib"] + extra
+    r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=900, env=env)
+    if r.returncode != 0 and resolved and (
+        "no library targets" in r.stderr or "no lib target" in r.stderr
+    ):
+        cmd = cmd_base + ["--bin", resolved] + extra
+        r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=900, env=env)
+    if r.returncode != 0:
+        raise subprocess.CalledProcessError(r.returncode, cmd, r.stdout, r.stderr)
+
     # rustdoc writes target/doc/<crate>.json
     docdir = root / "target" / "doc"
     candidates = sorted(docdir.glob("*.json"))

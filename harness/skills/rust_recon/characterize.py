@@ -142,6 +142,13 @@ def _classify_crate_use(name: str, info: dict,
     Returns one of: 'end_use', 'dev_use', 'end_with_dev_use',
     'dev_with_end_use'.
 
+    Taxonomic note the_user 2026-06-03: a 5th conceptual bucket
+    'dev_and_end_use' exists for cases where both bin and lib are
+    co-equally primary deliverables (gitoxide is the actual example).
+    Not implemented - the rubric below collapses such cases into
+    dev_with_end_use (lib at least as primary as bin). See
+    notes/rust_recon/followups.md for the taxonomic note.
+
     Rubric (the_user 2026-06-03):
     - has_lib and not has_bin -> dev_use.
     - has_bin and not has_lib -> end_use.

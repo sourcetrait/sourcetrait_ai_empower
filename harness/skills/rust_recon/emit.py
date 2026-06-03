@@ -89,6 +89,16 @@ _GENERIC_INNER_METHODS = frozenset([
     "build", "into_inner", "borrow", "borrow_mut",
 ])
 
+# 0.0.13 patch 13h: significance cutoff for the three-set picker.
+# the_user 2026-06-03: 'significance cut-off at 13% (not a fixed 5)...
+# 13% allows for a +=10% that still shows 3% in worst-case'. Each
+# significant[] list normalizes against its OWN top-1 count - per-
+# crate top-1 for intra, workspace-wide max inter_count for inter,
+# workspace-wide max inter_count of is_pub patterns for public.
+_SIGNIFICANCE_CUTOFF = float(
+    os.environ.get("ORIENT_SIGNIFICANCE_CUTOFF", "0.13"))
+
+
 # 0.0.9 patch 9a: minimum distinct variants for a type-usage family.
 # An outer-family requires >= this many distinct inner methods sharing
 # the outer; an inner-family requires >= this many distinct outers
@@ -949,6 +959,143 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n, pattern_metrics=None)
     return out
 
 
+def _compute_three_set_significance(fp: dict, facts: dict,
+                                    cutoff: float = None):
+    """0.0.13 patch 13h: significance-based picker replacing slot quotas.
+
+    Returns dict with:
+    - significant_intra_per_crate: {crate: {pattern: count}}
+        per-crate top-1 cutoff at 13% of crate's max pattern count.
+    - significant_inter: {pattern: inter_count}
+        workspace-wide cutoff at 13% of max inter_count.
+    - significant_public: {pattern: inter_count}
+        is_pub patterns only, cutoff at 13% of max is_pub inter_count.
+    - picks: list of {pattern, kind, categories, intra_crates,
+        inter_count, public_count} entries - the UNION with category
+        tags.
+
+    the_user 2026-06-03: '...other usages will be captured by the
+    other measurements and, if they are significant, will show.' A
+    pub item used intra-crate qualifies via its crate's intra list;
+    its inter-crate qualification (if heavy) shows via inter; its
+    public-API qualification (if pub) shows via public. The union
+    naturally captures all three signals."""
+    if cutoff is None:
+        cutoff = _SIGNIFICANCE_CUTOFF
+    pattern_metrics = fp.get("pattern_metrics", {})
+
+    # Build per-crate counts across all pattern kinds.
+    per_crate_counts = defaultdict(lambda: defaultdict(int))
+    for it in facts.get("impls", []):
+        if it.get("trait") and not it.get("cfg_gated"):
+            c = it.get("crate")
+            if c:
+                per_crate_counts[c][f"trait_impl:{it['trait']}"] += 1
+    for d in facts.get("derives", []):
+        c = d.get("crate")
+        nm = d.get("trait")
+        if c and nm:
+            per_crate_counts[c][f"derive:{nm}"] += 1
+    for tu in facts.get("type_usages", []):
+        c = tu.get("crate")
+        nm = tu.get("name")
+        if c and nm:
+            per_crate_counts[c][f"type_usage:{nm}"] += 1
+    for m in facts.get("macros", []):
+        c = m.get("crate")
+        kind = m.get("kind")
+        nm = m.get("name")
+        if c and nm:
+            if kind == "macro_invocation":
+                per_crate_counts[c][f"reg_macro:{nm}"] += 1
+            elif kind == "attr_macro":
+                per_crate_counts[c][f"attr_macro:{nm}"] += 1
+
+    # 1. Per-crate intra significance.
+    significant_intra_per_crate = {}
+    for crate, counts in per_crate_counts.items():
+        if not counts:
+            continue
+        top = max(counts.values())
+        thresh = top * cutoff
+        sig = {p: c for p, c in counts.items() if c >= thresh}
+        if sig:
+            significant_intra_per_crate[crate] = sig
+
+    # 2. Workspace-wide inter significance.
+    inter_counts = {}
+    for pattern, m in pattern_metrics.items():
+        if m.get("defining_crate") is None:
+            continue
+        ic = m.get("inter_count", 0) or 0
+        if ic > 0:
+            inter_counts[pattern] = ic
+    significant_inter = {}
+    if inter_counts:
+        top = max(inter_counts.values())
+        thresh = top * cutoff
+        significant_inter = {p: c for p, c in inter_counts.items() if c >= thresh}
+
+    # 3. Workspace-wide public significance (is_pub patterns by inter_count).
+    public_counts = {}
+    for pattern, m in pattern_metrics.items():
+        if not m.get("is_pub"):
+            continue
+        if m.get("defining_crate") is None:
+            continue
+        ic = m.get("inter_count", 0) or 0
+        if ic > 0:
+            public_counts[pattern] = ic
+    significant_public = {}
+    if public_counts:
+        top = max(public_counts.values())
+        thresh = top * cutoff
+        significant_public = {p: c for p, c in public_counts.items() if c >= thresh}
+
+    # UNION with category tags.
+    all_patterns = set()
+    for sig in significant_intra_per_crate.values():
+        all_patterns.update(sig.keys())
+    all_patterns.update(significant_inter.keys())
+    all_patterns.update(significant_public.keys())
+
+    picks = []
+    for pattern in sorted(all_patterns):
+        intra_crates = []
+        for crate, sig in significant_intra_per_crate.items():
+            if pattern in sig:
+                intra_crates.append((crate, sig[pattern]))
+        intra_crates.sort(key=lambda x: -x[1])
+        categories = []
+        if intra_crates:
+            categories.append("intra")
+        if pattern in significant_inter:
+            categories.append("inter")
+        if pattern in significant_public:
+            categories.append("public")
+        kind, _, name = pattern.partition(":")
+        picks.append({
+            "kind": kind,
+            "pattern": pattern,
+            "categories": categories,
+            "intra_crates": [{"crate": c, "count": n} for c, n in intra_crates],
+            "inter_count": significant_inter.get(pattern, 0),
+            "public_count": significant_public.get(pattern, 0),
+        })
+    # Sort picks by total category count desc, then by name. Patterns
+    # qualifying in all 3 categories are strongest signal.
+    picks.sort(key=lambda x: (-len(x["categories"]), x["pattern"]))
+    return {
+        "significant_intra_per_crate": {
+            c: dict(s) for c, s in significant_intra_per_crate.items()
+        },
+        "significant_inter": dict(significant_inter),
+        "significant_public": dict(significant_public),
+        "picks": picks,
+        "cutoff": cutoff,
+    }
+
+
 def candidate_instances(fp: dict, facts: dict):
     """Pick a list of architectural-pattern protagonists with seed instances.
 
@@ -985,6 +1132,64 @@ def candidate_instances(fp: dict, facts: dict):
     Each returned dict carries: kind, pattern, instance, all_spans,
     fallback_reason. 7b will add: source_crate (which crate's aggregation
     surfaced this pick)."""
+    if not fp["pattern_histogram"]:
+        return []
+    # 0.0.13 patch 13h: significance-based three-set picker replaces
+    # slot-quota machinery. the_user 2026-06-03 design directive: each
+    # crate returns its significant intra-list (13% cutoff); workspace
+    # returns its significant inter-list + public-list (13% cutoffs).
+    # Final picks = UNION with category tags per pick. Variable N
+    # (depends on threshold qualification) replaces fixed N=5.
+    sig = _compute_three_set_significance(fp, facts, _SIGNIFICANCE_CUTOFF)
+    sig_picks = sig["picks"]
+    out = []
+    for entry in sig_picks:
+        kind = entry["kind"]
+        name = entry["pattern"].split(":", 1)[1] if ":" in entry["pattern"] else entry["pattern"]
+        inst, spans = _instance_for_kind(kind, name, facts)
+        if inst is None:
+            continue
+        source_crate = None
+        if entry.get("intra_crates"):
+            source_crate = entry["intra_crates"][0]["crate"]
+        reason_parts = []
+        cats = entry.get("categories", [])
+        if "intra" in cats:
+            n_crates = len(entry.get("intra_crates", []))
+            reason_parts.append(
+                f"significant intra-crate in {n_crates} crate"
+                f"{'s' if n_crates != 1 else ''}")
+        if "inter" in cats:
+            reason_parts.append(
+                f"significant inter-crate (count {entry['inter_count']})")
+        if "public" in cats:
+            reason_parts.append(
+                f"significant public-API (inter usage {entry['public_count']})")
+        fallback_reason = (
+            f"Qualified via {', '.join(reason_parts)}."
+            if reason_parts else "Significance-threshold qualified.")
+        out.append({
+            "kind": kind,
+            "pattern": entry["pattern"],
+            "instance": inst,
+            "all_spans": spans,
+            "fallback_reason": fallback_reason,
+            "source_crate": source_crate,
+            "count": (entry["intra_crates"][0]["count"]
+                      if entry.get("intra_crates") else 0),
+            "categories": cats,
+            "intra_crates": entry.get("intra_crates", []),
+            "inter_count": entry.get("inter_count", 0),
+            "public_count": entry.get("public_count", 0),
+        })
+    return out
+
+
+def _legacy_candidate_instances_unused(fp: dict, facts: dict):
+    """Kept temporarily for reference; not called. The slot-quota
+    machinery (per_crate_top_patterns + aggregate_per_crate_picks)
+    is preserved below for any consumers + for the eventual
+    extraction into the optional fallback path."""
     if not fp["pattern_histogram"]:
         return []
     histogram = fp["pattern_histogram"]

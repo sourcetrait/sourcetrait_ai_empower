@@ -2,8 +2,7 @@ SourceTrait Empower: CLI Library
 ================================================================================
 [![License Badge]][License]
 
-*Common command-line interface library*
-
+*Command-line interface library*
 
 
 
@@ -24,7 +23,7 @@ all copyright covering your contribution.
 
 License (AGPL3)
 --------------------------------------------------------------------------------
-SourceTrait Empower CLI Library: Common command-line interface library  
+SourceTrait Empower CLI Library: Command-line interface library  
 Developed by [SourceTrait](https://sourcetrait.com), a division of **Asmov LLC**  
 Copyright (C) 2025 [Asmov LLC](https://asmov.software)  
 

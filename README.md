@@ -18,6 +18,16 @@ Crates
 
 *Nushell engine MCP server*
 
+### [CLI Library](./crates/sourcetrait_cmdlib_empower)
+[![CLI Library Crate Badge]][CLI Library Crate] [![Docs Badge]][CLI Library Docs]
+
+*Command-line interface library*
+
+### [Library](./crates/sourcetrait_lib_empower)
+[![Library Crate Badge]][Library Crate] [![Docs Badge]][Library Docs]
+
+*Common library for SourceTrait Empower*
+
 
 Repository
 --------------------------------------------------------------------------------
@@ -81,3 +91,11 @@ External dependency licenses are listed in:
 [Nushell MCP Crate]: https://crates.io/crates/nu_sh_mcp
 [Nushell MCP Crate Badge]: https://img.shields.io/crates/v/nu_sh_mcp.svg
 [Nushell MCP Docs]: https://docs.rs/nu_sh_mcp
+
+[CLI Library Crate]: https://crates.io/crates/sourcetrait_cmdlib_empower
+[CLI Library Crate Badge]: https://img.shields.io/crates/v/sourcetrait_cmdlib_empower.svg
+[CLI Library Docs]: https://docs.rs/sourcetrait_cmdlib_empower
+
+[Library Crate]: https://crates.io/crates/sourcetrait_lib_empower
+[Library Crate Badge]: https://img.shields.io/crates/v/sourcetrait_lib_empower.svg
+[Library Docs]: https://docs.rs/sourcetrait_lib_empower

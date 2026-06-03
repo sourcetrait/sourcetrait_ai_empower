@@ -74,6 +74,30 @@ _GENERIC_AUTO_TYPES = frozenset([
 # tokio::spawn class of external architectural patterns.
 _LYNCHPIN_USAGE_MIN = int(os.environ.get("ORIENT_LYNCHPIN_USAGE_MIN", "60"))
 
+# 0.0.9 patch 9a: inner method names treated as generic-shape for
+# inner-grouping family detection. A type_usage with inner method
+# `new` / `default` / `from` / `fmt` / etc. doesn't contribute to
+# the inner-family signal because these names are universal across
+# Rust types; grouping them by inner would produce a meaningless
+# "all-constructors" family. Outer-grouping isn't affected - generic
+# inner methods still aggregate into their outer's family.
+_GENERIC_INNER_METHODS = frozenset([
+    "new", "default", "from", "into", "try_from", "try_into",
+    "fmt", "clone", "as_ref", "as_mut", "deref", "deref_mut",
+    "eq", "ne", "cmp", "partial_cmp", "hash",
+    "drop", "next", "iter", "into_iter", "iter_mut",
+    "build", "into_inner", "borrow", "borrow_mut",
+])
+
+# 0.0.9 patch 9a: minimum distinct variants for a type-usage family.
+# An outer-family requires >= this many distinct inner methods sharing
+# the outer; an inner-family requires >= this many distinct outers
+# sharing the inner. Selection::new + Selection::single + Selection::range
+# qualifies the outer "Selection"; mpsc::channel + oneshot::channel
+# qualifies the inner "channel". Single-variant outers (Selection only
+# ever called as Selection::new) don't form a family.
+_FAMILY_MIN_VARIANTS = int(os.environ.get("ORIENT_FAMILY_MIN_VARIANTS", "2"))
+
 # 0.0.4 patch 4 (u): when the workspace has more than _CLUSTER_THRESHOLD crates, the
 # S1 crate / region map emits a "Crate clusters (by name prefix)" sub-section above
 # the per-crate detail list. Clusters require at least _CLUSTER_MIN_SIZE members.
@@ -315,6 +339,22 @@ def _instance_for_kind(kind, name, facts):
                 if tu.get("name") == name]
         return (inst[0] if inst else None,
                 [f"{tu.get('file','?')}:{tu['line']}" for tu in inst[:200]])
+    if kind == "type_usage_family":
+        # 0.0.9 patch 9a: family instances aggregate call sites from all
+        # matching type_usages. outer:X matches names starting with X::;
+        # inner:Y matches names ending with ::Y.
+        if name.startswith("outer:"):
+            outer = name.split(":", 1)[1]
+            inst = [tu for tu in facts.get("type_usages", [])
+                    if tu.get("name", "").split("::", 1)[0] == outer]
+        elif name.startswith("inner:"):
+            inner = name.split(":", 1)[1]
+            inst = [tu for tu in facts.get("type_usages", [])
+                    if tu.get("name", "").rpartition("::")[2] == inner]
+        else:
+            inst = []
+        return (inst[0] if inst else None,
+                [f"{tu.get('file','?')}:{tu['line']}" for tu in inst[:200]])
     return (None, [])
 
 
@@ -343,6 +383,13 @@ def _is_generic_pattern(kind, name):
     architectural patterns. Workspace-defined outers (Selection, Range, Rope
     for helix) survive because none of them are in the set.
 
+    0.0.9 patch 9a: extended to type_usage_family. A family pattern name has
+    the shape `outer:<X>` or `inner:<Y>`. Outer-families are generic when X
+    is in _GENERIC_AUTO_TYPES (same as type_usage). Inner-families are NEVER
+    generic at this stage because the inner-family construction (in
+    _per_crate_top_patterns) already excludes _GENERIC_INNER_METHODS at
+    counting time.
+
     candidate_instance treats these as kind-only signals and walks past, the same
     way Patch 5 handles fn_table:<crate> leaders."""
     if kind in ("derive", "trait_impl"):
@@ -350,6 +397,11 @@ def _is_generic_pattern(kind, name):
     if kind == "type_usage":
         outer = name.split("::", 1)[0]
         return outer in _GENERIC_AUTO_TYPES
+    if kind == "type_usage_family":
+        if name.startswith("outer:"):
+            outer = name.split(":", 1)[1]
+            return outer in _GENERIC_AUTO_TYPES
+        return False
     return False
 
 
@@ -401,6 +453,21 @@ def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx,
         if lynchpins and name in lynchpins:
             return True
         return False
+    if kind == "type_usage_family":
+        # 0.0.9 patch 9a: family patterns inherit workspace-defined
+        # status from their variant outers. An outer-family `outer:X`
+        # is workspace-defined when X is in workspace_types. An
+        # inner-family `inner:Y` is workspace-defined when its family
+        # name appears in the family lynchpins (passed alongside
+        # single-entry lynchpins). For v1 the inner-family workspace
+        # check is approximate; refinement candidate for 9a v2.
+        if name.startswith("outer:"):
+            outer = name.split(":", 1)[1]
+            if workspace_types and outer in workspace_types:
+                return True
+        if lynchpins and name in lynchpins:
+            return True
+        return False
     return False
 
 
@@ -425,7 +492,8 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
     skipped via _is_generic_pattern."""
     per_crate = defaultdict(
         lambda: {"trait_impl": Counter(), "derive": Counter(),
-                 "reg_macro": Counter(), "type_usage": Counter()})
+                 "reg_macro": Counter(), "type_usage": Counter(),
+                 "type_usage_family": Counter()})
     for i in facts["impls"]:
         crate = i.get("crate")
         if not crate or i.get("cfg_gated"):
@@ -482,11 +550,42 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
                 workspace_types, lynchpins):
             continue
         per_crate[crate]["type_usage"][name] += 1
+    # 0.0.9 patch 9a: derive per-crate type_usage_family counters from
+    # the per-crate type_usage Counter. For each crate, walk its
+    # type_usage entries and build outer->inner-set + inner->outer-set
+    # maps; a family qualifies when its variant count meets
+    # _FAMILY_MIN_VARIANTS.
+    for crate, kinds in per_crate.items():
+        type_usage_counter = kinds["type_usage"]
+        if not type_usage_counter:
+            continue
+        outer_inners = defaultdict(set)
+        outer_count = Counter()
+        inner_outers = defaultdict(set)
+        inner_count = Counter()
+        for name, count in type_usage_counter.items():
+            if "::" not in name:
+                continue
+            outer, _, inner = name.partition("::")
+            outer_inners[outer].add(inner)
+            outer_count[outer] += count
+            if inner and inner not in _GENERIC_INNER_METHODS:
+                inner_outers[inner].add(outer)
+                inner_count[inner] += count
+        family_counter = Counter()
+        for outer, count in outer_count.items():
+            if len(outer_inners[outer]) >= _FAMILY_MIN_VARIANTS:
+                family_counter[f"outer:{outer}"] = count
+        for inner, count in inner_count.items():
+            if len(inner_outers[inner]) >= _FAMILY_MIN_VARIANTS:
+                family_counter[f"inner:{inner}"] = count
+        kinds["type_usage_family"] = family_counter
     return per_crate
 
 
-_PLURAL_KIND_PRIORITY = {"trait_impl": 0, "derive": 1, "type_usage": 2,
-                         "reg_macro": 3}
+_PLURAL_KIND_PRIORITY = {"trait_impl": 0, "derive": 1,
+                         "type_usage_family": 2, "type_usage": 3,
+                         "reg_macro": 4}
 
 
 def _aggregate_per_crate_picks(per_crate_counts, facts, n):
@@ -515,8 +614,9 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
     desc. Backfill on underfill draws from the trait_impl pool first."""
     pattern_to_pick = {}
     for crate, kinds in per_crate_counts.items():
-        for kind in ("trait_impl", "derive", "type_usage", "reg_macro"):
-            counts = kinds[kind]
+        for kind in ("trait_impl", "derive", "type_usage",
+                     "type_usage_family", "reg_macro"):
+            counts = kinds.get(kind)
             if not counts:
                 continue
             top_name, top_count = counts.most_common(1)[0]
@@ -529,29 +629,73 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
                     "count": top_count,
                     "source_crate": crate,
                 }
-    by_kind = {"trait_impl": [], "derive": [], "reg_macro": [], "type_usage": []}
+    by_kind = {"trait_impl": [], "derive": [], "reg_macro": [],
+               "type_usage": [], "type_usage_family": []}
     for entry in pattern_to_pick.values():
         by_kind[entry["kind"]].append(entry)
     for kind in by_kind:
         by_kind[kind].sort(key=lambda x: -x["count"])
-    # Slot quotas. For N=5: 2 trait_impl, 1 derive, 1 type_usage, 1 reg_macro.
-    # Scales with N by giving trait_impl the residual. Type_usage gets its
-    # slot only at N>=5 so smaller N preserves the 0.0.7 shape.
+    # 0.0.9 patch 9a: slot quotas at N=5 become 2 trait_impl + 1 derive
+    # + 1 type_usage_family + 1 type_usage. Reg_macro drops to 0 because
+    # the reg_macro slot in 0.0.7+ rarely surfaces architectural patterns
+    # (helix's current!, ratatui's color!, tokio's trace! - none on the
+    # manual ground-truth list). 9b's mode-adaptive quotas can restore
+    # reg_macro for workspaces where reg_macro is the dominant kind.
     derive_quota = 1 if n >= 3 else 0
-    reg_macro_quota = 1 if n >= 4 else 0
+    type_usage_family_quota = 1 if n >= 4 else 0
     type_usage_quota = 1 if n >= 5 else 0
+    reg_macro_quota = 0  # 9a default; 9b adapts
     trait_impl_quota = max(
-        1, n - derive_quota - reg_macro_quota - type_usage_quota)
+        1,
+        n - derive_quota - type_usage_family_quota - type_usage_quota
+        - reg_macro_quota,
+    )
     quotas = {
         "trait_impl": trait_impl_quota,
         "derive": derive_quota,
+        "type_usage_family": type_usage_family_quota,
         "type_usage": type_usage_quota,
         "reg_macro": reg_macro_quota,
     }
+    # 0.0.9 patch 9a: dedup raw type_usage entries against the
+    # type_usage_family slot picks. If Selection family is selected,
+    # exclude Selection::new from the raw type_usage slot to avoid
+    # showing Selection twice (once as family, once as singular).
+    covered_family_outers = set()
+    covered_family_inners = set()
+
+    def _record_family_coverage(family_entry):
+        # entry["pattern"] is "type_usage_family:outer:X" or
+        # "type_usage_family:inner:Y".
+        body = family_entry["pattern"].split(":", 1)[1]
+        if body.startswith("outer:"):
+            covered_family_outers.add(body.split(":", 1)[1])
+        elif body.startswith("inner:"):
+            covered_family_inners.add(body.split(":", 1)[1])
+
+    def _type_usage_covered_by_family(type_usage_entry):
+        body = type_usage_entry["pattern"].split(":", 1)[1]
+        if "::" not in body:
+            return False
+        outer, _, inner = body.partition("::")
+        return outer in covered_family_outers or inner in covered_family_inners
+
     selected = []
-    for kind in ("trait_impl", "derive", "type_usage", "reg_macro"):
-        for entry in by_kind[kind][:quotas[kind]]:
-            selected.append(entry)
+    for kind in ("trait_impl", "derive", "type_usage_family",
+                 "type_usage", "reg_macro"):
+        quota = quotas[kind]
+        if quota <= 0:
+            continue
+        candidates = by_kind[kind]
+        if kind == "type_usage":
+            candidates = [
+                e for e in candidates if not _type_usage_covered_by_family(e)
+            ]
+        picked = candidates[:quota]
+        selected.extend(picked)
+        if kind == "type_usage_family":
+            for entry in picked:
+                _record_family_coverage(entry)
     # If underfilled (some kind had no picks), backfill from trait_impl pool.
     if len(selected) < n:
         chosen_patterns = {e["pattern"] for e in selected}
@@ -678,11 +822,13 @@ def candidate_instances(fp: dict, facts: dict):
             "all_spans": leader_spans,
             "fallback_reason": None,
         }]
-    # Two-pass walk. Priority: trait_impl > derive > type_usage > reg_macro.
-    # Pass 1 restricts to workspace-defined patterns; pass 2 (only runs if
-    # pass 1 finds nothing) falls back to non-workspace patterns. Generic
-    # patterns are skipped in both passes per Patch dd + 6a + 8c.
-    priority_order = ("trait_impl", "derive", "type_usage", "reg_macro")
+    # Two-pass walk. Priority: trait_impl > derive > type_usage_family >
+    # type_usage > reg_macro. Pass 1 restricts to workspace-defined
+    # patterns; pass 2 (only runs if pass 1 finds nothing) falls back to
+    # non-workspace patterns. Generic patterns are skipped in both passes
+    # per Patch dd + 6a + 8c + 9a.
+    priority_order = ("trait_impl", "derive", "type_usage_family",
+                      "type_usage", "reg_macro")
 
     def _walk(prefer_workspace):
         first_by_priority = {k: None for k in priority_order}

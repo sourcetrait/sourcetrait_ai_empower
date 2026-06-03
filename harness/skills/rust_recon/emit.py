@@ -220,10 +220,38 @@ def _is_src_file(file_path: str) -> bool:
     return all(f"/{p}" not in file_path for p in excluded)
 
 
+def _macro_defs_index(facts: dict):
+    """Build a {macro_name: sorted [(file, line)] list} dict from facts['macro_defs'],
+    deduped by (name, file, line) so per-crate roll-ups (same definition counted under
+    both the per-crate name and the workspace 'nu' pseudo-crate) collapse cleanly.
+
+    0.0.4 patch 3 (t) helper: catches `macro_rules! NAME { ... }` blocks captured by
+    rustscan so emit_orientation can annotate the registration UNRESOLVED with the
+    inline-definition span(s) instead of blanket-asserting 'expansion invisible'."""
+    idx = defaultdict(list)
+    seen = set()
+    for m in facts.get("macro_defs", []):
+        name = m.get("name")
+        file_ = m.get("file", "?")
+        line = m.get("line", "?")
+        if not name:
+            continue
+        key = (name, file_, line)
+        if key in seen:
+            continue
+        seen.add(key)
+        idx[name].append((file_, line))
+    return {name: sorted(spans) for name, spans in idx.items()}
+
+
 def detected_seams(fp: dict, facts: dict):
-    """Seams the static trace cannot cross -- seeds for the UNRESOLVED guardrail list.
+    """Seams the static trace cannot cross - seeds for the UNRESOLVED guardrail list.
     Spawn-site filtering is src/-only so test-harness sites do not crowd the architectural
-    signal (see _is_src_file)."""
+    signal (see _is_src_file).
+
+    0.0.4 patch 3 (t): the macro-mediated-registration seam description now reports how
+    many of the listed macros have inline `macro_rules!` definitions in the workspace,
+    pointing the reader at S6 for per-macro detail with definition spans."""
     seeds = []
     inv = fp.get("seam_inventory", {})
     if inv.get("process_spawn") or inv.get("std_io_stream"):
@@ -236,11 +264,20 @@ def detected_seams(fp: dict, facts: dict):
                       spawn_sites[:5]))
     if fp.get("registration_macros"):
         macs = ", ".join(fp["registration_macros"].keys())
-        seeds.append((f"macro-mediated registration ({macs})",
-                      "Items are registered by a macro; the call-site argument list is "
-                      "captured but the EXPANSION is invisible to the scanner. Counts are "
-                      "unverified without the rustdoc overlay. Confirm the generated items "
-                      "in source or via overlay before relying on the registry.", []))
+        macro_defs_idx = _macro_defs_index(facts)
+        inline_count = sum(1 for m in fp["registration_macros"] if m in macro_defs_idx)
+        total = len(fp["registration_macros"])
+        desc = ("Items are registered by a macro; the call-site argument list is "
+                "captured but the EXPANSION is not visible to the floor scanner. Counts "
+                "are unverified without the rustdoc overlay.")
+        if inline_count > 0:
+            desc += (f" {inline_count} of {total} macros have inline `macro_rules!` "
+                     f"definitions in the workspace - see S6 for per-macro detail with "
+                     f"definition spans (expansion is statically followable for those).")
+        else:
+            desc += (" Confirm the generated items in source or via overlay before "
+                     "relying on the registry.")
+        seeds.append((f"macro-mediated registration ({macs})", desc, []))
     if inv.get("extern") or inv.get("syscall_libc"):
         seeds.append(("FFI / syscall boundary",
                       "`extern`/`libc` crosses into non-Rust or the kernel; static tracing "
@@ -385,14 +422,34 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
 
     # 6. UNRESOLVED guardrails
     L += ["## 6. UNRESOLVED guardrails", "",
-          "Do not author *across* these without verifying in source first - a guessed bridge "
-          "compiles but is wrong. Seeded from detected boundaries; **[AGENT]** add any trace "
-          "stop you hit.", ""]
+          "Do not author *across* these without verifying in source first - a guessed "
+          "bridge compiles but is wrong. Seeded from detected boundaries; **[AGENT]** add "
+          "any trace stop you hit.", ""]
     if fp.get("registration_macros"):
+        # 0.0.4 patch 3 (t): per-macro inline-definition lookup so the per-macro entry
+        # downgrades from "expansion invisible" to "expansion readable inline at <span>"
+        # when an inline `macro_rules!` definition is captured in facts['macro_defs'].
+        macro_defs_idx = _macro_defs_index(facts)
         for mac, n in fp["registration_macros"].items():
-            L.append(f"- **`{mac}!` registration** - expansion invisible to the scanner; "
-                     f"call-site arg counts are unverified. Confirm generated items in source "
-                     f"or via the rustdoc overlay before relying on the registry.")
+            defs = macro_defs_idx.get(mac, [])
+            if defs:
+                shown = defs[:5]
+                tail = ("" if len(defs) <= 5
+                        else f" (+ {len(defs) - 5} more definition site(s))")
+                spans_str = ", ".join(f"{f}:{ln}" for f, ln in shown)
+                L.append(f"- **`{mac}!` registration** - expansion READABLE inline in "
+                         f"the workspace at {spans_str}{tail}. Call-site arg counts "
+                         f"remain unverified without the rustdoc overlay, but the "
+                         f"`macro_rules!` body is statically followable for each listed "
+                         f"definition site. Different definition crates may expand "
+                         f"differently; confirm per call-site crate.")
+            else:
+                L.append(f"- **`{mac}!` registration** - expansion not visible to the "
+                         f"floor scanner (no inline `macro_rules!` definition found in "
+                         f"the workspace; may be a proc-macro, imported from an external "
+                         f"crate, or otherwise out of scope). Call-site arg counts are "
+                         f"unverified. Confirm generated items in source or via the "
+                         f"rustdoc overlay before relying on the registry.")
     for title, desc, _ in seams:
         L.append(f"- **{title}** - {desc}")
     if not fp.get("registration_macros") and not seams:

@@ -854,34 +854,42 @@ def detected_seams(fp: dict, facts: dict):
 
 
 def emit_container_routing(root: Path, fp: dict, facts: dict, out: Path):
-    """0.0.8 patch 8d: routing-doc orientation shape for workspaces
-    annotated as containers (sub-topic aggregators).
+    """0.0.8 patch 8e: routing-doc orientation shape for workspaces
+    classified as containers by the shape heuristic.
 
-    When the workspace's [workspace.metadata.rust_deep] table sets
-    container = true, the_user has explicitly declared that the
-    workspace has no single architectural pattern - each member is a
-    separate topical library. Running the picker against such a
-    workspace produces confidently-wrong output (sourcetrait_common as
-    the canonical case, per the_user 2026-06-03). This emitter produces
-    a routing-doc shape that points the agent at the per-member
-    sub-orientations instead.
+    When classify_workspace_shape returns shape=container (sourcetrait_
+    common as the canonical case), the workspace has no single
+    architectural pattern - each member is a separate topical library
+    and the picker's output would be confidently wrong. This emitter
+    produces a routing-doc shape that points the agent at the per-
+    member sub-orientations instead.
 
     The provenance + per-crate listing + histogram appendix are still
     rendered (they remain auditable) but the worked-slice / authoring-
     guide sections are replaced by a routing prompt."""
-    detection = fp.get("container_detection", {})
+    shape = fp.get("workspace_shape", {})
+    signals = shape.get("signals", {})
     L = ["# Orientation: Container Workspace", "",
-         "This workspace is explicitly annotated as a container in its "
-         "root Cargo.toml's `[workspace.metadata.rust_deep]` table. "
-         "Architectural patterns belong to the individual sub-topics, "
-         "not the workspace as a whole; the picker is bypassed "
-         "accordingly. Each member is a separate topical library.", "",
+         "The structural signals indicate this workspace is a container - "
+         "a sub-topic aggregator with no single architectural pattern. "
+         "Each member is a separate topical library; running the picker "
+         "across the workspace as a whole would produce confidently-wrong "
+         "output. This artifact routes you to the per-member orientations "
+         "instead.", "",
          "```", provenance(root, out.parent, fp), "```", ""]
 
     L += ["## How this artifact was shaped", "",
-          "- mode: **container** (picker bypassed)",
-          f"- container annotation source: {detection.get('source', '?')}",
-          f"- container annotation reason: {detection.get('reason', '?')}",
+          "- shape: **container** (picker bypassed)",
+          f"- reasoning: {shape.get('reasoning', '?')}",
+          f"- central_crate: `{signals.get('central_crate', '?')}` "
+          f"(dominant kind: {signals.get('central_kind', '?')})",
+          f"- uniqueness_ratio: {signals.get('uniqueness_ratio', '?')} "
+          f"(higher -> patterns more crate-isolated)",
+          f"- kind_dominance_dispersion: "
+          f"{signals.get('kind_dominance_dispersion', '?')} (higher -> "
+          f"crates have diverse dominant kinds)",
+          f"- leaf_ratio: {signals.get('leaf_ratio', '?')}",
+          f"- hub_centrality: {signals.get('hub_centrality', '?')}",
           ""]
 
     # Workspace members listing
@@ -940,6 +948,14 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     L += ["## How this artifact was shaped", "",
           f"- mode: **{sel['mode']}** (histogram alone: {sel['histogram_mode']}, "
           f"top_share={sel['top_share']})"]
+    # 0.0.8 patch 8e: surface the structural shape label so the agent
+    # knows what kind of workspace they're looking at without having to
+    # re-derive it from the signals.
+    shape_info = fp.get("workspace_shape", {})
+    shape_label = shape_info.get("shape")
+    if shape_label and shape_label != "container":
+        L.append(f"- structural shape: **{shape_label}** -- "
+                 f"{shape_info.get('reasoning', '')}")
     if sel.get("runner_up"):
         L.append(f"- **UNRESOLVED (method-selection):** runner-up mode `{sel['runner_up']}` "
                  f"is within the ambiguity band. Confirm against the histogram below.")
@@ -1220,11 +1236,13 @@ def main():
     fp = json.loads((odir / "fingerprint.json").read_text())
     facts = json.loads((odir / "facts.json").read_text())
     emit_reference(root, fp, facts, odir / "reference.md")
-    # 0.0.8 patch 8d: container-annotated workspaces get a routing-doc
-    # orientation instead of the picker-driven worked-slice doc. The
-    # picker is bypassed because the_user has declared no single
-    # architectural pattern applies (sub-topic aggregator shape).
-    if fp.get("container_detection", {}).get("is_container"):
+    # 0.0.8 patch 8e: workspace shape classifier dispatches container-
+    # shape workspaces to the routing-doc orientation; all other shapes
+    # use the standard worked-slice orientation. Heuristic-driven; no
+    # annotation needed (the_user 2026-06-03: heuristics should analyze
+    # correctly without source-code intervention).
+    shape = fp.get("workspace_shape", {}).get("shape")
+    if shape == "container":
         emit_container_routing(root, fp, facts, odir / "orientation.md")
     else:
         emit_orientation(root, fp, facts, odir / "orientation.md")

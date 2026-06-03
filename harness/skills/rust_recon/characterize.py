@@ -80,63 +80,238 @@ def find_crates(root: Path):
     return crates, sorted(set(workspace_roots))
 
 
-def read_container_annotation(root: Path):
-    """0.0.8 patch 8d: read the workspace root Cargo.toml's
-    [workspace.metadata.rust_deep] table and return container annotation
-    state. Returns {is_container: bool, source: str, reason: str}.
+def classify_workspace_shape(fp_partial: dict, all_facts: dict) -> dict:
+    """0.0.8 patch 8e: heuristic shape classifier. Replaces the 8d
+    annotation-based detection (the_user 2026-06-03: 'we should not
+    need to alter any source-code. the point of the heuristics is to
+    analyze correctly, without intervention').
 
-    Annotation shape:
-        [workspace.metadata.rust_deep]
-        container = true
+    Reads the partial fingerprint (per_crate + pattern_histogram already
+    computed) plus all_facts and returns a shape label + signals + a
+    routable hint. Shapes emerging from empirical 10-target probe:
 
-    When `container = true` is set, the orientation pipeline treats the
-    workspace as a pure container (sub-topic aggregator). The picker is
-    bypassed and a routing-doc orientation is emitted instead. Used for
-    workspaces like sourcetrait_common that are designed as topic
-    aggregators with no single architectural pattern - running heuristics
-    against them produces confidently-wrong output (the_user 2026-06-03).
+    - container: central crate's dominant kind is not type_usage (so it's
+      shared infra, not an architectural framework), AND per-crate top
+      kinds are diverse (dispersion > 0.3), AND patterns are mostly
+      crate-isolated (uniqueness > 0.7). sourcetrait_common is the
+      canonical example - shared testing infra at the hub + topical
+      libraries each with their own dominant kind.
+    - tight_framework: central crate is type_usage-dominant + patterns
+      share heavily across crates (uniqueness < 0.2) + crates align
+      on the same kind (dispersion < 0.1). bevy / iced / nushell.
+    - framework_with_users: central type_usage framework crate + many
+      thin client crates around it (high leaf_ratio + high hub_centrality).
+      tokio / rustls / libcosmic / helix.
+    - framework_product: central type_usage framework + moderate pattern
+      sharing. The middle ground.
+    - submodule_aggregator: low dispersion (<0.1) + central kind is not
+      type_usage. cosmic-epoch (config crate as central, all members
+      type_usage-aligned).
+    - mixed: signals don't match a known shape. Emit as normal
+      orientation; flag for follow-up.
 
-    Heuristic auto-detection is intentionally NOT performed: empirical
-    grounding showed that signals distinguishing pure containers
-    (sourcetrait_common) from no-dominant product workspaces (tokio with
-    its even kind distribution) are not reliable. Explicit opt-in via
-    annotation is the source-of-truth signal."""
-    cargo_path = root / "Cargo.toml"
-    if not cargo_path.exists():
-        return {"is_container": False, "source": "no_cargo_toml",
-                "reason": "no root Cargo.toml"}
-    try:
-        data = tomllib.loads(cargo_path.read_text(encoding="utf-8",
-                                                 errors="replace"))
-    except Exception as e:
-        return {"is_container": False, "source": "parse_error",
-                "reason": f"failed to parse root Cargo.toml: {e}"}
-    workspace = data.get("workspace", {})
-    if not isinstance(workspace, dict) or "workspace" not in data:
-        return {"is_container": False, "source": "not_annotated",
-                "reason": "no [workspace] table in root Cargo.toml"}
-    metadata = workspace.get("metadata")
-    if not isinstance(metadata, dict):
-        return {"is_container": False, "source": "not_annotated",
-                "reason": "no [workspace.metadata] table"}
-    rust_deep = metadata.get("rust_deep")
-    if not isinstance(rust_deep, dict):
-        return {"is_container": False, "source": "not_annotated",
-                "reason": "no [workspace.metadata.rust_deep] table"}
-    if "container" not in rust_deep:
-        return {"is_container": False, "source": "not_annotated",
-                "reason": "[workspace.metadata.rust_deep] table present but "
-                          "no container key"}
-    container = rust_deep["container"]
-    if container is True:
-        return {"is_container": True, "source": "annotated",
-                "reason": "[workspace.metadata.rust_deep] container = true"}
-    if container is False:
-        return {"is_container": False, "source": "annotated_false",
-                "reason": "[workspace.metadata.rust_deep] container = false"}
-    return {"is_container": False, "source": "annotated_invalid",
-            "reason": f"[workspace.metadata.rust_deep] container = "
-                      f"{container!r} (expected bool)"}
+    The container shape is the only one that routes to a different emit
+    path (emit_container_routing). All other shapes use the normal
+    emit_orientation with the shape label surfaced for the agent's
+    awareness."""
+    per_crate = fp_partial.get("per_crate", {})
+    n_crates = len(per_crate)
+
+    if n_crates == 0:
+        return {"shape": "empty", "signals": {},
+                "reasoning": "no crates found in the workspace"}
+    if n_crates == 1:
+        return {"shape": "monolith", "signals": {"n_crates": 1},
+                "reasoning": "single-crate workspace"}
+
+    signals = _compute_shape_signals(fp_partial, all_facts)
+
+    central_kind = signals["central_kind"]
+    uniqueness = signals["uniqueness_ratio"]
+    dispersion = signals["kind_dominance_dispersion"]
+    leaf_ratio = signals["leaf_ratio"]
+    hub_centrality = signals["hub_centrality"]
+
+    # Container: central is shared infra (not architectural framework),
+    # crates have diverse dominant kinds, patterns are crate-isolated.
+    if (central_kind not in ("type_usage", None)
+            and uniqueness > 0.7
+            and dispersion > 0.3):
+        return {
+            "shape": "container",
+            "signals": signals,
+            "reasoning": (
+                f"central crate's dominant kind is `{central_kind}` "
+                f"(not the architectural type_usage axis) - the hub is "
+                f"shared infrastructure, not a framework; per-crate "
+                f"top kinds are diverse (dispersion {dispersion:.3f}) "
+                f"indicating each member is its own topical library; "
+                f"patterns are mostly crate-isolated (uniqueness "
+                f"{uniqueness:.3f}). Each member should be probed "
+                f"individually for its architectural pattern."
+            ),
+        }
+
+    # Submodule aggregator: low dispersion (members aligned) + central
+    # crate not type_usage. cosmic-epoch's config-crate-as-central case.
+    if dispersion < 0.1 and central_kind not in ("type_usage", None):
+        return {
+            "shape": "submodule_aggregator",
+            "signals": signals,
+            "reasoning": (
+                f"per-crate top kinds align (dispersion {dispersion:.3f}); "
+                f"central crate is `{central_kind}`-dominant rather than "
+                f"type_usage; structural shape suggests a config / "
+                f"versioning aggregator with many parallel topical "
+                f"submodules."
+            ),
+        }
+
+    # Tight framework: central is type_usage + heavy pattern sharing +
+    # aligned kinds. bevy / iced / nushell.
+    if (central_kind == "type_usage"
+            and uniqueness < 0.2
+            and dispersion < 0.1):
+        return {
+            "shape": "tight_framework",
+            "signals": signals,
+            "reasoning": (
+                f"central type_usage framework crate; patterns share "
+                f"heavily across crates (uniqueness {uniqueness:.3f}); "
+                f"crates align on the same dominant kind (dispersion "
+                f"{dispersion:.3f}). Trace the central crate first."
+            ),
+        }
+
+    # Framework with users: central is type_usage + many thin clients.
+    # tokio / rustls / libcosmic.
+    if (central_kind == "type_usage"
+            and leaf_ratio > 0.5
+            and hub_centrality > 0.7):
+        return {
+            "shape": "framework_with_users",
+            "signals": signals,
+            "reasoning": (
+                f"central type_usage framework crate; many leaf "
+                f"crates (leaf_ratio {leaf_ratio:.3f}); high hub "
+                f"centrality ({hub_centrality:.3f}) indicates a "
+                f"framework + many independent client crates."
+            ),
+        }
+
+    # Framework product: central type_usage + moderate everything.
+    # helix is the canonical example.
+    if central_kind == "type_usage":
+        return {
+            "shape": "framework_product",
+            "signals": signals,
+            "reasoning": (
+                f"central type_usage framework crate; moderate pattern "
+                f"sharing (uniqueness {uniqueness:.3f}); typical layered "
+                f"product workspace shape."
+            ),
+        }
+
+    # Default: signals don't match a known shape.
+    return {
+        "shape": "mixed",
+        "signals": signals,
+        "reasoning": (
+            f"signals don't match a known shape: central_kind="
+            f"{central_kind}, uniqueness={uniqueness:.3f}, dispersion="
+            f"{dispersion:.3f}, leaf_ratio={leaf_ratio:.3f}, "
+            f"hub_centrality={hub_centrality:.3f}. Emit as standard "
+            f"orientation; the shape may surface during follow-up "
+            f"analysis."
+        ),
+    }
+
+
+def _compute_shape_signals(fp_partial: dict, all_facts: dict) -> dict:
+    """Compute the structural signals fed into classify_workspace_shape.
+    Pure-functional given (fp_partial, all_facts); no external state.
+    See classify_workspace_shape's docstring for signal semantics."""
+    per_crate = fp_partial.get("per_crate", {})
+    crate_names = sorted(per_crate.keys())
+    n_crates = max(1, len(crate_names))
+
+    pattern_to_crates = defaultdict(set)
+    for it in all_facts.get("impls", []):
+        if it.get("trait") and not it.get("cfg_gated"):
+            pattern_to_crates[f"trait_impl:{it['trait']}"].add(
+                it.get("crate"))
+    for d in all_facts.get("derives", []):
+        if d.get("trait"):
+            pattern_to_crates[f"derive:{d['trait']}"].add(d.get("crate"))
+    for m in all_facts.get("macros", []):
+        kind = m.get("kind")
+        nm = m.get("name")
+        if not nm:
+            continue
+        if kind == "attr_macro":
+            pattern_to_crates[f"attr_macro:{nm}"].add(m.get("crate"))
+        elif kind == "macro_invocation":
+            pattern_to_crates[f"reg_macro:{nm}"].add(m.get("crate"))
+    for tu in all_facts.get("type_usages", []):
+        if tu.get("name"):
+            pattern_to_crates[f"type_usage:{tu['name']}"].add(tu.get("crate"))
+    unique_patterns = len(pattern_to_crates)
+    single_crate_patterns = sum(
+        1 for s in pattern_to_crates.values() if len(s) == 1)
+    uniqueness_ratio = (single_crate_patterns / unique_patterns
+                        if unique_patterns else 0.0)
+
+    per_crate_kinds = defaultdict(Counter)
+    for it in all_facts.get("impls", []):
+        if it.get("trait") and not it.get("cfg_gated"):
+            per_crate_kinds[it.get("crate")]["trait_impl"] += 1
+    for d in all_facts.get("derives", []):
+        per_crate_kinds[d.get("crate")]["derive"] += 1
+    for m in all_facts.get("macros", []):
+        kind = m.get("kind")
+        if kind == "attr_macro":
+            per_crate_kinds[m.get("crate")]["attr_macro"] += 1
+        elif kind == "macro_invocation":
+            per_crate_kinds[m.get("crate")]["reg_macro"] += 1
+    for tu in all_facts.get("type_usages", []):
+        per_crate_kinds[tu.get("crate")]["type_usage"] += 1
+    per_crate_top_kind = {}
+    for crate, counter in per_crate_kinds.items():
+        if counter:
+            per_crate_top_kind[crate] = counter.most_common(1)[0][0]
+    distinct_top_kinds = len(set(per_crate_top_kind.values()))
+    kind_dominance_dispersion = (
+        distinct_top_kinds / max(1, len(per_crate_top_kind)))
+
+    workspace_crate_set = set(crate_names)
+    dependent_count = Counter()
+    for name, info in per_crate.items():
+        for dep in info.get("deps", []):
+            if dep in workspace_crate_set:
+                dependent_count[dep] += 1
+    leaf_crates = sum(
+        1 for name in crate_names if dependent_count[name] == 0)
+    leaf_ratio = leaf_crates / n_crates
+    max_dependents = max(dependent_count.values()) if dependent_count else 0
+    hub_centrality = max_dependents / n_crates
+
+    central_crate = (dependent_count.most_common(1)[0][0]
+                     if dependent_count else None)
+    central_kind = (per_crate_top_kind.get(central_crate)
+                    if central_crate else None)
+
+    return {
+        "uniqueness_ratio": round(uniqueness_ratio, 3),
+        "kind_dominance_dispersion": round(kind_dominance_dispersion, 3),
+        "leaf_ratio": round(leaf_ratio, 3),
+        "hub_centrality": round(hub_centrality, 3),
+        "central_crate": central_crate,
+        "central_kind": central_kind,
+        "n_crates": len(crate_names),
+        "unique_patterns": unique_patterns,
+        "single_crate_patterns": single_crate_patterns,
+        "distinct_top_kinds": distinct_top_kinds,
+    }
 
 
 class UnionFind:
@@ -371,8 +546,6 @@ def main():
     seam_total = sum(all_facts["seams"].values())
     seam_density = seam_total / (total_loc / 1000.0)
 
-    container_annotation = read_container_annotation(root)
-
     fingerprint = {
         "tool_version": "0.1.0",
         "repo_root": str(root),
@@ -390,7 +563,6 @@ def main():
         "seam_inventory": dict(all_facts["seams"]),
         "seam_density_per_kloc": round(seam_density, 2),
         "selection": sel,
-        "container_detection": container_annotation,
         "thresholds": {
             "DOMINANCE_SHARE": DOMINANCE_SHARE, "COEQUAL_TOPK": COEQUAL_TOPK,
             "COEQUAL_SHARE": COEQUAL_SHARE, "AMBIGUOUS_BAND": AMBIGUOUS_BAND,
@@ -400,6 +572,12 @@ def main():
         },
         "per_crate": per_crate,
     }
+    # 0.0.8 patch 8e: shape classification reads the partial fingerprint
+    # + all_facts and assigns a workspace_shape. Container shape routes
+    # to a routing-doc orientation in emit.py; other shapes use the
+    # standard orientation with the shape label surfaced for context.
+    fingerprint["workspace_shape"] = classify_workspace_shape(
+        fingerprint, all_facts)
 
     # Fingerprint is written FIRST - the chosen mode must be auditable before any trace.
     (out_dir / "fingerprint.json").write_text(json.dumps(fingerprint, indent=2))

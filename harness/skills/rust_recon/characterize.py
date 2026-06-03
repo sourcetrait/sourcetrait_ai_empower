@@ -130,7 +130,7 @@ def find_crates(root: Path):
 # workspace's might be 500. Long-term we want a ratio (e.g.
 # pub_inter_count / max_pub_inter_count_in_workspace, or
 # pub_inter_count / pub_count). Tracked in
-# notes/rust_recon/followups.md.
+# notes/rust_recon/debt.md.
 _DEV_WITH_END_THRESHOLD = int(
     os.environ.get("ORIENT_DEV_WITH_END_USE_THRESHOLD", "30"))
 
@@ -151,7 +151,7 @@ def _classify_crate_use(name: str, info: dict,
     primary'. The_user 2026-06-03: 'it will bite us'. Will surface
     when a gitoxide-class workspace is probed or when downstream
     consumership-aware emit prompts depend on the distinction.
-    Tracked in notes/rust_recon/followups.md.
+    Tracked in notes/rust_recon/debt.md.
 
     Rubric (the_user 2026-06-03):
     - has_lib and not has_bin -> dev_use.

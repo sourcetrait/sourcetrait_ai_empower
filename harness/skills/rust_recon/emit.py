@@ -98,6 +98,84 @@ _GENERIC_INNER_METHODS = frozenset([
 # ever called as Selection::new) don't form a family.
 _FAMILY_MIN_VARIANTS = int(os.environ.get("ORIENT_FAMILY_MIN_VARIANTS", "2"))
 
+# 0.0.10 patch 10f: combined-score ranking constants. Score formula:
+#   score = raw_count
+#         * (1 + alpha * inter_ratio)
+#         * (1 + beta * is_pub)
+#         * (1 + gamma * min(example_count, _EXAMPLE_SATURATION) / _EXAMPLE_SATURATION)
+#         * (delta if example_count >= _EXAMPLE_THRESHOLD else 1)
+# alpha = inter-crate flow boost; beta = public-API boost; gamma =
+# example-presence boost (saturating at _EXAMPLE_SATURATION examples);
+# delta = developer-signaled-importance boost when example count
+# exceeds _EXAMPLE_THRESHOLD (the_user 2026-06-03: 'more than 3 examples
+# exist' = developers signaling strong usage guidelines).
+_SCORE_INTER_BOOST = float(
+    os.environ.get("ORIENT_SCORE_INTER_BOOST", "0.5"))
+_SCORE_PUB_BOOST = float(os.environ.get("ORIENT_SCORE_PUB_BOOST", "0.3"))
+_SCORE_EXAMPLE_BOOST = float(
+    os.environ.get("ORIENT_SCORE_EXAMPLE_BOOST", "0.5"))
+_SCORE_EXAMPLE_THRESHOLD_BOOST = float(
+    os.environ.get("ORIENT_SCORE_EXAMPLE_THRESHOLD_BOOST", "1.5"))
+_EXAMPLE_SATURATION = int(os.environ.get("ORIENT_EXAMPLE_SATURATION", "10"))
+_EXAMPLE_THRESHOLD = int(os.environ.get("ORIENT_EXAMPLE_THRESHOLD", "3"))
+
+
+def _compute_score(count, metrics):
+    """0.0.10 patch 10f: centrality score for a pattern. count is the
+    raw per-crate or workspace-wide count; metrics is the pattern_metrics
+    entry for the pattern (or aggregated metrics for families). Returns
+    a float; higher = more architecturally central.
+
+    Missing metrics fields default to neutral values (inter_ratio=0,
+    is_pub=False, example_count=0). External patterns with no metrics
+    surface at raw count.
+    """
+    if not metrics:
+        return float(count)
+    inter_ratio = metrics.get("inter_ratio", 0.0) or 0.0
+    is_pub = 1.0 if metrics.get("is_pub", False) else 0.0
+    example_count = metrics.get("example_count", 0) or 0
+    score = float(count)
+    score *= 1.0 + _SCORE_INTER_BOOST * inter_ratio
+    score *= 1.0 + _SCORE_PUB_BOOST * is_pub
+    sat = min(example_count, _EXAMPLE_SATURATION) / max(1, _EXAMPLE_SATURATION)
+    score *= 1.0 + _SCORE_EXAMPLE_BOOST * sat
+    if example_count >= _EXAMPLE_THRESHOLD:
+        score *= _SCORE_EXAMPLE_THRESHOLD_BOOST
+    return score
+
+
+def _aggregate_family_metrics(family_kind, family_inner, per_crate_type_usage_metrics):
+    """0.0.10 patch 10f: aggregate per-pattern metrics for a family
+    entry by taking the BEST (max) value of each metric across the
+    family's constituent type_usages. A family is more architecturally
+    central than its weakest member; aggregating by max captures the
+    strongest signal.
+
+    family_kind: 'outer' or 'inner' (from the type_usage_family pattern
+    name 'outer:X' / 'inner:Y').
+    family_inner: X or Y respectively.
+    per_crate_type_usage_metrics: dict mapping type_usage pattern name
+    (without 'type_usage:' prefix) to its metrics."""
+    best = {"inter_ratio": 0.0, "is_pub": False, "example_count": 0}
+    for tu_name, m in per_crate_type_usage_metrics.items():
+        if "::" not in tu_name:
+            continue
+        outer, _, inner = tu_name.partition("::")
+        matches = (
+            (family_kind == "outer" and outer == family_inner)
+            or (family_kind == "inner" and inner == family_inner)
+        )
+        if not matches:
+            continue
+        if m.get("inter_ratio", 0.0) > best["inter_ratio"]:
+            best["inter_ratio"] = m.get("inter_ratio", 0.0)
+        if m.get("is_pub", False):
+            best["is_pub"] = True
+        if m.get("example_count", 0) > best["example_count"]:
+            best["example_count"] = m.get("example_count", 0)
+    return best
+
 # 0.0.4 patch 4 (u): when the workspace has more than _CLUSTER_THRESHOLD crates, the
 # S1 crate / region map emits a "Crate clusters (by name prefix)" sub-section above
 # the per-crate detail list. Clusters require at least _CLUSTER_MIN_SIZE members.
@@ -406,7 +484,8 @@ def _is_generic_pattern(kind, name):
 
 
 def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx,
-                          workspace_types=None, lynchpins=None):
+                          workspace_types=None, lynchpins=None,
+                          pattern_metrics=None):
     """True when the pattern is anchored to a workspace-defined trait or macro.
 
     0.0.6 patch 6b: trait_impl:<T> and derive:<T> are workspace-defined when T
@@ -452,6 +531,15 @@ def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx,
             return True
         if lynchpins and name in lynchpins:
             return True
+        # 0.0.10 patch 10f: pattern_metrics has the broader defining-
+        # crate map (types + mods + traits). A type_usage whose outer
+        # resolves to a workspace MODULE (tokio's mpsc / oneshot /
+        # broadcast / watch) is workspace-defined even though it's not
+        # in workspace_types (which only tracks struct/enum/union/type).
+        if pattern_metrics:
+            entry = pattern_metrics.get(f"type_usage:{name}")
+            if entry and entry.get("defining_crate"):
+                return True
         return False
     if kind == "type_usage_family":
         # 0.0.9 patch 9a: family patterns inherit workspace-defined
@@ -472,7 +560,8 @@ def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx,
 
 
 def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
-                            workspace_types=None, lynchpins=None):
+                            workspace_types=None, lynchpins=None,
+                            pattern_metrics=None):
     """For each workspace crate, find the top non-generic workspace-defined
     pattern of each kind (trait_impl, derive, type_usage, reg_macro). Returns a
     dict of crate_name -> {kind -> {pattern, count, source_crate}}.
@@ -505,7 +594,7 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
             continue
         if not _is_workspace_defined(
                 "trait_impl", name, workspace_traits, macro_defs_idx,
-                workspace_types, lynchpins):
+                workspace_types, lynchpins, pattern_metrics):
             continue
         per_crate[crate]["trait_impl"][name] += 1
     for d in facts.get("derives", []):
@@ -519,7 +608,7 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
             continue
         if not _is_workspace_defined(
                 "derive", name, workspace_traits, macro_defs_idx,
-                workspace_types, lynchpins):
+                workspace_types, lynchpins, pattern_metrics):
             continue
         per_crate[crate]["derive"][name] += 1
     for m in facts.get("macros", []):
@@ -533,7 +622,7 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
             continue
         if not _is_workspace_defined(
                 "reg_macro", name, workspace_traits, macro_defs_idx,
-                workspace_types, lynchpins):
+                workspace_types, lynchpins, pattern_metrics):
             continue
         per_crate[crate]["reg_macro"][name] += 1
     for tu in facts.get("type_usages", []):
@@ -547,9 +636,17 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
             continue
         if not _is_workspace_defined(
                 "type_usage", name, workspace_traits, macro_defs_idx,
-                workspace_types, lynchpins):
+                workspace_types, lynchpins, pattern_metrics):
             continue
         per_crate[crate]["type_usage"][name] += 1
+    # 0.0.10 patch 10f revision: example_type_usages inclusion at the
+    # per-crate counter level changed family detection in ways that
+    # broke helix (family slot empty). The example_count signal lives
+    # in pattern_metrics; the score formula uses it as a weight on
+    # whatever count surfaces from src counting. Example-only patterns
+    # (tokio's mpsc::channel with 0 src) currently don't surface as
+    # candidates - they need a separate handling path that doesn't
+    # interfere with family detection. Deferred to 10f v2 (or 0.0.11).
     # 0.0.9 patch 9a: derive per-crate type_usage_family counters from
     # the per-crate type_usage Counter. For each crate, walk its
     # type_usage entries and build outer->inner-set + inner->outer-set
@@ -597,7 +694,7 @@ _PLURAL_KIND_PRIORITY = {"trait_impl": 0, "derive": 1,
                          "reg_macro": 4}
 
 
-def _aggregate_per_crate_picks(per_crate_counts, facts, n):
+def _aggregate_per_crate_picks(per_crate_counts, facts, n, pattern_metrics=None):
     """Flatten per-crate top picks into a single deduped list of candidates,
     capped at n, with kind-aware slot quotas. Returns a list of dicts in the
     candidate_instances return shape.
@@ -621,6 +718,18 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
     + 1 type_usage + 1 reg_macro. Output ordering by _PLURAL_KIND_PRIORITY:
     trait_impl > derive > type_usage > reg_macro, each tier sorted by count
     desc. Backfill on underfill draws from the trait_impl pool first."""
+    pattern_metrics = pattern_metrics or {}
+    # 0.0.10 patch 10f: build a per-crate type_usage metric lookup for
+    # family score aggregation. For each per-crate type_usage entry,
+    # find its pattern_metrics record (workspace-wide) - the family
+    # score then aggregates across constituent type_usages by max.
+    per_crate_type_usage_metrics = {}
+    for crate, kinds in per_crate_counts.items():
+        for tu_name in kinds.get("type_usage", Counter()):
+            pattern = f"type_usage:{tu_name}"
+            if pattern in pattern_metrics:
+                per_crate_type_usage_metrics[tu_name] = pattern_metrics[pattern]
+
     pattern_to_pick = {}
     for crate, kinds in per_crate_counts.items():
         for kind in ("trait_impl", "derive", "type_usage",
@@ -637,20 +746,36 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
             n_per_crate = 2 if kind == "type_usage_family" else 1
             for top_name, top_count in counts.most_common(n_per_crate):
                 pattern = f"{kind}:{top_name}"
+                # 0.0.10 patch 10f: combined score for ranking.
+                if kind == "type_usage_family":
+                    family_kind = (
+                        "outer" if top_name.startswith("outer:") else "inner")
+                    family_inner = top_name.split(":", 1)[1]
+                    fm = _aggregate_family_metrics(
+                        family_kind, family_inner,
+                        per_crate_type_usage_metrics)
+                    score = _compute_score(top_count, fm)
+                else:
+                    metrics = pattern_metrics.get(pattern)
+                    score = _compute_score(top_count, metrics)
                 existing = pattern_to_pick.get(pattern)
-                if existing is None or top_count > existing["count"]:
+                if existing is None or score > existing["score"]:
                     pattern_to_pick[pattern] = {
                         "kind": kind,
                         "pattern": pattern,
                         "count": top_count,
+                        "score": score,
                         "source_crate": crate,
                     }
     by_kind = {"trait_impl": [], "derive": [], "reg_macro": [],
                "type_usage": [], "type_usage_family": []}
     for entry in pattern_to_pick.values():
         by_kind[entry["kind"]].append(entry)
+    # 0.0.10 patch 10f: sort by combined score (descending) instead of
+    # raw count. Score blends raw count + inter-crate flow + public-API
+    # status + example presence + >=3-examples threshold boost.
     for kind in by_kind:
-        by_kind[kind].sort(key=lambda x: -x["count"])
+        by_kind[kind].sort(key=lambda x: -x["score"])
     # 0.0.9 patch 9a: slot quotas at N=5 become 2 trait_impl + 1 derive
     # + 1 type_usage_family + 1 type_usage. Reg_macro drops to 0 because
     # the reg_macro slot in 0.0.7+ rarely surfaces architectural patterns
@@ -692,29 +817,13 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
         "type_usage": type_usage_quota,
         "reg_macro": reg_macro_quota,
     }
-    # 0.0.9 patch 9a: dedup raw type_usage entries against the
-    # type_usage_family slot picks. If Selection family is selected,
-    # exclude Selection::new from the raw type_usage slot to avoid
-    # showing Selection twice (once as family, once as singular).
-    covered_family_outers = set()
-    covered_family_inners = set()
-
-    def _record_family_coverage(family_entry):
-        # entry["pattern"] is "type_usage_family:outer:X" or
-        # "type_usage_family:inner:Y".
-        body = family_entry["pattern"].split(":", 1)[1]
-        if body.startswith("outer:"):
-            covered_family_outers.add(body.split(":", 1)[1])
-        elif body.startswith("inner:"):
-            covered_family_inners.add(body.split(":", 1)[1])
-
-    def _type_usage_covered_by_family(type_usage_entry):
-        body = type_usage_entry["pattern"].split(":", 1)[1]
-        if "::" not in body:
-            return False
-        outer, _, inner = body.partition("::")
-        return outer in covered_family_outers or inner in covered_family_inners
-
+    # 0.0.9 patch 9a + 0.0.10 patch 10f revision: dedup family/singular
+    # removed. When task family is the family pick and task::spawn is
+    # the singular pick, both surface - the family shows the
+    # architectural axis, the singular shows the specific spawn call.
+    # Both are useful in an orientation. Empirically the dedup was
+    # dropping manual-list matches like tokio's task::spawn in 10f
+    # probes when the family swallowed the singular slot.
     selected = []
     for kind in ("trait_impl", "derive", "type_usage_family",
                  "type_usage", "reg_macro"):
@@ -722,15 +831,8 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
         if quota <= 0:
             continue
         candidates = by_kind[kind]
-        if kind == "type_usage":
-            candidates = [
-                e for e in candidates if not _type_usage_covered_by_family(e)
-            ]
         picked = candidates[:quota]
         selected.extend(picked)
-        if kind == "type_usage_family":
-            for entry in picked:
-                _record_family_coverage(entry)
     # If underfilled (some kind had no picks), backfill from trait_impl pool.
     if len(selected) < n:
         chosen_patterns = {e["pattern"] for e in selected}
@@ -834,9 +936,17 @@ def candidate_instances(fp: dict, facts: dict):
     # protagonist list. If empty (cosmic-epoch-style submodule aggregator
     # with no workspace-defined patterns at all), fall through to the
     # single-pick logic from 6a/6b below.
+    # 0.0.10 patch 10f: pass pattern_metrics through to the picker so
+    # combined-score ranking can blend raw count + inter_ratio + is_pub
+    # + example_count signals. Metrics also feed _is_workspace_defined's
+    # mod-via-pattern_metrics check so example-only patterns enter the
+    # per-crate aggregation pool.
+    pattern_metrics = fp.get("pattern_metrics", {})
     per_crate_counts = _per_crate_top_patterns(
-        facts, workspace_traits, macro_defs_idx, workspace_types, lynchpins)
-    plural_picks = _aggregate_per_crate_picks(per_crate_counts, facts, _PLURAL_N)
+        facts, workspace_traits, macro_defs_idx, workspace_types,
+        lynchpins, pattern_metrics)
+    plural_picks = _aggregate_per_crate_picks(
+        per_crate_counts, facts, _PLURAL_N, pattern_metrics)
     if plural_picks:
         return plural_picks
     leader_dom = histogram[0]["pattern"]
@@ -845,7 +955,7 @@ def candidate_instances(fp: dict, facts: dict):
     leader_is_generic = _is_generic_pattern(leader_kind, leader_name)
     leader_is_workspace = _is_workspace_defined(
         leader_kind, leader_name, workspace_traits, macro_defs_idx,
-        workspace_types, lynchpins)
+        workspace_types, lynchpins, pattern_metrics)
     # Direct return only when the leader is valid + non-generic + workspace-defined.
     # 0.0.6 patch 6b: non-workspace leaders (trait_impl:From, reg_macro:fl, etc.)
     # fall through to the walk so a workspace-defined alternative gets a chance.
@@ -876,7 +986,7 @@ def candidate_instances(fp: dict, facts: dict):
                 continue
             if prefer_workspace and not _is_workspace_defined(
                     kind, name, workspace_traits, macro_defs_idx,
-                    workspace_types, lynchpins):
+                    workspace_types, lynchpins, pattern_metrics):
                 continue
             inst, spans = _instance_for_kind(kind, name, facts)
             if inst is None:

@@ -1,8 +1,8 @@
-"""rustdoc_overlay.py — OPTIONAL semantic overlay (degradation-first).
+"""rustdoc_overlay.py - OPTIONAL semantic overlay (degradation-first).
 
 The floor (rustscan + characterize + emit) produces a correct, honest artifact alone. This
 overlay only makes it BETTER, and only when a nightly toolchain and a buildable project are
-present. It cannot run in an offline container with no cargo — by design it then no-ops with
+present. It cannot run in an offline container with no cargo - by design it then no-ops with
 an explicit banner, and the floor proceeds unchanged.
 
 What the overlay adds when available:
@@ -12,7 +12,7 @@ What the overlay adds when available:
   - Re-export identity: what a `pub use` actually points at.
   - A reconciliation report: where the floor (which over-trusts source text) and rustdoc
     (which over-trusts the compiler, losing spans for re-exports / blanket / synthesized /
-    macro items) DISAGREE — disagreement is itself a seam signal worth surfacing.
+    macro items) DISAGREE - disagreement is itself a seam signal worth surfacing.
 
 rustdoc JSON is nightly-only and format_version-gated; spans are null for re-exports,
 blanket/synthesized impls, and macro-generated items. Null spans are FLAGGED, never dropped.
@@ -68,7 +68,7 @@ def _resolve_package(root: Path, requested: str | None, odir: Path | None) -> st
 
       1. If `requested` matches a workspace member name, keep it (caller knows best).
       2. Else use the characterize fingerprint's most-depended-on in-workspace crate
-         (matches the §2 vocabulary pick).
+         (matches the S2 vocabulary pick).
       3. Else match the repo dir name against package names, including `lib<name>` and
          hyphen/underscore equivalents.
       4. Else pick the first workspace member that publishes a lib target.
@@ -126,7 +126,7 @@ def _resolve_package(root: Path, requested: str | None, odir: Path | None) -> st
 
 def run_rustdoc_json(root: Path, package: str | None, odir: Path | None = None):
     """Invoke nightly rustdoc JSON. Returns parsed dict or raises. THIS SHELLS OUT (the only
-    phase permitted to) and requires network/toolchain — untested in the offline container."""
+    phase permitted to) and requires network/toolchain - untested in the offline container."""
     resolved = _resolve_package(root, package, odir)
     cmd_base = ["cargo", "+nightly", "rustdoc"]
     if resolved:
@@ -241,7 +241,7 @@ def main():
         banner = {"status": "absent", "reason": reason,
                   "effect": "Floor-only artifact. Macro-expansion counts remain "
                             "`expansion_unverified`; re-export targets unresolved. This is a "
-                            "correct, honest artifact — just without the semantic overlay."}
+                            "correct, honest artifact - just without the semantic overlay."}
         (odir / "rustdoc_overlay.json").write_text(json.dumps(banner, indent=2))
         print(f"[overlay] DEGRADED: {reason}")
         print("[overlay] floor-only artifact stands; no overlay applied.")

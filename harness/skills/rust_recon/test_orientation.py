@@ -1,4 +1,4 @@
-"""test_orientation.py — unit tests for the deterministic phases, runnable in-container
+"""test_orientation.py - unit tests for the deterministic phases, runnable in-container
 against synthetic Rust trees. The rustdoc overlay and real-repo trace cannot run here; only
 the overlay's DEGRADATION path is asserted.
 

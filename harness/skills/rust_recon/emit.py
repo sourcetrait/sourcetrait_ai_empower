@@ -1,4 +1,4 @@
-"""emit.py — final phase. Reads fingerprint.json + facts.json and writes the two-file
+"""emit.py - final phase. Reads fingerprint.json + facts.json and writes the two-file
 artifact:
 
   reference.md   exhaustive, span-anchored, grep-into. Fully mechanical.
@@ -6,7 +6,7 @@ artifact:
                  map, core type vocabulary, seam-spine, dominant-pattern identification,
                  a candidate instance, detected-seam UNRESOLVED guardrails) plus clearly
                  marked [AGENT ...] slots that Claude Code fills BY READING SOURCE at the
-                 spans provided — the judgment work (data-flow narrative, the worked slice,
+                 spans provided - the judgment work (data-flow narrative, the worked slice,
                  the why-axis from doc-comments) that no static tool can fabricate.
 
 The division is deliberate: the tool produces everything that is fabrication-proof (counts,
@@ -79,41 +79,41 @@ def emit_reference(root: Path, fp: dict, facts: dict, out: Path):
             L.append("### traits")
             for t in sorted(c["traits"], key=lambda x: x["name"]):
                 cfg = "  *(cfg-gated)*" if t.get("cfg_gated") else ""
-                L.append(f"- `{t['name']}` — {sp(t)}{cfg}")
+                L.append(f"- `{t['name']}` - {sp(t)}{cfg}")
         if c["types"]:
             L.append("### types")
             for t in sorted(c["types"], key=lambda x: x["name"]):
                 cfg = "  *(cfg-gated)*" if t.get("cfg_gated") else ""
-                L.append(f"- `{t['kind']} {t['name']}` — {sp(t)}{cfg}")
+                L.append(f"- `{t['kind']} {t['name']}` - {sp(t)}{cfg}")
         if c["impls"]:
             L.append("### impls")
             for i in sorted(c["impls"], key=lambda x: (str(x.get("trait")), str(x.get("type")))):
                 tr = f"`{i['trait']}` for " if i.get("trait") else "(inherent) "
                 cfg = "  *(cfg-gated)*" if i.get("cfg_gated") else ""
-                L.append(f"- impl {tr}`{i.get('type')}` — {sp(i)}{cfg}")
+                L.append(f"- impl {tr}`{i.get('type')}` - {sp(i)}{cfg}")
         if c["fns"]:
             L.append("### free functions")
             for f in sorted(c["fns"], key=lambda x: x["name"]):
-                L.append(f"- `fn {f['name']}` — {sp(f)}")
+                L.append(f"- `fn {f['name']}` - {sp(f)}")
         if c["macros"]:
             L.append("### macro applications *(expansion unverified without rustdoc overlay)*")
             for m in sorted(c["macros"], key=lambda x: x.get("line", 0)):
                 if m["kind"] == "macro_invocation":
                     args = ", ".join(m.get("arg_idents", [])[:12])
-                    L.append(f"- `{m['name']}!(...)` args=[{args}] — {sp(m)}")
+                    L.append(f"- `{m['name']}!(...)` args=[{args}] - {sp(m)}")
                 else:
-                    L.append(f"- `#[{m['name']}]` — {sp(m)}")
+                    L.append(f"- `#[{m['name']}]` - {sp(m)}")
         if c["reexports"]:
             L.append("### re-exports *(rustdoc resolves the target; span may be null)*")
             for u in c["reexports"]:
-                L.append(f"- `{u['path']}` — {sp(u)}")
+                L.append(f"- `{u['path']}` - {sp(u)}")
         L.append("")
     out.write_text("\n".join(L))
 
 
 def core_vocabulary(fp: dict, facts: dict):
     """Heuristic: the core types live in the most-depended-on crate. Prefer in-workspace
-    crates (those that appear in fp["per_crate"] keys) over external infra crates -- the §2
+    crates (those that appear in fp["per_crate"] keys) over external infra crates -- the S2
     vocabulary should be the domain language other crates in the workspace speak in, not a
     shared error-helper or utility crate from crates.io. Falls back to the global most-
     depended-on pick only when no in-workspace crate has any dependents at all (unusual)."""
@@ -124,8 +124,8 @@ def core_vocabulary(fp: dict, facts: dict):
     in_workspace = {k: v for k, v in dep_count.items() if k in fp["per_crate"]}
     pick_pool = in_workspace if in_workspace else dep_count
     core = max(pick_pool, key=pick_pool.get) if pick_pool else None
-    # Filter types/traits to src/ only -- the 0.0.2 #5 sweep partition for §3 seam sites,
-    # now extended to §2 vocab so test-file types (ratatui/tests/*.rs, tokio/tests/*.rs)
+    # Filter types/traits to src/ only -- the 0.0.2 #5 sweep partition for S3 seam sites,
+    # now extended to S2 vocab so test-file types (ratatui/tests/*.rs, tokio/tests/*.rs)
     # do not pollute the listed core vocabulary.
     types = [t for t in facts["types"]
              if t.get("crate") == core and _is_src_file(t.get("file", ""))]
@@ -165,7 +165,7 @@ def _is_src_file(file_path: str) -> bool:
     harnesses before this filter landed. Handles two layouts: per-crate tests under
     `crates/<X>/tests/...` (slash-segment form) and workspace-top-level tests under
     `tests/...` (path-prefix form, as nushell uses for integration tests). Used by
-    detected_seams to keep §3 focused on the architectural signal."""
+    detected_seams to keep S3 focused on the architectural signal."""
     excluded = ("tests/", "benches/", "examples/")
     if any(file_path.startswith(p) for p in excluded):
         return False
@@ -212,7 +212,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
          "exhaustive index. Map-first ordering: skeleton (crate map, core vocabulary, seams,",
          "flow) then the worked slice (the authoring template), then guardrails, then the",
          "authoring guide. Every claim is a span you can open. Sections marked **[AGENT]** are",
-         "filled by reading source at the cited spans — never from guesswork.", "",
+         "filled by reading source at the cited spans - never from guesswork.", "",
          "```", provenance(root, out.parent, fp), "```", ""]
 
     # method-selection honesty
@@ -229,9 +229,9 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     # 1. crate / region map
     L += ["## 1. Crate / region map", ""]
     if fp["n_components"] > 1 or len(fp["workspace_roots"]) > 1:
-        L.append(f"**Regional** — {fp['n_components']} disjoint component(s), "
+        L.append(f"**Regional** - {fp['n_components']} disjoint component(s), "
                  f"{len(fp['workspace_roots'])} workspace root(s). Each component is a region; "
-                 f"the seam-spine (§3) is the join. **[AGENT]** name each region's role and "
+                 f"the seam-spine (S3) is the join. **[AGENT]** name each region's role and "
                  f"the named seams connecting it to the others; if two regions share no traced "
                  f"data path, record that as an UNRESOLVED rather than inventing a link.")
         L.append("")
@@ -247,22 +247,22 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
         L.append(f"- **{name}** ({c['dir']}/, {c['loc']} LoC, {c['n_impls']} impls, "
                  f"{c['n_types']} types){dep_str}")
     L.append("")
-    L.append("**[AGENT]** In 2–4 sentences each (what / why / where), describe the role of the "
+    L.append("**[AGENT]** In 2-4 sentences each (what / why / where), describe the role of the "
              "core crates. Populate *why* only from crate-level doc-comments / README; where "
              "absent, write `why: unverified`.")
     L.append("")
 
     # 2. core type vocabulary
     L += ["## 2. Core type vocabulary", "",
-          f"Most-depended-on crate: **{core}** — its public types are the vocabulary other "
+          f"Most-depended-on crate: **{core}** - its public types are the vocabulary other "
           f"crates speak in. Confirm and describe each (what / where load-bearing; why from "
           f"doc-comments else unverified):", ""]
     for t in sorted(core_traits, key=lambda x: x["name"])[:40]:
-        doc = f" — doc: {t['doc'][:120]}" if t.get("doc") else "  *(why: unverified — no doc)*"
-        L.append(f"- trait `{t['name']}` — {sp(t)}{doc}")
+        doc = f" - doc: {t['doc'][:120]}" if t.get("doc") else "  *(why: unverified - no doc)*"
+        L.append(f"- trait `{t['name']}` - {sp(t)}{doc}")
     for t in sorted(core_types, key=lambda x: x["name"])[:40]:
-        doc = f" — doc: {t['doc'][:120]}" if t.get("doc") else "  *(why: unverified — no doc)*"
-        L.append(f"- `{t['kind']} {t['name']}` — {sp(t)}{doc}")
+        doc = f" - doc: {t['doc'][:120]}" if t.get("doc") else "  *(why: unverified - no doc)*"
+        L.append(f"- `{t['kind']} {t['name']}` - {sp(t)}{doc}")
     L.append("")
 
     # 3. seam-spine
@@ -272,7 +272,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
           ""]
     if seams:
         for title, desc, sites in seams:
-            L.append(f"- **{title}** — {desc}")
+            L.append(f"- **{title}** - {desc}")
             for s in sites:
                 L.append(f"    - site: {s.get('path','')} ({s.get('file','?')}:{s.get('line','?')})")
     else:
@@ -286,12 +286,12 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
 
     # 4. data-flow narrative (agent)
     L += ["## 4. Data-flow narrative", "",
-          "**[AGENT]** Trace how the core data type (from §2) moves from entry to result "
-          "through the core crates. 1–2 short paragraphs, each sentence anchored to a span "
-          "from reference.md. Stop at any seam from §3 with an explicit UNRESOLVED.", ""]
+          "**[AGENT]** Trace how the core data type (from S2) moves from entry to result "
+          "through the core crates. 1-2 short paragraphs, each sentence anchored to a span "
+          "from reference.md. Stop at any seam from S3 with an explicit UNRESOLVED.", ""]
 
     # 5. worked slice (the protagonist; seeded)
-    L += ["## 5. Worked slice — the authoring template", ""]
+    L += ["## 5. Worked slice - the authoring template", ""]
     if cand and cand.get("instance"):
         dom = cand["pattern"]
         inst = cand["instance"]
@@ -300,23 +300,23 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  f"this is the kind you will most often author).")
         if cand["kind"] == "trait_impl":
             L.append(f"Seed instance: `impl {dom.split(':')[1]} for {inst.get('type')}` "
-                     f"— {sp(inst)}.")
+                     f"- {sp(inst)}.")
         else:
-            L.append(f"Seed instance — {sp(inst)}.")
+            L.append(f"Seed instance - {sp(inst)}.")
         L.append("")
         L.append("**[AGENT]** Trace THIS ONE instance across every crate boundary it touches, "
                  "as the executable template for authoring the next one:")
         L += ["- **what** it does: inputs / outputs / state + environment changes "
-              "(load-bearing — read the impl body in source).",
+              "(load-bearing - read the impl body in source).",
               "- **where** it plugs in: how it is registered and invoked (follow the "
-              "registration path; if it goes through a macro, that is a guardrail — see §6).",
+              "registration path; if it goes through a macro, that is a guardrail - see S6).",
               "- **why** it is shaped this way: from doc-comments only, else `why: unverified`.",
-              "- stop honestly at each seam (§3) with `UNRESOLVED: what you looked for, what "
-              "you ran`. A stop is a success — it marks a real boundary for the next author."]
+              "- stop honestly at each seam (S3) with `UNRESOLVED: what you looked for, what "
+              "you ran`. A stop is a success - it marks a real boundary for the next author."]
         L.append("")
         L.append("Every other instance of this pattern (open any to compare): "
                  + ", ".join(f"`{s}`" for s in cand["all_spans"][:15])
-                 + (" …" if len(cand["all_spans"]) > 15 else ""))
+                 + (" ..." if len(cand["all_spans"]) > 15 else ""))
     else:
         L.append("**[AGENT]** No single dominant instance was isolated automatically "
                  f"(mode: {sel['mode']}). Pick the largest pattern from the histogram below "
@@ -325,30 +325,30 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
 
     # 6. UNRESOLVED guardrails
     L += ["## 6. UNRESOLVED guardrails", "",
-          "Do not author *across* these without verifying in source first — a guessed bridge "
+          "Do not author *across* these without verifying in source first - a guessed bridge "
           "compiles but is wrong. Seeded from detected boundaries; **[AGENT]** add any trace "
           "stop you hit.", ""]
     if fp.get("registration_macros"):
         for mac, n in fp["registration_macros"].items():
-            L.append(f"- **`{mac}!` registration** — expansion invisible to the scanner; "
+            L.append(f"- **`{mac}!` registration** - expansion invisible to the scanner; "
                      f"call-site arg counts are unverified. Confirm generated items in source "
                      f"or via the rustdoc overlay before relying on the registry.")
     for title, desc, _ in seams:
-        L.append(f"- **{title}** — {desc}")
+        L.append(f"- **{title}** - {desc}")
     if not fp.get("registration_macros") and not seams:
         L.append("- None seeded. Record trace stops here as you hit them.")
     L.append("")
 
     # 7. pattern-authoring guide
     L += ["## 7. Pattern-authoring guide", "",
-          "**[AGENT]** From the trait/struct definitions in §2 and the worked slice in §5, "
+          "**[AGENT]** From the trait/struct definitions in S2 and the worked slice in S5, "
           "write the minimal checklist to author a NEW instance of the dominant pattern: which "
           "trait to implement, which methods are required (read the trait def in source), how "
-          "to register it (the path from §5), and which seams (§6) a new instance must "
+          "to register it (the path from S5), and which seams (S6) a new instance must "
           "respect. Anchor each step to a span.", "",
           "## Appendix: full pattern histogram", ""]
     for row in fp["pattern_histogram"][:25]:
-        L.append(f"- `{row['pattern']}` — {row['count']}")
+        L.append(f"- `{row['pattern']}` - {row['count']}")
     L.append("")
     out.write_text("\n".join(L))
 

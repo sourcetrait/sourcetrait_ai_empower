@@ -1,4 +1,4 @@
-"""rustscan.py — structure-aware Rust fact extractor (pure stdlib).
+"""rustscan.py - structure-aware Rust fact extractor (pure stdlib).
 
 This is the detection FLOOR. It is deliberately *not*:
   - regex-based pattern detection over raw source (which miscounts constructs inside
@@ -11,7 +11,7 @@ Instead a character-level lexer masks comment bodies and string/char literal *co
 (preserving byte and line offsets) so that item detection operates on code only. Doc-comment
 text is preserved separately to feed the why-axis. Macro invocations are captured with their
 argument lists, so macro-mediated registration can be counted from the call site even though
-the expansion itself is invisible to any static scanner — these counts are flagged
+the expansion itself is invisible to any static scanner - these counts are flagged
 `expansion_unverified` and are confirmed by the rustdoc overlay when a toolchain is present.
 
 `re` is used only as a low-level lexer over already-masked (comment/string-free) text to
@@ -41,7 +41,7 @@ INERT_ATTRS = {
     "proc_macro", "proc_macro_derive", "proc_macro_attribute", "stable", "unstable",
 }
 
-# Macro invocations that are std/common noise — excluded from the registration-macro
+# Macro invocations that are std/common noise - excluded from the registration-macro
 # histogram (still recorded in the raw macro list).
 NOISE_MACROS = {
     "vec", "println", "print", "eprintln", "eprint", "format", "write", "writeln",
@@ -591,7 +591,7 @@ def _parse_impl(toks, p, masked, ln):
     semi = _find_token(toks, p + 1, ";", set())
     end_idx = body if body != -1 else (semi if semi != -1 else min(p + 60, len(toks) - 1))
     # Resume AT the body-open '{' (or past ';') so the main loop's brace counter stays
-    # balanced — jumping past '{' would skip counting the open while still counting its close.
+    # balanced - jumping past '{' would skip counting the open while still counting its close.
     next_idx = end_idx if body != -1 else end_idx + 1
     # skip a leading generic <...> directly after `impl`
     q = p + 1

@@ -1,4 +1,4 @@
-# Method reference — tracing and filling the orientation
+# Method reference - tracing and filling the orientation
 
 This is the depth behind Step 4 of `SKILL.md`. Read it when you are filling the `[AGENT]`
 sections and want the reasoning, not just the rule.
@@ -8,7 +8,7 @@ sections and want the reasoning, not just the rule.
 A large workspace is intimidating because it looks like thousands of unique things. It is
 almost never that. It is a few *kinds* of thing, instantiated many times. The single highest-
 leverage act of orientation is to identify the dominant kind and trace exactly one instance of
-it all the way through — across crate boundaries, through registration, to where its output
+it all the way through - across crate boundaries, through registration, to where its output
 goes. That one trace is worth more than summaries of fifty crates, because it is *executable*:
 the next time you author an instance of that pattern, you follow the same path.
 
@@ -20,12 +20,12 @@ leaders), trace the second only far enough to show where it *differs* from the f
 
 `fingerprint.json`'s `pattern_histogram` ranks candidate kinds empirically:
 
-- `trait_impl:<Trait>` — the classic "implement this trait" extension point.
-- `derive:<Trait>` — behaviour attached by `#[derive(...)]` (e.g. an ECS `Component`).
-- `attr_macro:<path>` — behaviour attached by an attribute macro.
-- `reg_macro:<name>` — items registered through a macro; the count is the call-site argument
+- `trait_impl:<Trait>` - the classic "implement this trait" extension point.
+- `derive:<Trait>` - behaviour attached by `#[derive(...)]` (e.g. an ECS `Component`).
+- `attr_macro:<path>` - behaviour attached by an attribute macro.
+- `reg_macro:<name>` - items registered through a macro; the count is the call-site argument
   count, and it is **unverified** until rustdoc confirms the expansion.
-- `fn_table:<crate>` — behaviour expressed as many free functions (e.g. a command table).
+- `fn_table:<crate>` - behaviour expressed as many free functions (e.g. a command table).
 
 Do not walk in assuming `impl Trait for`. Bevy's dominant pattern is a derive; Helix's may be
 a function table; nushell's is a trait impl cross-confirmed by a registration macro. Let the
@@ -35,16 +35,16 @@ ranking decide, and when two kinds nearly tie, treat both as load-bearing.
 
 Every item you write is three axes: **what / where / why.**
 
-- **what** — what it does: inputs, outputs, the state and environment it reads or changes.
-- **where** — where it plugs in: how it is registered, how it is invoked, what calls it.
-- **why** — why it is shaped this way.
+- **what** - what it does: inputs, outputs, the state and environment it reads or changes.
+- **where** - where it plugs in: how it is registered, how it is invoked, what calls it.
+- **why** - why it is shaped this way.
 
 *What* and *where* are load-bearing because the reader is going to write code that depends on
 them. Get the inputs/outputs wrong and their code is wrong; get the registration path wrong and
 their new instance never runs. *Why* is supporting: it speeds comprehension but the reader does
 not compile against it.
 
-Keep each axis to 1–2 sentences. The orientation earns its read-first status by being dense
+Keep each axis to 1-2 sentences. The orientation earns its read-first status by being dense
 and relational, not by being long.
 
 ## Anti-fabrication on the why-axis
@@ -52,7 +52,7 @@ and relational, not by being long.
 This is the rule that most protects the reader, because they write code. A plausible-but-wrong
 *why* is worse than a blank one: it justifies a change that should not be made.
 
-State *why* only from something you can point at — a doc-comment, a clearly-named invariant,
+State *why* only from something you can point at - a doc-comment, a clearly-named invariant,
 an obvious code constraint. If you cannot verify it in source, write `why: unverified`. The
 emitter already stamps undocumented items that way; do not overwrite the stamp with a guess.
 "I don't know why this is shaped this way" is a true, useful statement. An invented rationale
@@ -85,14 +85,14 @@ until you have read both sides."
 ## Regional workspaces
 
 When `selection.mode` is `regional`, the workspace is either multiple Cargo workspaces or
-multiple disjoint dependency components (the tool finds these via union-find — no clustering
+multiple disjoint dependency components (the tool finds these via union-find - no clustering
 heuristic, no resolution knob). Each component is a region.
 
 - Put each region's *relationships* (its role, the named seams joining it to others) in the
   orientation. Put each region's *exhaustive detail* in the reference. This character-based
   routing is what keeps the orientation read-first even at OS scale.
 - The seam-spine is the join between regions. If two regions share **no** traced data path,
-  say so as an UNRESOLVED — do not invent a connection to make the map look whole. A kernel and
+  say so as an UNRESOLVED - do not invent a connection to make the map look whole. A kernel and
   a userspace shell may communicate only through syscalls; that *is* the relationship, and the
   syscall edge is the seam.
 - The dominant pattern still holds within a region even when structure forced the regional
@@ -103,22 +103,22 @@ heuristic, no resolution knob). Each component is a region.
 
 Every claim resolves to `file:line`. This is not decoration:
 
-- It is the route back into source — the orientation's whole job is to send the reader to the
+- It is the route back into source - the orientation's whole job is to send the reader to the
   right place to author.
 - It is self-correcting. A fabricated claim has no real span, or a span that does not say what
   the claim says. Forcing yourself to cite is forcing yourself to verify.
 
 When the rustdoc overlay marks a span null (re-exports, blanket/synthesized/macro-generated
 items), keep the entry and keep the null flag. A null span is information: it says "this exists
-but has no single source location" — which is itself a fact about how the item came to be.
+but has no single source location" - which is itself a fact about how the item came to be.
 
 ## The finished orientation, checked with fresh eyes
 
 Before you call it done, re-read `orientation.md` as if you were the next agent:
 
-- Could you author a new instance of the dominant pattern from §5 + §7 alone, opening only the
+- Could you author a new instance of the dominant pattern from S5 + S7 alone, opening only the
   spans cited? If not, the worked slice is incomplete.
 - Is every *why* either sourced or marked `unverified`? No orphan rationales.
 - Is every boundary either traced or marked `UNRESOLVED`? No narrated gaps.
-- Did the map stay small? If §1–§7 read like a second copy of the source, detail leaked out of
-  the reference and into the map — push it back.
+- Did the map stay small? If S1-S7 read like a second copy of the source, detail leaked out of
+  the reference and into the map - push it back.

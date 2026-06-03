@@ -1,4 +1,4 @@
-"""characterize.py — phase 1 of the orientation pipeline.
+"""characterize.py - phase 1 of the orientation pipeline.
 
 Walks a Rust workspace, builds the crate dependency graph, scans every `.rs` file for facts
 (via rustscan), computes the structural fingerprint, and selects the trace mode. Writes
@@ -7,7 +7,7 @@ before any costly trace) and `facts.json` (the exhaustive fact table consumed by
 
 Pure stdlib. `tomllib` (3.11+) parses Cargo.toml; union-find computes disjoint components.
 No clustering / community detection: region cutting (when needed) is decided by disjoint
-components and, within a monolithic component, by seam density — never by graph modularity.
+components and, within a monolithic component, by seam density - never by graph modularity.
 
 Thresholds are DECLARED ASSUMPTIONS, surfaced in the fingerprint and overridable via env
 vars. They are defensible defaults, not constants calibrated against real repos (which this
@@ -133,13 +133,13 @@ def scan_crate(root: Path, crate_dir: str):
 def pattern_histogram(all_facts):
     """Group candidate patterns by kind and specific name; return ranked list + by-kind mass.
 
-    Candidate kinds (co-equal — the dominant pattern is decided empirically, NOT assumed to
+    Candidate kinds (co-equal - the dominant pattern is decided empirically, NOT assumed to
     be `impl Trait for`):
       trait_impl:<Trait>        one entry per impl of that trait
       derive:<Trait>            one entry per derive of that trait
       attr_macro:<path>         one entry per user attribute-macro application
       reg_macro:<name>          one entry per registration-macro *argument* (call-site count,
-                                expansion unverified — confirmed by the rustdoc overlay)
+                                expansion unverified - confirmed by the rustdoc overlay)
       fn_table:<crate>          free functions clustered in a crate (heuristic)
     """
     patterns = Counter()
@@ -297,7 +297,7 @@ def main():
         "per_crate": per_crate,
     }
 
-    # Fingerprint is written FIRST — the chosen mode must be auditable before any trace.
+    # Fingerprint is written FIRST - the chosen mode must be auditable before any trace.
     (out_dir / "fingerprint.json").write_text(json.dumps(fingerprint, indent=2))
     all_facts["seams"] = dict(all_facts["seams"])
     (out_dir / "facts.json").write_text(json.dumps(all_facts, indent=2))

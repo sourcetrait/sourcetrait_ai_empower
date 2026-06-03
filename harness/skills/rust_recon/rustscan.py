@@ -77,7 +77,9 @@ def _is_noise_macro(name):
     wrappers that emit `#[cfg(...)]` blocks for feature ergonomics."""
     if name in NOISE_MACROS:
         return True
-    if name.startswith("assert_") or name.startswith("debug_assert_"):
+    if (name.startswith("assert_")
+            or name.startswith("debug_assert_")
+            or name.startswith("async_assert_")):
         return True
     if name.startswith("cfg_") or name.startswith("cfg_not_"):
         return True

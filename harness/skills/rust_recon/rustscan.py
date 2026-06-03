@@ -550,33 +550,49 @@ def scan_file(relpath, src):
                 nm = _name_after(toks, p)
                 if nm:
                     doc_text, cfg, _ = gather_prefix(istart)
+                    vis = _extract_visibility(toks, p)
                     facts["traits"].append({"name": nm, "line": ln(off),
-                                            "cfg_gated": cfg, "doc": doc_text})
+                                            "cfg_gated": cfg, "doc": doc_text,
+                                            "visibility": vis})
             elif t in ("struct", "enum", "union"):
                 nm = _name_after(toks, p)
                 if nm:
                     doc_text, cfg, _ = gather_prefix(istart)
+                    vis = _extract_visibility(toks, p)
                     facts["types"].append({"kind": t, "name": nm, "line": ln(off),
-                                           "cfg_gated": cfg, "doc": doc_text})
+                                           "cfg_gated": cfg, "doc": doc_text,
+                                           "visibility": vis})
             elif t == "type" and prev not in ("impl",):
                 nm = _name_after(toks, p)
                 if nm:
+                    vis = _extract_visibility(toks, p)
                     facts["types"].append({"kind": "type", "name": nm, "line": ln(off),
-                                           "cfg_gated": False, "doc": ""})
+                                           "cfg_gated": False, "doc": "",
+                                           "visibility": vis})
             elif t == "fn":
                 if p + 1 < N and _is_ident(toks[p + 1][0]):  # not fn-pointer type
                     nm = toks[p + 1][0]
                     doc_text, cfg, _ = gather_prefix(istart)
+                    vis = _extract_visibility(toks, p)
                     facts["fns"].append({"name": nm, "line": ln(off),
-                                         "brace_depth": brace, "doc": doc_text})
+                                         "brace_depth": brace, "doc": doc_text,
+                                         "visibility": vis})
             elif t == "mod":
                 nm = _name_after(toks, p)
                 if nm:
-                    facts["mods"].append({"name": nm, "line": ln(off)})
+                    vis = _extract_visibility(toks, p)
+                    facts["mods"].append({"name": nm, "line": ln(off),
+                                          "visibility": vis})
             elif t == "macro_rules":
-                # macro_rules ! name
+                # macro_rules ! name. Visibility for macros is via the
+                # macro_export attribute rather than `pub`; the visibility
+                # field captures syntactic pub if present (rare for
+                # macro_rules) and macro_export detection is downstream.
                 if p + 2 < N and _is_ident(toks[p + 2][0]):
-                    facts["macro_defs"].append({"name": toks[p + 2][0], "line": ln(off)})
+                    vis = _extract_visibility(toks, p)
+                    facts["macro_defs"].append({"name": toks[p + 2][0],
+                                                "line": ln(off),
+                                                "visibility": vis})
             elif t == "use":
                 is_pub = (prev == "pub") or (p >= 2 and toks[p - 2][0] == "pub")
                 semi = _find_token(toks, p, ";", set())
@@ -631,6 +647,47 @@ def _name_after(toks, p):
 
 
 _QUALIFIERS = {"pub", "unsafe", "async", "const", "default", "extern"}
+
+
+def _extract_visibility(toks, p):
+    """0.0.10 patch 10a: return visibility string for the item keyword at
+    token index p. Walks backward across qualifier tokens looking for
+    `pub` (or `pub(crate)` / `pub(super)` / `pub(in path)` variants).
+    Returns 'pub' / 'pub(...)' / '' (private).
+
+    Visibility is the foundation for public-API status detection. A
+    pattern (trait / struct / fn / macro) whose declaration is `pub` is
+    a candidate for inclusion in the workspace's public API surface;
+    private items are internal-only by language semantics.
+
+    Non-qualifier non-pub tokens immediately preceding the item keyword
+    (typically `{` / `}` / `;` for a private item at block top-level, or
+    `]` for a directly-preceding attribute) terminate the walk -> ''.
+    Attributes themselves don't affect visibility detection."""
+    i = p - 1
+    while i >= 0:
+        t = toks[i][0]
+        if t == "pub":
+            return "pub"
+        if t == ")":
+            depth, j = 1, i - 1
+            while j >= 0:
+                if toks[j][0] == ")":
+                    depth += 1
+                elif toks[j][0] == "(":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j -= 1
+            if j > 0 and toks[j - 1][0] == "pub":
+                args = " ".join(toks[m][0] for m in range(j + 1, i))
+                return f"pub({args})"
+            return ""
+        if t in _QUALIFIERS:
+            i -= 1
+            continue
+        return ""
+    return ""
 
 
 def _qualifier_start(toks, p):

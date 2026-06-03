@@ -727,10 +727,8 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     sel = fp["selection"]
     core, core_types, core_traits = core_vocabulary(fp, facts)
     cands = candidate_instances(fp, facts)
-    # 0.0.7 patch 7a: candidate_instances returns a list; emit S5 still uses one
-    # protagonist for now (cands[0] if any). 7c will iterate the full list to
-    # produce the multi-protagonist S5 + S7 sections.
-    cand = cands[0] if cands else None
+    # 0.0.7 patch 7c: emit S5 + S7 iterate the candidate_instances list to render
+    # multi-protagonist worked slices and per-protagonist authoring guides.
     seams = detected_seams(fp, facts)
 
     L = ["# Orientation", "",
@@ -852,9 +850,12 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
         L.append("- No strong seam markers detected. **[AGENT]** confirm by inspecting the "
                  "dominant pattern's boundaries; absence of markers is itself worth noting.")
     L.append("")
-    L.append("**[AGENT]** For each seam, trace the dominant pattern's instance UP TO the seam "
-             "and stop. Record the wire/foreign contract location if visible; otherwise write "
-             "`UNRESOLVED: <what you looked for>, <what you ran>`.")
+    L.append("**[AGENT]** For each seam, trace each protagonist pattern's "
+             "instance (per S5.N) UP TO the seam and stop. Record the wire / "
+             "foreign contract location if visible; otherwise write `UNRESOLVED: "
+             "<what you looked for>, <what you ran>`. Different protagonists may "
+             "interact with the same seam differently (e.g. plugin commands cross "
+             "the IPC seam; builtin commands do not).")
     L.append("")
 
     # 4. data-flow narrative (agent)
@@ -863,49 +864,77 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
           "through the core crates. 1-2 short paragraphs, each sentence anchored to a span "
           "from reference.md. Stop at any seam from S3 with an explicit UNRESOLVED.", ""]
 
-    # 5. worked slice (the protagonist; seeded)
-    L += ["## 5. Worked slice - the authoring template", ""]
-    if cand and cand.get("instance"):
-        dom = cand["pattern"]
-        inst = cand["instance"]
-        fallback_reason = cand.get("fallback_reason")
-        # Find this pattern's own count in the histogram (may not be position 0 when
-        # the load-bearing fallback fired).
-        own_count = next(
-            (h["count"] for h in fp["pattern_histogram"] if h["pattern"] == dom), 0)
-        if fallback_reason:
-            L.append(f"Dominant pattern (load-bearing pick): **`{dom}`** "
-                     f"({own_count} instances; this is the kind you will most often "
-                     f"author).")
+    # 5. worked slices (plural; surfaced via per-crate top-pattern aggregation
+    # under 0.0.7 patch 7b + 7c).
+    L += ["## 5. Worked slices - the authoring templates", ""]
+    if cands:
+        n_cands = len(cands)
+        L.append(f"**{n_cands} protagonist pattern{'s' if n_cands != 1 else ''}** "
+                 f"surfaced via per-crate top-pattern aggregation (0.0.7 patch 7b + "
+                 f"7c). Trace each across crate boundaries; the cross-pattern "
+                 f"composition / shared-seam view is at the end of this section.")
+        L.append("")
+        L.append("Pattern shape claude.ai's framework didn't catch: most workspaces "
+                 "have plural architectural patterns. method.md's 'trace one, not "
+                 "three' was claude.ai's hypothesis stated as doctrine. Empirical "
+                 "evidence (9-10 of 10 deployment targets have 4-6 architectural "
+                 "patterns per manual ground-truth audit) refutes it as a default. "
+                 "Plurality is the default; single-protagonist is the exception. See "
+                 "notes/rust_recon/methodology_findings.md in the consuming KB for "
+                 "the empirical record.")
+        L.append("")
+        for idx, c in enumerate(cands, 1):
+            dom = c["pattern"]
+            inst = c["instance"]
+            source_crate = c.get("source_crate", "?")
+            count = c.get("count", 0)
+            L.append(f"### 5.{idx} Worked slice: **`{dom}`**")
             L.append("")
-            L.append(f"**Why this pattern:** {fallback_reason}")
-        else:
-            L.append(f"Dominant pattern: **`{dom}`** "
-                     f"({own_count} instances; this is the kind you will most often "
-                     f"author).")
-        if cand["kind"] == "trait_impl":
-            L.append(f"Seed instance: `impl {dom.split(':')[1]} for {inst.get('type')}` "
-                     f"- {sp(inst)}.")
-        else:
-            L.append(f"Seed instance - {sp(inst)}.")
+            L.append(f"Source crate: `{source_crate}` ({count} instances of this "
+                     f"pattern in that crate, per the per-crate aggregation that "
+                     f"surfaced it).")
+            if c["kind"] == "trait_impl":
+                L.append(f"Seed instance: `impl {dom.split(':')[1]} for "
+                         f"{inst.get('type')}` - {sp(inst)}.")
+            else:
+                L.append(f"Seed instance - {sp(inst)}.")
+            if c.get("fallback_reason"):
+                L.append("")
+                L.append(f"**Pick rationale:** {c['fallback_reason']}")
+            L.append("")
+            L.append(f"**[AGENT]** Trace this instance of `{dom}` across every "
+                     f"crate boundary it touches:")
+            L += ["- **what** it does: inputs / outputs / state + environment "
+                  "changes (load-bearing - read the impl body in source).",
+                  "- **where** it plugs in: how it is registered and invoked "
+                  "(follow the registration path; if it goes through a macro, "
+                  "that is a guardrail - see S6).",
+                  "- **why** it is shaped this way: from doc-comments only, "
+                  "else `why: unverified`.",
+                  "- stop honestly at each seam (S3) with `UNRESOLVED: <what "
+                  "you looked for>, <what you ran>`."]
+            if c.get("all_spans"):
+                L.append("")
+                L.append("Other instances of this pattern (open any to compare): "
+                         + ", ".join(f"`{s}`" for s in c["all_spans"][:15])
+                         + (" ..." if len(c["all_spans"]) > 15 else ""))
+            L.append("")
+        L.append(f"### 5.{n_cands + 1} How these patterns connect")
         L.append("")
-        L.append("**[AGENT]** Trace THIS ONE instance across every crate boundary it touches, "
-                 "as the executable template for authoring the next one:")
-        L += ["- **what** it does: inputs / outputs / state + environment changes "
-              "(load-bearing - read the impl body in source).",
-              "- **where** it plugs in: how it is registered and invoked (follow the "
-              "registration path; if it goes through a macro, that is a guardrail - see S6).",
-              "- **why** it is shaped this way: from doc-comments only, else `why: unverified`.",
-              "- stop honestly at each seam (S3) with `UNRESOLVED: what you looked for, what "
-              "you ran`. A stop is a success - it marks a real boundary for the next author."]
-        L.append("")
-        L.append("Every other instance of this pattern (open any to compare): "
-                 + ", ".join(f"`{s}`" for s in cand["all_spans"][:15])
-                 + (" ..." if len(cand["all_spans"]) > 15 else ""))
+        L.append(f"**[AGENT]** The {n_cands} patterns above are not independent. "
+                 f"After tracing each individually, identify the composition: "
+                 f"which seams from S3 do they cross together? Which types from "
+                 f"S2 flow between them (e.g. one pattern's output is another's "
+                 f"input)? Which lifecycle dependencies exist (one pattern's "
+                 f"setup precedes another's use)? This composition view is the "
+                 f"architecture the workspace's authors hold in their head; "
+                 f"surface it explicitly here, anchored to the spans you opened "
+                 f"in 5.1 through 5.{n_cands}.")
     else:
-        L.append("**[AGENT]** No single dominant instance was isolated automatically "
-                 f"(mode: {sel['mode']}). Pick the largest pattern from the histogram below "
-                 "and trace one instance of it as the template.")
+        L.append("**[AGENT]** No structural patterns surfaced from per-crate "
+                 f"aggregation (mode: {sel['mode']}). Inspect the histogram "
+                 "appendix and pick manually; the workspace shape may be unusual "
+                 "(submodule aggregator, no workspace-defined traits, etc.).")
     L.append("")
 
     # 6. UNRESOLVED guardrails
@@ -944,14 +973,41 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
         L.append("- None seeded. Record trace stops here as you hit them.")
     L.append("")
 
-    # 7. pattern-authoring guide
-    L += ["## 7. Pattern-authoring guide", "",
-          "**[AGENT]** From the trait/struct definitions in S2 and the worked slice in S5, "
-          "write the minimal checklist to author a NEW instance of the dominant pattern: which "
-          "trait to implement, which methods are required (read the trait def in source), how "
-          "to register it (the path from S5), and which seams (S6) a new instance must "
-          "respect. Anchor each step to a span.", "",
-          "## Appendix: full pattern histogram", ""]
+    # 7. pattern-authoring guides (plural; mirrors S5's worked slices)
+    L += ["## 7. Pattern-authoring guides", ""]
+    if cands:
+        L.append("One authoring checklist per protagonist pattern. Each guide "
+                 "lists the minimal steps to add a NEW instance of that pattern, "
+                 "drawing from the worked slice in the corresponding S5.N section.")
+        L.append("")
+        for idx, c in enumerate(cands, 1):
+            dom = c["pattern"]
+            L.append(f"### 7.{idx} Authoring guide: **`{dom}`**")
+            L.append("")
+            L.append(f"**[AGENT]** From the trait / type definitions in S2 and "
+                     f"the worked slice in S5.{idx}, write the minimal checklist "
+                     f"to author a NEW instance of `{dom}`: which trait to "
+                     f"implement (or macro to invoke), which methods / args are "
+                     f"required (read the trait def in source), how to register "
+                     f"the new instance (the registration path from S5.{idx}), "
+                     f"and which seams (S6) a new instance must respect. Anchor "
+                     f"each step to a span.")
+            L.append("")
+        L.append(f"### 7.{len(cands) + 1} Cross-pattern shared scaffolding")
+        L.append("")
+        L.append(f"**[AGENT]** Collect duplicated steps across the {len(cands)} "
+                 f"authoring guides above. Patterns that share a registration "
+                 f"path (default_context.rs, a common builder), a trait import "
+                 f"(common workspace prelude), or a seam compliance step (PipelineData "
+                 f"shape, Selection invariants, etc.) deserve a 'this applies to all "
+                 f"protagonists' note. The shared scaffolding is the authoring "
+                 f"context a contributor learns once and reuses across patterns.")
+    else:
+        L.append("**[AGENT]** From the trait / struct definitions in S2 and the "
+                 "worked slice in S5, write the minimal checklist to author a "
+                 "NEW instance of the dominant pattern.")
+    L.append("")
+    L += ["## Appendix: full pattern histogram", ""]
     for row in fp["pattern_histogram"][:25]:
         L.append(f"- `{row['pattern']}` - {row['count']}")
     L.append("")

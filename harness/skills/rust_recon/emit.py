@@ -569,7 +569,16 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
             outer, _, inner = name.partition("::")
             outer_inners[outer].add(inner)
             outer_count[outer] += count
-            if inner and inner not in _GENERIC_INNER_METHODS:
+            # 0.0.9 patch 9b: inner-family detection restricted to
+            # snake_case method-like inners (first char lowercase).
+            # Variant constructors (Idle, Busy, Lagged - PascalCase)
+            # don't form meaningful inner-families because variant
+            # names are specific to their enum type; grouping them
+            # by variant name across enums produces noise rather than
+            # architectural signal. Generic method names (new, default,
+            # from, etc.) are still skipped via _GENERIC_INNER_METHODS.
+            if (inner and inner[0].islower()
+                    and inner not in _GENERIC_INNER_METHODS):
                 inner_outers[inner].add(outer)
                 inner_count[inner] += count
         family_counter = Counter()
@@ -619,16 +628,23 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
             counts = kinds.get(kind)
             if not counts:
                 continue
-            top_name, top_count = counts.most_common(1)[0]
-            pattern = f"{kind}:{top_name}"
-            existing = pattern_to_pick.get(pattern)
-            if existing is None or top_count > existing["count"]:
-                pattern_to_pick[pattern] = {
-                    "kind": kind,
-                    "pattern": pattern,
-                    "count": top_count,
-                    "source_crate": crate,
-                }
+            # 0.0.9 patch 9b: families pick top-2 per crate (not just
+            # top-1). This surfaces secondary families like tokio's
+            # `channel` (inner-family) which loses the top-1 spot to
+            # tokio's `State` (outer-family) but is the architectural
+            # protagonist on the manual ground-truth list. Other kinds
+            # still pick top-1 per crate.
+            n_per_crate = 2 if kind == "type_usage_family" else 1
+            for top_name, top_count in counts.most_common(n_per_crate):
+                pattern = f"{kind}:{top_name}"
+                existing = pattern_to_pick.get(pattern)
+                if existing is None or top_count > existing["count"]:
+                    pattern_to_pick[pattern] = {
+                        "kind": kind,
+                        "pattern": pattern,
+                        "count": top_count,
+                        "source_crate": crate,
+                    }
     by_kind = {"trait_impl": [], "derive": [], "reg_macro": [],
                "type_usage": [], "type_usage_family": []}
     for entry in pattern_to_pick.values():
@@ -639,12 +655,31 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
     # + 1 type_usage_family + 1 type_usage. Reg_macro drops to 0 because
     # the reg_macro slot in 0.0.7+ rarely surfaces architectural patterns
     # (helix's current!, ratatui's color!, tokio's trace! - none on the
-    # manual ground-truth list). 9b's mode-adaptive quotas can restore
-    # reg_macro for workspaces where reg_macro is the dominant kind.
+    # manual ground-truth list).
     derive_quota = 1 if n >= 3 else 0
     type_usage_family_quota = 1 if n >= 4 else 0
     type_usage_quota = 1 if n >= 5 else 0
-    reg_macro_quota = 0  # 9a default; 9b adapts
+    reg_macro_quota = 0
+    # 0.0.9 patch 9b: the 2-family-slot adaptive bump was empirically
+    # tested + reverted. Probing across helix / tokio / nushell / bevy /
+    # ratatui showed the 2-family configuration consistently dropped
+    # the singular type_usage slot's high-value pick (tokio's task::spawn
+    # in particular - a manual ground-truth match) without surfacing
+    # better family alternatives (per-crate aggregation favors high-
+    # count outer-families like State / Error / CommandCompleter over
+    # architecturally-meaningful but lower-count families).
+    #
+    # The 1 family + 1 singular split (9a default) is the empirical
+    # sweet spot for current per-crate aggregation. Mode-adaptive
+    # bumping deferred to a future iteration when the family ranking
+    # signal sharpens (eg by counting workspace-defined-outer matches
+    # or by external-API surface inference).
+    #
+    # The 9b infrastructure that DID survive: top-2 per-crate for
+    # type_usage_family (more candidates available in by_kind sort) +
+    # snake_case-only filter on inner-family detection (skip PascalCase
+    # variant-name pseudo-families). These improve family quality
+    # without changing the slot split.
     trait_impl_quota = max(
         1,
         n - derive_quota - type_usage_family_quota - type_usage_quota

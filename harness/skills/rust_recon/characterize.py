@@ -126,20 +126,55 @@ def _classify_workspace_app_status(crates: dict) -> dict:
     Returns {workspace: 'library' | 'app' | 'hybrid', breakdown: {...},
     reasoning: str}."""
     def _is_scaffolding(name: str, info: dict) -> bool:
-        # Check the crate's directory path - example/bench/fuzz dirs
-        # are scaffolding by convention. Also check name patterns.
+        # Check the crate's directory path - example/bench/fuzz/tests/
+        # tools/ci dirs are scaffolding by convention. Also check name
+        # patterns.
+        # 0.0.13 patch 13g: expanded scaffolding detection per the_user
+        # 2026-06-03 observation that bevy / rustls / tokio were
+        # misclassified as hybrid because their build/CI/bench tools
+        # leaked into the 'app' bucket. Added: tools/, ci/, bench/,
+        # scripts/, build-* / ci_* prefixes, -bench / _bench suffixes,
+        # bare 'xtask' / 'ci' / 'bogo' as standalone names.
         d = (info.get("dir") or "").lower()
-        if any(seg in d for seg in (
-                "/examples/", "examples/", "/benches/", "benches/",
-                "/fuzz/", "fuzz/", "/tests/", "tests/", "/xtask/",
-                "xtask/")):
+        path_segments = (
+            "/examples/", "examples/", "/example/", "example/",
+            "/benches/", "benches/", "/bench/", "bench/",
+            "/fuzz/", "fuzz/",
+            "/tests/", "tests/", "/test/", "test/",
+            "/xtask/", "xtask/",
+            "/tools/", "tools/",
+            "/ci/", "ci/",
+            "/scripts/", "scripts/",
+            "/build/", "build/",
+        )
+        if any(seg in d for seg in path_segments) or d in (
+                "xtask", "ci", "bogo", "build", "tools", "tests",
+                "scripts", "examples", "benches", "bench", "fuzz"):
             return True
         nm = name.lower()
-        if any(suf in nm for suf in (
-                "_example", "_demo", "_fuzz", "-fuzz", "-example",
-                "-demo", "-test", "_test", "-tests", "_tests")):
+        suffix_patterns = (
+            "_example", "_demo", "_fuzz", "_test", "_tests",
+            "_bench", "_benches", "_xtask",
+            "-example", "-demo", "-fuzz", "-test", "-tests",
+            "-bench", "-benches", "-xtask",
+        )
+        if any(suf in nm for suf in suffix_patterns):
             return True
-        if any(nm.startswith(p) for p in ("example_", "demo_")):
+        prefix_patterns = (
+            "example_", "example-", "demo_", "demo-",
+            "build_", "build-", "build_templated", "ci_", "ci-",
+            "tests-", "test-", "bench-", "bench_",
+            "fuzz_", "fuzz-",
+            "rustls-bench", "rustls-ci-bench",
+            "export-content", "export_content",
+            "tests-integration",
+        )
+        if any(nm.startswith(p) for p in prefix_patterns):
+            return True
+        # Standalone names that are conventionally scaffolding.
+        if nm in ("xtask", "ci", "bogo", "build", "tools",
+                  "example-showcase", "export-content",
+                  "tests-integration"):
             return True
         return False
 

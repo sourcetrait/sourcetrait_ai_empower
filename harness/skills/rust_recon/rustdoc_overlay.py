@@ -39,8 +39,8 @@ KNOWN_FORMAT_VERSIONS = set(range(26, 58))
 # macro registration (derive macros, attribute macros, registration!() expansions).
 STD_BLANKET_TRAITS = frozenset({
     "Any", "Borrow", "BorrowMut", "CloneToUninit", "Freeze", "From", "Into",
-    "Receiver", "RefUnwindSafe", "Send", "Sync", "ToOwned", "ToString", "TryFrom",
-    "TryInto", "Unpin", "UnsafeUnpin", "UnwindSafe",
+    "Receiver", "RefUnwindSafe", "Send", "Sized", "Sync", "ToOwned", "ToString",
+    "TryFrom", "TryInto", "Unpin", "UnsafeUnpin", "UnwindSafe",
 })
 
 

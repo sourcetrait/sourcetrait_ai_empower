@@ -94,7 +94,7 @@ the cited spans in source** - never from memory or inference. The slots, in auth
 1. **S1 crate/region roles** - what each core crate is for, where it sits.
 2. **S2 core vocabulary** - confirm and describe the core types other crates speak in.
 3. **S3 seam-spine** - trace the dominant pattern UP TO each seam and stop.
-4. **S4 data-flow narrative** - how the core data type moves entry → result.
+4. **S4 data-flow narrative** - how the core data type moves entry -> result.
 5. **S5 worked slice** - the protagonist. Trace the one seeded instance across every boundary
    it touches. This becomes the template for authoring new instances.
 6. **S7 pattern-authoring guide** - the minimal checklist to add a new instance of the

@@ -17,6 +17,7 @@ the reference is exhaustive.
 
 from __future__ import annotations
 import json
+import os
 import re
 import subprocess
 import sys
@@ -25,6 +26,58 @@ from pathlib import Path
 
 # 0.0.4 patch 2 (s): word-bounded capitalized identifier for use-path scanning.
 _TYPE_IDENT_RE = re.compile(r'\b[A-Z]\w*\b')
+
+# 0.0.4 patch 4 (u): when the workspace has more than _CLUSTER_THRESHOLD crates, the
+# S1 crate / region map emits a "Crate clusters (by name prefix)" sub-section above
+# the per-crate detail list. Clusters require at least _CLUSTER_MIN_SIZE members.
+_CLUSTER_THRESHOLD = int(os.environ.get("ORIENT_CLUSTER_THRESHOLD", "15"))
+_CLUSTER_MIN_SIZE = int(os.environ.get("ORIENT_CLUSTER_MIN_SIZE", "3"))
+
+
+def _cluster_crates_by_prefix(crate_names):
+    """Group crate names by longest shared name prefix (split on '_' or '-' independently).
+
+    Returns (clusters, others) where clusters is {prefix: [names]} for prefixes with at
+    least _CLUSTER_MIN_SIZE members, and others is the leftover standalone-crate list.
+    Snake-case and kebab-case prefixes are kept DISTINCT (nu-plugin vs nu_plugin) since
+    a workspace can use both conventions for different roles - nushell uses kebab for
+    SDK / runtime crates (nu-plugin-*) and snake for bundled plugin binaries
+    (nu_plugin_*); these are different architectural clusters."""
+    crates = sorted(crate_names)
+
+    def prefix_candidates(name):
+        # Returns [longest, ..., shortest] prefix candidates excluding the full name.
+        # Snake and kebab are tried independently; results are deduped while preserving
+        # longest-first order.
+        results = []
+        for sep in ('_', '-'):
+            if sep not in name:
+                continue
+            parts = name.split(sep)
+            for k in range(len(parts) - 1, 0, -1):
+                p = sep.join(parts[:k])
+                if p and p not in results:
+                    results.append(p)
+        return results
+
+    prefix_members = defaultdict(set)
+    for name in crates:
+        for p in prefix_candidates(name):
+            prefix_members[p].add(name)
+
+    clusters = defaultdict(list)
+    others = []
+    for name in crates:
+        assigned = None
+        for p in prefix_candidates(name):
+            if len(prefix_members[p]) >= _CLUSTER_MIN_SIZE:
+                assigned = p
+                break
+        if assigned:
+            clusters[assigned].append(name)
+        else:
+            others.append(name)
+    return dict(clusters), others
 
 
 def sp(rec):
@@ -313,6 +366,15 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
 
     # 1. crate / region map
     L += ["## 1. Crate / region map", ""]
+    # 0.0.4 patch 4 (u): pre-cluster crates by name prefix when the workspace has more
+    # than _CLUSTER_THRESHOLD crates and at least one prefix group reaches the minimum
+    # cluster size. The per-crate detail still follows for grep completeness.
+    use_clusters = len(fp["per_crate"]) > _CLUSTER_THRESHOLD
+    clusters, others = ({}, [])
+    if use_clusters:
+        clusters, others = _cluster_crates_by_prefix(fp["per_crate"].keys())
+        if not clusters:
+            use_clusters = False
     if fp["n_components"] > 1 or len(fp["workspace_roots"]) > 1:
         L.append(f"**Regional** - {fp['n_components']} disjoint component(s), "
                  f"{len(fp['workspace_roots'])} workspace root(s). Each component is a region; "
@@ -325,16 +387,42 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     else:
         L.append("Single connected component. Crates and their internal dependencies:")
     L.append("")
+    if use_clusters:
+        L.append("### 1.1 Crate clusters (by name prefix)")
+        L.append("")
+        L.append(f"Workspace has {len(fp['per_crate'])} crates; the prefix-grouping below "
+                 f"surfaces architectural clusters above the per-crate detail. Threshold for "
+                 f"clustering: {_CLUSTER_THRESHOLD} crates (env: ORIENT_CLUSTER_THRESHOLD). "
+                 f"Minimum cluster size: {_CLUSTER_MIN_SIZE} (env: ORIENT_CLUSTER_MIN_SIZE). "
+                 f"Snake-case (`name_x`) and kebab-case (`name-x`) prefixes are kept "
+                 f"distinct.")
+        L.append("")
+        for prefix in sorted(clusters):
+            members = sorted(clusters[prefix])
+            sep = '_' if '_' in prefix else '-'
+            L.append(f"- **`{prefix}{sep}*`** ({len(members)} crates): "
+                     f"{', '.join(members)}")
+        if others:
+            L.append(f"- **Other** ({len(others)} crates): {', '.join(others)}")
+        L.append("")
+        L.append("### 1.2 Per-crate detail")
+        L.append("")
     for name in sorted(fp["per_crate"]):
         c = fp["per_crate"][name]
         ideps = [d for d in c["deps"] if d in fp["per_crate"]]
-        dep_str = f" → depends on: {', '.join(ideps)}" if ideps else ""
+        dep_str = f" -> depends on: {', '.join(ideps)}" if ideps else ""
         L.append(f"- **{name}** ({c['dir']}/, {c['loc']} LoC, {c['n_impls']} impls, "
                  f"{c['n_types']} types){dep_str}")
     L.append("")
-    L.append("**[AGENT]** In 2-4 sentences each (what / why / where), describe the role of the "
-             "core crates. Populate *why* only from crate-level doc-comments / README; where "
-             "absent, write `why: unverified`.")
+    if use_clusters:
+        L.append("**[AGENT]** In 2-4 sentences each, describe each crate cluster (S1.1) and "
+                 "the load-bearing standalone crates from S1.2 / 'Other'. Populate *why* only "
+                 "from crate-level doc-comments / README; where absent, write "
+                 "`why: unverified`.")
+    else:
+        L.append("**[AGENT]** In 2-4 sentences each (what / why / where), describe the role "
+                 "of the core crates. Populate *why* only from crate-level doc-comments / "
+                 "README; where absent, write `why: unverified`.")
     L.append("")
 
     # 2. core type vocabulary

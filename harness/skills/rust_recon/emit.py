@@ -413,22 +413,40 @@ def _instance_for_kind(kind, name, facts):
     if kind == "type_usage":
         # 0.0.8 patch 8c: type_usage instances are call-site dicts from
         # facts['type_usages'] matched by combined "<outer>::<inner>" name.
+        # 0.0.11 patch 11a: fall back to example_type_usages when src has
+        # none. Patterns that exist only in tests/examples (tokio's
+        # mpsc::channel: 0 src + 80 example calls) need their instance
+        # to come from the example pool, not nowhere.
         inst = [tu for tu in facts.get("type_usages", [])
                 if tu.get("name") == name]
+        if not inst:
+            inst = [tu for tu in facts.get("example_type_usages", [])
+                    if tu.get("name") == name]
         return (inst[0] if inst else None,
                 [f"{tu.get('file','?')}:{tu['line']}" for tu in inst[:200]])
     if kind == "type_usage_family":
         # 0.0.9 patch 9a: family instances aggregate call sites from all
         # matching type_usages. outer:X matches names starting with X::;
         # inner:Y matches names ending with ::Y.
+        # 0.0.11 patch 11a: same example_type_usages fallback as singular
+        # type_usage. Families derived from example-only patterns
+        # (AppBuilder in helix tests) need their instance from the example
+        # pool. Without this, the picker selects the family then drops it
+        # at instance lookup, leaving the slot unfilled.
         if name.startswith("outer:"):
             outer = name.split(":", 1)[1]
             inst = [tu for tu in facts.get("type_usages", [])
                     if tu.get("name", "").split("::", 1)[0] == outer]
+            if not inst:
+                inst = [tu for tu in facts.get("example_type_usages", [])
+                        if tu.get("name", "").split("::", 1)[0] == outer]
         elif name.startswith("inner:"):
             inner = name.split(":", 1)[1]
             inst = [tu for tu in facts.get("type_usages", [])
                     if tu.get("name", "").rpartition("::")[2] == inner]
+            if not inst:
+                inst = [tu for tu in facts.get("example_type_usages", [])
+                        if tu.get("name", "").rpartition("::")[2] == inner]
         else:
             inst = []
         return (inst[0] if inst else None,
@@ -639,14 +657,41 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
                 workspace_types, lynchpins, pattern_metrics):
             continue
         per_crate[crate]["type_usage"][name] += 1
-    # 0.0.10 patch 10f revision: example_type_usages inclusion at the
-    # per-crate counter level changed family detection in ways that
-    # broke helix (family slot empty). The example_count signal lives
-    # in pattern_metrics; the score formula uses it as a weight on
-    # whatever count surfaces from src counting. Example-only patterns
-    # (tokio's mpsc::channel with 0 src) currently don't surface as
-    # candidates - they need a separate handling path that doesn't
-    # interfere with family detection. Deferred to 10f v2 (or 0.0.11).
+    # 0.0.11 patch 11a: example-only patterns enter the picker pool
+    # CONDITIONALLY - only patterns that have zero src usage get
+    # counted from example_type_usages. AND only entries from
+    # `/examples/` directories count (tests/ + benches/ entries are
+    # excluded). examples/ are CURATED public-API demonstrations the
+    # developers wrote to teach consumers; tests/ are test fixtures
+    # for internal testing infrastructure and shouldn't outrank
+    # architectural patterns. helix's AppBuilder lives in tests/ (test
+    # fixture); tokio's mpsc::channel lives in examples/ (canonical
+    # public-API demo) - the directory filter cleanly distinguishes.
+    src_pattern_names = set()
+    for tu in facts.get("type_usages", []):
+        nm = tu.get("name")
+        if nm:
+            src_pattern_names.add(nm)
+    for tu in facts.get("example_type_usages", []):
+        crate = tu.get("crate")
+        if not crate:
+            continue
+        name = tu.get("name")
+        if not name:
+            continue
+        if name in src_pattern_names:
+            continue
+        file_path = tu.get("file", "")
+        # Only examples/ directory entries (not tests/ or benches/)
+        if "/examples/" not in file_path and not file_path.startswith("examples/"):
+            continue
+        if _is_generic_pattern("type_usage", name):
+            continue
+        if not _is_workspace_defined(
+                "type_usage", name, workspace_traits, macro_defs_idx,
+                workspace_types, lynchpins, pattern_metrics):
+            continue
+        per_crate[crate]["type_usage"][name] += 1
     # 0.0.9 patch 9a: derive per-crate type_usage_family counters from
     # the per-crate type_usage Counter. For each crate, walk its
     # type_usage entries and build outer->inner-set + inner->outer-set
@@ -817,13 +862,33 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n, pattern_metrics=None)
         "type_usage": type_usage_quota,
         "reg_macro": reg_macro_quota,
     }
-    # 0.0.9 patch 9a + 0.0.10 patch 10f revision: dedup family/singular
-    # removed. When task family is the family pick and task::spawn is
-    # the singular pick, both surface - the family shows the
-    # architectural axis, the singular shows the specific spawn call.
-    # Both are useful in an orientation. Empirically the dedup was
-    # dropping manual-list matches like tokio's task::spawn in 10f
-    # probes when the family swallowed the singular slot.
+    # 0.0.9 patch 9a + 0.0.10 patch 10f revision + 0.0.11 patch 11a:
+    # dedup family/singular re-enabled. With 11a's example pool
+    # extension, families like AppBuilder for helix would surface AND
+    # the singular AppBuilder::new would surface (both about
+    # AppBuilder), starving the singular slot. With dedup, singular
+    # slot picks a different pattern (KeyCode-related, Selection-
+    # related, etc.) covering more architectural ground. For tokio,
+    # task family + task::spawn dedups to task family alone - but the
+    # singular slot then picks mpsc::channel (NEW from 11a, manual
+    # list match) which is a clean trade.
+    covered_family_outers = set()
+    covered_family_inners = set()
+
+    def _record_family_coverage(family_entry):
+        body = family_entry["pattern"].split(":", 1)[1]
+        if body.startswith("outer:"):
+            covered_family_outers.add(body.split(":", 1)[1])
+        elif body.startswith("inner:"):
+            covered_family_inners.add(body.split(":", 1)[1])
+
+    def _type_usage_covered_by_family(type_usage_entry):
+        body = type_usage_entry["pattern"].split(":", 1)[1]
+        if "::" not in body:
+            return False
+        outer, _, inner = body.partition("::")
+        return outer in covered_family_outers or inner in covered_family_inners
+
     selected = []
     for kind in ("trait_impl", "derive", "type_usage_family",
                  "type_usage", "reg_macro"):
@@ -831,8 +896,15 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n, pattern_metrics=None)
         if quota <= 0:
             continue
         candidates = by_kind[kind]
+        if kind == "type_usage":
+            candidates = [
+                e for e in candidates if not _type_usage_covered_by_family(e)
+            ]
         picked = candidates[:quota]
         selected.extend(picked)
+        if kind == "type_usage_family":
+            for entry in picked:
+                _record_family_coverage(entry)
     # If underfilled (some kind had no picks), backfill from trait_impl pool.
     if len(selected) < n:
         chosen_patterns = {e["pattern"] for e in selected}

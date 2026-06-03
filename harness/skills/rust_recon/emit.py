@@ -235,28 +235,99 @@ def core_vocabulary(fp: dict, facts: dict):
     return core, types, traits
 
 
-def candidate_instance(fp: dict, facts: dict):
-    """Pick one instance of the dominant pattern as the worked-slice seed."""
-    if not fp["pattern_histogram"]:
-        return None
-    dom = fp["pattern_histogram"][0]["pattern"]
-    kind, _, name = dom.partition(":")
+def _instance_for_kind(kind, name, facts):
+    """Pick a sample instance for a pattern of the given (kind, name). Returns
+    (instance, all_spans) where instance is None if no actionable item exists for
+    that kind. Used by candidate_instance both for the histogram leader and (0.0.4
+    patch 5) for the load-bearing fallback walk."""
     if kind == "trait_impl":
-        inst = [i for i in facts["impls"] if i.get("trait") == name and not i.get("cfg_gated")]
+        inst = [i for i in facts["impls"]
+                if i.get("trait") == name and not i.get("cfg_gated")]
         inst.sort(key=lambda x: str(x.get("type")))
-        return {"kind": kind, "pattern": dom,
-                "instance": inst[0] if inst else None,
-                "all_spans": [sp(i) for i in inst[:200]]}
+        return (inst[0] if inst else None, [sp(i) for i in inst[:200]])
     if kind == "derive":
         inst = [d for d in facts["derives"] if d.get("trait") == name]
-        return {"kind": kind, "pattern": dom, "instance": inst[0] if inst else None,
-                "all_spans": [f"{d.get('file','?')}:{d['line']}" for d in inst[:200]]}
+        return (inst[0] if inst else None,
+                [f"{d.get('file','?')}:{d['line']}" for d in inst[:200]])
     if kind == "reg_macro":
         inst = [m for m in facts["macros"]
                 if m["kind"] == "macro_invocation" and m["name"] == name]
-        return {"kind": kind, "pattern": dom, "instance": inst[0] if inst else None,
-                "all_spans": [sp(m) for m in inst[:200]]}
-    return {"kind": kind, "pattern": dom, "instance": None, "all_spans": []}
+        return (inst[0] if inst else None, [sp(m) for m in inst[:200]])
+    return (None, [])
+
+
+def candidate_instance(fp: dict, facts: dict):
+    """Pick one instance of the dominant pattern as the worked-slice seed.
+
+    0.0.4 patch 5 (v): when the raw histogram leader is a kind-only signal that does
+    not yield a structurally followable instance (fn_table:<crate> counts free
+    functions, attr_macro:<external> may be an external derive surface, etc.), walk
+    DOWN the histogram for the first trait_impl / derive / reg_macro entry that has
+    a valid instance and surface THAT as the load-bearing pick. The returned dict's
+    `fallback_reason` field explains why the alternative was chosen so emit_orientation
+    can render the rationale alongside the pattern."""
+    if not fp["pattern_histogram"]:
+        return None
+    histogram = fp["pattern_histogram"]
+    leader_dom = histogram[0]["pattern"]
+    leader_kind, _, leader_name = leader_dom.partition(":")
+    leader_inst, leader_spans = _instance_for_kind(leader_kind, leader_name, facts)
+    if leader_inst is not None:
+        return {
+            "kind": leader_kind,
+            "pattern": leader_dom,
+            "instance": leader_inst,
+            "all_spans": leader_spans,
+            "fallback_reason": None,
+        }
+    # Leader yielded no instance; walk down for the first viable structural kind.
+    # Priority: trait_impl > derive > reg_macro - trait_impl is the most architecturally
+    # load-bearing kind (an extension point), derive is behaviour-by-tag, reg_macro is
+    # the loosest signal (often test harnesses or DSLs). Walking the histogram in rank
+    # order WITHIN each priority tier finds the highest-rank trait_impl first, only
+    # falling to derive / reg_macro when no trait_impl exists in the histogram.
+    priority_order = ("trait_impl", "derive", "reg_macro")
+    first_by_priority = {k: None for k in priority_order}
+    for entry in histogram[1:]:
+        dom = entry["pattern"]
+        kind, _, name = dom.partition(":")
+        if kind not in first_by_priority or first_by_priority[kind] is not None:
+            continue
+        inst, spans = _instance_for_kind(kind, name, facts)
+        if inst is None:
+            continue
+        first_by_priority[kind] = (entry, inst, spans)
+    for priority in priority_order:
+        if first_by_priority[priority] is None:
+            continue
+        entry, inst, spans = first_by_priority[priority]
+        dom = entry["pattern"]
+        kind = dom.partition(":")[0]
+        return {
+            "kind": kind,
+            "pattern": dom,
+            "instance": inst,
+            "all_spans": spans,
+            "fallback_reason": (
+                f"Histogram leader `{leader_dom}` is a kind-only signal "
+                f"({histogram[0]['count']} instances) but does not yield a "
+                f"structurally followable item to trace - it counts a category "
+                f"(free functions, an external attribute macro, etc.) rather than "
+                f"a single concrete pattern. Picked `{dom}` ({entry['count']} "
+                f"instances) as the load-bearing alternative, prioritizing "
+                f"trait_impl > derive > reg_macro over raw rank since trait_impl "
+                f"is the most architecturally load-bearing kind."
+            ),
+        }
+    # No viable fallback either; return the leader with no instance so emit can
+    # render the existing 'pick from the histogram' fallback text.
+    return {
+        "kind": leader_kind,
+        "pattern": leader_dom,
+        "instance": None,
+        "all_spans": [],
+        "fallback_reason": None,
+    }
 
 
 def _is_src_file(file_path: str) -> bool:
@@ -480,9 +551,21 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     if cand and cand.get("instance"):
         dom = cand["pattern"]
         inst = cand["instance"]
-        L.append(f"Dominant pattern: **`{dom}`** "
-                 f"({fp['pattern_histogram'][0]['count']} instances; "
-                 f"this is the kind you will most often author).")
+        fallback_reason = cand.get("fallback_reason")
+        # Find this pattern's own count in the histogram (may not be position 0 when
+        # the load-bearing fallback fired).
+        own_count = next(
+            (h["count"] for h in fp["pattern_histogram"] if h["pattern"] == dom), 0)
+        if fallback_reason:
+            L.append(f"Dominant pattern (load-bearing pick): **`{dom}`** "
+                     f"({own_count} instances; this is the kind you will most often "
+                     f"author).")
+            L.append("")
+            L.append(f"**Why this pattern:** {fallback_reason}")
+        else:
+            L.append(f"Dominant pattern: **`{dom}`** "
+                     f"({own_count} instances; this is the kind you will most often "
+                     f"author).")
         if cand["kind"] == "trait_impl":
             L.append(f"Seed instance: `impl {dom.split(':')[1]} for {inst.get('type')}` "
                      f"- {sp(inst)}.")

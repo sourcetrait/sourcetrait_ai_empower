@@ -124,8 +124,13 @@ def core_vocabulary(fp: dict, facts: dict):
     in_workspace = {k: v for k, v in dep_count.items() if k in fp["per_crate"]}
     pick_pool = in_workspace if in_workspace else dep_count
     core = max(pick_pool, key=pick_pool.get) if pick_pool else None
-    types = [t for t in facts["types"] if t.get("crate") == core]
-    traits = [t for t in facts["traits"] if t.get("crate") == core]
+    # Filter types/traits to src/ only -- the 0.0.2 #5 sweep partition for §3 seam sites,
+    # now extended to §2 vocab so test-file types (ratatui/tests/*.rs, tokio/tests/*.rs)
+    # do not pollute the listed core vocabulary.
+    types = [t for t in facts["types"]
+             if t.get("crate") == core and _is_src_file(t.get("file", ""))]
+    traits = [t for t in facts["traits"]
+              if t.get("crate") == core and _is_src_file(t.get("file", ""))]
     return core, types, traits
 
 

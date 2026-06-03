@@ -325,8 +325,8 @@ def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx):
     return False
 
 
-def candidate_instance(fp: dict, facts: dict):
-    """Pick one instance of the dominant pattern as the worked-slice seed.
+def candidate_instances(fp: dict, facts: dict):
+    """Pick a list of architectural-pattern protagonists with seed instances.
 
     0.0.4 patch 5 (v): when the raw histogram leader is a kind-only signal that does
     not yield a structurally followable instance (fn_table:<crate> counts free
@@ -350,10 +350,19 @@ def candidate_instance(fp: dict, facts: dict):
     is also held to the workspace check: if it's workspace-defined + non-generic +
     has an instance, it's returned directly; otherwise the walk takes over.
 
-    The returned dict's `fallback_reason` field explains why the alternative was
-    chosen so emit_orientation can render the rationale alongside the pattern."""
+    0.0.7 patch 7a: return shape changes from `dict | None` to `list[dict]` (empty
+    list when no candidates). This is a pure-refactor preparation for 7b's
+    per-crate top-pattern aggregation - the function now CAN return multiple
+    protagonists (single-item list initially to match the prior single-pick
+    behavior, then 7b extends to genuine plurality). The single returned dict
+    matches the prior shape exactly; emit_orientation accesses cands[0] for the
+    legacy single-protagonist render.
+
+    Each returned dict carries: kind, pattern, instance, all_spans,
+    fallback_reason. 7b will add: source_crate (which crate's aggregation
+    surfaced this pick)."""
     if not fp["pattern_histogram"]:
-        return None
+        return []
     histogram = fp["pattern_histogram"]
     workspace_traits = {t["name"] for t in facts.get("traits", []) if t.get("name")}
     macro_defs_idx = _macro_defs_index(facts)
@@ -367,13 +376,13 @@ def candidate_instance(fp: dict, facts: dict):
     # 0.0.6 patch 6b: non-workspace leaders (trait_impl:From, reg_macro:fl, etc.)
     # fall through to the walk so a workspace-defined alternative gets a chance.
     if leader_inst is not None and not leader_is_generic and leader_is_workspace:
-        return {
+        return [{
             "kind": leader_kind,
             "pattern": leader_dom,
             "instance": leader_inst,
             "all_spans": leader_spans,
             "fallback_reason": None,
-        }
+        }]
     # Two-pass walk. Priority: trait_impl > derive > reg_macro. Pass 1 restricts
     # to workspace-defined patterns; pass 2 (only runs if pass 1 finds nothing)
     # falls back to non-workspace patterns. Generic patterns are skipped in both
@@ -407,13 +416,13 @@ def candidate_instance(fp: dict, facts: dict):
         pick = _walk(prefer_workspace=False)
     if pick is None:
         # No viable structural pattern at all; return leader with no instance.
-        return {
+        return [{
             "kind": leader_kind,
             "pattern": leader_dom,
             "instance": None,
             "all_spans": [],
             "fallback_reason": None,
-        }
+        }]
     entry, inst, spans = pick
     dom = entry["pattern"]
     kind = dom.partition(":")[0]
@@ -453,7 +462,7 @@ def candidate_instance(fp: dict, facts: dict):
              "tier; the pick is the highest-rank non-workspace structural "
              "pattern."
     )
-    return {
+    return [{
         "kind": kind,
         "pattern": dom,
         "instance": inst,
@@ -465,7 +474,7 @@ def candidate_instance(fp: dict, facts: dict):
             f"non-generic-derive > reg_macro within the workspace-defined tier."
             f"{workspace_note}"
         ),
-    }
+    }]
 
 
 def _is_src_file(file_path: str) -> bool:
@@ -551,7 +560,11 @@ def detected_seams(fp: dict, facts: dict):
 def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     sel = fp["selection"]
     core, core_types, core_traits = core_vocabulary(fp, facts)
-    cand = candidate_instance(fp, facts)
+    cands = candidate_instances(fp, facts)
+    # 0.0.7 patch 7a: candidate_instances returns a list; emit S5 still uses one
+    # protagonist for now (cands[0] if any). 7c will iterate the full list to
+    # produce the multi-protagonist S5 + S7 sections.
+    cand = cands[0] if cands else None
     seams = detected_seams(fp, facts)
 
     L = ["# Orientation", "",

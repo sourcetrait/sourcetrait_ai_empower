@@ -116,6 +116,15 @@ def scan_crate(root: Path, crate_dir: str):
             it["file"] = rel
         for it in f["macros"]:
             it["file"] = rel
+        # 0.0.5 patch cc: rustscan returns derives without a file field; attach it
+        # so derive-flavored seed instances render as `<file>:<line>` instead of
+        # `?:<line>`. Surfaced by the helix 0.0.4 baseline (S5 seed was `?:12`
+        # before this fix). Pre-Patch-dd, this would have hit the derive:Debug
+        # pick directly; post-Patch-dd it hits the rare case where Patch dd's
+        # fallback walk lands on a non-generic derive (e.g. bevy's Component or
+        # a domain-flavored derive in a derive-protagonist workspace).
+        for it in f["derives"]:
+            it["file"] = rel
         agg["impls"] += f["impls"]
         agg["traits"] += f["traits"]
         agg["types"] += f["types"]

@@ -2,7 +2,7 @@
 name = "nu_plugin_empower"
 version = "0.0.1"
 edition = "2024"
-description = "Nushell plugin for sourcetrait_empower"
+description = "Nushell plugin supporting SourceTrait Empower"
 authors = ["SourceTrait <development@sourcetrait.com>"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/sourcetrait/sourcetrait_empower"

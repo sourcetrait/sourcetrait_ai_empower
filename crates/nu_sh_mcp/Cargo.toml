@@ -2,7 +2,7 @@
 name = "nu_sh_mcp"
 version = "0.0.34"
 edition = "2024"
-description = "Nushell-engine MCP server for sourcetrait_empower"
+description = "Nushell engine MCP server"
 authors = ["SourceTrait <development@sourcetrait.com>"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/sourcetrait/sourcetrait_empower"

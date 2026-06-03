@@ -1,0 +1,11 @@
+(MIT OR Apache-2.0) AND Unicode-3.0 (1): unicode-ident
+AGPL-3.0-or-later WITH GPL-3.0-linking-exception (1): sourcetrait_lib_empower
+AGPL-3.0-or-later WITH GPL-3.0-linking-source-exception (4): sourcetrait_stdx, sourcetrait_testing, sourcetrait_testing_macro, sourcetrait_tooling
+Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT (4): linux-raw-sys, rustix, wasip2, wit-bindgen
+Apache-2.0 OR BSD-2-Clause OR MIT (2): zerocopy, zerocopy-derive
+Apache-2.0 OR LGPL-2.1-or-later OR MIT (1): r-efi
+Apache-2.0 OR MIT (78): allocator-api2, android_system_properties, anstream, anstyle, anstyle-parse, anstyle-query, anstyle-wincon, anyhow, autocfg, bitflags, bumpalo, cc, cfg-if, chrono, colorchoice, core-foundation-sys, env_filter, env_logger, equivalent, errno, filetime, find-msvc-tools, futures-channel, futures-core, futures-io, futures-macro, futures-sink, futures-task, futures-util, getrandom, hashbrown, heck, iana-time-zone, iana-time-zone-haiku, indexmap, is_terminal_polyfill, jobserver, js-sys, libc, log, num-traits, once_cell, once_cell_polyfill, pin-project-lite, portable-atomic, portable-atomic-util, ppv-lite86, proc-macro2, pure-rust-locales, quote, rand, rand_chacha, rand_core, regex, regex-automata, regex-syntax, rustversion, serde, serde_core, serde_derive, shlex, snafu, snafu-derive, syn, tar, utf8parse, wasm-bindgen, wasm-bindgen-macro, wasm-bindgen-macro-support, wasm-bindgen-shared, windows-core, windows-implement, windows-interface, windows-link, windows-result, windows-strings, windows-sys, xattr
+BSL-1.0 (1): xxhash-rust
+MIT (4): function_name, function_name-proc-macro, shutdown_hooks, slab
+MIT OR Unlicense (9): aho-corasick, jiff, jiff-static, jiff-tzdb, jiff-tzdb-platform, memchr, same-file, walkdir, winapi-util
+Zlib (1): foldhash

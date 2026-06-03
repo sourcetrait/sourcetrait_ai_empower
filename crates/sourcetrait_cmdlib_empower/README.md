@@ -1,42 +1,10 @@
-SourceTrait Empower: Nu Plugin
+SourceTrait Empower: CLI Library
 ================================================================================
 [![License Badge]][License]
 
-*Nushell plugin supporting SourceTrait Empower*
-
-Commands:
-- [peek](#peek)
+*Common command-line interface library*
 
 
-Usage
---------------------------------------------------------------------------------
-
-### `peek`
-
-Structural queries against markdown files.
-
-#### `peek md find`
-
-Find regex matches in a markdown file. Returns `[[offset, length], ...]`
-sorted by appearance. Multiline regex (`^` and `$` match line boundaries).
-
-```nu
-peek md find '^## ' README.md
-```
-
-
-Installation
---------------------------------------------------------------------------------
-
-Build from source, install to the nushell plugin directory, register:
-
-```nu
-^cargo install --path .
-cp ~/.cargo/bin/nu_plugin_empower ~/.config/nushell/plugins/
-plugin add ~/.config/nushell/plugins/nu_plugin_empower
-```
-
-Requires nushell 0.113 or later.
 
 
 Repository
@@ -56,9 +24,9 @@ all copyright covering your contribution.
 
 License (AGPL3)
 --------------------------------------------------------------------------------
-SourceTrait Empower Nu Plugin: Nushell plugin supported SourceTrait Empower  
+SourceTrait Empower CLI Library: Common command-line interface library  
 Developed by [SourceTrait](https://sourcetrait.com), a division of **Asmov LLC**  
-Copyright (C) 2026 [Asmov LLC](https://asmov.software)  
+Copyright (C) 2025 [Asmov LLC](https://asmov.software)  
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the **GNU Affero General Public License** as
@@ -73,6 +41,20 @@ GNU Affero General Public License for more details.
 You should have received a [copy](./LICENSE-AGPL-3.txt) of the
 GNU Affero General Public License along with this program.
 If not, see [https://www.gnu.org/licenses/](https://www.gnu.org/licenses/).
+
+### Linking Exception (Section 7)
+
+In addition to the *AGPL-3.0* terms above, this software is distributed with a
+*Section 7 Additional Permission* allowing it to be linked with independent
+modules under licenses of your choice, while preserving the AGPL's source
+obligations (including *Section 13 -- Remote Network Interaction*) for the
+software itself.
+
+The authoritative exception text is in:  
+[`LICENSE-AGPL-3-LINKING-EXCEPTION.txt`](./LICENSE-AGPL-3-LINKING-EXCEPTION.txt)
+
+External dependency licenses are listed in:  
+[`LICENSES-EXTERNAL.txt`](./LICENSES-EXTERNAL.txt)
 
 
 

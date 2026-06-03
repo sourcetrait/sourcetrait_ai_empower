@@ -1,0 +1,43 @@
+The software in this package (the 'Software') is distributed under the
+GNU Affero General Public License Version 3 (with a special exception described
+below).
+
+A copy of GNU Affero General Public License (AGPL3) is included in this
+distribution, in the file LICENSE-AGPL-3.txt. If you do not have the source
+code, it is available at:
+
+https://www.gnu.org/licenses/
+
+Linking this Software statically or dynamically with other modules is
+making a combined work based on this Software. Thus, the terms and
+conditions of the GNU Affero General Public License cover the whole
+combination.
+
+As a special exception, the copyright holders of this Software give you
+permission to link this Software with independent modules to produce a combined
+work, regardless of the license terms of these independent modules, and to copy
+and distribute the resulting combined work under terms of your choice, provided
+that you also meet, for each linked independent module, the terms and conditions
+of the license of that module. An independent module is a module which is not
+derived from or based on this Software.
+
+This exception does not modify or waive the obligations of the GNU Affero
+General Public License with respect to this Software itself or to any modified
+version of it. In particular, Section 13 (Remote Network Interaction)
+continues to apply to this Software and to any modification of it, whether
+distributed alone or as part of a combined work. The 'terms of your choice'
+permission above governs only the independent modules and the act of
+combining; it does not extend to this Software's own AGPL obligations.
+
+If you modify this Software, you may extend this exception to your version of
+the Software, but you are not obligated to do so. If you do not wish to do so,
+delete this exception statement from your version.
+
+This Software also depends upon other software distributed under other
+terms. External software included with or imported by this Software may also be
+distributed under different licensing terms. The name of each external license
+used by each dependency is included in this distribution, in the file
+LICENSES-EXTERNAL.txt.
+
+If you do not have the source code for this Software, it is available at:
+https://github.com/sourcetrait

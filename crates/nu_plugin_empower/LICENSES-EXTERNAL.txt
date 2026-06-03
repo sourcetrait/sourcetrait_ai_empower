@@ -1,0 +1,27 @@
+(MIT OR Apache-2.0) AND Unicode-3.0 (1): unicode-ident
+0BSD (2): doctest-file, recvmsg
+0BSD OR Apache-2.0 (1): interprocess
+0BSD OR Apache-2.0 OR MIT (1): adler2
+AGPL-3.0-or-later (1): nu_plugin_empower
+AGPL-3.0-or-later WITH GPL-3.0-linking-exception (2): sourcetrait_cmdlib_empower, sourcetrait_lib_empower
+AGPL-3.0-or-later WITH GPL-3.0-linking-source-exception (4): sourcetrait_stdx, sourcetrait_testing, sourcetrait_testing_macro, sourcetrait_tooling
+Apache-2.0 (9): buf-trait, byteyarn, clang-sys, miette, miette-derive, supports-color, supports-hyperlinks, supports-unicode, unicode-linebreak
+Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT (5): linux-raw-sys, rustix, wasi, wasip2, wit-bindgen
+Apache-2.0 OR BSD-2-Clause OR MIT (5): mach2, zerocopy, zerocopy, zerocopy-derive, zerocopy-derive
+Apache-2.0 OR BSL-1.0 (1): ryu
+Apache-2.0 OR CC0-1.0 OR MIT-0 (1): dunce
+Apache-2.0 OR GPL-2.0-only (1): self_cell
+Apache-2.0 OR LGPL-2.1-or-later OR MIT (1): r-efi
+Apache-2.0 OR MIT (168): allocator-api2, android_system_properties, anstream, anstyle, anstyle-parse, anstyle-query, anstyle-wincon, anyhow, arrayvec, autocfg, bigdecimal, bit-set, bit-vec, bitflags, bumpalo, cc, cexpr, cfg-if, chrono, chrono-humanize, clap, clap_builder, clap_derive, clap_lex, colorchoice, core-foundation-sys, crc32fast, dirs, dirs-sys, displaydoc, document-features, either, env_filter, env_logger, equivalent, erased-serde, errno, filetime, find-msvc-tools, flate2, fluent, fluent-bundle, fluent-langneg, fluent-syntax, futures-channel, futures-core, futures-io, futures-macro, futures-sink, futures-task, futures-util, getrandom, getrandom, glob, hashbrown, heck, hex, iana-time-zone, iana-time-zone-haiku, indexmap, intl-memoizer, intl_pluralrules, inventory, is_terminal_polyfill, itertools, itertools, itoa, jobserver, js-sys, libc, litrs, lock_api, log, lscolors, minimal-lexical, ntapi, nu-glob, num-bigint, num-format, num-integer, num-traits, omnipath, once_cell, once_cell_polyfill, parking_lot, parking_lot_core, pin-project-lite, portable-atomic, portable-atomic-util, ppv-lite86, proc-macro-error-attr2, proc-macro-error2, proc-macro2, procfs, procfs-core, pure-rust-locales, quote, rand, rand_chacha, rand_core, ref-cast, ref-cast-impl, regex, regex-automata, regex-syntax, rustc-hash, rustc_version, rustversion, scopeguard, semver, serde, serde_core, serde_derive, serde_json, shlex, shlex, signal-hook, signal-hook-mio, signal-hook-registry, smallvec, snafu, snafu-derive, stable_deref_trait, strip-ansi-escapes, syn, sys-locale, tar, terminal_size, thiserror, thiserror, thiserror-impl, thiserror-impl, type-map, typeid, typetag, typetag-impl, unic-langid, unic-langid-impl, unicase, unicode-segmentation, unicode-width, unicode-width, unicode-xid, utf8parse, vte, wasm-bindgen, wasm-bindgen-macro, wasm-bindgen-macro-support, wasm-bindgen-shared, web-time, widestring, wild, winapi, winapi-i686-pc-windows-gnu, winapi-x86_64-pc-windows-gnu, windows, windows-collections, windows-core, windows-future, windows-implement, windows-interface, windows-link, windows-numerics, windows-result, windows-strings, windows-sys, windows-threading, xattr
+Apache-2.0 OR MIT OR Zlib (4): dispatch2, miniz_oxide, objc2-core-foundation, objc2-io-kit
+BSD-3-Clause (3): alloc-no-stdlib, alloc-stdlib, bindgen
+BSD-3-Clause AND MIT (1): brotli
+BSD-3-Clause OR MIT (1): brotli-decompressor
+BSL-1.0 (1): xxhash-rust
+CC-PDDC (1): pwd
+ISC (2): is_ci, libloading
+MIT (52): bytes, castaway, cfg_aliases, convert_case, crossterm, crossterm_winapi, derive_more, derive_more-impl, fancy-regex, filedescriptor, function_name, function_name-proc-macro, lean_string, libm, libproc, libredox, lru, mio, nix, nom, nu-ansi-term, nu-derive-value, nu-engine, nu-experimental, nu-path, nu-plugin, nu-plugin-core, nu-plugin-protocol, nu-protocol, nu-system, nu-utils, objc2, objc2-encode, os_display, os_pipe, owo-colors, redox_syscall, redox_users, rmp, rmp-serde, shutdown_hooks, simd-adler32, slab, strsim, strum, strum_macros, synstructure, sysinfo, textwrap, uucore, uucore_procs, zmij
+MIT OR Unlicense (10): aho-corasick, byteorder, jiff, jiff-static, jiff-tzdb, jiff-tzdb-platform, memchr, same-file, walkdir, winapi-util
+MPL-2.0 (1): option-ext
+Unicode-3.0 (7): tinystr, yoke, yoke-derive, zerofrom, zerofrom-derive, zerovec, zerovec-derive
+Zlib (2): foldhash, zlib-rs

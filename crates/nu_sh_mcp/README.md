@@ -1,28 +1,14 @@
-SourceTrait Empower: Nu Plugin
+SourceTrait Empower: Nushell MCP
 ================================================================================
 [![License Badge]][License]
 
-*Nushell plugin supporting SourceTrait Empower*
-
-Commands:
-- [peek](#peek)
+*Nushell engine MCP server*
 
 
 Usage
 --------------------------------------------------------------------------------
 
-### `peek`
-
-Structural queries against markdown files.
-
-#### `peek md find`
-
-Find regex matches in a markdown file. Returns `[[offset, length], ...]`
-sorted by appearance. Multiline regex (`^` and `$` match line boundaries).
-
-```nu
-peek md find '^## ' README.md
-```
+Refer to the [MCP Interface](docs/Interface.md).
 
 
 Installation
@@ -32,8 +18,7 @@ Build from source, install to the nushell plugin directory, register:
 
 ```nu
 ^cargo install --path .
-cp ~/.cargo/bin/nu_plugin_empower ~/.config/nushell/plugins/
-plugin add ~/.config/nushell/plugins/nu_plugin_empower
+^claude mcp add --transport stdio nu_sh_mcp
 ```
 
 Requires nushell 0.113 or later.
@@ -56,9 +41,9 @@ all copyright covering your contribution.
 
 License (AGPL3)
 --------------------------------------------------------------------------------
-SourceTrait Empower Nu Plugin: Nushell plugin supported SourceTrait Empower  
+SourceTrait Empower Nushell MCP: Nushell engine MCP server  
 Developed by [SourceTrait](https://sourcetrait.com), a division of **Asmov LLC**  
-Copyright (C) 2026 [Asmov LLC](https://asmov.software)  
+Copyright (C) 2025 [Asmov LLC](https://asmov.software)  
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the **GNU Affero General Public License** as

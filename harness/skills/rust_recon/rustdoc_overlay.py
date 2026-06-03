@@ -20,6 +20,7 @@ blanket/synthesized impls, and macro-generated items. Null spans are FLAGGED, ne
 
 from __future__ import annotations
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -69,7 +70,14 @@ def run_rustdoc_json(root: Path, package: str | None):
     # to --lib since rustdoc-JSON is overwhelmingly the library surface. Bin-only packages
     # will need a caller-side fork to specify --bin NAME.
     cmd += ["--lib", "--", "-Z", "unstable-options", "--output-format", "json"]
-    subprocess.run(cmd, cwd=str(root), check=True, capture_output=True, text=True, timeout=900)
+    # Override RUSTDOCFLAGS to cap-lints-allow so strict-doc projects (iced ships with
+    # `-F rustdoc::broken-intra-doc-links` enabled) don't error out the rustdoc build
+    # before the JSON gets written. Doesn't change any source-level warnings; only loosens
+    # the overlay-time rustdoc lint gate.
+    env = os.environ.copy()
+    env["RUSTDOCFLAGS"] = "--cap-lints allow"
+    subprocess.run(cmd, cwd=str(root), check=True, capture_output=True, text=True,
+                   timeout=900, env=env)
     # rustdoc writes target/doc/<crate>.json
     docdir = root / "target" / "doc"
     candidates = sorted(docdir.glob("*.json"))

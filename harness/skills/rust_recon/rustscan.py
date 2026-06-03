@@ -97,10 +97,10 @@ def _is_noise_attr(path, base):
 # 0.0.8 patch 8a: identifiers that flood the type-usage histogram when
 # treated as architectural protagonists. Standard collections, smart
 # pointers, primitive option / result enums, common namespace aliases,
-# and short generic-parameter conventions (T / E / U / K / V). The set
-# is checked against the OUTER name in `<outer>::<inner>(` factory-call
-# detection - noise outers are never counted. Expand as false positives
-# surface during probe sweeps.
+# short generic-parameter conventions (T / E / U / K / V), and (0.0.9
+# patch 9c) Rust primitives. The set is checked against the OUTER name
+# in `<outer>::<inner>(` factory-call detection - noise outers are
+# never counted. Expand as false positives surface during probe sweeps.
 TYPE_USAGE_NOISE_TYPES = frozenset([
     # collections
     "Vec", "VecDeque", "LinkedList", "BinaryHeap",
@@ -120,6 +120,16 @@ TYPE_USAGE_NOISE_TYPES = frozenset([
     "std", "core", "alloc",
     # generic-parameter conventions
     "T", "E", "U", "K", "V",
+    # 0.0.9 patch 9c: Rust primitives. Outer matches like
+    # f32::from / i32::from_str_radix / bool::then / char::is_ascii
+    # are universal data-shaping calls, not workspace-architectural
+    # patterns. libcosmic's 0.0.8 baseline had f32::from at 108
+    # instances passing the lynchpin threshold; this set forecloses
+    # that noise leak.
+    "f32", "f64",
+    "i8", "i16", "i32", "i64", "i128", "isize",
+    "u8", "u16", "u32", "u64", "u128", "usize",
+    "char", "bool", "str",
 ])
 
 

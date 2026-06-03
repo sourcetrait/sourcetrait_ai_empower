@@ -27,6 +27,21 @@ from pathlib import Path
 # 0.0.4 patch 2 (s): word-bounded capitalized identifier for use-path scanning.
 _TYPE_IDENT_RE = re.compile(r'\b[A-Z]\w*\b')
 
+# 0.0.5 patch dd: generic auto-derive trait names. These are derived universally via
+# #[derive(...)] across the standard data-shaping needs (Debug for stringification,
+# Clone / Copy for value semantics, the equality + hashing family for collections,
+# Default for zero-value construction, Serialize / Deserialize for serde). They are
+# NOT architecturally load-bearing - picking one as the worked-slice protagonist
+# yields a generic trace that does not reveal the workspace's structural pattern.
+# candidate_instance treats a generic-auto-derive leader as kind-only and walks past
+# to find a domain-specific pattern. Domain-flavored derives that ARE load-bearing
+# for their workspace (bevy's Component / Resource / System / Event, etc.) stay OUT
+# of this set so they remain pickable.
+_GENERIC_AUTO_DERIVES = frozenset([
+    "Debug", "Clone", "PartialEq", "Eq", "Hash", "Default", "Copy",
+    "Serialize", "Deserialize",
+])
+
 # 0.0.4 patch 4 (u): when the workspace has more than _CLUSTER_THRESHOLD crates, the
 # S1 crate / region map emits a "Crate clusters (by name prefix)" sub-section above
 # the per-crate detail list. Clusters require at least _CLUSTER_MIN_SIZE members.
@@ -256,6 +271,17 @@ def _instance_for_kind(kind, name, facts):
     return (None, [])
 
 
+def _is_generic_auto_derive(kind, name):
+    """True when the pattern is a derive of one of the standard data-shaping traits
+    (Debug / Clone / PartialEq / Eq / Hash / Default / Copy / Serialize / Deserialize).
+
+    0.0.5 patch dd: these derives are universally applied; treating them as the
+    worked-slice protagonist yields a trace that does not reveal the workspace's
+    architectural pattern. candidate_instance treats them as kind-only and walks
+    past, the same way Patch 5 handles fn_table:<crate> leaders."""
+    return kind == "derive" and name in _GENERIC_AUTO_DERIVES
+
+
 def candidate_instance(fp: dict, facts: dict):
     """Pick one instance of the dominant pattern as the worked-slice seed.
 
@@ -263,16 +289,27 @@ def candidate_instance(fp: dict, facts: dict):
     not yield a structurally followable instance (fn_table:<crate> counts free
     functions, attr_macro:<external> may be an external derive surface, etc.), walk
     DOWN the histogram for the first trait_impl / derive / reg_macro entry that has
-    a valid instance and surface THAT as the load-bearing pick. The returned dict's
-    `fallback_reason` field explains why the alternative was chosen so emit_orientation
-    can render the rationale alongside the pattern."""
+    a valid instance and surface THAT as the load-bearing pick.
+
+    0.0.5 patch dd: the kind-only treatment is extended to generic-auto-derive
+    leaders (Debug, Clone, PartialEq, Eq, Hash, Default, Copy, Serialize,
+    Deserialize). These are universally applied via #[derive(...)] and are not
+    architecturally load-bearing; picking one as the protagonist gives a generic
+    trace that does not reveal the workspace's structural pattern. helix (rank-1
+    leader was derive:Debug at 849) and bevy (rank-1 was derive:Clone at 3911)
+    surfaced this; both should now pick non-generic alternatives. The fallback walk
+    also skips generic-auto-derive entries entirely.
+
+    The returned dict's `fallback_reason` field explains why the alternative was
+    chosen so emit_orientation can render the rationale alongside the pattern."""
     if not fp["pattern_histogram"]:
         return None
     histogram = fp["pattern_histogram"]
     leader_dom = histogram[0]["pattern"]
     leader_kind, _, leader_name = leader_dom.partition(":")
     leader_inst, leader_spans = _instance_for_kind(leader_kind, leader_name, facts)
-    if leader_inst is not None:
+    leader_is_generic_derive = _is_generic_auto_derive(leader_kind, leader_name)
+    if leader_inst is not None and not leader_is_generic_derive:
         return {
             "kind": leader_kind,
             "pattern": leader_dom,
@@ -280,12 +317,15 @@ def candidate_instance(fp: dict, facts: dict):
             "all_spans": leader_spans,
             "fallback_reason": None,
         }
-    # Leader yielded no instance; walk down for the first viable structural kind.
-    # Priority: trait_impl > derive > reg_macro - trait_impl is the most architecturally
-    # load-bearing kind (an extension point), derive is behaviour-by-tag, reg_macro is
-    # the loosest signal (often test harnesses or DSLs). Walking the histogram in rank
-    # order WITHIN each priority tier finds the highest-rank trait_impl first, only
-    # falling to derive / reg_macro when no trait_impl exists in the histogram.
+    # Leader is kind-only (no instance, OR a generic auto-derive); walk down for the
+    # first viable non-generic structural kind. Priority: trait_impl > derive >
+    # reg_macro - trait_impl is the most architecturally load-bearing kind (an
+    # extension point), derive is behaviour-by-tag, reg_macro is the loosest signal
+    # (often test harnesses or DSLs). Walking the histogram in rank order WITHIN
+    # each priority tier finds the highest-rank trait_impl first; the
+    # generic-auto-derive skip ensures Debug / Clone / etc. don't take the derive
+    # slot away from a domain derive (bevy's Component / Resource / System /
+    # Event, etc.).
     priority_order = ("trait_impl", "derive", "reg_macro")
     first_by_priority = {k: None for k in priority_order}
     for entry in histogram[1:]:
@@ -293,6 +333,8 @@ def candidate_instance(fp: dict, facts: dict):
         kind, _, name = dom.partition(":")
         if kind not in first_by_priority or first_by_priority[kind] is not None:
             continue
+        if _is_generic_auto_derive(kind, name):
+            continue  # 0.0.5 patch dd: generic-auto-derives never take a slot.
         inst, spans = _instance_for_kind(kind, name, facts)
         if inst is None:
             continue
@@ -303,20 +345,30 @@ def candidate_instance(fp: dict, facts: dict):
         entry, inst, spans = first_by_priority[priority]
         dom = entry["pattern"]
         kind = dom.partition(":")[0]
+        if leader_is_generic_derive:
+            leader_reason = (
+                f"is a generic auto-derive ({leader_name} is universally derived "
+                f"via #[derive(...)] across the standard data-shaping traits; not "
+                f"architecturally load-bearing)"
+            )
+        else:
+            leader_reason = (
+                f"is a kind-only signal that does not yield a structurally "
+                f"followable item to trace - it counts a category (free functions, "
+                f"an external attribute macro, etc.) rather than a single concrete "
+                f"pattern"
+            )
         return {
             "kind": kind,
             "pattern": dom,
             "instance": inst,
             "all_spans": spans,
             "fallback_reason": (
-                f"Histogram leader `{leader_dom}` is a kind-only signal "
-                f"({histogram[0]['count']} instances) but does not yield a "
-                f"structurally followable item to trace - it counts a category "
-                f"(free functions, an external attribute macro, etc.) rather than "
-                f"a single concrete pattern. Picked `{dom}` ({entry['count']} "
-                f"instances) as the load-bearing alternative, prioritizing "
-                f"trait_impl > derive > reg_macro over raw rank since trait_impl "
-                f"is the most architecturally load-bearing kind."
+                f"Histogram leader `{leader_dom}` ({histogram[0]['count']} instances) "
+                f"{leader_reason}. Picked `{dom}` ({entry['count']} instances) as "
+                f"the load-bearing alternative, prioritizing trait_impl > "
+                f"non-generic-derive > reg_macro over raw rank since trait_impl is "
+                f"the most architecturally load-bearing kind."
             ),
         }
     # No viable fallback either; return the leader with no instance so emit can

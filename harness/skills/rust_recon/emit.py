@@ -42,6 +42,38 @@ _GENERIC_AUTO_DERIVES = frozenset([
     "Serialize", "Deserialize",
 ])
 
+# 0.0.8 patch 8c: generic-shape outer names for type_usage entries.
+# A type_usage pattern `<outer>::<inner>` whose outer is in this set is
+# treated as a generic trait-method invocation (Default::default,
+# Display::fmt, From::from, Clone::clone, etc.) and skipped by the
+# picker. These are noise in the architectural sense even though they
+# pass the rustscan TYPE_USAGE_NOISE_TYPES gate (which only excludes
+# noisy collection / smart-pointer outers). Workspace-defined outers
+# are NEVER in this set; if a workspace declared a trait named one of
+# these, the workspace_types lookup still surfaces the pattern.
+_GENERIC_AUTO_TYPES = frozenset([
+    # standard trait outers
+    "Default", "Display", "Debug",
+    "From", "Into", "TryFrom", "TryInto",
+    "Clone",
+    "AsRef", "AsMut",
+    "Drop",
+    "PartialEq", "Eq", "Hash", "PartialOrd", "Ord",
+    "Iterator", "IntoIterator",
+    # Poll / Future trait outers (used as enum constructors)
+    "Poll",
+])
+
+# 0.0.8 patch 8c: minimum usage count for an external (non-workspace-
+# defined) type_usage entry to count as a workspace-relevant lynchpin.
+# Tokio's task::spawn (65) + Poll::Ready (450) pass; AtomicUsize::new
+# (41 in tokio's own scan) doesn't. Configurable via env. Calibrated
+# from the helix + tokio probes in 8b - workspace-defined types tend
+# to land in 38-99 range; setting the lynchpin floor at 60 keeps
+# noise (under-threshold std primitives) out while admitting the
+# tokio::spawn class of external architectural patterns.
+_LYNCHPIN_USAGE_MIN = int(os.environ.get("ORIENT_LYNCHPIN_USAGE_MIN", "60"))
+
 # 0.0.4 patch 4 (u): when the workspace has more than _CLUSTER_THRESHOLD crates, the
 # S1 crate / region map emits a "Crate clusters (by name prefix)" sub-section above
 # the per-crate detail list. Clusters require at least _CLUSTER_MIN_SIZE members.
@@ -276,6 +308,13 @@ def _instance_for_kind(kind, name, facts):
         inst = [m for m in facts["macros"]
                 if m["kind"] == "macro_invocation" and m["name"] == name]
         return (inst[0] if inst else None, [sp(m) for m in inst[:200]])
+    if kind == "type_usage":
+        # 0.0.8 patch 8c: type_usage instances are call-site dicts from
+        # facts['type_usages'] matched by combined "<outer>::<inner>" name.
+        inst = [tu for tu in facts.get("type_usages", [])
+                if tu.get("name") == name]
+        return (inst[0] if inst else None,
+                [f"{tu.get('file','?')}:{tu['line']}" for tu in inst[:200]])
     return (None, [])
 
 
@@ -296,12 +335,26 @@ def _is_generic_pattern(kind, name):
     Debug impls ARE architectural would mis-skip - watch for false positives during
     per-target audit.
 
+    0.0.8 patch 8c: extended to type_usage variants. A type_usage pattern
+    `<outer>::<inner>` is generic when outer is in _GENERIC_AUTO_TYPES
+    (Default::default, Display::fmt, From::from, Clone::clone, Poll::Ready,
+    etc.) - these are standard trait-method invocations or enum-variant
+    constructors that are universal across Rust code, not workspace-specific
+    architectural patterns. Workspace-defined outers (Selection, Range, Rope
+    for helix) survive because none of them are in the set.
+
     candidate_instance treats these as kind-only signals and walks past, the same
     way Patch 5 handles fn_table:<crate> leaders."""
-    return name in _GENERIC_AUTO_DERIVES and kind in ("derive", "trait_impl")
+    if kind in ("derive", "trait_impl"):
+        return name in _GENERIC_AUTO_DERIVES
+    if kind == "type_usage":
+        outer = name.split("::", 1)[0]
+        return outer in _GENERIC_AUTO_TYPES
+    return False
 
 
-def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx):
+def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx,
+                          workspace_types=None, lynchpins=None):
     """True when the pattern is anchored to a workspace-defined trait or macro.
 
     0.0.6 patch 6b: trait_impl:<T> and derive:<T> are workspace-defined when T
@@ -320,6 +373,17 @@ def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx):
     (Component, Resource, etc.). This helper drives the two-pass walk that
     catches both cases.
 
+    0.0.8 patch 8c: extended to type_usage. A type_usage pattern
+    `<outer>::<inner>` is workspace-defined when its outer appears in
+    workspace_types (the set of struct / enum / union / type aliases declared
+    in the workspace). External lynchpins are also admitted: a non-workspace
+    type_usage whose combined name appears in the lynchpins set (built from
+    pattern_histogram entries above _LYNCHPIN_USAGE_MIN) counts as
+    workspace-relevant. Tokio's task::spawn and Poll::Ready appear in the
+    lynchpins set when scanning an application workspace using tokio; helix's
+    Selection::new / Range::new appear via workspace_types when scanning helix
+    itself.
+
     Detection caveat: name-based (no path resolution). False positives possible
     when a workspace defines a trait with the same name as a commonly-impl'd
     imported trait (e.g. `Request` in helix-lsp-types AND `tower::Request`).
@@ -330,13 +394,21 @@ def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx):
         return name in workspace_traits
     if kind == "reg_macro":
         return name in macro_defs_idx
+    if kind == "type_usage":
+        outer = name.split("::", 1)[0]
+        if workspace_types and outer in workspace_types:
+            return True
+        if lynchpins and name in lynchpins:
+            return True
+        return False
     return False
 
 
-def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx):
+def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
+                            workspace_types=None, lynchpins=None):
     """For each workspace crate, find the top non-generic workspace-defined
-    pattern of each kind (trait_impl, derive, reg_macro). Returns a dict of
-    crate_name -> {kind -> {pattern, count, source_crate}}.
+    pattern of each kind (trait_impl, derive, type_usage, reg_macro). Returns a
+    dict of crate_name -> {kind -> {pattern, count, source_crate}}.
 
     0.0.7 patch 7b: this is the engine for plural protagonist surfacing. The
     global histogram counts patterns workspace-wide; per-crate aggregation
@@ -344,9 +416,16 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx):
     core's Selection/Transaction, helix-view's Editor, helix-term's Command,
     helix-lsp's Request, etc.). Each crate's top non-generic workspace-defined
     pattern of each kind becomes a candidate protagonist; the aggregation
-    phase combines + dedupes them into the workspace-wide plural list."""
+    phase combines + dedupes them into the workspace-wide plural list.
+
+    0.0.8 patch 8c: type_usage is added as a 4th per-crate counter. Counts
+    facts['type_usages'] entries whose outer name is workspace-defined (in
+    workspace_types) or whose combined name is an external lynchpin (in
+    lynchpins). Generic outers (Default::default, From::from, etc.) are
+    skipped via _is_generic_pattern."""
     per_crate = defaultdict(
-        lambda: {"trait_impl": Counter(), "derive": Counter(), "reg_macro": Counter()})
+        lambda: {"trait_impl": Counter(), "derive": Counter(),
+                 "reg_macro": Counter(), "type_usage": Counter()})
     for i in facts["impls"]:
         crate = i.get("crate")
         if not crate or i.get("cfg_gated"):
@@ -357,7 +436,8 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx):
         if _is_generic_pattern("trait_impl", name):
             continue
         if not _is_workspace_defined(
-                "trait_impl", name, workspace_traits, macro_defs_idx):
+                "trait_impl", name, workspace_traits, macro_defs_idx,
+                workspace_types, lynchpins):
             continue
         per_crate[crate]["trait_impl"][name] += 1
     for d in facts.get("derives", []):
@@ -370,7 +450,8 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx):
         if _is_generic_pattern("derive", name):
             continue
         if not _is_workspace_defined(
-                "derive", name, workspace_traits, macro_defs_idx):
+                "derive", name, workspace_traits, macro_defs_idx,
+                workspace_types, lynchpins):
             continue
         per_crate[crate]["derive"][name] += 1
     for m in facts.get("macros", []):
@@ -383,13 +464,29 @@ def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx):
         if not name:
             continue
         if not _is_workspace_defined(
-                "reg_macro", name, workspace_traits, macro_defs_idx):
+                "reg_macro", name, workspace_traits, macro_defs_idx,
+                workspace_types, lynchpins):
             continue
         per_crate[crate]["reg_macro"][name] += 1
+    for tu in facts.get("type_usages", []):
+        crate = tu.get("crate")
+        if not crate:
+            continue
+        name = tu.get("name")
+        if not name:
+            continue
+        if _is_generic_pattern("type_usage", name):
+            continue
+        if not _is_workspace_defined(
+                "type_usage", name, workspace_traits, macro_defs_idx,
+                workspace_types, lynchpins):
+            continue
+        per_crate[crate]["type_usage"][name] += 1
     return per_crate
 
 
-_PLURAL_KIND_PRIORITY = {"trait_impl": 0, "derive": 1, "reg_macro": 2}
+_PLURAL_KIND_PRIORITY = {"trait_impl": 0, "derive": 1, "type_usage": 2,
+                         "reg_macro": 3}
 
 
 def _aggregate_per_crate_picks(per_crate_counts, facts, n):
@@ -407,15 +504,18 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
     (architecturally central to ECS) never made the top 5 because trait_impl
     Plugin/MeshBuilder/etc. filled all slots.
 
-    0.0.7 patch 7b refinement B (this version): slot quotas. For N=5 the
-    default split is 3 trait_impl + 1 derive + 1 reg_macro. Quotas allocate
-    by kind; underfilled kinds (workspace has no workspace-defined derives,
-    etc.) cede to the trait_impl pool so N total is maintained. Output
-    ordering: trait_impls first (most architectural), then derives, then
-    reg_macros, each tier sorted by count desc."""
+    0.0.7 patch 7b refinement B: slot quotas. For N=5 the default split was
+    3 trait_impl + 1 derive + 1 reg_macro. Quotas allocate by kind; underfilled
+    kinds cede to the trait_impl pool so N total is maintained.
+
+    0.0.8 patch 8c (this version): adds type_usage as a 4th kind with its
+    own slot quota. At N=5 the default split becomes 2 trait_impl + 1 derive
+    + 1 type_usage + 1 reg_macro. Output ordering by _PLURAL_KIND_PRIORITY:
+    trait_impl > derive > type_usage > reg_macro, each tier sorted by count
+    desc. Backfill on underfill draws from the trait_impl pool first."""
     pattern_to_pick = {}
     for crate, kinds in per_crate_counts.items():
-        for kind in ("trait_impl", "derive", "reg_macro"):
+        for kind in ("trait_impl", "derive", "type_usage", "reg_macro"):
             counts = kinds[kind]
             if not counts:
                 continue
@@ -429,23 +529,27 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n):
                     "count": top_count,
                     "source_crate": crate,
                 }
-    by_kind = {"trait_impl": [], "derive": [], "reg_macro": []}
+    by_kind = {"trait_impl": [], "derive": [], "reg_macro": [], "type_usage": []}
     for entry in pattern_to_pick.values():
         by_kind[entry["kind"]].append(entry)
     for kind in by_kind:
         by_kind[kind].sort(key=lambda x: -x["count"])
-    # Slot quotas. For N=5: 3 trait_impl, 1 derive, 1 reg_macro. Scales with N
-    # by giving trait_impl the residual.
+    # Slot quotas. For N=5: 2 trait_impl, 1 derive, 1 type_usage, 1 reg_macro.
+    # Scales with N by giving trait_impl the residual. Type_usage gets its
+    # slot only at N>=5 so smaller N preserves the 0.0.7 shape.
     derive_quota = 1 if n >= 3 else 0
     reg_macro_quota = 1 if n >= 4 else 0
-    trait_impl_quota = max(1, n - derive_quota - reg_macro_quota)
+    type_usage_quota = 1 if n >= 5 else 0
+    trait_impl_quota = max(
+        1, n - derive_quota - reg_macro_quota - type_usage_quota)
     quotas = {
         "trait_impl": trait_impl_quota,
         "derive": derive_quota,
+        "type_usage": type_usage_quota,
         "reg_macro": reg_macro_quota,
     }
     selected = []
-    for kind in ("trait_impl", "derive", "reg_macro"):
+    for kind in ("trait_impl", "derive", "type_usage", "reg_macro"):
         for entry in by_kind[kind][:quotas[kind]]:
             selected.append(entry)
     # If underfilled (some kind had no picks), backfill from trait_impl pool.
@@ -522,13 +626,37 @@ def candidate_instances(fp: dict, facts: dict):
     histogram = fp["pattern_histogram"]
     workspace_traits = {t["name"] for t in facts.get("traits", []) if t.get("name")}
     macro_defs_idx = _macro_defs_index(facts)
+    # 0.0.8 patch 8c: workspace_types is the set of struct / enum / union /
+    # type-alias names declared in the workspace; the outer of a type_usage
+    # pattern is workspace-defined when it appears here.
+    workspace_types = {t["name"] for t in facts.get("types", []) if t.get("name")}
+    # 0.0.8 patch 8c: external lynchpins are type_usage histogram entries
+    # whose combined name appears above _LYNCHPIN_USAGE_MIN (tokio's task::spawn
+    # + Poll::Ready when scanning an app using tokio; nothing for a standalone
+    # workspace whose internal type_usage frequencies are all workspace-
+    # defined). Generic outers (Default / Display / From / etc.) are excluded
+    # so the lynchpin set surfaces only architectural-shape patterns.
+    lynchpins = set()
+    for entry in histogram:
+        dom = entry.get("pattern", "")
+        if not dom.startswith("type_usage:"):
+            continue
+        name = dom.split(":", 1)[1]
+        if _is_generic_pattern("type_usage", name):
+            continue
+        outer = name.split("::", 1)[0]
+        if outer in workspace_types:
+            continue
+        if entry.get("count", 0) >= _LYNCHPIN_USAGE_MIN:
+            lynchpins.add(name)
     # 0.0.7 patch 7b: per-crate top-pattern aggregation runs FIRST. If it
     # surfaces any candidates (workspace has multiple crates each with a
     # workspace-defined non-generic pattern), return those as the plural
     # protagonist list. If empty (cosmic-epoch-style submodule aggregator
     # with no workspace-defined patterns at all), fall through to the
     # single-pick logic from 6a/6b below.
-    per_crate_counts = _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx)
+    per_crate_counts = _per_crate_top_patterns(
+        facts, workspace_traits, macro_defs_idx, workspace_types, lynchpins)
     plural_picks = _aggregate_per_crate_picks(per_crate_counts, facts, _PLURAL_N)
     if plural_picks:
         return plural_picks
@@ -537,7 +665,8 @@ def candidate_instances(fp: dict, facts: dict):
     leader_inst, leader_spans = _instance_for_kind(leader_kind, leader_name, facts)
     leader_is_generic = _is_generic_pattern(leader_kind, leader_name)
     leader_is_workspace = _is_workspace_defined(
-        leader_kind, leader_name, workspace_traits, macro_defs_idx)
+        leader_kind, leader_name, workspace_traits, macro_defs_idx,
+        workspace_types, lynchpins)
     # Direct return only when the leader is valid + non-generic + workspace-defined.
     # 0.0.6 patch 6b: non-workspace leaders (trait_impl:From, reg_macro:fl, etc.)
     # fall through to the walk so a workspace-defined alternative gets a chance.
@@ -549,11 +678,11 @@ def candidate_instances(fp: dict, facts: dict):
             "all_spans": leader_spans,
             "fallback_reason": None,
         }]
-    # Two-pass walk. Priority: trait_impl > derive > reg_macro. Pass 1 restricts
-    # to workspace-defined patterns; pass 2 (only runs if pass 1 finds nothing)
-    # falls back to non-workspace patterns. Generic patterns are skipped in both
-    # passes per Patch dd + 6a.
-    priority_order = ("trait_impl", "derive", "reg_macro")
+    # Two-pass walk. Priority: trait_impl > derive > type_usage > reg_macro.
+    # Pass 1 restricts to workspace-defined patterns; pass 2 (only runs if
+    # pass 1 finds nothing) falls back to non-workspace patterns. Generic
+    # patterns are skipped in both passes per Patch dd + 6a + 8c.
+    priority_order = ("trait_impl", "derive", "type_usage", "reg_macro")
 
     def _walk(prefer_workspace):
         first_by_priority = {k: None for k in priority_order}
@@ -565,7 +694,8 @@ def candidate_instances(fp: dict, facts: dict):
             if _is_generic_pattern(kind, name):
                 continue
             if prefer_workspace and not _is_workspace_defined(
-                    kind, name, workspace_traits, macro_defs_idx):
+                    kind, name, workspace_traits, macro_defs_idx,
+                    workspace_types, lynchpins):
                 continue
             inst, spans = _instance_for_kind(kind, name, facts)
             if inst is None:

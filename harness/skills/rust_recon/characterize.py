@@ -684,15 +684,25 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
         if inner:
             seen_patterns.add(("type_usage", inner, f"type_usage:{inner}"))
 
-    # 0.0.10 patch 10e: example_type_usages indexed by (file, name) so
-    # the per-pattern example_count can be computed without re-iterating
-    # the full list per pattern.
+    # 0.0.10 patch 10e + 0.0.11 patch 11e: example_type_usages indexed
+    # by (file, name). 11e applies the examples/-directory filter
+    # (matching 11a's per-crate counter inclusion logic) so tests/ and
+    # benches/ entries don't inflate the example_count metric. Tests
+    # ARE a developer signal (the_user 2026-06-03: 'developer thinks
+    # might break, problem path indicator') but they're not the
+    # curated public-API demonstration that examples/ carries. 0.0.12's
+    # score calibration may tinker with weighted contribution (Option
+    # B); for now the 11e filter aligns the metric with the per-crate
+    # counter so the score boost reflects ONLY curated demos.
     example_files_by_name = defaultdict(set)
     for tu in all_facts.get("example_type_usages", []):
         nm = tu.get("name")
-        f = tu.get("file")
-        if nm and f:
-            example_files_by_name[nm].add(f)
+        f = tu.get("file") or ""
+        if not (nm and f):
+            continue
+        if "/examples/" not in f and not f.startswith("examples/"):
+            continue
+        example_files_by_name[nm].add(f)
 
     def _example_count_for_type_usage(name):
         return len(example_files_by_name.get(name, set()))

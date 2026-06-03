@@ -347,6 +347,12 @@ def scan_crate(root: Path, crate_dir: str):
     """Scan all .rs under a crate dir; return aggregated facts + line count."""
     agg = {"impls": [], "traits": [], "types": [], "fns": [], "uses": [],
            "macros": [], "derives": [], "macro_defs": [], "type_usages": [],
+           "mods": [],
+           # 0.0.10 patch 10e: example_type_usages collects type_usages
+           # from tests/ + benches/ + examples/ files separately so they
+           # don't pollute the architectural histogram but ARE available
+           # as the example-presence signal for the picker's ranking.
+           "example_type_usages": [],
            "seams": Counter()}
     loc = 0
     base = root / crate_dir
@@ -383,14 +389,19 @@ def scan_crate(root: Path, crate_dir: str):
         agg["macros"] += f["macros"]
         agg["derives"] += f["derives"]
         agg["macro_defs"] += [dict(m, file=rel) for m in f["macro_defs"]]
+        agg["mods"] += [dict(m, file=rel) for m in f["mods"]]
         # 0.0.8 patch 8b: type_usages aggregate only from src/ files
         # so test/bench/example files (canonical demonstration sites)
         # are preserved for the 0.0.10 example-mining pass without
         # polluting the architectural histogram. Each entry gets the
         # rel path attached so emit.py can render usage sites as
         # `<file>:<line>`.
+        # 0.0.10 patch 10e: ALSO aggregate the non-src type_usages
+        # into example_type_usages for the example-presence signal.
         if _is_src_file(rel):
             agg["type_usages"] += [dict(tu, file=rel) for tu in f["type_usages"]]
+        else:
+            agg["example_type_usages"] += [dict(tu, file=rel) for tu in f["type_usages"]]
         for k, v in f["seams"].items():
             agg["seams"][k] += v
     agg["loc"] = loc
@@ -545,13 +556,30 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
                 "crate": crate,
                 "visibility": m.get("visibility", ""),
             }
+    # 0.0.10 patch 10e: mod_def_lookup for type_usage where the outer
+    # is a workspace MODULE rather than a type (tokio::sync's `mpsc` /
+    # `oneshot` / `broadcast` modules are the namespaces under which
+    # the channels public API lives; their factory calls are
+    # `mpsc::channel()` etc.). Without mod lookup, those entries would
+    # show defining_crate=None even though tokio defines those modules.
+    mod_def_lookup = {}
+    for m in all_facts.get("mods", []):
+        name = m.get("name")
+        crate = m.get("crate")
+        if name and crate and name not in mod_def_lookup:
+            mod_def_lookup[name] = {
+                "crate": crate,
+                "visibility": m.get("visibility", ""),
+            }
 
     def _pattern_def(kind, pattern_inner):
         if kind in ("trait_impl", "derive"):
             return trait_def_lookup.get(pattern_inner)
         if kind == "type_usage":
             outer = pattern_inner.split("::", 1)[0]
-            return type_def_lookup.get(outer)
+            # Prefer type lookup; fall back to module lookup for
+            # tokio-style `mod mpsc { pub fn channel() ... }` shape.
+            return type_def_lookup.get(outer) or mod_def_lookup.get(outer)
         if kind in ("reg_macro", "attr_macro"):
             return macro_def_lookup.get(pattern_inner)
         return None
@@ -608,6 +636,28 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
                 continue
             pattern = f"{kind}:{inner}"
             seen_patterns.add((kind, inner, pattern))
+    # 0.0.10 patch 10e: ALSO surface patterns that exist only in
+    # example_type_usages (mpsc::channel + broadcast::channel + ...).
+    # These appear nowhere in src but heavily in tests/examples; the
+    # picker should rank them as architectural via the example_count
+    # signal even though their src usage is zero.
+    for tu in all_facts.get("example_type_usages", []):
+        inner = tu.get("name")
+        if inner:
+            seen_patterns.add(("type_usage", inner, f"type_usage:{inner}"))
+
+    # 0.0.10 patch 10e: example_type_usages indexed by (file, name) so
+    # the per-pattern example_count can be computed without re-iterating
+    # the full list per pattern.
+    example_files_by_name = defaultdict(set)
+    for tu in all_facts.get("example_type_usages", []):
+        nm = tu.get("name")
+        f = tu.get("file")
+        if nm and f:
+            example_files_by_name[nm].add(f)
+
+    def _example_count_for_type_usage(name):
+        return len(example_files_by_name.get(name, set()))
 
     for kind, inner, pattern in seen_patterns:
         defn = _pattern_def(kind, inner)
@@ -618,6 +668,8 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
                 "inter_count": 0,
                 "inter_ratio": 0.0,
                 "is_pub": False,
+                "example_count": (_example_count_for_type_usage(inner)
+                                  if kind == "type_usage" else 0),
             }
             continue
         defining_crate = defn["crate"]
@@ -642,6 +694,8 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
             "inter_count": inter,
             "inter_ratio": round(ratio, 3),
             "is_pub": is_pub,
+            "example_count": (_example_count_for_type_usage(inner)
+                              if kind == "type_usage" else 0),
         }
     return metrics
 
@@ -665,6 +719,7 @@ def main():
 
     all_facts = {"impls": [], "traits": [], "types": [], "fns": [], "uses": [],
                  "macros": [], "derives": [], "macro_defs": [], "type_usages": [],
+                 "mods": [], "example_type_usages": [],
                  "seams": Counter()}
     per_crate = {}
     free_fns_by_crate = {}
@@ -678,7 +733,7 @@ def main():
         }
         free_fns_by_crate[name] = sum(1 for f in cf["fns"] if f.get("brace_depth") == 0)
         for key in ("impls", "traits", "types", "fns", "uses", "macros", "derives",
-                    "macro_defs", "type_usages"):
+                    "macro_defs", "type_usages", "mods", "example_type_usages"):
             for rec in cf[key]:
                 rec["crate"] = name
             all_facts[key] += cf[key]

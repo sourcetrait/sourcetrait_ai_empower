@@ -1734,14 +1734,29 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                      f"seed {sp(e['instance'])}")
             cands_compat.append(e)
         L.append("")
-        L.append("**[AGENT]** The three sets above are distinct axes "
-                 "of architectural significance. A pattern qualifying "
-                 "in multiple sets is strongly architecturally central; "
-                 "single-set qualification is meaningful within that "
-                 "axis. Trace patterns by category - intra patterns "
-                 "are internal to their crate; inter patterns flow "
-                 "across crates; public patterns surface as the "
-                 "workspace's external API.")
+        L.append("**[AGENT]** Coverage tiering per the_user "
+                 "2026-06-03 directive:")
+        L.append("")
+        L.append("- **Tier 1 (heaviest coverage)**: patterns in the "
+                 "PUBLIC set OR the INTER-CRATE set. These are "
+                 "architecturally central - either public-API surface "
+                 "(5.3) or cross-crate flow (5.2). Allocate deep "
+                 "worked-slice attention to each.")
+        L.append("- **Tier 2 (secondary coverage)**: patterns in "
+                 "INTRA-CRATE sets only (5.1) without inter/public "
+                 "qualification. Internal to their defining crate; "
+                 "mention briefly with context for the crate's "
+                 "architecture.")
+        L.append("- **Tier 3 (baseline coverage)**: patterns NOT "
+                 "in any significance set above the 13% cutoff. The "
+                 "reference index (`reference.md`) is the inventory; "
+                 "no per-pattern attention beyond the listing.")
+        L.append("")
+        L.append("A pattern qualifying in multiple Tier 1 sets "
+                 "(public AND inter) is the strongest signal - the "
+                 "pattern flows across the workspace AND is part of "
+                 "its external API surface. Single-set Tier 1 is "
+                 "still load-bearing.")
         L.append("")
     # 0.0.13 patch 13i: the three-set sections above ARE the picker
     # output; drop the legacy per-pick worked-slice loop. The agent

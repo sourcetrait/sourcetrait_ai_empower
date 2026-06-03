@@ -123,6 +123,14 @@ def find_crates(root: Path):
 # other workspace crates depend on the lib) from 'the bin is the
 # deliverable and the lib is auxiliary' (nushell `nu_plugin_*`,
 # helix-term pattern). Env-tunable.
+#
+# Tech-debt the_user 2026-06-03: this is a fixed absolute count
+# rather than a ratio. Doesn't scale with workspace size - a small
+# workspace's 'significant cross-crate usage' might be 5; a huge
+# workspace's might be 500. Long-term we want a ratio (e.g.
+# pub_inter_count / max_pub_inter_count_in_workspace, or
+# pub_inter_count / pub_count). Tracked in
+# notes/rust_recon/followups.md.
 _DEV_WITH_END_THRESHOLD = int(
     os.environ.get("ORIENT_DEV_WITH_END_USE_THRESHOLD", "30"))
 

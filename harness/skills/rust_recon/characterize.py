@@ -53,7 +53,14 @@ def _is_src_file(rel: str) -> bool:
 
 
 def find_crates(root: Path):
-    """Return (crates, workspace_roots). crates: name -> {dir, deps, is_workspace_member}."""
+    """Return (crates, workspace_roots). crates: name -> {dir, deps,
+    app_status, keywords, categories, description}.
+
+    0.0.13 patch 13d + 13e + 13f: each crate's record gains
+    app_status ('library' | 'app' | 'hybrid') derived from Cargo.toml's
+    [[bin]] entries + presence of src/main.rs / src/bin/ + presence
+    of src/lib.rs. Package metadata (keywords, categories,
+    description) is captured for downstream consumption."""
     crates = {}
     workspace_roots = []
     for cargo in root.rglob("Cargo.toml"):
@@ -73,11 +80,108 @@ def find_crates(root: Path):
                 d = data.get(sect, {})
                 if isinstance(d, dict):
                     deps.update(d.keys())
+            crate_dir = cargo.parent
+            # 13d: detect bin presence from [[bin]] OR src/main.rs OR
+            # src/bin/ directory existence.
+            has_bin_entry = bool(data.get("bin"))
+            has_main_rs = (crate_dir / "src" / "main.rs").exists()
+            has_bin_dir = (crate_dir / "src" / "bin").is_dir()
+            has_bin = has_bin_entry or has_main_rs or has_bin_dir
+            # Lib presence: explicit [lib] table OR src/lib.rs file.
+            # Cargo defaults to a lib if src/lib.rs exists and no
+            # explicit lib config disables it.
+            has_lib_entry = bool(data.get("lib"))
+            has_lib_rs = (crate_dir / "src" / "lib.rs").exists()
+            has_lib = has_lib_entry or has_lib_rs
+            if has_bin and has_lib:
+                app_status = "hybrid"
+            elif has_bin:
+                app_status = "app"
+            elif has_lib:
+                app_status = "library"
+            else:
+                # Unusual; default to library.
+                app_status = "library"
             crates[name] = {
                 "dir": str(cargo.parent.relative_to(root)) or ".",
                 "deps": sorted(deps),
+                "app_status": app_status,
+                # 13f: package metadata for downstream consumption.
+                "keywords": pkg.get("keywords", []) or [],
+                "categories": pkg.get("categories", []) or [],
+                "description": (pkg.get("description") or "").strip(),
             }
     return crates, sorted(set(workspace_roots))
+
+
+def _classify_workspace_app_status(crates: dict) -> dict:
+    """0.0.13 patch 13e: aggregate per-crate app_status into a workspace-
+    level classification + per-crate breakdown.
+
+    Excludes example / bench / fuzz crates from the workspace
+    classification - they're scaffolding, not the workspace's primary
+    purpose. A workspace with many demo example crates is still a
+    library workspace if its non-example crates are all libraries.
+
+    Returns {workspace: 'library' | 'app' | 'hybrid', breakdown: {...},
+    reasoning: str}."""
+    def _is_scaffolding(name: str, info: dict) -> bool:
+        # Check the crate's directory path - example/bench/fuzz dirs
+        # are scaffolding by convention. Also check name patterns.
+        d = (info.get("dir") or "").lower()
+        if any(seg in d for seg in (
+                "/examples/", "examples/", "/benches/", "benches/",
+                "/fuzz/", "fuzz/", "/tests/", "tests/", "/xtask/",
+                "xtask/")):
+            return True
+        nm = name.lower()
+        if any(suf in nm for suf in (
+                "_example", "_demo", "_fuzz", "-fuzz", "-example",
+                "-demo", "-test", "_test", "-tests", "_tests")):
+            return True
+        if any(nm.startswith(p) for p in ("example_", "demo_")):
+            return True
+        return False
+
+    per_status = {"library": [], "app": [], "hybrid": []}
+    scaffolding_crates = []
+    for name, info in crates.items():
+        if _is_scaffolding(name, info):
+            scaffolding_crates.append(name)
+            continue
+        status = info.get("app_status", "library")
+        per_status.setdefault(status, []).append(name)
+    n_lib = len(per_status["library"])
+    n_app = len(per_status["app"])
+    n_hyb = len(per_status["hybrid"])
+    n_scaf = len(scaffolding_crates)
+    if n_app == 0 and n_hyb == 0:
+        workspace_status = "library"
+        reasoning = (
+            f"all {n_lib} primary crates are pure libraries"
+            + (f" ({n_scaf} scaffolding crates excluded)" if n_scaf else "")
+        )
+    elif n_lib == 0 and n_hyb == 0:
+        workspace_status = "app"
+        reasoning = (
+            f"all {n_app} primary crates are pure apps"
+            + (f" ({n_scaf} scaffolding crates excluded)" if n_scaf else "")
+        )
+    else:
+        workspace_status = "hybrid"
+        reasoning = (
+            f"primary crates: {n_lib} library + {n_app} app + "
+            f"{n_hyb} hybrid"
+            + (f" ({n_scaf} scaffolding excluded)" if n_scaf else "")
+        )
+    return {
+        "workspace": workspace_status,
+        "library_crates": sorted(per_status["library"]),
+        "app_crates": sorted(per_status["app"]),
+        "hybrid_crates": sorted(per_status["hybrid"]),
+        "scaffolding_crates": sorted(scaffolding_crates),
+        "reasoning": reasoning,
+    }
 
 
 def classify_workspace_shape(fp_partial: dict, all_facts: dict) -> dict:
@@ -837,6 +941,9 @@ def main():
     seam_total = sum(all_facts["seams"].values())
     seam_density = seam_total / (total_loc / 1000.0)
 
+    # 0.0.13 patches 13d + 13e: library-vs-app axis at workspace level.
+    workspace_app_status = _classify_workspace_app_status(crates)
+
     # 0.0.10 patches 10b + 10c + 10d: per-pattern metrics. For each
     # pattern in pattern_histogram + per-crate aggregation, compute:
     # - defining_crate: where the type / trait / macro was declared.
@@ -868,6 +975,7 @@ def main():
         "seam_density_per_kloc": round(seam_density, 2),
         "selection": sel,
         "pattern_metrics": pattern_metrics,
+        "workspace_app_status": workspace_app_status,
         "thresholds": {
             "DOMINANCE_SHARE": DOMINANCE_SHARE, "COEQUAL_TOPK": COEQUAL_TOPK,
             "COEQUAL_SHARE": COEQUAL_SHARE, "AMBIGUOUS_BAND": AMBIGUOUS_BAND,

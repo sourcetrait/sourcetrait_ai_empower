@@ -54,13 +54,17 @@ def _is_src_file(rel: str) -> bool:
 
 def find_crates(root: Path):
     """Return (crates, workspace_roots). crates: name -> {dir, deps,
-    app_status, keywords, categories, description}.
+    has_bin, has_lib, keywords, categories, description}.
 
-    0.0.13 patch 13d + 13e + 13f: each crate's record gains
-    app_status ('library' | 'app' | 'hybrid') derived from Cargo.toml's
-    [[bin]] entries + presence of src/main.rs / src/bin/ + presence
-    of src/lib.rs. Package metadata (keywords, categories,
-    description) is captured for downstream consumption."""
+    0.0.13 patch 13d + 13e + 13f + 0.0.15 patch 15a: each crate's
+    record carries the raw bin / lib presence signals. The 4-bucket
+    use-classification (end_use / dev_use / end_with_dev_use /
+    dev_with_end_use) is computed downstream in main() after
+    pattern_metrics is built - the cross-crate is_pub usage signal
+    is load-bearing per the_user 2026-06-03 ('lib.rs / [lib] with
+    significant is_pub may suggest dev_use or dev_with_end_use').
+    Package metadata (keywords, categories, description) is
+    captured for downstream consumption."""
     crates = {}
     workspace_roots = []
     for cargo in root.rglob("Cargo.toml"):
@@ -93,19 +97,11 @@ def find_crates(root: Path):
             has_lib_entry = bool(data.get("lib"))
             has_lib_rs = (crate_dir / "src" / "lib.rs").exists()
             has_lib = has_lib_entry or has_lib_rs
-            if has_bin and has_lib:
-                app_status = "hybrid"
-            elif has_bin:
-                app_status = "app"
-            elif has_lib:
-                app_status = "library"
-            else:
-                # Unusual; default to library.
-                app_status = "library"
             crates[name] = {
                 "dir": str(cargo.parent.relative_to(root)) or ".",
                 "deps": sorted(deps),
-                "app_status": app_status,
+                "has_bin": has_bin,
+                "has_lib": has_lib,
                 # 13f: package metadata for downstream consumption.
                 "keywords": pkg.get("keywords", []) or [],
                 "categories": pkg.get("categories", []) or [],
@@ -114,17 +110,79 @@ def find_crates(root: Path):
     return crates, sorted(set(workspace_roots))
 
 
-def _classify_workspace_app_status(crates: dict) -> dict:
-    """0.0.13 patch 13e: aggregate per-crate app_status into a workspace-
-    level classification + per-crate breakdown.
+# 0.0.15 patch 15a: minimum cross-crate is_pub usage to flip a crate
+# with BOTH bin and lib from end_with_dev_use to dev_with_end_use.
+# Default 30 was chosen empirically against the 10-target probe:
+# helix-term (16) and helix-loader (12) have small lib pub-cross-crate
+# usage because their libs are internal organization rather than a
+# real public library API; helix-core (401) and helix-view (430) are
+# genuine library crates - but they're has_lib-only so the threshold
+# doesn't apply. The threshold's only effect is on has-both-bin-and-
+# lib crates, where it distinguishes 'the lib is the deliverable'
+# (gitoxide pattern; pub_inter_count would be in the hundreds because
+# other workspace crates depend on the lib) from 'the bin is the
+# deliverable and the lib is auxiliary' (nushell `nu_plugin_*`,
+# helix-term pattern). Env-tunable.
+_DEV_WITH_END_THRESHOLD = int(
+    os.environ.get("ORIENT_DEV_WITH_END_USE_THRESHOLD", "30"))
 
-    Excludes example / bench / fuzz crates from the workspace
-    classification - they're scaffolding, not the workspace's primary
-    purpose. A workspace with many demo example crates is still a
-    library workspace if its non-example crates are all libraries.
 
-    Returns {workspace: 'library' | 'app' | 'hybrid', breakdown: {...},
-    reasoning: str}."""
+def _classify_crate_use(name: str, info: dict,
+                        pattern_metrics: dict) -> str:
+    """0.0.15 patch 15a: per-crate 4-bucket use-classification.
+
+    Returns one of: 'end_use', 'dev_use', 'end_with_dev_use',
+    'dev_with_end_use'.
+
+    Rubric (the_user 2026-06-03):
+    - has_lib and not has_bin -> dev_use.
+    - has_bin and not has_lib -> end_use.
+    - has_bin and has_lib: weigh by cross-crate is_pub usage of
+      patterns defined in this crate. The_user 2026-06-03 framing:
+      '[bin] can be a signal that may be either end_use or
+      end_with_dev_use, or it could just be some demo (irrelevant).
+      lib.rs / [lib] with significant is_pub may suggest dev_use or
+      dev_with_end_use'. If the lib's pub items are used cross-crate
+      at or above _DEV_WITH_END_THRESHOLD, the lib is the primary
+      deliverable and the bin is auxiliary (dev_with_end_use, the
+      gitoxide pattern). Otherwise the bin is the primary deliverable
+      and the lib is internal organization (end_with_dev_use, the
+      nushell `nu` / helix `helix-term` pattern).
+    - neither -> dev_use (fallback, unusual)."""
+    has_bin = info.get("has_bin", False)
+    has_lib = info.get("has_lib", False)
+    if has_lib and not has_bin:
+        return "dev_use"
+    if has_bin and not has_lib:
+        return "end_use"
+    if not has_bin and not has_lib:
+        return "dev_use"
+    # has_bin and has_lib: multi-signal weighing.
+    pub_inter_count = sum(
+        (m.get("inter_count", 0) or 0)
+        for pattern, m in pattern_metrics.items()
+        if m.get("defining_crate") == name and m.get("is_pub")
+    )
+    if pub_inter_count >= _DEV_WITH_END_THRESHOLD:
+        return "dev_with_end_use"
+    return "end_with_dev_use"
+
+
+def _classify_workspace_use(crates: dict,
+                            pattern_metrics: dict) -> dict:
+    """0.0.13 patch 13e + 0.0.15 patch 15a: aggregate per-crate use-
+    classification into a workspace-level 4-bucket assignment +
+    per-crate breakdown.
+
+    Excludes example / bench / fuzz / xtask / tools / ci / build /
+    scripts crates from the workspace classification - they're
+    scaffolding, not the workspace's primary purpose. A workspace
+    with many demo example crates is still a dev_use workspace if
+    its non-example crates are all libraries.
+
+    Returns {workspace: 'end_use' | 'dev_use' | 'end_with_dev_use'
+    | 'dev_with_end_use', per_crate: {...}, buckets: {...},
+    scaffolding_crates: [...], reasoning: str}."""
     def _is_scaffolding(name: str, info: dict) -> bool:
         # Check the crate's directory path - example/bench/fuzz/tests/
         # tools/ci dirs are scaffolding by convention. Also check name
@@ -178,42 +236,59 @@ def _classify_workspace_app_status(crates: dict) -> dict:
             return True
         return False
 
-    per_status = {"library": [], "app": [], "hybrid": []}
+    per_crate_class = {}
     scaffolding_crates = []
     for name, info in crates.items():
         if _is_scaffolding(name, info):
             scaffolding_crates.append(name)
             continue
-        status = info.get("app_status", "library")
-        per_status.setdefault(status, []).append(name)
-    n_lib = len(per_status["library"])
-    n_app = len(per_status["app"])
-    n_hyb = len(per_status["hybrid"])
+        per_crate_class[name] = _classify_crate_use(
+            name, info, pattern_metrics)
+    buckets = {
+        "end_use": 0, "dev_use": 0,
+        "end_with_dev_use": 0, "dev_with_end_use": 0,
+    }
+    for cls in per_crate_class.values():
+        if cls in buckets:
+            buckets[cls] += 1
+    n_total = sum(buckets.values())
     n_scaf = len(scaffolding_crates)
-    if n_app == 0 and n_hyb == 0:
-        workspace_status = "library"
+    # 0.0.15 patch 15a workspace aggregation rules.
+    if n_total == 0:
+        workspace = "dev_use"
+        reasoning = "no primary crates after scaffolding exclusion"
+    elif buckets["dev_use"] == n_total:
+        workspace = "dev_use"
+        reasoning = f"all {n_total} primary crates are pure dev_use libraries"
+    elif buckets["end_use"] == n_total:
+        workspace = "end_use"
+        reasoning = f"all {n_total} primary crates are pure end_use binaries"
+    elif buckets["end_with_dev_use"] > 0 or buckets["end_use"] > 0:
+        workspace = "end_with_dev_use"
         reasoning = (
-            f"all {n_lib} primary crates are pure libraries"
-            + (f" ({n_scaf} scaffolding crates excluded)" if n_scaf else "")
+            f"primary crates: end_use={buckets['end_use']} "
+            f"end_with_dev_use={buckets['end_with_dev_use']} "
+            f"dev_with_end_use={buckets['dev_with_end_use']} "
+            f"dev_use={buckets['dev_use']}; the workspace ships an "
+            f"end-user product with the libraries composing it"
         )
-    elif n_lib == 0 and n_hyb == 0:
-        workspace_status = "app"
+    elif buckets["dev_with_end_use"] > 0:
+        workspace = "dev_with_end_use"
         reasoning = (
-            f"all {n_app} primary crates are pure apps"
-            + (f" ({n_scaf} scaffolding crates excluded)" if n_scaf else "")
+            f"primary crates: dev_use={buckets['dev_use']} "
+            f"dev_with_end_use={buckets['dev_with_end_use']}; the "
+            f"workspace's primary deliverable is a library with a "
+            f"CLI auxiliary (gitoxide pattern)"
         )
     else:
-        workspace_status = "hybrid"
-        reasoning = (
-            f"primary crates: {n_lib} library + {n_app} app + "
-            f"{n_hyb} hybrid"
-            + (f" ({n_scaf} scaffolding excluded)" if n_scaf else "")
-        )
+        workspace = "dev_use"
+        reasoning = "fallback default"
+    if n_scaf:
+        reasoning += f" ({n_scaf} scaffolding crates excluded)"
     return {
-        "workspace": workspace_status,
-        "library_crates": sorted(per_status["library"]),
-        "app_crates": sorted(per_status["app"]),
-        "hybrid_crates": sorted(per_status["hybrid"]),
+        "workspace": workspace,
+        "per_crate": per_crate_class,
+        "buckets": buckets,
         "scaffolding_crates": sorted(scaffolding_crates),
         "reasoning": reasoning,
     }
@@ -976,9 +1051,6 @@ def main():
     seam_total = sum(all_facts["seams"].values())
     seam_density = seam_total / (total_loc / 1000.0)
 
-    # 0.0.13 patches 13d + 13e: library-vs-app axis at workspace level.
-    workspace_app_status = _classify_workspace_app_status(crates)
-
     # 0.0.10 patches 10b + 10c + 10d: per-pattern metrics. For each
     # pattern in pattern_histogram + per-crate aggregation, compute:
     # - defining_crate: where the type / trait / macro was declared.
@@ -991,6 +1063,14 @@ def main():
     #   For reg_macro patterns, looks up the macro_def's visibility +
     #   detects #[macro_export] attribute on it.
     pattern_metrics = _compute_pattern_metrics(all_facts)
+
+    # 0.0.13 patches 13d + 13e + 0.0.15 patch 15a: 4-bucket
+    # use-classification at workspace level. Runs AFTER pattern_metrics
+    # because the per-crate classifier weighs cross-crate is_pub usage
+    # of items declared in each crate to distinguish end_with_dev_use
+    # from dev_with_end_use in has-both-bin-and-lib crates.
+    workspace_use_classification = _classify_workspace_use(
+        crates, pattern_metrics)
 
     fingerprint = {
         "tool_version": "0.1.0",
@@ -1010,7 +1090,7 @@ def main():
         "seam_density_per_kloc": round(seam_density, 2),
         "selection": sel,
         "pattern_metrics": pattern_metrics,
-        "workspace_app_status": workspace_app_status,
+        "workspace_use_classification": workspace_use_classification,
         "thresholds": {
             "DOMINANCE_SHARE": DOMINANCE_SHARE, "COEQUAL_TOPK": COEQUAL_TOPK,
             "COEQUAL_SHARE": COEQUAL_SHARE, "AMBIGUOUS_BAND": AMBIGUOUS_BAND,

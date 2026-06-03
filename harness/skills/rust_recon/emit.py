@@ -1011,18 +1011,25 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             elif kind == "attr_macro":
                 per_crate_counts[c][f"attr_macro:{nm}"] += 1
 
-    # 1. Per-crate intra significance.
+    # 1. Per-crate intra significance. the_user 2026-06-03 'no top':
+    # cutoff = 13% of SUM of all pattern counts in the crate. A
+    # pattern is significant if it represents >= 13% of the crate's
+    # total volume. Statistical-significance anchor, not relative to
+    # any single pattern.
     significant_intra_per_crate = {}
     for crate, counts in per_crate_counts.items():
         if not counts:
             continue
-        top = max(counts.values())
-        thresh = top * cutoff
+        total = sum(counts.values())
+        if total <= 0:
+            continue
+        thresh = total * cutoff
         sig = {p: c for p, c in counts.items() if c >= thresh}
         if sig:
             significant_intra_per_crate[crate] = sig
 
-    # 2. Workspace-wide inter significance.
+    # 2. Workspace-wide inter significance. cutoff = 13% of SUM of
+    # all inter_counts.
     inter_counts = {}
     for pattern, m in pattern_metrics.items():
         if m.get("defining_crate") is None:
@@ -1032,11 +1039,13 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             inter_counts[pattern] = ic
     significant_inter = {}
     if inter_counts:
-        top = max(inter_counts.values())
-        thresh = top * cutoff
-        significant_inter = {p: c for p, c in inter_counts.items() if c >= thresh}
+        total = sum(inter_counts.values())
+        if total > 0:
+            thresh = total * cutoff
+            significant_inter = {p: c for p, c in inter_counts.items() if c >= thresh}
 
-    # 3. Workspace-wide public significance (is_pub patterns by inter_count).
+    # 3. Workspace-wide public significance (is_pub patterns by
+    # inter_count). cutoff = 13% of SUM of public-eligible inter_counts.
     public_counts = {}
     for pattern, m in pattern_metrics.items():
         if not m.get("is_pub"):
@@ -1048,9 +1057,10 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             public_counts[pattern] = ic
     significant_public = {}
     if public_counts:
-        top = max(public_counts.values())
-        thresh = top * cutoff
-        significant_public = {p: c for p, c in public_counts.items() if c >= thresh}
+        total = sum(public_counts.values())
+        if total > 0:
+            thresh = total * cutoff
+            significant_public = {p: c for p, c in public_counts.items() if c >= thresh}
 
     # UNION with category tags.
     all_patterns = set()

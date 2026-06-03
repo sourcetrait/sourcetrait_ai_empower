@@ -314,7 +314,12 @@ def scan_file(relpath, src):
                 inner_start = toks[br][1] + 1
                 inner_end = toks[close][1]
                 inner_txt = masked[inner_start:inner_end].strip()
-                path = inner_txt.split("(", 1)[0].strip()
+                # Strip args (after `(`) then value (after `=`) so attribute path
+                # extraction handles both `#[foo(args)]` and value-style
+                # `#[foo = "value"]` (must_use, doc, ...). The value-style branch
+                # previously captured `foo = "..."` whole as the path string,
+                # producing fake histogram entries like `must_use = "  ..."`.
+                path = inner_txt.split("(", 1)[0].split("=", 1)[0].strip()
                 args = ""
                 if "(" in inner_txt:
                     args = inner_txt[inner_txt.index("(") + 1:].rstrip()

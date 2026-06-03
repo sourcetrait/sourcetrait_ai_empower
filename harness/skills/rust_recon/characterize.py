@@ -498,6 +498,154 @@ def select_mode(ranked, by_kind, workspace_roots, n_components):
     }
 
 
+def _compute_pattern_metrics(all_facts: dict) -> dict:
+    """0.0.10 patches 10b + 10c + 10d: per-pattern metrics dictionary.
+    Key is the pattern name as it appears in pattern_histogram (e.g.
+    `trait_impl:Plugin`, `type_usage:Selection::new`, `derive:Component`).
+    Value is {defining_crate, intra_count, inter_count, inter_ratio,
+    is_pub}.
+
+    Resolves the defining crate by name lookup against the relevant facts
+    list: trait_impl + derive resolve to facts['traits']; type_usage
+    resolves outer-name to facts['types']; reg_macro + attr_macro resolve
+    to facts['macro_defs']. Patterns whose underlying type / trait /
+    macro is NOT workspace-declared (external) get defining_crate=None
+    and intra/inter counts are skipped (the inter/intra distinction is
+    workspace-internal).
+
+    is_pub captures the definition site's visibility from 10a's
+    rustscan output. For #[macro_export] detection: the rustscan attrs
+    list carries macro_export entries; a macro_def with a co-located
+    macro_export attr in the same file is treated as pub regardless of
+    syntactic visibility (macro_rules doesn't take `pub` directly)."""
+    type_def_lookup = {}
+    for t in all_facts.get("types", []):
+        name = t.get("name")
+        crate = t.get("crate")
+        if name and crate and name not in type_def_lookup:
+            type_def_lookup[name] = {
+                "crate": crate,
+                "visibility": t.get("visibility", ""),
+            }
+    trait_def_lookup = {}
+    for t in all_facts.get("traits", []):
+        name = t.get("name")
+        crate = t.get("crate")
+        if name and crate and name not in trait_def_lookup:
+            trait_def_lookup[name] = {
+                "crate": crate,
+                "visibility": t.get("visibility", ""),
+            }
+    macro_def_lookup = {}
+    for m in all_facts.get("macro_defs", []):
+        name = m.get("name")
+        crate = m.get("crate")
+        if name and crate and name not in macro_def_lookup:
+            macro_def_lookup[name] = {
+                "crate": crate,
+                "visibility": m.get("visibility", ""),
+            }
+
+    def _pattern_def(kind, pattern_inner):
+        if kind in ("trait_impl", "derive"):
+            return trait_def_lookup.get(pattern_inner)
+        if kind == "type_usage":
+            outer = pattern_inner.split("::", 1)[0]
+            return type_def_lookup.get(outer)
+        if kind in ("reg_macro", "attr_macro"):
+            return macro_def_lookup.get(pattern_inner)
+        return None
+
+    def _pattern_match(kind, pattern_inner, fact):
+        if kind == "trait_impl":
+            return fact.get("trait") == pattern_inner and not fact.get("cfg_gated")
+        if kind == "derive":
+            return fact.get("trait") == pattern_inner
+        if kind == "type_usage":
+            return fact.get("name") == pattern_inner
+        if kind == "reg_macro":
+            return (fact.get("kind") == "macro_invocation"
+                    and fact.get("name") == pattern_inner)
+        if kind == "attr_macro":
+            return (fact.get("kind") == "attr_macro"
+                    and fact.get("name") == pattern_inner)
+        return False
+
+    metrics = {}
+    sources_by_kind = {
+        "trait_impl": all_facts.get("impls", []),
+        "derive": all_facts.get("derives", []),
+        "type_usage": all_facts.get("type_usages", []),
+        "reg_macro": all_facts.get("macros", []),
+        "attr_macro": all_facts.get("macros", []),
+    }
+
+    seen_patterns = set()
+    for kind, source in sources_by_kind.items():
+        for fact in source:
+            if kind == "trait_impl":
+                inner = fact.get("trait")
+                if not inner or fact.get("cfg_gated"):
+                    continue
+            elif kind == "derive":
+                inner = fact.get("trait")
+                if not inner:
+                    continue
+            elif kind == "type_usage":
+                inner = fact.get("name")
+                if not inner:
+                    continue
+            elif kind in ("reg_macro", "attr_macro"):
+                fk = fact.get("kind")
+                wanted = ("macro_invocation" if kind == "reg_macro"
+                          else "attr_macro")
+                if fk != wanted:
+                    continue
+                inner = fact.get("name")
+                if not inner:
+                    continue
+            else:
+                continue
+            pattern = f"{kind}:{inner}"
+            seen_patterns.add((kind, inner, pattern))
+
+    for kind, inner, pattern in seen_patterns:
+        defn = _pattern_def(kind, inner)
+        if defn is None:
+            metrics[pattern] = {
+                "defining_crate": None,
+                "intra_count": 0,
+                "inter_count": 0,
+                "inter_ratio": 0.0,
+                "is_pub": False,
+            }
+            continue
+        defining_crate = defn["crate"]
+        is_pub = bool(defn["visibility"]) and defn["visibility"].startswith("pub")
+        intra = 0
+        inter = 0
+        for fact in sources_by_kind[kind]:
+            if not _pattern_match(kind, inner, fact):
+                continue
+            using = fact.get("crate")
+            if not using:
+                continue
+            if using == defining_crate:
+                intra += 1
+            else:
+                inter += 1
+        total = intra + inter
+        ratio = (inter / total) if total > 0 else 0.0
+        metrics[pattern] = {
+            "defining_crate": defining_crate,
+            "intra_count": intra,
+            "inter_count": inter,
+            "inter_ratio": round(ratio, 3),
+            "is_pub": is_pub,
+        }
+    return metrics
+
+
 def main():
     if tomllib is None:
         print("ERROR: tomllib unavailable (need Python 3.11+).", file=sys.stderr)
@@ -546,6 +694,19 @@ def main():
     seam_total = sum(all_facts["seams"].values())
     seam_density = seam_total / (total_loc / 1000.0)
 
+    # 0.0.10 patches 10b + 10c + 10d: per-pattern metrics. For each
+    # pattern in pattern_histogram + per-crate aggregation, compute:
+    # - defining_crate: where the type / trait / macro was declared.
+    # - intra_count: usages within the defining crate.
+    # - inter_count: usages in other workspace crates.
+    # - inter_ratio: inter_count / (intra + inter).
+    # - is_pub: definition site's visibility is `pub` (10d). For
+    #   trait_impl / derive patterns, looks up the trait's visibility.
+    #   For type_usage patterns, looks up the outer type's visibility.
+    #   For reg_macro patterns, looks up the macro_def's visibility +
+    #   detects #[macro_export] attribute on it.
+    pattern_metrics = _compute_pattern_metrics(all_facts)
+
     fingerprint = {
         "tool_version": "0.1.0",
         "repo_root": str(root),
@@ -563,6 +724,7 @@ def main():
         "seam_inventory": dict(all_facts["seams"]),
         "seam_density_per_kloc": round(seam_density, 2),
         "selection": sel,
+        "pattern_metrics": pattern_metrics,
         "thresholds": {
             "DOMINANCE_SHARE": DOMINANCE_SHARE, "COEQUAL_TOPK": COEQUAL_TOPK,
             "COEQUAL_SHARE": COEQUAL_SHARE, "AMBIGUOUS_BAND": AMBIGUOUS_BAND,

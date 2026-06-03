@@ -293,6 +293,38 @@ def _is_generic_pattern(kind, name):
     return name in _GENERIC_AUTO_DERIVES and kind in ("derive", "trait_impl")
 
 
+def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx):
+    """True when the pattern is anchored to a workspace-defined trait or macro.
+
+    0.0.6 patch 6b: trait_impl:<T> and derive:<T> are workspace-defined when T
+    appears in facts['traits'] (built into workspace_traits as a name set);
+    reg_macro:<N> is workspace-defined when N appears in facts['macro_defs'] as
+    an inline macro_rules! definition (Patch 3's tracking). The picker prefers
+    workspace-defined patterns over imported ones; the reasoning is that the
+    workspace's architectural pattern lives in traits and macros the workspace
+    DEFINES, not in trait_impls of std::convert::From or external macros like
+    fluent-localization's fl!.
+
+    Helix's 0.0.5 baseline picked trait_impl:From (std-library) at rank 12 even
+    though trait_impl:Request (helix-lsp-types::Request) at rank 16 is more
+    architecturally specific; bevy's 0.0.5 baseline picked trait_impl:From over
+    its many workspace-defined trait_impls (Plugin, Bundle, etc.) and derives
+    (Component, Resource, etc.). This helper drives the two-pass walk that
+    catches both cases.
+
+    Detection caveat: name-based (no path resolution). False positives possible
+    when a workspace defines a trait with the same name as a commonly-impl'd
+    imported trait (e.g. `Request` in helix-lsp-types AND `tower::Request`).
+    For 0.0.6 v1, name check is the simple defensible signal; refine with
+    rustdoc-overlay path resolution in a later iteration if false positives
+    surface."""
+    if kind in ("trait_impl", "derive"):
+        return name in workspace_traits
+    if kind == "reg_macro":
+        return name in macro_defs_idx
+    return False
+
+
 def candidate_instance(fp: dict, facts: dict):
     """Pick one instance of the dominant pattern as the worked-slice seed.
 
@@ -311,16 +343,30 @@ def candidate_instance(fp: dict, facts: dict):
     surfaced this; both should now pick non-generic alternatives. The fallback walk
     also skips generic-auto-derive entries entirely.
 
+    0.0.6 patch 6b: workspace-defined-trait preference. The walk now runs in two
+    passes - first preferring patterns where the trait or macro is workspace-defined
+    (the workspace's architectural pattern lives there), then falling back to
+    non-workspace patterns if no workspace-defined alternative exists. The leader
+    is also held to the workspace check: if it's workspace-defined + non-generic +
+    has an instance, it's returned directly; otherwise the walk takes over.
+
     The returned dict's `fallback_reason` field explains why the alternative was
     chosen so emit_orientation can render the rationale alongside the pattern."""
     if not fp["pattern_histogram"]:
         return None
     histogram = fp["pattern_histogram"]
+    workspace_traits = {t["name"] for t in facts.get("traits", []) if t.get("name")}
+    macro_defs_idx = _macro_defs_index(facts)
     leader_dom = histogram[0]["pattern"]
     leader_kind, _, leader_name = leader_dom.partition(":")
     leader_inst, leader_spans = _instance_for_kind(leader_kind, leader_name, facts)
     leader_is_generic = _is_generic_pattern(leader_kind, leader_name)
-    if leader_inst is not None and not leader_is_generic:
+    leader_is_workspace = _is_workspace_defined(
+        leader_kind, leader_name, workspace_traits, macro_defs_idx)
+    # Direct return only when the leader is valid + non-generic + workspace-defined.
+    # 0.0.6 patch 6b: non-workspace leaders (trait_impl:From, reg_macro:fl, etc.)
+    # fall through to the walk so a workspace-defined alternative gets a chance.
+    if leader_inst is not None and not leader_is_generic and leader_is_workspace:
         return {
             "kind": leader_kind,
             "pattern": leader_dom,
@@ -328,72 +374,97 @@ def candidate_instance(fp: dict, facts: dict):
             "all_spans": leader_spans,
             "fallback_reason": None,
         }
-    # Leader is kind-only (no instance, OR a generic auto-derive); walk down for the
-    # first viable non-generic structural kind. Priority: trait_impl > derive >
-    # reg_macro - trait_impl is the most architecturally load-bearing kind (an
-    # extension point), derive is behaviour-by-tag, reg_macro is the loosest signal
-    # (often test harnesses or DSLs). Walking the histogram in rank order WITHIN
-    # each priority tier finds the highest-rank trait_impl first; the
-    # generic-auto-derive skip ensures Debug / Clone / etc. don't take the derive
-    # slot away from a domain derive (bevy's Component / Resource / System /
-    # Event, etc.).
+    # Two-pass walk. Priority: trait_impl > derive > reg_macro. Pass 1 restricts
+    # to workspace-defined patterns; pass 2 (only runs if pass 1 finds nothing)
+    # falls back to non-workspace patterns. Generic patterns are skipped in both
+    # passes per Patch dd + 6a.
     priority_order = ("trait_impl", "derive", "reg_macro")
-    first_by_priority = {k: None for k in priority_order}
-    for entry in histogram[1:]:
-        dom = entry["pattern"]
-        kind, _, name = dom.partition(":")
-        if kind not in first_by_priority or first_by_priority[kind] is not None:
-            continue
-        if _is_generic_pattern(kind, name):
-            continue  # 0.0.5 patch dd + 0.0.6 patch 6a: generic patterns skipped.
-        inst, spans = _instance_for_kind(kind, name, facts)
-        if inst is None:
-            continue
-        first_by_priority[kind] = (entry, inst, spans)
-    for priority in priority_order:
-        if first_by_priority[priority] is None:
-            continue
-        entry, inst, spans = first_by_priority[priority]
-        dom = entry["pattern"]
-        kind = dom.partition(":")[0]
-        if leader_is_generic:
-            kind_descriptor = (
-                "generic auto-derive" if leader_kind == "derive"
-                else "manual impl of a generic data-shaping trait"
-            )
-            leader_reason = (
-                f"is a {kind_descriptor} ({leader_name} is universally derived or "
-                f"manually implemented across the standard data-shaping traits; "
-                f"not architecturally load-bearing)"
-            )
-        else:
-            leader_reason = (
-                f"is a kind-only signal that does not yield a structurally "
-                f"followable item to trace - it counts a category (free functions, "
-                f"an external attribute macro, etc.) rather than a single concrete "
-                f"pattern"
-            )
+
+    def _walk(prefer_workspace):
+        first_by_priority = {k: None for k in priority_order}
+        for entry in histogram:
+            dom = entry["pattern"]
+            kind, _, name = dom.partition(":")
+            if kind not in first_by_priority or first_by_priority[kind] is not None:
+                continue
+            if _is_generic_pattern(kind, name):
+                continue
+            if prefer_workspace and not _is_workspace_defined(
+                    kind, name, workspace_traits, macro_defs_idx):
+                continue
+            inst, spans = _instance_for_kind(kind, name, facts)
+            if inst is None:
+                continue
+            first_by_priority[kind] = (entry, inst, spans)
+        for priority in priority_order:
+            if first_by_priority[priority] is not None:
+                return first_by_priority[priority]
+        return None
+
+    pick = _walk(prefer_workspace=True)
+    pick_is_workspace = pick is not None
+    if pick is None:
+        pick = _walk(prefer_workspace=False)
+    if pick is None:
+        # No viable structural pattern at all; return leader with no instance.
         return {
-            "kind": kind,
-            "pattern": dom,
-            "instance": inst,
-            "all_spans": spans,
-            "fallback_reason": (
-                f"Histogram leader `{leader_dom}` ({histogram[0]['count']} instances) "
-                f"{leader_reason}. Picked `{dom}` ({entry['count']} instances) as "
-                f"the load-bearing alternative, prioritizing trait_impl > "
-                f"non-generic-derive > reg_macro over raw rank since trait_impl is "
-                f"the most architecturally load-bearing kind."
-            ),
+            "kind": leader_kind,
+            "pattern": leader_dom,
+            "instance": None,
+            "all_spans": [],
+            "fallback_reason": None,
         }
-    # No viable fallback either; return the leader with no instance so emit can
-    # render the existing 'pick from the histogram' fallback text.
+    entry, inst, spans = pick
+    dom = entry["pattern"]
+    kind = dom.partition(":")[0]
+    # Build fallback_reason explaining why the leader was passed over (if it was)
+    # plus how the pick was chosen (workspace-defined vs fallback).
+    if leader_is_generic:
+        kind_descriptor = (
+            "generic auto-derive" if leader_kind == "derive"
+            else "manual impl of a generic data-shaping trait"
+        )
+        leader_reason = (
+            f"is a {kind_descriptor} ({leader_name} is universally derived or "
+            f"manually implemented across the standard data-shaping traits; "
+            f"not architecturally load-bearing)"
+        )
+    elif leader_inst is None:
+        leader_reason = (
+            f"is a kind-only signal that does not yield a structurally "
+            f"followable item to trace - it counts a category (free functions, "
+            f"an external attribute macro, etc.) rather than a single concrete "
+            f"pattern"
+        )
+    elif not leader_is_workspace:
+        leader_reason = (
+            f"is implemented for an imported trait (`{leader_name}` is not "
+            f"declared in any workspace crate; the workspace's architectural "
+            f"patterns live in workspace-defined traits / macros)"
+        )
+    else:
+        # Shouldn't happen given the direct-return gate; defensive default.
+        leader_reason = f"was passed over by the picker"
+    workspace_note = (
+        " The pick is a workspace-defined pattern (the trait or macro is "
+        "declared inside a workspace crate)."
+        if pick_is_workspace
+        else " No workspace-defined alternative was available at any priority "
+             "tier; the pick is the highest-rank non-workspace structural "
+             "pattern."
+    )
     return {
-        "kind": leader_kind,
-        "pattern": leader_dom,
-        "instance": None,
-        "all_spans": [],
-        "fallback_reason": None,
+        "kind": kind,
+        "pattern": dom,
+        "instance": inst,
+        "all_spans": spans,
+        "fallback_reason": (
+            f"Histogram leader `{leader_dom}` ({histogram[0]['count']} instances) "
+            f"{leader_reason}. Picked `{dom}` ({entry['count']} instances) as "
+            f"the load-bearing alternative, prioritizing trait_impl > "
+            f"non-generic-derive > reg_macro within the workspace-defined tier."
+            f"{workspace_note}"
+        ),
     }
 
 

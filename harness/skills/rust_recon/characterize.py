@@ -37,6 +37,21 @@ AMBIGUOUS_BAND = float(os.environ.get("ORIENT_AMBIGUOUS_BAND", "0.07"))
 SEAM_DENSE_PER_KLOC = float(os.environ.get("ORIENT_SEAM_DENSE_PER_KLOC", "4.0"))
 
 
+# 0.0.8 patch 8b: src-only filter for type_usages. Test / bench /
+# example files are excluded from the architectural type-usage
+# aggregation - those files demonstrate canonical usage and belong to
+# the 0.0.10 example-mining scope. Path segment match against the
+# excluded directory names; works for both per-crate layouts
+# (`crates/<X>/tests/...`) and workspace-top-level layouts
+# (`tests/...` as nushell uses).
+_EXCLUDED_DIR_SEGMENTS = ("tests", "benches", "examples")
+
+
+def _is_src_file(rel: str) -> bool:
+    parts = rel.replace("\\", "/").split("/")
+    return not any(seg in _EXCLUDED_DIR_SEGMENTS for seg in parts)
+
+
 def find_crates(root: Path):
     """Return (crates, workspace_roots). crates: name -> {dir, deps, is_workspace_member}."""
     crates = {}
@@ -97,7 +112,8 @@ def components(crates):
 def scan_crate(root: Path, crate_dir: str):
     """Scan all .rs under a crate dir; return aggregated facts + line count."""
     agg = {"impls": [], "traits": [], "types": [], "fns": [], "uses": [],
-           "macros": [], "derives": [], "macro_defs": [], "seams": Counter()}
+           "macros": [], "derives": [], "macro_defs": [], "type_usages": [],
+           "seams": Counter()}
     loc = 0
     base = root / crate_dir
     for rs in base.rglob("*.rs"):
@@ -133,6 +149,14 @@ def scan_crate(root: Path, crate_dir: str):
         agg["macros"] += f["macros"]
         agg["derives"] += f["derives"]
         agg["macro_defs"] += [dict(m, file=rel) for m in f["macro_defs"]]
+        # 0.0.8 patch 8b: type_usages aggregate only from src/ files
+        # so test/bench/example files (canonical demonstration sites)
+        # are preserved for the 0.0.10 example-mining pass without
+        # polluting the architectural histogram. Each entry gets the
+        # rel path attached so emit.py can render usage sites as
+        # `<file>:<line>`.
+        if _is_src_file(rel):
+            agg["type_usages"] += [dict(tu, file=rel) for tu in f["type_usages"]]
         for k, v in f["seams"].items():
             agg["seams"][k] += v
     agg["loc"] = loc
@@ -172,6 +196,14 @@ def pattern_histogram(all_facts):
             patterns[f"reg_macro:{m['name']}"] += n_args
             by_kind["reg_macro"] += n_args
             reg_macro_calls[m["name"]] += 1
+    # 0.0.8 patch 8b: type_usage histogram entries. Counts factory-call
+    # shapes captured by rustscan's 8a pass (mpsc::channel, Selection::new,
+    # PipelineData::Value, etc.). Architectural pattern kind the picker's
+    # prior 4-kind taxonomy (trait_impl / derive / attr_macro / reg_macro)
+    # could not see. Src-only filter already applied in scan_crate.
+    for tu in all_facts.get("type_usages", []):
+        patterns[f"type_usage:{tu['name']}"] += 1
+        by_kind["type_usage"] += 1
 
     # Function-table heuristic: a crate with many free functions (brace_depth 0) and few
     # trait impls expresses behaviour as free functions. Reported, flagged heuristic.
@@ -250,7 +282,8 @@ def main():
     comps = components(crates)
 
     all_facts = {"impls": [], "traits": [], "types": [], "fns": [], "uses": [],
-                 "macros": [], "derives": [], "macro_defs": [], "seams": Counter()}
+                 "macros": [], "derives": [], "macro_defs": [], "type_usages": [],
+                 "seams": Counter()}
     per_crate = {}
     free_fns_by_crate = {}
     for name, info in crates.items():
@@ -263,7 +296,7 @@ def main():
         }
         free_fns_by_crate[name] = sum(1 for f in cf["fns"] if f.get("brace_depth") == 0)
         for key in ("impls", "traits", "types", "fns", "uses", "macros", "derives",
-                    "macro_defs"):
+                    "macro_defs", "type_usages"):
             for rec in cf[key]:
                 rec["crate"] = name
             all_facts[key] += cf[key]

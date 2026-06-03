@@ -94,6 +94,35 @@ def _is_noise_attr(path, base):
     return path in NOISE_ATTRS or base in NOISE_ATTRS
 
 
+# 0.0.8 patch 8a: identifiers that flood the type-usage histogram when
+# treated as architectural protagonists. Standard collections, smart
+# pointers, primitive option / result enums, common namespace aliases,
+# and short generic-parameter conventions (T / E / U / K / V). The set
+# is checked against the OUTER name in `<outer>::<inner>(` factory-call
+# detection - noise outers are never counted. Expand as false positives
+# surface during probe sweeps.
+TYPE_USAGE_NOISE_TYPES = frozenset([
+    # collections
+    "Vec", "VecDeque", "LinkedList", "BinaryHeap",
+    "HashMap", "HashSet", "BTreeMap", "BTreeSet",
+    # smart pointers + cell types
+    "Box", "Arc", "Rc", "Mutex", "RwLock", "RefCell", "Cell", "Weak",
+    "OnceCell", "OnceLock",
+    # primitive-y wrappers + enum constructors
+    "Option", "Result", "Some", "None", "Ok", "Err",
+    # standard string-ish + filesystem types
+    "String", "Path", "PathBuf", "Cow", "Pin",
+    "OsString", "OsStr", "CString", "CStr",
+    # iterator + adaptor helpers
+    "Iter", "IterMut", "IntoIter", "Chain", "Map", "Filter", "Take",
+    "Skip", "Zip", "Enumerate", "Peekable",
+    # std-library top-level namespaces (rarely used as outer-of-factory)
+    "std", "core", "alloc",
+    # generic-parameter conventions
+    "T", "E", "U", "K", "V",
+])
+
+
 _TOK = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|::|->|=>|[{}()\[\]<>;:,!#=&|]")
 
 
@@ -339,6 +368,14 @@ def scan_file(relpath, src):
     facts = {
         "impls": [], "traits": [], "types": [], "fns": [], "mods": [],
         "uses": [], "macros": [], "attrs": [], "derives": [], "macro_defs": [],
+        # 0.0.8 patch 8a: type_usages captures factory-call shape
+        # `<outer>::<inner>(...)` where outer is not a Rust keyword and
+        # not in TYPE_USAGE_NOISE_TYPES. Each entry: {name, kind_hint,
+        # line, brace_depth, expansion_unverified}. Architectural pattern
+        # the prior 7-kind taxonomy (trait_impl / derive / attr_macro /
+        # reg_macro / fn_table) couldn't see - tokio's mpsc::channel,
+        # helix's Selection::single, nushell's PipelineData::Value, etc.
+        "type_usages": [],
         "seams": {}, "doc_count": len(docs),
     }
 
@@ -453,6 +490,38 @@ def scan_file(relpath, src):
                 })
             p = close + 1
             continue
+
+        # 0.0.8 patch 8a: type-usage factory call detection.
+        # Shape: <outer_ident> :: <inner_ident> [<turbofish>] (<args>).
+        # Captures static method calls like mpsc::channel(...) and
+        # Selection::single(0, 5) and PipelineData::Value(...). Both
+        # idents must be non-keyword; outer must not be in
+        # TYPE_USAGE_NOISE_TYPES (skip Vec / Box / Option / etc.).
+        # For chained paths like tokio::sync::mpsc::channel(...) only
+        # the innermost IDENT::IDENT( pair matches because the outer
+        # ident is followed by :: (not ( or <), so the detector walks
+        # forward until it finds the pair where inner is followed by (.
+        # Captured name: "<outer>::<inner>". Loop advance: none here;
+        # the trailing p += 1 fires so the next iteration can still
+        # consider further patterns inside the call args.
+        if (_is_ident(t) and t not in KEYWORDS
+                and t not in TYPE_USAGE_NOISE_TYPES
+                and p + 3 < N
+                and toks[p + 1][0] == "::"
+                and _is_ident(toks[p + 2][0])
+                and toks[p + 2][0] not in KEYWORDS):
+            after_inner = p + 3
+            if toks[after_inner][0] == "<":
+                gclose = _match(toks, after_inner, "<", ">")
+                after_inner = gclose + 1
+            if after_inner < N and toks[after_inner][0] == "(":
+                facts["type_usages"].append({
+                    "name": f"{t}::{toks[p + 2][0]}",
+                    "kind_hint": "factory_call",
+                    "line": ln(off),
+                    "brace_depth": brace,
+                    "expansion_unverified": False,
+                })
 
         if _is_ident(t) and prev not in (".", "::") and t in KEYWORDS:
             istart = _qualifier_start(toks, p)

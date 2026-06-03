@@ -98,6 +98,19 @@ _GENERIC_INNER_METHODS = frozenset([
 _SIGNIFICANCE_CUTOFF = float(
     os.environ.get("ORIENT_SIGNIFICANCE_CUTOFF", "0.13"))
 
+# 0.0.13 patch 13k: examples contribute to PUBLIC SET ONLY. Each
+# curated example (in /examples/ directory) contributes 1x to the
+# public set's count by default. When 'examples are serious' (>= 3
+# curated examples - the_user 2026-06-03 threshold), the per-example
+# weight is bumped above 1x. Calibration needed; default at 1.5
+# matches the prior delta-threshold semantics.
+_PUBLIC_EXAMPLE_WEIGHT = float(
+    os.environ.get("ORIENT_PUBLIC_EXAMPLE_WEIGHT", "1.0"))
+_PUBLIC_EXAMPLE_SERIOUS_WEIGHT = float(
+    os.environ.get("ORIENT_PUBLIC_EXAMPLE_SERIOUS_WEIGHT", "1.5"))
+_PUBLIC_EXAMPLES_SERIOUS_THRESHOLD = int(
+    os.environ.get("ORIENT_PUBLIC_EXAMPLES_SERIOUS_THRESHOLD", "3"))
+
 
 # 0.0.9 patch 9a: minimum distinct variants for a type-usage family.
 # An outer-family requires >= this many distinct inner methods sharing
@@ -1044,8 +1057,14 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             thresh = total * cutoff
             significant_inter = {p: c for p, c in inter_counts.items() if c >= thresh}
 
-    # 3. Workspace-wide public significance (is_pub patterns by
-    # inter_count). cutoff = 13% of SUM of public-eligible inter_counts.
+    # 3. Workspace-wide public significance. the_user 2026-06-03:
+    # 'examples is a public set weight only... any hit there is worth
+    # 1x. if the "examples are serious" signal is present, the weight
+    # ratio is higher than 1x'. Public set count = inter_count +
+    # (curated_example_count * per_example_weight). per_example_weight
+    # = 1.0 default; 1.5 (calibration) when curated >= 3 examples.
+    # Examples DO NOT contribute to intra or inter sets - their
+    # other-set significance is captured by raw counts already.
     public_counts = {}
     for pattern, m in pattern_metrics.items():
         if not m.get("is_pub"):
@@ -1053,8 +1072,15 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         if m.get("defining_crate") is None:
             continue
         ic = m.get("inter_count", 0) or 0
-        if ic > 0:
-            public_counts[pattern] = ic
+        curated = m.get("curated_example_count", 0) or 0
+        per_example_weight = (
+            _PUBLIC_EXAMPLE_SERIOUS_WEIGHT
+            if curated >= _PUBLIC_EXAMPLES_SERIOUS_THRESHOLD
+            else _PUBLIC_EXAMPLE_WEIGHT
+        )
+        public_contribution = ic + curated * per_example_weight
+        if public_contribution > 0:
+            public_counts[pattern] = public_contribution
     significant_public = {}
     if public_counts:
         total = sum(public_counts.values())

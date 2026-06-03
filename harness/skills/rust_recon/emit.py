@@ -271,15 +271,26 @@ def _instance_for_kind(kind, name, facts):
     return (None, [])
 
 
-def _is_generic_auto_derive(kind, name):
-    """True when the pattern is a derive of one of the standard data-shaping traits
-    (Debug / Clone / PartialEq / Eq / Hash / Default / Copy / Serialize / Deserialize).
+def _is_generic_pattern(kind, name):
+    """True when the pattern is a derive OR a manual trait_impl of one of the
+    standard data-shaping traits (Debug / Clone / PartialEq / Eq / Hash / Default /
+    Copy / Serialize / Deserialize).
 
-    0.0.5 patch dd: these derives are universally applied; treating them as the
-    worked-slice protagonist yields a trace that does not reveal the workspace's
-    architectural pattern. candidate_instance treats them as kind-only and walks
-    past, the same way Patch 5 handles fn_table:<crate> leaders."""
-    return kind == "derive" and name in _GENERIC_AUTO_DERIVES
+    0.0.5 patch dd: derives of these traits are universally applied via
+    #[derive(...)]; treating them as the worked-slice protagonist yields a trace
+    that does not reveal the workspace's architectural pattern.
+
+    0.0.6 patch 6a: extended to trait_impl variants of the same trait names. Manual
+    impls of Debug / Clone / etc. are almost always data-shaping (custom formatting,
+    optimized cloning) rather than architectural; tokio's 0.0.5 baseline picked
+    trait_impl:Debug at 146 instances even though Debug formatting is not what
+    tokio's architecture is about. Edge case: a debug-tracing library where manual
+    Debug impls ARE architectural would mis-skip - watch for false positives during
+    per-target audit.
+
+    candidate_instance treats these as kind-only signals and walks past, the same
+    way Patch 5 handles fn_table:<crate> leaders."""
+    return name in _GENERIC_AUTO_DERIVES and kind in ("derive", "trait_impl")
 
 
 def candidate_instance(fp: dict, facts: dict):
@@ -308,8 +319,8 @@ def candidate_instance(fp: dict, facts: dict):
     leader_dom = histogram[0]["pattern"]
     leader_kind, _, leader_name = leader_dom.partition(":")
     leader_inst, leader_spans = _instance_for_kind(leader_kind, leader_name, facts)
-    leader_is_generic_derive = _is_generic_auto_derive(leader_kind, leader_name)
-    if leader_inst is not None and not leader_is_generic_derive:
+    leader_is_generic = _is_generic_pattern(leader_kind, leader_name)
+    if leader_inst is not None and not leader_is_generic:
         return {
             "kind": leader_kind,
             "pattern": leader_dom,
@@ -333,8 +344,8 @@ def candidate_instance(fp: dict, facts: dict):
         kind, _, name = dom.partition(":")
         if kind not in first_by_priority or first_by_priority[kind] is not None:
             continue
-        if _is_generic_auto_derive(kind, name):
-            continue  # 0.0.5 patch dd: generic-auto-derives never take a slot.
+        if _is_generic_pattern(kind, name):
+            continue  # 0.0.5 patch dd + 0.0.6 patch 6a: generic patterns skipped.
         inst, spans = _instance_for_kind(kind, name, facts)
         if inst is None:
             continue
@@ -345,11 +356,15 @@ def candidate_instance(fp: dict, facts: dict):
         entry, inst, spans = first_by_priority[priority]
         dom = entry["pattern"]
         kind = dom.partition(":")[0]
-        if leader_is_generic_derive:
+        if leader_is_generic:
+            kind_descriptor = (
+                "generic auto-derive" if leader_kind == "derive"
+                else "manual impl of a generic data-shaping trait"
+            )
             leader_reason = (
-                f"is a generic auto-derive ({leader_name} is universally derived "
-                f"via #[derive(...)] across the standard data-shaping traits; not "
-                f"architecturally load-bearing)"
+                f"is a {kind_descriptor} ({leader_name} is universally derived or "
+                f"manually implemented across the standard data-shaping traits; "
+                f"not architecturally load-bearing)"
             )
         else:
             leader_reason = (

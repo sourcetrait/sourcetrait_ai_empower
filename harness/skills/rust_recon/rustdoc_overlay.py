@@ -59,12 +59,78 @@ def toolchain_available():
     return True, "ok"
 
 
-def run_rustdoc_json(root: Path, package: str | None):
+def _resolve_package(root: Path, requested: str | None, odir: Path | None) -> str | None:
+    """Resolve the package name to pass to `cargo rustdoc -p`. The caller-supplied
+    `requested` is usually the agent's guess (often the repo name), which may or may not
+    be a workspace member -- sourcetrait_common is the canonical worked example: the repo
+    is named sourcetrait_common but no crate carries that name. We invoke `cargo metadata
+    --no-deps` to enumerate the workspace's actual packages, then pick by priority:
+
+      1. If `requested` matches a workspace member name, keep it (caller knows best).
+      2. Else use the characterize fingerprint's most-depended-on in-workspace crate
+         (matches the §2 vocabulary pick).
+      3. Else match the repo dir name against package names, including `lib<name>` and
+         hyphen/underscore equivalents.
+      4. Else pick the first workspace member that publishes a lib target.
+      5. Else fall through and return the caller's value unchanged (probably None).
+
+    cargo metadata failures (e.g. cosmic-epoch's submodule aggregation with no top-level
+    Cargo.toml) drop straight to step 5 -- the script will then either pass the requested
+    package or no -p flag at all, letting cargo's own error surface."""
+    try:
+        r = subprocess.run(
+            ["cargo", "+nightly", "metadata", "--no-deps", "--format-version", "1"],
+            cwd=str(root), capture_output=True, text=True, timeout=60, check=True,
+        )
+        meta = json.loads(r.stdout)
+    except Exception:
+        return requested
+
+    packages = {p["name"]: p for p in meta.get("packages", [])}
+    if not packages:
+        return requested
+
+    if requested and requested in packages:
+        return requested
+
+    if odir is not None:
+        fp_path = odir / "fingerprint.json"
+        if fp_path.exists():
+            try:
+                fp = json.loads(fp_path.read_text())
+                dep_count = {}
+                for c in fp.get("per_crate", {}).values():
+                    for d in c.get("deps", []):
+                        dep_count[d] = dep_count.get(d, 0) + 1
+                in_ws = {k: v for k, v in dep_count.items() if k in packages}
+                if in_ws:
+                    return max(in_ws, key=in_ws.get)
+            except Exception:
+                pass
+
+    repo_name = root.name
+    if repo_name in packages:
+        return repo_name
+    normalized = repo_name.replace("-", "_")
+    for p_name in packages:
+        if p_name == f"lib{repo_name}" or p_name.replace("-", "_") == normalized:
+            return p_name
+
+    for p_name, p_data in packages.items():
+        for target in p_data.get("targets", []):
+            if "lib" in target.get("kind", []):
+                return p_name
+
+    return requested
+
+
+def run_rustdoc_json(root: Path, package: str | None, odir: Path | None = None):
     """Invoke nightly rustdoc JSON. Returns parsed dict or raises. THIS SHELLS OUT (the only
     phase permitted to) and requires network/toolchain — untested in the offline container."""
+    resolved = _resolve_package(root, package, odir)
     cmd = ["cargo", "+nightly", "rustdoc"]
-    if package:
-        cmd += ["-p", package]
+    if resolved:
+        cmd += ["-p", resolved]
     # rustdoc's extra-args (after `--`) require a single target filter when the package
     # has multiple targets (lib + bin(s)); cargo rejects with error 101 otherwise. Default
     # to --lib since rustdoc-JSON is overwhelmingly the library surface. Bin-only packages
@@ -173,7 +239,7 @@ def main():
 
     try:
         facts = json.loads((odir / "facts.json").read_text())
-        rd = run_rustdoc_json(root, package)
+        rd = run_rustdoc_json(root, package, odir)
         overlay = reconcile(facts, rd)
     except Exception as e:
         banner = {"status": "error", "reason": str(e),

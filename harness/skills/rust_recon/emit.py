@@ -48,6 +48,14 @@ _GENERIC_AUTO_DERIVES = frozenset([
 _CLUSTER_THRESHOLD = int(os.environ.get("ORIENT_CLUSTER_THRESHOLD", "15"))
 _CLUSTER_MIN_SIZE = int(os.environ.get("ORIENT_CLUSTER_MIN_SIZE", "3"))
 
+# 0.0.7 patch 7b: candidate_instances surfaces up to this many architectural
+# patterns per workspace via per-crate aggregation. Justified by the
+# the_user-validated manual ground-truth list at
+# notes/rust_recon/methodology_findings.md - most workspaces have 4-6
+# architectural patterns; 5 is the central tendency. Configurable so future
+# iterations can probe larger / smaller N.
+_PLURAL_N = int(os.environ.get("ORIENT_PLURAL_N", "5"))
+
 
 def _cluster_crates_by_prefix(crate_names):
     """Group crate names by longest shared name prefix (split on '_' or '-' independently).
@@ -325,6 +333,154 @@ def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx):
     return False
 
 
+def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx):
+    """For each workspace crate, find the top non-generic workspace-defined
+    pattern of each kind (trait_impl, derive, reg_macro). Returns a dict of
+    crate_name -> {kind -> {pattern, count, source_crate}}.
+
+    0.0.7 patch 7b: this is the engine for plural protagonist surfacing. The
+    global histogram counts patterns workspace-wide; per-crate aggregation
+    discovers that each workspace crate has its own architectural lead (helix-
+    core's Selection/Transaction, helix-view's Editor, helix-term's Command,
+    helix-lsp's Request, etc.). Each crate's top non-generic workspace-defined
+    pattern of each kind becomes a candidate protagonist; the aggregation
+    phase combines + dedupes them into the workspace-wide plural list."""
+    per_crate = defaultdict(
+        lambda: {"trait_impl": Counter(), "derive": Counter(), "reg_macro": Counter()})
+    for i in facts["impls"]:
+        crate = i.get("crate")
+        if not crate or i.get("cfg_gated"):
+            continue
+        name = i.get("trait")
+        if not name:
+            continue
+        if _is_generic_pattern("trait_impl", name):
+            continue
+        if not _is_workspace_defined(
+                "trait_impl", name, workspace_traits, macro_defs_idx):
+            continue
+        per_crate[crate]["trait_impl"][name] += 1
+    for d in facts.get("derives", []):
+        crate = d.get("crate")
+        if not crate:
+            continue
+        name = d.get("trait")
+        if not name:
+            continue
+        if _is_generic_pattern("derive", name):
+            continue
+        if not _is_workspace_defined(
+                "derive", name, workspace_traits, macro_defs_idx):
+            continue
+        per_crate[crate]["derive"][name] += 1
+    for m in facts.get("macros", []):
+        if m.get("kind") != "macro_invocation":
+            continue
+        crate = m.get("crate")
+        if not crate:
+            continue
+        name = m.get("name")
+        if not name:
+            continue
+        if not _is_workspace_defined(
+                "reg_macro", name, workspace_traits, macro_defs_idx):
+            continue
+        per_crate[crate]["reg_macro"][name] += 1
+    return per_crate
+
+
+_PLURAL_KIND_PRIORITY = {"trait_impl": 0, "derive": 1, "reg_macro": 2}
+
+
+def _aggregate_per_crate_picks(per_crate_counts, facts, n):
+    """Flatten per-crate top picks into a single deduped list of candidates,
+    capped at n, with kind-aware slot quotas. Returns a list of dicts in the
+    candidate_instances return shape.
+
+    0.0.7 patch 7b initial: pattern_to_pick deduped by pattern name, then
+    sorted by raw count. This made reg_macro test helpers (nu!, current!,
+    trace!) outrank architectural trait_impls on raw-count alone.
+
+    0.0.7 patch 7b refinement A: ordering became (priority tier, raw count).
+    Priority: trait_impl > derive > reg_macro. Surfaced architectural
+    trait_impls but starved derive + reg_macro slots; bevy's derive:Component
+    (architecturally central to ECS) never made the top 5 because trait_impl
+    Plugin/MeshBuilder/etc. filled all slots.
+
+    0.0.7 patch 7b refinement B (this version): slot quotas. For N=5 the
+    default split is 3 trait_impl + 1 derive + 1 reg_macro. Quotas allocate
+    by kind; underfilled kinds (workspace has no workspace-defined derives,
+    etc.) cede to the trait_impl pool so N total is maintained. Output
+    ordering: trait_impls first (most architectural), then derives, then
+    reg_macros, each tier sorted by count desc."""
+    pattern_to_pick = {}
+    for crate, kinds in per_crate_counts.items():
+        for kind in ("trait_impl", "derive", "reg_macro"):
+            counts = kinds[kind]
+            if not counts:
+                continue
+            top_name, top_count = counts.most_common(1)[0]
+            pattern = f"{kind}:{top_name}"
+            existing = pattern_to_pick.get(pattern)
+            if existing is None or top_count > existing["count"]:
+                pattern_to_pick[pattern] = {
+                    "kind": kind,
+                    "pattern": pattern,
+                    "count": top_count,
+                    "source_crate": crate,
+                }
+    by_kind = {"trait_impl": [], "derive": [], "reg_macro": []}
+    for entry in pattern_to_pick.values():
+        by_kind[entry["kind"]].append(entry)
+    for kind in by_kind:
+        by_kind[kind].sort(key=lambda x: -x["count"])
+    # Slot quotas. For N=5: 3 trait_impl, 1 derive, 1 reg_macro. Scales with N
+    # by giving trait_impl the residual.
+    derive_quota = 1 if n >= 3 else 0
+    reg_macro_quota = 1 if n >= 4 else 0
+    trait_impl_quota = max(1, n - derive_quota - reg_macro_quota)
+    quotas = {
+        "trait_impl": trait_impl_quota,
+        "derive": derive_quota,
+        "reg_macro": reg_macro_quota,
+    }
+    selected = []
+    for kind in ("trait_impl", "derive", "reg_macro"):
+        for entry in by_kind[kind][:quotas[kind]]:
+            selected.append(entry)
+    # If underfilled (some kind had no picks), backfill from trait_impl pool.
+    if len(selected) < n:
+        chosen_patterns = {e["pattern"] for e in selected}
+        for entry in by_kind["trait_impl"][quotas["trait_impl"]:]:
+            if entry["pattern"] in chosen_patterns:
+                continue
+            selected.append(entry)
+            if len(selected) >= n:
+                break
+    selected.sort(
+        key=lambda x: (_PLURAL_KIND_PRIORITY.get(x["kind"], 99), -x["count"]))
+    out = []
+    for entry in selected[:n]:
+        inst, spans = _instance_for_kind(
+            entry["kind"], entry["pattern"].split(":", 1)[1], facts)
+        if inst is None:
+            continue
+        out.append({
+            "kind": entry["kind"],
+            "pattern": entry["pattern"],
+            "instance": inst,
+            "all_spans": spans,
+            "fallback_reason": (
+                f"Surfaced via per-crate top-pattern aggregation; source crate "
+                f"`{entry['source_crate']}` ({entry['count']} instances of "
+                f"`{entry['pattern']}` in that crate)."
+            ),
+            "source_crate": entry["source_crate"],
+            "count": entry["count"],
+        })
+    return out
+
+
 def candidate_instances(fp: dict, facts: dict):
     """Pick a list of architectural-pattern protagonists with seed instances.
 
@@ -366,6 +522,16 @@ def candidate_instances(fp: dict, facts: dict):
     histogram = fp["pattern_histogram"]
     workspace_traits = {t["name"] for t in facts.get("traits", []) if t.get("name")}
     macro_defs_idx = _macro_defs_index(facts)
+    # 0.0.7 patch 7b: per-crate top-pattern aggregation runs FIRST. If it
+    # surfaces any candidates (workspace has multiple crates each with a
+    # workspace-defined non-generic pattern), return those as the plural
+    # protagonist list. If empty (cosmic-epoch-style submodule aggregator
+    # with no workspace-defined patterns at all), fall through to the
+    # single-pick logic from 6a/6b below.
+    per_crate_counts = _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx)
+    plural_picks = _aggregate_per_crate_picks(per_crate_counts, facts, _PLURAL_N)
+    if plural_picks:
+        return plural_picks
     leader_dom = histogram[0]["pattern"]
     leader_kind, _, leader_name = leader_dom.partition(":")
     leader_inst, leader_spans = _instance_for_kind(leader_kind, leader_name, facts)

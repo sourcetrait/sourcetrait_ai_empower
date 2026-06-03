@@ -587,12 +587,30 @@ def scan_file(relpath, src):
                 # macro_rules ! name. Visibility for macros is via the
                 # macro_export attribute rather than `pub`; the visibility
                 # field captures syntactic pub if present (rare for
-                # macro_rules) and macro_export detection is downstream.
+                # macro_rules); 0.0.11 patch 11d adds explicit
+                # macro_exported detection by walking the attrs that
+                # precede the macro_rules! keyword.
                 if p + 2 < N and _is_ident(toks[p + 2][0]):
                     vis = _extract_visibility(toks, p)
+                    macro_exported = False
+                    pos = off
+                    guard = 0
+                    while guard < 50:
+                        guard += 1
+                        j = pos
+                        while j > 0 and src[j - 1] in " \t\r\n":
+                            j -= 1
+                        if j in attrs_by_end:
+                            a = attrs_by_end[j]
+                            if a["base"] == "macro_export":
+                                macro_exported = True
+                            pos = a["start"]
+                            continue
+                        break
                     facts["macro_defs"].append({"name": toks[p + 2][0],
                                                 "line": ln(off),
-                                                "visibility": vis})
+                                                "visibility": vis,
+                                                "macro_exported": macro_exported})
             elif t == "use":
                 is_pub = (prev == "pub") or (p >= 2 and toks[p - 2][0] == "pub")
                 semi = _find_token(toks, p, ";", set())

@@ -529,15 +529,48 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
     list carries macro_export entries; a macro_def with a co-located
     macro_export attr in the same file is treated as pub regardless of
     syntactic visibility (macro_rules doesn't take `pub` directly)."""
-    type_def_lookup = {}
+    # 0.0.11 patch 11c: name-collision resolution for the definition
+    # lookups. When the same type name is defined in multiple workspace
+    # crates (helix's Range in both helix-core and helix-lsp-types),
+    # first-seen-wins arbitrarily picks one. Refined heuristic: pick
+    # the crate with more impl blocks targeting the type name (the
+    # canonical home, with the most methods + trait implementations).
+    # For traits + macros, count workspace-wide usages similarly.
+    impl_target_count = defaultdict(lambda: defaultdict(int))
+    for i in all_facts.get("impls", []):
+        type_name = i.get("type")
+        crate = i.get("crate")
+        if type_name and crate:
+            impl_target_count[type_name][crate] += 1
+
+    def _pick_canonical_crate(candidates_by_name, name, counts):
+        crates = candidates_by_name.get(name, [])
+        if len(crates) <= 1:
+            return crates[0] if crates else None
+        return max(crates, key=lambda c: counts.get(c, 0))
+
+    type_candidates = defaultdict(list)
+    type_visibility = {}
     for t in all_facts.get("types", []):
         name = t.get("name")
         crate = t.get("crate")
-        if name and crate and name not in type_def_lookup:
+        if name and crate:
+            if crate not in type_candidates[name]:
+                type_candidates[name].append(crate)
+            key = (name, crate)
+            type_visibility[key] = t.get("visibility", "")
+    type_def_lookup = {}
+    for name, crates in type_candidates.items():
+        canonical = _pick_canonical_crate(type_candidates, name,
+                                          impl_target_count[name])
+        if canonical:
             type_def_lookup[name] = {
-                "crate": crate,
-                "visibility": t.get("visibility", ""),
+                "crate": canonical,
+                "visibility": type_visibility.get((name, canonical), ""),
             }
+    # Traits + macros use the simpler first-seen-wins for now (collisions
+    # are rarer for traits, and macro names tend to be globally unique
+    # within a workspace by the macro_rules convention).
     trait_def_lookup = {}
     for t in all_facts.get("traits", []):
         name = t.get("name")
@@ -555,6 +588,11 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
             macro_def_lookup[name] = {
                 "crate": crate,
                 "visibility": m.get("visibility", ""),
+                # 0.0.11 patch 11d: macro_exported flag from rustscan's
+                # #[macro_export] attribute detection. macro_rules! by
+                # itself doesn't take syntactic `pub`; #[macro_export]
+                # above the declaration is the actual export mechanism.
+                "macro_exported": m.get("macro_exported", False),
             }
     # 0.0.10 patch 10e: mod_def_lookup for type_usage where the outer
     # is a workspace MODULE rather than a type (tokio::sync's `mpsc` /
@@ -674,6 +712,11 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
             continue
         defining_crate = defn["crate"]
         is_pub = bool(defn["visibility"]) and defn["visibility"].startswith("pub")
+        # 0.0.11 patch 11d: for macros, also accept #[macro_export]
+        # as is_pub. Most pub macros use macro_export rather than
+        # syntactic pub macro_rules!.
+        if not is_pub and defn.get("macro_exported"):
+            is_pub = True
         intra = 0
         inter = 0
         for fact in sources_by_kind[kind]:

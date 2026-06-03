@@ -129,18 +129,26 @@ def _compute_score(count, metrics):
     Missing metrics fields default to neutral values (inter_ratio=0,
     is_pub=False, example_count=0). External patterns with no metrics
     surface at raw count.
+
+    0.0.12 patch 12d: example_count is now the weighted total
+    (examples + 0.3 * tests + 0.3 * benches by default). The threshold
+    boost uses curated_example_count (examples/-only) so the
+    'more than 3 examples exist' developer-signal semantics stays
+    strict per the_user's framing while the saturation boost
+    captures the broader pattern-importance signal that tests contribute.
     """
     if not metrics:
         return float(count)
     inter_ratio = metrics.get("inter_ratio", 0.0) or 0.0
     is_pub = 1.0 if metrics.get("is_pub", False) else 0.0
     example_count = metrics.get("example_count", 0) or 0
+    curated_example_count = metrics.get("curated_example_count", 0) or 0
     score = float(count)
     score *= 1.0 + _SCORE_INTER_BOOST * inter_ratio
     score *= 1.0 + _SCORE_PUB_BOOST * is_pub
     sat = min(example_count, _EXAMPLE_SATURATION) / max(1, _EXAMPLE_SATURATION)
     score *= 1.0 + _SCORE_EXAMPLE_BOOST * sat
-    if example_count >= _EXAMPLE_THRESHOLD:
+    if curated_example_count >= _EXAMPLE_THRESHOLD:
         score *= _SCORE_EXAMPLE_THRESHOLD_BOOST
     return score
 
@@ -157,7 +165,8 @@ def _aggregate_family_metrics(family_kind, family_inner, per_crate_type_usage_me
     family_inner: X or Y respectively.
     per_crate_type_usage_metrics: dict mapping type_usage pattern name
     (without 'type_usage:' prefix) to its metrics."""
-    best = {"inter_ratio": 0.0, "is_pub": False, "example_count": 0}
+    best = {"inter_ratio": 0.0, "is_pub": False, "example_count": 0,
+            "curated_example_count": 0}
     for tu_name, m in per_crate_type_usage_metrics.items():
         if "::" not in tu_name:
             continue
@@ -174,6 +183,8 @@ def _aggregate_family_metrics(family_kind, family_inner, per_crate_type_usage_me
             best["is_pub"] = True
         if m.get("example_count", 0) > best["example_count"]:
             best["example_count"] = m.get("example_count", 0)
+        if m.get("curated_example_count", 0) > best["curated_example_count"]:
+            best["curated_example_count"] = m.get("curated_example_count", 0)
     return best
 
 # 0.0.4 patch 4 (u): when the workspace has more than _CLUSTER_THRESHOLD crates, the

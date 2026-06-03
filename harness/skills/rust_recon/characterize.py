@@ -684,28 +684,55 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
         if inner:
             seen_patterns.add(("type_usage", inner, f"type_usage:{inner}"))
 
-    # 0.0.10 patch 10e + 0.0.11 patch 11e: example_type_usages indexed
-    # by (file, name). 11e applies the examples/-directory filter
-    # (matching 11a's per-crate counter inclusion logic) so tests/ and
-    # benches/ entries don't inflate the example_count metric. Tests
-    # ARE a developer signal (the_user 2026-06-03: 'developer thinks
-    # might break, problem path indicator') but they're not the
-    # curated public-API demonstration that examples/ carries. 0.0.12's
-    # score calibration may tinker with weighted contribution (Option
-    # B); for now the 11e filter aligns the metric with the per-crate
-    # counter so the score boost reflects ONLY curated demos.
-    example_files_by_name = defaultdict(set)
+    # 0.0.10 patch 10e + 0.0.11 patch 11e + 0.0.12 patch 12d:
+    # example_type_usages indexed by (file, name) with weighted
+    # contribution by source directory. examples/ at 1.0x are the
+    # developer-curated public-API demonstrations the_user 2026-06-03
+    # framing weighted highly ('more than 3 examples exist' threshold).
+    # tests/ and benches/ at 0.3x capture the the_user-confirmed
+    # signal that 'tests... it couldn't be completely insignificant
+    # and have tons of tests because it's a problem path' - they ARE
+    # signal at lower magnitude than curated demos.
+    #
+    # Two output values:
+    # - example_count: weighted total (gamma boost saturation input).
+    # - curated_example_count: strict examples/-only count (threshold
+    #   boost test, preserving the_user's '3 examples' semantics).
+    test_weight = float(os.environ.get("ORIENT_TEST_WEIGHT", "0.3"))
+    bench_weight = float(os.environ.get("ORIENT_BENCH_WEIGHT", "0.3"))
+    files_by_category_per_name = defaultdict(
+        lambda: {"examples": set(), "tests": set(), "benches": set()})
     for tu in all_facts.get("example_type_usages", []):
         nm = tu.get("name")
         f = tu.get("file") or ""
         if not (nm and f):
             continue
-        if "/examples/" not in f and not f.startswith("examples/"):
-            continue
-        example_files_by_name[nm].add(f)
+        if "/examples/" in f or f.startswith("examples/"):
+            files_by_category_per_name[nm]["examples"].add(f)
+        elif "/tests/" in f or f.startswith("tests/"):
+            files_by_category_per_name[nm]["tests"].add(f)
+        elif "/benches/" in f or f.startswith("benches/"):
+            files_by_category_per_name[nm]["benches"].add(f)
+    example_files_by_name = {}
+    curated_example_count_by_name = {}
+    for nm, cats in files_by_category_per_name.items():
+        weighted = (len(cats["examples"]) * 1.0
+                    + len(cats["tests"]) * test_weight
+                    + len(cats["benches"]) * bench_weight)
+        example_files_by_name[nm] = weighted
+        curated_example_count_by_name[nm] = len(cats["examples"])
 
     def _example_count_for_type_usage(name):
-        return len(example_files_by_name.get(name, set()))
+        # 0.0.12 patch 12d: weighted count (float). examples/ + 0.3 * tests/
+        # + 0.3 * benches/ by default.
+        return example_files_by_name.get(name, 0.0)
+
+    def _curated_example_count_for_type_usage(name):
+        # 0.0.12 patch 12d: strict examples/-only count for the
+        # threshold semantics. the_user 2026-06-03: 'more than 3
+        # examples exist' applies to curated demos, not to weighted
+        # total including tests.
+        return curated_example_count_by_name.get(name, 0)
 
     for kind, inner, pattern in seen_patterns:
         defn = _pattern_def(kind, inner)
@@ -716,8 +743,12 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
                 "inter_count": 0,
                 "inter_ratio": 0.0,
                 "is_pub": False,
-                "example_count": (_example_count_for_type_usage(inner)
-                                  if kind == "type_usage" else 0),
+                "example_count": (
+                    round(_example_count_for_type_usage(inner), 2)
+                    if kind == "type_usage" else 0),
+                "curated_example_count": (
+                    _curated_example_count_for_type_usage(inner)
+                    if kind == "type_usage" else 0),
             }
             continue
         defining_crate = defn["crate"]
@@ -747,8 +778,12 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
             "inter_count": inter,
             "inter_ratio": round(ratio, 3),
             "is_pub": is_pub,
-            "example_count": (_example_count_for_type_usage(inner)
-                              if kind == "type_usage" else 0),
+            "example_count": (
+                round(_example_count_for_type_usage(inner), 2)
+                if kind == "type_usage" else 0),
+            "curated_example_count": (
+                _curated_example_count_for_type_usage(inner)
+                if kind == "type_usage" else 0),
         }
     return metrics
 

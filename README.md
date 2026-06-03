@@ -13,6 +13,11 @@ Crates
 
 *Nu commands*
 
+### [Nushell MCP](./crates/nu_sh_mcp)
+[![Nushell MCP Crate Badge]][Nushell MCP Crate] [![Docs Badge]][Nushell MCP Docs]
+
+*Nushell engine MCP server*
+
 
 Repository
 --------------------------------------------------------------------------------
@@ -72,3 +77,7 @@ External dependency licenses are listed in:
 [Nu Plugin Crate]: https://crates.io/crates/nu_plugin_empower
 [Nu Plugin Crate Badge]: https://img.shields.io/crates/v/nu_plugin_empower.svg
 [Nu Plugin Docs]: https://docs.rs/nu_plugin_empower
+
+[Nushell MCP Crate]: https://crates.io/crates/nu_sh_mcp
+[Nushell MCP Crate Badge]: https://img.shields.io/crates/v/nu_sh_mcp.svg
+[Nushell MCP Docs]: https://docs.rs/nu_sh_mcp

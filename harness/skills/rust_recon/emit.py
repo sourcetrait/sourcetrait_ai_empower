@@ -1134,55 +1134,43 @@ def candidate_instances(fp: dict, facts: dict):
     surfaced this pick)."""
     if not fp["pattern_histogram"]:
         return []
-    # 0.0.13 patch 13h: significance-based three-set picker replaces
-    # slot-quota machinery. the_user 2026-06-03 design directive: each
-    # crate returns its significant intra-list (13% cutoff); workspace
-    # returns its significant inter-list + public-list (13% cutoffs).
-    # Final picks = UNION with category tags per pick. Variable N
-    # (depends on threshold qualification) replaces fixed N=5.
+    # 0.0.13 patch 13h + 13i: significance-based three-SET picker
+    # (not union). the_user 2026-06-03: 'carry three sets of
+    # significance... we need granularity along those 3 axes... the
+    # whole premise of "there is 1 set" we've shown to be wrong'.
+    # candidate_instances now returns a STRUCTURED dict not a flat
+    # list. emit_orientation renders the three sets as separate
+    # sections preserving granularity.
     sig = _compute_three_set_significance(fp, facts, _SIGNIFICANCE_CUTOFF)
-    sig_picks = sig["picks"]
-    out = []
-    for entry in sig_picks:
-        kind = entry["kind"]
-        name = entry["pattern"].split(":", 1)[1] if ":" in entry["pattern"] else entry["pattern"]
-        inst, spans = _instance_for_kind(kind, name, facts)
-        if inst is None:
-            continue
-        source_crate = None
-        if entry.get("intra_crates"):
-            source_crate = entry["intra_crates"][0]["crate"]
-        reason_parts = []
-        cats = entry.get("categories", [])
-        if "intra" in cats:
-            n_crates = len(entry.get("intra_crates", []))
-            reason_parts.append(
-                f"significant intra-crate in {n_crates} crate"
-                f"{'s' if n_crates != 1 else ''}")
-        if "inter" in cats:
-            reason_parts.append(
-                f"significant inter-crate (count {entry['inter_count']})")
-        if "public" in cats:
-            reason_parts.append(
-                f"significant public-API (inter usage {entry['public_count']})")
-        fallback_reason = (
-            f"Qualified via {', '.join(reason_parts)}."
-            if reason_parts else "Significance-threshold qualified.")
-        out.append({
-            "kind": kind,
-            "pattern": entry["pattern"],
-            "instance": inst,
-            "all_spans": spans,
-            "fallback_reason": fallback_reason,
-            "source_crate": source_crate,
-            "count": (entry["intra_crates"][0]["count"]
-                      if entry.get("intra_crates") else 0),
-            "categories": cats,
-            "intra_crates": entry.get("intra_crates", []),
-            "inter_count": entry.get("inter_count", 0),
-            "public_count": entry.get("public_count", 0),
-        })
-    return out
+    # Enrich each set with instance + spans per pattern.
+    def _enrich(pattern_map):
+        out = {}
+        for pattern, count in pattern_map.items():
+            kind, _, name = pattern.partition(":")
+            inst, spans = _instance_for_kind(kind, name, facts)
+            if inst is None:
+                continue
+            out[pattern] = {
+                "kind": kind,
+                "pattern": pattern,
+                "count": count,
+                "instance": inst,
+                "all_spans": spans,
+            }
+        return out
+
+    enriched_intra_per_crate = {
+        crate: _enrich(s) for crate, s in
+        sig["significant_intra_per_crate"].items()
+    }
+    enriched_inter = _enrich(sig["significant_inter"])
+    enriched_public = _enrich(sig["significant_public"])
+    return {
+        "intra_per_crate": enriched_intra_per_crate,
+        "inter": enriched_inter,
+        "public": enriched_public,
+        "cutoff": sig["cutoff"],
+    }
 
 
 def _legacy_candidate_instances_unused(fp: dict, facts: dict):
@@ -1656,9 +1644,76 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
           "through the core crates. 1-2 short paragraphs, each sentence anchored to a span "
           "from reference.md. Stop at any seam from S3 with an explicit UNRESOLVED.", ""]
 
+    # 0.0.13 patch 13i: cands is now a structured dict with three
+    # significance sets (intra_per_crate / inter / public) instead of
+    # a flat list. Render each set as its own subsection preserving
+    # granularity per the_user 2026-06-03 directive.
+    intra_per_crate = cands.get("intra_per_crate", {}) if isinstance(cands, dict) else {}
+    inter_sig = cands.get("inter", {}) if isinstance(cands, dict) else {}
+    public_sig = cands.get("public", {}) if isinstance(cands, dict) else {}
+    cutoff = cands.get("cutoff", 0.13) if isinstance(cands, dict) else 0.13
+
     # 5. worked slices (plural; surfaced via per-crate top-pattern aggregation
     # under 0.0.7 patch 7b + 7c).
-    L += ["## 5. Worked slices - the authoring templates", ""]
+    L += ["## 5. Significance sets - the authoring templates", ""]
+    L.append(f"Significance threshold: {cutoff:.2%} of each set's "
+             f"top count. the_user 2026-06-03: 'we need granularity "
+             f"along those 3 axes'; this section preserves them.")
+    L.append("")
+    # Use the legacy list-shape for downstream sections.
+    cands_compat = []
+    if intra_per_crate or inter_sig or public_sig:
+        # 5.1 Intra-crate significance (per crate).
+        L.append("### 5.1 Intra-crate significance (per crate)")
+        L.append("")
+        for crate in sorted(intra_per_crate.keys()):
+            entries = intra_per_crate[crate]
+            if not entries:
+                continue
+            L.append(f"#### crate `{crate}` ({len(entries)} significant)")
+            L.append("")
+            for pattern in sorted(entries.keys(), key=lambda p: -entries[p]["count"]):
+                e = entries[pattern]
+                L.append(f"- `{pattern}` - {e['count']} occurrences - "
+                         f"seed {sp(e['instance'])}")
+                cands_compat.append(e)
+            L.append("")
+        # 5.2 Inter-crate significance.
+        L.append(f"### 5.2 Inter-crate significance "
+                 f"({len(inter_sig)} significant)")
+        L.append("")
+        for pattern in sorted(inter_sig.keys(), key=lambda p: -inter_sig[p]["count"]):
+            e = inter_sig[pattern]
+            L.append(f"- `{pattern}` - inter_count {e['count']} - "
+                     f"seed {sp(e['instance'])}")
+            cands_compat.append(e)
+        L.append("")
+        # 5.3 Public-API significance (is_pub + inter_count).
+        L.append(f"### 5.3 Public-API significance "
+                 f"({len(public_sig)} significant; is_pub + inter_count)")
+        L.append("")
+        for pattern in sorted(public_sig.keys(), key=lambda p: -public_sig[p]["count"]):
+            e = public_sig[pattern]
+            L.append(f"- `{pattern}` - public inter_count {e['count']} - "
+                     f"seed {sp(e['instance'])}")
+            cands_compat.append(e)
+        L.append("")
+        L.append("**[AGENT]** The three sets above are distinct axes "
+                 "of architectural significance. A pattern qualifying "
+                 "in multiple sets is strongly architecturally central; "
+                 "single-set qualification is meaningful within that "
+                 "axis. Trace patterns by category - intra patterns "
+                 "are internal to their crate; inter patterns flow "
+                 "across crates; public patterns surface as the "
+                 "workspace's external API.")
+        L.append("")
+    # 0.0.13 patch 13i: the three-set sections above ARE the picker
+    # output; drop the legacy per-pick worked-slice loop. The agent
+    # reads the structured 5.1/5.2/5.3 lists + traces patterns of
+    # interest by category. For variable N (helix ~158 picks, bevy
+    # ~479), a per-pick worked slice rendering would explode the
+    # document; the structured lists keep it scannable.
+    cands = []
     if cands:
         n_cands = len(cands)
         L.append(f"**{n_cands} protagonist pattern{'s' if n_cands != 1 else ''}** "

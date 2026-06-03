@@ -89,14 +89,17 @@ _GENERIC_INNER_METHODS = frozenset([
     "build", "into_inner", "borrow", "borrow_mut",
 ])
 
-# 0.0.13 patch 13h: significance cutoff for the three-set picker.
-# the_user 2026-06-03: 'significance cut-off at 13% (not a fixed 5)...
-# 13% allows for a +=10% that still shows 3% in worst-case'. Each
-# significant[] list normalizes against its OWN top-1 count - per-
-# crate top-1 for intra, workspace-wide max inter_count for inter,
-# workspace-wide max inter_count of is_pub patterns for public.
-_SIGNIFICANCE_CUTOFF = float(
-    os.environ.get("ORIENT_SIGNIFICANCE_CUTOFF", "0.13"))
+# 0.0.13 patch 13h + 0.0.14 patch 14a: top-N per set for the three-
+# set picker. Originally the_user 2026-06-03 set a 13% sum-cutoff,
+# but the 0.0.13 refresh empirically showed 6 of 9 measurable targets
+# produced ZERO inter/public significance under that cutoff - long-
+# tail workspaces dilute the sum-denominator. the_user 2026-06-03
+# follow-up: 'take the top 7 for each set (and support that number
+# with 13% as the guiding principle)' - 1 / 0.13 = 7.69, rounded to 7.
+# Each set keeps its top _SET_TOP_N patterns by count: intra-per-crate
+# (top N per crate), inter (top N by inter_count workspace-wide),
+# public (top N by public_count workspace-wide).
+_SET_TOP_N = int(os.environ.get("ORIENT_SET_TOP_N", "7"))
 
 # 0.0.13 patch 13k: examples contribute to PUBLIC SET ONLY. Each
 # curated example (in /examples/ directory) contributes 1x to the
@@ -973,28 +976,36 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n, pattern_metrics=None)
 
 
 def _compute_three_set_significance(fp: dict, facts: dict,
-                                    cutoff: float = None):
-    """0.0.13 patch 13h: significance-based picker replacing slot quotas.
+                                    top_n: int = None):
+    """0.0.13 patch 13h + 0.0.14 patch 14a: top-N per set picker.
 
     Returns dict with:
     - significant_intra_per_crate: {crate: {pattern: count}}
-        per-crate top-1 cutoff at 13% of crate's max pattern count.
+        per-crate top top_n patterns by count.
     - significant_inter: {pattern: inter_count}
-        workspace-wide cutoff at 13% of max inter_count.
-    - significant_public: {pattern: inter_count}
-        is_pub patterns only, cutoff at 13% of max is_pub inter_count.
+        top top_n patterns by inter_count workspace-wide.
+    - significant_public: {pattern: public_count}
+        top top_n patterns by public_count = inter_count +
+        curated_example_count * weight, is_pub only.
     - picks: list of {pattern, kind, categories, intra_crates,
         inter_count, public_count} entries - the UNION with category
         tags.
 
-    the_user 2026-06-03: '...other usages will be captured by the
-    other measurements and, if they are significant, will show.' A
-    pub item used intra-crate qualifies via its crate's intra list;
-    its inter-crate qualification (if heavy) shows via inter; its
-    public-API qualification (if pub) shows via public. The union
-    naturally captures all three signals."""
-    if cutoff is None:
-        cutoff = _SIGNIFICANCE_CUTOFF
+    the_user 2026-06-03 follow-up: 'take the top 7 for each set (and
+    support that number with 13% as the guiding principle)'. The
+    13j sum-cutoff at 13% produced empty inter/public sets for 6 of
+    9 measurable targets at the 0.0.13 refresh because long-tail
+    workspaces dilute the sum-denominator; top-N preserves the
+    statistical-significance framing (1 / 0.13 = 7.69 conceptual
+    ceiling, rounded to 7) while guaranteeing each set has up to
+    top_n picks where data exists.
+
+    Categories are added to picks based on which sets the pattern
+    appears in. A pub item used intra-crate qualifies via its crate's
+    intra list; its inter-crate qualification (if heavy) shows via
+    inter; its public-API qualification (if pub) shows via public."""
+    if top_n is None:
+        top_n = _SET_TOP_N
     pattern_metrics = fp.get("pattern_metrics", {})
 
     # Build per-crate counts across all pattern kinds.
@@ -1024,25 +1035,24 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             elif kind == "attr_macro":
                 per_crate_counts[c][f"attr_macro:{nm}"] += 1
 
-    # 1. Per-crate intra significance. the_user 2026-06-03 'no top':
-    # cutoff = 13% of SUM of all pattern counts in the crate. A
-    # pattern is significant if it represents >= 13% of the crate's
-    # total volume. Statistical-significance anchor, not relative to
-    # any single pattern.
+    # 1. Per-crate intra significance. the_user 2026-06-03 follow-up:
+    # 'take the top 7 for each set (and support that number with 13%
+    # as the guiding principle)'. Each crate keeps its top top_n
+    # patterns by raw count. 13j's sum-cutoff replaced by top-N
+    # because the 0.0.13 refresh showed sum-cutoff produced empty
+    # inter/public sets for long-tail workspaces; top-N preserves
+    # the same 1 / 0.13 = 7.69 conceptual ceiling (rounded to 7).
     significant_intra_per_crate = {}
     for crate, counts in per_crate_counts.items():
         if not counts:
             continue
-        total = sum(counts.values())
-        if total <= 0:
-            continue
-        thresh = total * cutoff
-        sig = {p: c for p, c in counts.items() if c >= thresh}
+        sorted_items = sorted(counts.items(), key=lambda x: -x[1])
+        sig = dict(sorted_items[:top_n])
         if sig:
             significant_intra_per_crate[crate] = sig
 
-    # 2. Workspace-wide inter significance. cutoff = 13% of SUM of
-    # all inter_counts.
+    # 2. Workspace-wide inter significance. Top top_n patterns by
+    # inter_count.
     inter_counts = {}
     for pattern, m in pattern_metrics.items():
         if m.get("defining_crate") is None:
@@ -1052,10 +1062,8 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             inter_counts[pattern] = ic
     significant_inter = {}
     if inter_counts:
-        total = sum(inter_counts.values())
-        if total > 0:
-            thresh = total * cutoff
-            significant_inter = {p: c for p, c in inter_counts.items() if c >= thresh}
+        sorted_inter = sorted(inter_counts.items(), key=lambda x: -x[1])
+        significant_inter = dict(sorted_inter[:top_n])
 
     # 3. Workspace-wide public significance. the_user 2026-06-03:
     # 'examples is a public set weight only... any hit there is worth
@@ -1083,10 +1091,8 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             public_counts[pattern] = public_contribution
     significant_public = {}
     if public_counts:
-        total = sum(public_counts.values())
-        if total > 0:
-            thresh = total * cutoff
-            significant_public = {p: c for p, c in public_counts.items() if c >= thresh}
+        sorted_public = sorted(public_counts.items(), key=lambda x: -x[1])
+        significant_public = dict(sorted_public[:top_n])
 
     # UNION with category tags.
     all_patterns = set()
@@ -1128,7 +1134,7 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         "significant_inter": dict(significant_inter),
         "significant_public": dict(significant_public),
         "picks": picks,
-        "cutoff": cutoff,
+        "top_n": top_n,
     }
 
 
@@ -1177,7 +1183,7 @@ def candidate_instances(fp: dict, facts: dict):
     # candidate_instances now returns a STRUCTURED dict not a flat
     # list. emit_orientation renders the three sets as separate
     # sections preserving granularity.
-    sig = _compute_three_set_significance(fp, facts, _SIGNIFICANCE_CUTOFF)
+    sig = _compute_three_set_significance(fp, facts, _SET_TOP_N)
     # Enrich each set with instance + spans per pattern.
     def _enrich(pattern_map):
         out = {}
@@ -1205,7 +1211,7 @@ def candidate_instances(fp: dict, facts: dict):
         "intra_per_crate": enriched_intra_per_crate,
         "inter": enriched_inter,
         "public": enriched_public,
-        "cutoff": sig["cutoff"],
+        "top_n": sig["top_n"],
     }
 
 
@@ -1687,14 +1693,15 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     intra_per_crate = cands.get("intra_per_crate", {}) if isinstance(cands, dict) else {}
     inter_sig = cands.get("inter", {}) if isinstance(cands, dict) else {}
     public_sig = cands.get("public", {}) if isinstance(cands, dict) else {}
-    cutoff = cands.get("cutoff", 0.13) if isinstance(cands, dict) else 0.13
+    top_n = cands.get("top_n", 7) if isinstance(cands, dict) else 7
 
     # 5. worked slices (plural; surfaced via per-crate top-pattern aggregation
     # under 0.0.7 patch 7b + 7c).
     L += ["## 5. Significance sets - the authoring templates", ""]
-    L.append(f"Significance threshold: {cutoff:.2%} of each set's "
-             f"top count. the_user 2026-06-03: 'we need granularity "
-             f"along those 3 axes'; this section preserves them.")
+    L.append(f"Top {top_n} per set. the_user 2026-06-03: 'take the "
+             f"top 7 for each set (and support that number with 13% "
+             f"as the guiding principle)' - 1 / 0.13 = 7.69, rounded "
+             f"to {top_n}. Each section below preserves its axis.")
     L.append("")
     # Use the legacy list-shape for downstream sections.
     cands_compat = []
@@ -1748,9 +1755,9 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  "mention briefly with context for the crate's "
                  "architecture.")
         L.append("- **Tier 3 (baseline coverage)**: patterns NOT "
-                 "in any significance set above the 13% cutoff. The "
-                 "reference index (`reference.md`) is the inventory; "
-                 "no per-pattern attention beyond the listing.")
+                 "in any set's top N picks. The reference index "
+                 "(`reference.md`) is the inventory; no per-pattern "
+                 "attention beyond the listing.")
         L.append("")
         L.append("A pattern qualifying in multiple Tier 1 sets "
                  "(public AND inter) is the strongest signal - the "

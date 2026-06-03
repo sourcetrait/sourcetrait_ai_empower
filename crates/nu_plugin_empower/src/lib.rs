@@ -32,7 +32,7 @@ pub(crate) mod nu {
     };
 }
 
-pub(crate) use sourcetrait_cmdlib_empower as cmdlib;
+pub(crate) use sourcetrait_libcli_empower as libcli;
 
 pub use crate::{
     plugin::EmpowerPlugin,

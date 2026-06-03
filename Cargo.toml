@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
   "crates/sourcetrait_lib_empower",
-  "crates/sourcetrait_cmdlib_empower",
+  "crates/sourcetrait_libcli_empower",
   "crates/nu_plugin_empower",
   "crates/nu_sh_mcp",
 ]
@@ -34,7 +34,7 @@ shellexpand = { version = "3", features = ["path"] }
 snafu = "0.8"
 sourcetrait_chronox = { version = "1" }
 sourcetrait_clapx = { version = "1" }
-sourcetrait_cmdlib_empower = { path = "crates/sourcetrait_cmdlib_empower" }
+sourcetrait_libcli_empower = { path = "crates/sourcetrait_libcli_empower" }
 sourcetrait_lib_empower = { path = "crates/sourcetrait_lib_empower" }
 sourcetrait_ronx = { version = "3" }
 sourcetrait_stdx = { version = "1" }

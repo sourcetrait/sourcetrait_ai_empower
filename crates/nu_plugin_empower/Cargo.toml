@@ -1,6 +1,6 @@
 [package]
 name = "nu_plugin_empower"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 description = "Nushell plugin supporting SourceTrait Empower"
 authors = ["SourceTrait <development@sourcetrait.com>"]
@@ -18,7 +18,7 @@ path = "src/main.rs"
 nu-plugin.workspace = true
 nu-protocol.workspace = true
 snafu.workspace = true
-sourcetrait_cmdlib_empower.workspace = true
+sourcetrait_libcli_empower.workspace = true
 
 # [dev-dependencies] left empty for now -- nu-plugin-test-support 0.113 pulls
 # in nu-plugin-engine 0.113.1 which has a non-exhaustive-match upstream bug

@@ -52,6 +52,46 @@ NOISE_MACROS = {
     "compile_error", "if_chain", "try", "await",
 }
 
+# Attribute macros that are user-domain but constitute scaffolding noise rather than
+# architectural registration -- test-framework attributes, rustfmt/clippy directives, and
+# derive-helper attributes that configure a derive-generated impl per-field (serde, strum,
+# bitflags etc.). attr_macro:case from rstest, attr_macro:serde from derive scaffolding,
+# attr_macro:rustfmt::skip from formatter pragmas all dominated histograms in the 0.0.2
+# probe sweep without representing architectural patterns.
+NOISE_ATTRS = {
+    # test-framework
+    "case", "rstest", "expect",
+    # rustfmt / formatter pragmas
+    "rustfmt::skip",
+    # derive-helper / proc-macro support attrs configuring generated code per-field
+    "serde", "strum", "bitflags", "clap", "arg", "command",
+}
+
+
+def _is_noise_macro(name):
+    """Return True if `name` should be excluded from the macro_invocation histogram.
+    Combines the explicit NOISE_MACROS set with prefix heuristics: assert_* and
+    debug_assert_* catch the tokio-test / bevy / many-other-framework assertion macros
+    that fall outside the canonical assert / assert_eq / assert_ne already in
+    NOISE_MACROS, and cfg_* / cfg_not_* catch tokio-style cfg-gating macro_rules!
+    wrappers that emit `#[cfg(...)]` blocks for feature ergonomics."""
+    if name in NOISE_MACROS:
+        return True
+    if name.startswith("assert_") or name.startswith("debug_assert_"):
+        return True
+    if name.startswith("cfg_") or name.startswith("cfg_not_"):
+        return True
+    return False
+
+
+def _is_noise_attr(path, base):
+    """Return True if a #[<path>] attribute should be excluded from the attr_macro
+    histogram. Checks both the full path form (catches namespaced attrs like
+    rustfmt::skip) and the last-segment base form (catches unnamespaced attrs like
+    'case' or 'serde')."""
+    return path in NOISE_ATTRS or base in NOISE_ATTRS
+
+
 _TOK = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|::|->|=>|[{}()\[\]<>;:,!#=&|]")
 
 
@@ -341,7 +381,7 @@ def scan_file(relpath, src):
                 d = piece.strip().split("::")[-1].strip()
                 if d:
                     facts["derives"].append({"trait": d, "line": a["line"]})
-        elif a["base"] not in INERT_ATTRS:
+        elif a["base"] not in INERT_ATTRS and not _is_noise_attr(a["path"], a["base"]):
             # user attribute-macro
             facts["macros"].append({"kind": "attr_macro", "name": a["path"],
                                     "line": a["line"], "args_count": len(_split_top(a["args"])),
@@ -402,7 +442,7 @@ def scan_file(relpath, src):
             arg_idents = [s.strip().split("::")[-1].split("<")[0].strip()
                           for s in _split_top(arg_txt)]
             arg_idents = [a for a in arg_idents if a and _is_ident(a)]
-            if t not in NOISE_MACROS:
+            if not _is_noise_macro(t):
                 facts["macros"].append({
                     "kind": "macro_invocation", "name": t, "line": ln(off),
                     "args_count": len([s for s in _split_top(arg_txt) if s.strip()]),

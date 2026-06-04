@@ -24,6 +24,9 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config  # noqa: E402
+
 # 0.0.4 patch 2 (s): word-bounded capitalized identifier for use-path scanning.
 _TYPE_IDENT_RE = re.compile(r'\b[A-Z]\w*\b')
 
@@ -37,10 +40,9 @@ _TYPE_IDENT_RE = re.compile(r'\b[A-Z]\w*\b')
 # to find a domain-specific pattern. Domain-flavored derives that ARE load-bearing
 # for their workspace (bevy's Component / Resource / System / Event, etc.) stay OUT
 # of this set so they remain pickable.
-_GENERIC_AUTO_DERIVES = frozenset([
-    "Debug", "Clone", "PartialEq", "Eq", "Hash", "Default", "Copy",
-    "Serialize", "Deserialize",
-])
+# 0.0.30: moved to calibration.toml [filters.generic_auto_derives].
+_GENERIC_AUTO_DERIVES = config.frozenset_param(
+    "filters", "generic_auto_derives")
 
 # 0.0.8 patch 8c: generic-shape outer names for type_usage entries.
 # A type_usage pattern `<outer>::<inner>` whose outer is in this set is
@@ -51,18 +53,9 @@ _GENERIC_AUTO_DERIVES = frozenset([
 # noisy collection / smart-pointer outers). Workspace-defined outers
 # are NEVER in this set; if a workspace declared a trait named one of
 # these, the workspace_types lookup still surfaces the pattern.
-_GENERIC_AUTO_TYPES = frozenset([
-    # standard trait outers
-    "Default", "Display", "Debug",
-    "From", "Into", "TryFrom", "TryInto",
-    "Clone",
-    "AsRef", "AsMut",
-    "Drop",
-    "PartialEq", "Eq", "Hash", "PartialOrd", "Ord",
-    "Iterator", "IntoIterator",
-    # Poll / Future trait outers (used as enum constructors)
-    "Poll",
-])
+# 0.0.30: moved to calibration.toml [filters.generic_auto_types].
+_GENERIC_AUTO_TYPES = config.frozenset_param(
+    "filters", "generic_auto_types")
 
 # 0.0.8 patch 8c: minimum usage count for an external (non-workspace-
 # defined) type_usage entry to count as a workspace-relevant lynchpin.
@@ -72,7 +65,10 @@ _GENERIC_AUTO_TYPES = frozenset([
 # to land in 38-99 range; setting the lynchpin floor at 60 keeps
 # noise (under-threshold std primitives) out while admitting the
 # tokio::spawn class of external architectural patterns.
-_LYNCHPIN_USAGE_MIN = int(os.environ.get("ORIENT_LYNCHPIN_USAGE_MIN", "60"))
+# 0.0.30: moved to calibration.toml [picker.lynchpin].
+_LYNCHPIN_USAGE_MIN = config.int_param(
+    "ORIENT_LYNCHPIN_USAGE_MIN", "picker", "lynchpin", "usage_min",
+    default=60)
 
 # 0.0.9 patch 9a: inner method names treated as generic-shape for
 # inner-grouping family detection. A type_usage with inner method
@@ -81,13 +77,9 @@ _LYNCHPIN_USAGE_MIN = int(os.environ.get("ORIENT_LYNCHPIN_USAGE_MIN", "60"))
 # Rust types; grouping them by inner would produce a meaningless
 # "all-constructors" family. Outer-grouping isn't affected - generic
 # inner methods still aggregate into their outer's family.
-_GENERIC_INNER_METHODS = frozenset([
-    "new", "default", "from", "into", "try_from", "try_into",
-    "fmt", "clone", "as_ref", "as_mut", "deref", "deref_mut",
-    "eq", "ne", "cmp", "partial_cmp", "hash",
-    "drop", "next", "iter", "into_iter", "iter_mut",
-    "build", "into_inner", "borrow", "borrow_mut",
-])
+# 0.0.30: moved to calibration.toml [filters.generic_inner_methods].
+_GENERIC_INNER_METHODS = config.frozenset_param(
+    "filters", "generic_inner_methods")
 
 # 0.0.13 patch 13h + 0.0.14 patch 14a + 0.0.20 patch 20a: top-N per
 # set for the three-set picker. History:
@@ -149,9 +141,16 @@ _GENERIC_INNER_METHODS = frozenset([
 # measure_overlap continues to hold at 100% (mechanical-only ceiling
 # reached at 0.0.28; widening admits MORE picks per ground-truth
 # entry without changing match counts).
-_TOP_N_FLOOR = int(os.environ.get("ORIENT_TOP_N_FLOOR", "7"))
-_SLOC_DIVISOR = int(os.environ.get("ORIENT_SLOC_DIVISOR", "100"))
-_SLOC_MULTIPLIER = float(os.environ.get("ORIENT_SLOC_MULTIPLIER", "1.6"))
+# 0.0.30: moved to calibration.toml [picker]. Current values D=100,
+# M=1.6 reflect 0.0.29's widening; the_user-tunable via TOML edit or
+# env var override (ORIENT_SLOC_DIVISOR / ORIENT_SLOC_MULTIPLIER /
+# ORIENT_TOP_N_FLOOR).
+_TOP_N_FLOOR = config.int_param(
+    "ORIENT_TOP_N_FLOOR", "picker", "top_n_floor", default=7)
+_SLOC_DIVISOR = config.int_param(
+    "ORIENT_SLOC_DIVISOR", "picker", "sloc_divisor", default=100)
+_SLOC_MULTIPLIER = config.float_param(
+    "ORIENT_SLOC_MULTIPLIER", "picker", "sloc_multiplier", default=1.6)
 
 
 def _compute_sloc_scaled_top_n(sloc: int) -> int:
@@ -205,16 +204,18 @@ def _compute_sloc_scaled_top_n(sloc: int) -> int:
 # - 16: 4.0
 # - 64: 6.0
 # - 128 (bevy / iced scale): 7.0
-_EXAMPLE_WEIGHT_FLOOR = float(
-    os.environ.get("ORIENT_EXAMPLE_WEIGHT_FLOOR", "1.0"))
+_EXAMPLE_WEIGHT_FLOOR = config.float_param(
+    "ORIENT_EXAMPLE_WEIGHT_FLOOR",
+    "picker", "example", "weight_floor", default=1.0)
 
 # 0.0.24: minimum spread (number of crates whose initial intra_crate
 # top-N contains the pattern) for it to qualify as a workspace-wide
 # 'internals' protagonist. the_user 2026-06-04: '>=2'. Lower threshold
 # means more patterns enter the internals pool; the top_n_workspace
-# cap then truncates. Configurable via env.
-_INTERNALS_SPREAD_THRESHOLD = int(
-    os.environ.get("ORIENT_INTERNALS_SPREAD_THRESHOLD", "2"))
+# cap then truncates. 0.0.30: moved to calibration.toml.
+_INTERNALS_SPREAD_THRESHOLD = config.int_param(
+    "ORIENT_INTERNALS_SPREAD_THRESHOLD",
+    "picker", "internals", "spread_threshold", default=2)
 
 
 def _compute_public_example_weight(num_example_rs_files: int) -> float:
@@ -242,7 +243,9 @@ def _compute_public_example_weight(num_example_rs_files: int) -> float:
 # qualifies the outer "Selection"; mpsc::channel + oneshot::channel
 # qualifies the inner "channel". Single-variant outers (Selection only
 # ever called as Selection::new) don't form a family.
-_FAMILY_MIN_VARIANTS = int(os.environ.get("ORIENT_FAMILY_MIN_VARIANTS", "2"))
+_FAMILY_MIN_VARIANTS = config.int_param(
+    "ORIENT_FAMILY_MIN_VARIANTS",
+    "picker", "family", "min_variants", default=2)
 
 # 0.0.10 patch 10f: combined-score ranking constants. Score formula:
 #   score = raw_count
@@ -255,15 +258,24 @@ _FAMILY_MIN_VARIANTS = int(os.environ.get("ORIENT_FAMILY_MIN_VARIANTS", "2"))
 # delta = developer-signaled-importance boost when example count
 # exceeds _EXAMPLE_THRESHOLD (the_user 2026-06-03: 'more than 3 examples
 # exist' = developers signaling strong usage guidelines).
-_SCORE_INTER_BOOST = float(
-    os.environ.get("ORIENT_SCORE_INTER_BOOST", "0.5"))
-_SCORE_PUB_BOOST = float(os.environ.get("ORIENT_SCORE_PUB_BOOST", "0.3"))
-_SCORE_EXAMPLE_BOOST = float(
-    os.environ.get("ORIENT_SCORE_EXAMPLE_BOOST", "0.5"))
-_SCORE_EXAMPLE_THRESHOLD_BOOST = float(
-    os.environ.get("ORIENT_SCORE_EXAMPLE_THRESHOLD_BOOST", "1.5"))
-_EXAMPLE_SATURATION = int(os.environ.get("ORIENT_EXAMPLE_SATURATION", "10"))
-_EXAMPLE_THRESHOLD = int(os.environ.get("ORIENT_EXAMPLE_THRESHOLD", "3"))
+_SCORE_INTER_BOOST = config.float_param(
+    "ORIENT_SCORE_INTER_BOOST",
+    "picker", "score", "inter_boost", default=0.5)
+_SCORE_PUB_BOOST = config.float_param(
+    "ORIENT_SCORE_PUB_BOOST",
+    "picker", "score", "pub_boost", default=0.3)
+_SCORE_EXAMPLE_BOOST = config.float_param(
+    "ORIENT_SCORE_EXAMPLE_BOOST",
+    "picker", "score", "example_boost", default=0.5)
+_SCORE_EXAMPLE_THRESHOLD_BOOST = config.float_param(
+    "ORIENT_SCORE_EXAMPLE_THRESHOLD_BOOST",
+    "picker", "score", "example_threshold_boost", default=1.5)
+_EXAMPLE_SATURATION = config.int_param(
+    "ORIENT_EXAMPLE_SATURATION",
+    "picker", "example", "saturation", default=10)
+_EXAMPLE_THRESHOLD = config.int_param(
+    "ORIENT_EXAMPLE_THRESHOLD",
+    "picker", "example", "threshold", default=3)
 
 
 def _compute_score(count, metrics):
@@ -336,8 +348,12 @@ def _aggregate_family_metrics(family_kind, family_inner, per_crate_type_usage_me
 # 0.0.4 patch 4 (u): when the workspace has more than _CLUSTER_THRESHOLD crates, the
 # S1 crate / region map emits a "Crate clusters (by name prefix)" sub-section above
 # the per-crate detail list. Clusters require at least _CLUSTER_MIN_SIZE members.
-_CLUSTER_THRESHOLD = int(os.environ.get("ORIENT_CLUSTER_THRESHOLD", "15"))
-_CLUSTER_MIN_SIZE = int(os.environ.get("ORIENT_CLUSTER_MIN_SIZE", "3"))
+_CLUSTER_THRESHOLD = config.int_param(
+    "ORIENT_CLUSTER_THRESHOLD",
+    "picker", "cluster", "threshold", default=15)
+_CLUSTER_MIN_SIZE = config.int_param(
+    "ORIENT_CLUSTER_MIN_SIZE",
+    "picker", "cluster", "min_size", default=3)
 
 # 0.0.7 patch 7b: candidate_instances surfaces up to this many architectural
 # patterns per workspace via per-crate aggregation. Justified by the
@@ -345,7 +361,8 @@ _CLUSTER_MIN_SIZE = int(os.environ.get("ORIENT_CLUSTER_MIN_SIZE", "3"))
 # notes/rust_recon/methodology_findings.md - most workspaces have 4-6
 # architectural patterns; 5 is the central tendency. Configurable so future
 # iterations can probe larger / smaller N.
-_PLURAL_N = int(os.environ.get("ORIENT_PLURAL_N", "5"))
+_PLURAL_N = config.int_param(
+    "ORIENT_PLURAL_N", "picker", "plural", "n", default=5)
 
 
 def _cluster_crates_by_prefix(crate_names):

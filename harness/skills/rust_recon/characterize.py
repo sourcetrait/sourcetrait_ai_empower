@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rustscan  # noqa: E402
+import config  # noqa: E402
 
 try:
     import tomllib
@@ -31,11 +32,18 @@ except ModuleNotFoundError:  # pragma: no cover (Python < 3.11)
     tomllib = None
 
 # --- Declared, overridable thresholds (surfaced in the fingerprint) ---------------------
-DOMINANCE_SHARE = float(os.environ.get("ORIENT_DOMINANCE_SHARE", "0.45"))
-COEQUAL_TOPK = int(os.environ.get("ORIENT_COEQUAL_TOPK", "4"))
-COEQUAL_SHARE = float(os.environ.get("ORIENT_COEQUAL_SHARE", "0.60"))
-AMBIGUOUS_BAND = float(os.environ.get("ORIENT_AMBIGUOUS_BAND", "0.07"))
-SEAM_DENSE_PER_KLOC = float(os.environ.get("ORIENT_SEAM_DENSE_PER_KLOC", "4.0"))
+# 0.0.30: calibration constants moved to calibration.toml; loaded via
+# config.py. Env vars (ORIENT_*) still override the TOML defaults.
+DOMINANCE_SHARE = config.float_param(
+    "ORIENT_DOMINANCE_SHARE", "mode", "dominance_share", default=0.45)
+COEQUAL_TOPK = config.int_param(
+    "ORIENT_COEQUAL_TOPK", "mode", "coequal_topk", default=4)
+COEQUAL_SHARE = config.float_param(
+    "ORIENT_COEQUAL_SHARE", "mode", "coequal_share", default=0.60)
+AMBIGUOUS_BAND = config.float_param(
+    "ORIENT_AMBIGUOUS_BAND", "mode", "ambiguous_band", default=0.07)
+SEAM_DENSE_PER_KLOC = config.float_param(
+    "ORIENT_SEAM_DENSE_PER_KLOC", "mode", "seam_dense_per_kloc", default=4.0)
 
 
 # 0.0.8 patch 8b: src-only filter for type_usages. Test / bench /
@@ -45,7 +53,9 @@ SEAM_DENSE_PER_KLOC = float(os.environ.get("ORIENT_SEAM_DENSE_PER_KLOC", "4.0"))
 # excluded directory names; works for both per-crate layouts
 # (`crates/<X>/tests/...`) and workspace-top-level layouts
 # (`tests/...` as nushell uses).
-_EXCLUDED_DIR_SEGMENTS = ("tests", "benches", "examples")
+_EXCLUDED_DIR_SEGMENTS = config.tuple_param(
+    "filters", "excluded_dir_segments",
+    default=("tests", "benches", "examples"))
 
 # 0.0.28: filters for method_ref synthesis from AST scanner output.
 # Tighter than emit.py's _GENERIC_AUTO_TYPES + _GENERIC_INNER_METHODS
@@ -65,26 +75,10 @@ _EXCLUDED_DIR_SEGMENTS = ("tests", "benches", "examples")
 # are constructor / formatter conventions, not architectural verbs.
 # iced's `update` and similar workspace-specific verbs survive this
 # filter. Matches emit.py's _GENERIC_INNER_METHODS exactly.
-_METHOD_REF_OUTER_SKIP = frozenset([
-    "Self",
-    # Mirror of emit.py _GENERIC_AUTO_TYPES:
-    "Default", "Display", "Debug",
-    "From", "Into", "TryFrom", "TryInto",
-    "Clone",
-    "AsRef", "AsMut",
-    "Drop",
-    "PartialEq", "Eq", "Hash", "PartialOrd", "Ord",
-    "Iterator", "IntoIterator",
-    "Poll",
-])
-_METHOD_REF_INNER_SKIP = frozenset([
-    # Mirror of emit.py _GENERIC_INNER_METHODS:
-    "new", "default", "from", "into", "try_from", "try_into",
-    "fmt", "clone", "as_ref", "as_mut", "deref", "deref_mut",
-    "eq", "ne", "cmp", "partial_cmp", "hash",
-    "drop", "next", "iter", "into_iter", "iter_mut",
-    "build", "into_inner", "borrow", "borrow_mut",
-])
+_METHOD_REF_OUTER_SKIP = config.frozenset_param(
+    "filters", "method_ref_outer_skip")
+_METHOD_REF_INNER_SKIP = config.frozenset_param(
+    "filters", "method_ref_inner_skip")
 
 # 0.0.28: minimum distinct workspace-defined-pub outers for a
 # method_ref family to qualify as a workspace-wide protagonist.
@@ -92,9 +86,10 @@ _METHOD_REF_INNER_SKIP = frozenset([
 # methodology; 3+ outers across multiple Type definitions indicates
 # the method name is the architectural concept the workspace's
 # external API uses as a hook (iced's update + view + draw etc.).
-# Env-tunable.
-_METHOD_REF_FAMILY_MIN_OUTERS = int(
-    os.environ.get("ORIENT_METHOD_REF_FAMILY_MIN_OUTERS", "3"))
+# 0.0.30: moved to calibration.toml [picker.family].
+_METHOD_REF_FAMILY_MIN_OUTERS = config.int_param(
+    "ORIENT_METHOD_REF_FAMILY_MIN_OUTERS",
+    "picker", "family", "method_ref_min_outers", default=3)
 
 
 def _is_src_file(rel: str) -> bool:
@@ -181,8 +176,9 @@ def find_crates(root: Path):
 # pub_inter_count / max_pub_inter_count_in_workspace, or
 # pub_inter_count / pub_count). Tracked in
 # notes/rust_recon/debt.md.
-_DEV_WITH_END_THRESHOLD = int(
-    os.environ.get("ORIENT_DEV_WITH_END_USE_THRESHOLD", "30"))
+_DEV_WITH_END_THRESHOLD = config.int_param(
+    "ORIENT_DEV_WITH_END_USE_THRESHOLD",
+    "classification", "dev_with_end_threshold", default=30)
 
 
 def _classify_crate_use(name: str, info: dict,
@@ -1212,8 +1208,12 @@ def _compute_pattern_metrics(all_facts: dict, ast_facts: dict = None,
     # - example_count: weighted total (gamma boost saturation input).
     # - curated_example_count: strict examples/-only count (threshold
     #   boost test, preserving the_user's '3 examples' semantics).
-    test_weight = float(os.environ.get("ORIENT_TEST_WEIGHT", "0.3"))
-    bench_weight = float(os.environ.get("ORIENT_BENCH_WEIGHT", "0.3"))
+    test_weight = config.float_param(
+        "ORIENT_TEST_WEIGHT", "picker", "example", "test_weight",
+        default=0.3)
+    bench_weight = config.float_param(
+        "ORIENT_BENCH_WEIGHT", "picker", "example", "bench_weight",
+        default=0.3)
     files_by_category_per_name = defaultdict(
         lambda: {"examples": set(), "tests": set(), "benches": set()})
     for tu in all_facts.get("example_type_usages", []):

@@ -30,57 +30,6 @@ import config  # noqa: E402
 # 0.0.4 patch 2 (s): word-bounded capitalized identifier for use-path scanning.
 _TYPE_IDENT_RE = re.compile(r'\b[A-Z]\w*\b')
 
-# 0.0.5 patch dd: generic auto-derive trait names. These are derived universally via
-# #[derive(...)] across the standard data-shaping needs (Debug for stringification,
-# Clone / Copy for value semantics, the equality + hashing family for collections,
-# Default for zero-value construction, Serialize / Deserialize for serde). They are
-# NOT architecturally load-bearing - picking one as the worked-slice protagonist
-# yields a generic trace that does not reveal the workspace's structural pattern.
-# candidate_instance treats a generic-auto-derive leader as kind-only and walks past
-# to find a domain-specific pattern. Domain-flavored derives that ARE load-bearing
-# for their workspace (bevy's Component / Resource / System / Event, etc.) stay OUT
-# of this set so they remain pickable.
-# 0.0.30: moved to calibration.toml [filters.generic_auto_derives].
-_GENERIC_AUTO_DERIVES = config.frozenset_param(
-    "filters", "generic_auto_derives")
-
-# 0.0.8 patch 8c: generic-shape outer names for type_usage entries.
-# A type_usage pattern `<outer>::<inner>` whose outer is in this set is
-# treated as a generic trait-method invocation (Default::default,
-# Display::fmt, From::from, Clone::clone, etc.) and skipped by the
-# picker. These are noise in the architectural sense even though they
-# pass the rustscan TYPE_USAGE_NOISE_TYPES gate (which only excludes
-# noisy collection / smart-pointer outers). Workspace-defined outers
-# are NEVER in this set; if a workspace declared a trait named one of
-# these, the workspace_types lookup still surfaces the pattern.
-# 0.0.30: moved to calibration.toml [filters.generic_auto_types].
-_GENERIC_AUTO_TYPES = config.frozenset_param(
-    "filters", "generic_auto_types")
-
-# 0.0.8 patch 8c: minimum usage count for an external (non-workspace-
-# defined) type_usage entry to count as a workspace-relevant lynchpin.
-# Tokio's task::spawn (65) + Poll::Ready (450) pass; AtomicUsize::new
-# (41 in tokio's own scan) doesn't. Configurable via env. Calibrated
-# from the helix + tokio probes in 8b - workspace-defined types tend
-# to land in 38-99 range; setting the lynchpin floor at 60 keeps
-# noise (under-threshold std primitives) out while admitting the
-# tokio::spawn class of external architectural patterns.
-# 0.0.30: moved to calibration.toml [picker.lynchpin].
-_LYNCHPIN_USAGE_MIN = config.int_param(
-    "ORIENT_LYNCHPIN_USAGE_MIN", "picker", "lynchpin", "usage_min",
-    default=60)
-
-# 0.0.9 patch 9a: inner method names treated as generic-shape for
-# inner-grouping family detection. A type_usage with inner method
-# `new` / `default` / `from` / `fmt` / etc. doesn't contribute to
-# the inner-family signal because these names are universal across
-# Rust types; grouping them by inner would produce a meaningless
-# "all-constructors" family. Outer-grouping isn't affected - generic
-# inner methods still aggregate into their outer's family.
-# 0.0.30: moved to calibration.toml [filters.generic_inner_methods].
-_GENERIC_INNER_METHODS = config.frozenset_param(
-    "filters", "generic_inner_methods")
-
 # 0.0.13 patch 13h + 0.0.14 patch 14a + 0.0.20 patch 20a: top-N per
 # set for the three-set picker. History:
 #
@@ -236,17 +185,6 @@ def _compute_public_example_weight(num_example_rs_files: int) -> float:
     return max(_EXAMPLE_WEIGHT_FLOOR, math.log2(num_example_rs_files))
 
 
-# 0.0.9 patch 9a: minimum distinct variants for a type-usage family.
-# An outer-family requires >= this many distinct inner methods sharing
-# the outer; an inner-family requires >= this many distinct outers
-# sharing the inner. Selection::new + Selection::single + Selection::range
-# qualifies the outer "Selection"; mpsc::channel + oneshot::channel
-# qualifies the inner "channel". Single-variant outers (Selection only
-# ever called as Selection::new) don't form a family.
-_FAMILY_MIN_VARIANTS = config.int_param(
-    "ORIENT_FAMILY_MIN_VARIANTS",
-    "picker", "family", "min_variants", default=2)
-
 # 0.0.10 patch 10f: combined-score ranking constants. Score formula:
 #   score = raw_count
 #         * (1 + alpha * inter_ratio)
@@ -311,40 +249,6 @@ def _compute_score(count, metrics):
     return score
 
 
-def _aggregate_family_metrics(family_kind, family_inner, per_crate_type_usage_metrics):
-    """0.0.10 patch 10f: aggregate per-pattern metrics for a family
-    entry by taking the BEST (max) value of each metric across the
-    family's constituent type_usages. A family is more architecturally
-    central than its weakest member; aggregating by max captures the
-    strongest signal.
-
-    family_kind: 'outer' or 'inner' (from the type_usage_family pattern
-    name 'outer:X' / 'inner:Y').
-    family_inner: X or Y respectively.
-    per_crate_type_usage_metrics: dict mapping type_usage pattern name
-    (without 'type_usage:' prefix) to its metrics."""
-    best = {"inter_ratio": 0.0, "is_pub": False, "example_count": 0,
-            "curated_example_count": 0}
-    for tu_name, m in per_crate_type_usage_metrics.items():
-        if "::" not in tu_name:
-            continue
-        outer, _, inner = tu_name.partition("::")
-        matches = (
-            (family_kind == "outer" and outer == family_inner)
-            or (family_kind == "inner" and inner == family_inner)
-        )
-        if not matches:
-            continue
-        if m.get("inter_ratio", 0.0) > best["inter_ratio"]:
-            best["inter_ratio"] = m.get("inter_ratio", 0.0)
-        if m.get("is_pub", False):
-            best["is_pub"] = True
-        if m.get("example_count", 0) > best["example_count"]:
-            best["example_count"] = m.get("example_count", 0)
-        if m.get("curated_example_count", 0) > best["curated_example_count"]:
-            best["curated_example_count"] = m.get("curated_example_count", 0)
-    return best
-
 # 0.0.4 patch 4 (u): when the workspace has more than _CLUSTER_THRESHOLD crates, the
 # S1 crate / region map emits a "Crate clusters (by name prefix)" sub-section above
 # the per-crate detail list. Clusters require at least _CLUSTER_MIN_SIZE members.
@@ -354,15 +258,6 @@ _CLUSTER_THRESHOLD = config.int_param(
 _CLUSTER_MIN_SIZE = config.int_param(
     "ORIENT_CLUSTER_MIN_SIZE",
     "picker", "cluster", "min_size", default=3)
-
-# 0.0.7 patch 7b: candidate_instances surfaces up to this many architectural
-# patterns per workspace via per-crate aggregation. Justified by the
-# the_user-validated manual ground-truth list at
-# notes/rust_recon/methodology_findings.md - most workspaces have 4-6
-# architectural patterns; 5 is the central tendency. Configurable so future
-# iterations can probe larger / smaller N.
-_PLURAL_N = config.int_param(
-    "ORIENT_PLURAL_N", "picker", "plural", "n", default=5)
 
 
 def _cluster_crates_by_prefix(crate_names):
@@ -650,490 +545,6 @@ def _instance_for_kind(kind, name, facts):
         return (inst[0] if inst else None,
                 [f"{tu.get('file','?')}:{tu['line']}" for tu in inst[:200]])
     return (None, [])
-
-
-def _is_generic_pattern(kind, name):
-    """True when the pattern is a derive OR a manual trait_impl of one of the
-    standard data-shaping traits (Debug / Clone / PartialEq / Eq / Hash / Default /
-    Copy / Serialize / Deserialize).
-
-    0.0.5 patch dd: derives of these traits are universally applied via
-    #[derive(...)]; treating them as the worked-slice protagonist yields a trace
-    that does not reveal the workspace's architectural pattern.
-
-    0.0.6 patch 6a: extended to trait_impl variants of the same trait names. Manual
-    impls of Debug / Clone / etc. are almost always data-shaping (custom formatting,
-    optimized cloning) rather than architectural; tokio's 0.0.5 baseline picked
-    trait_impl:Debug at 146 instances even though Debug formatting is not what
-    tokio's architecture is about. Edge case: a debug-tracing library where manual
-    Debug impls ARE architectural would mis-skip - watch for false positives during
-    per-target audit.
-
-    0.0.8 patch 8c: extended to type_usage variants. A type_usage pattern
-    `<outer>::<inner>` is generic when outer is in _GENERIC_AUTO_TYPES
-    (Default::default, Display::fmt, From::from, Clone::clone, Poll::Ready,
-    etc.) - these are standard trait-method invocations or enum-variant
-    constructors that are universal across Rust code, not workspace-specific
-    architectural patterns. Workspace-defined outers (Selection, Range, Rope
-    for helix) survive because none of them are in the set.
-
-    0.0.9 patch 9a: extended to type_usage_family. A family pattern name has
-    the shape `outer:<X>` or `inner:<Y>`. Outer-families are generic when X
-    is in _GENERIC_AUTO_TYPES (same as type_usage). Inner-families are NEVER
-    generic at this stage because the inner-family construction (in
-    _per_crate_top_patterns) already excludes _GENERIC_INNER_METHODS at
-    counting time.
-
-    candidate_instance treats these as kind-only signals and walks past, the same
-    way Patch 5 handles fn_table:<crate> leaders."""
-    if kind in ("derive", "trait_impl"):
-        return name in _GENERIC_AUTO_DERIVES
-    if kind == "type_usage":
-        outer = name.split("::", 1)[0]
-        return outer in _GENERIC_AUTO_TYPES
-    if kind == "type_usage_family":
-        if name.startswith("outer:"):
-            outer = name.split(":", 1)[1]
-            return outer in _GENERIC_AUTO_TYPES
-        return False
-    return False
-
-
-def _is_workspace_defined(kind, name, workspace_traits, macro_defs_idx,
-                          workspace_types=None, lynchpins=None,
-                          pattern_metrics=None):
-    """True when the pattern is anchored to a workspace-defined trait or macro.
-
-    0.0.6 patch 6b: trait_impl:<T> and derive:<T> are workspace-defined when T
-    appears in facts['traits'] (built into workspace_traits as a name set);
-    reg_macro:<N> is workspace-defined when N appears in facts['macro_defs'] as
-    an inline macro_rules! definition (Patch 3's tracking). The picker prefers
-    workspace-defined patterns over imported ones; the reasoning is that the
-    workspace's architectural pattern lives in traits and macros the workspace
-    DEFINES, not in trait_impls of std::convert::From or external macros like
-    fluent-localization's fl!.
-
-    Helix's 0.0.5 baseline picked trait_impl:From (std-library) at rank 12 even
-    though trait_impl:Request (helix-lsp-types::Request) at rank 16 is more
-    architecturally specific; bevy's 0.0.5 baseline picked trait_impl:From over
-    its many workspace-defined trait_impls (Plugin, Bundle, etc.) and derives
-    (Component, Resource, etc.). This helper drives the two-pass walk that
-    catches both cases.
-
-    0.0.8 patch 8c: extended to type_usage. A type_usage pattern
-    `<outer>::<inner>` is workspace-defined when its outer appears in
-    workspace_types (the set of struct / enum / union / type aliases declared
-    in the workspace). External lynchpins are also admitted: a non-workspace
-    type_usage whose combined name appears in the lynchpins set (built from
-    pattern_histogram entries above _LYNCHPIN_USAGE_MIN) counts as
-    workspace-relevant. Tokio's task::spawn and Poll::Ready appear in the
-    lynchpins set when scanning an application workspace using tokio; helix's
-    Selection::new / Range::new appear via workspace_types when scanning helix
-    itself.
-
-    Detection caveat: name-based (no path resolution). False positives possible
-    when a workspace defines a trait with the same name as a commonly-impl'd
-    imported trait (e.g. `Request` in helix-lsp-types AND `tower::Request`).
-    For 0.0.6 v1, name check is the simple defensible signal; refine with
-    rustdoc-overlay path resolution in a later iteration if false positives
-    surface."""
-    if kind in ("trait_impl", "derive"):
-        return name in workspace_traits
-    if kind == "reg_macro":
-        return name in macro_defs_idx
-    if kind == "type_usage":
-        outer = name.split("::", 1)[0]
-        if workspace_types and outer in workspace_types:
-            return True
-        if lynchpins and name in lynchpins:
-            return True
-        # 0.0.10 patch 10f: pattern_metrics has the broader defining-
-        # crate map (types + mods + traits). A type_usage whose outer
-        # resolves to a workspace MODULE (tokio's mpsc / oneshot /
-        # broadcast / watch) is workspace-defined even though it's not
-        # in workspace_types (which only tracks struct/enum/union/type).
-        if pattern_metrics:
-            entry = pattern_metrics.get(f"type_usage:{name}")
-            if entry and entry.get("defining_crate"):
-                return True
-        return False
-    if kind == "type_usage_family":
-        # 0.0.9 patch 9a: family patterns inherit workspace-defined
-        # status from their variant outers. An outer-family `outer:X`
-        # is workspace-defined when X is in workspace_types. An
-        # inner-family `inner:Y` is workspace-defined when its family
-        # name appears in the family lynchpins (passed alongside
-        # single-entry lynchpins). For v1 the inner-family workspace
-        # check is approximate; refinement candidate for 9a v2.
-        if name.startswith("outer:"):
-            outer = name.split(":", 1)[1]
-            if workspace_types and outer in workspace_types:
-                return True
-        if lynchpins and name in lynchpins:
-            return True
-        return False
-    return False
-
-
-def _per_crate_top_patterns(facts, workspace_traits, macro_defs_idx,
-                            workspace_types=None, lynchpins=None,
-                            pattern_metrics=None):
-    """For each workspace crate, find the top non-generic workspace-defined
-    pattern of each kind (trait_impl, derive, type_usage, reg_macro). Returns a
-    dict of crate_name -> {kind -> {pattern, count, source_crate}}.
-
-    0.0.7 patch 7b: this is the engine for plural protagonist surfacing. The
-    global histogram counts patterns workspace-wide; per-crate aggregation
-    discovers that each workspace crate has its own architectural lead (helix-
-    core's Selection/Transaction, helix-view's Editor, helix-term's Command,
-    helix-lsp's Request, etc.). Each crate's top non-generic workspace-defined
-    pattern of each kind becomes a candidate protagonist; the aggregation
-    phase combines + dedupes them into the workspace-wide plural list.
-
-    0.0.8 patch 8c: type_usage is added as a 4th per-crate counter. Counts
-    facts['type_usages'] entries whose outer name is workspace-defined (in
-    workspace_types) or whose combined name is an external lynchpin (in
-    lynchpins). Generic outers (Default::default, From::from, etc.) are
-    skipped via _is_generic_pattern."""
-    per_crate = defaultdict(
-        lambda: {"trait_impl": Counter(), "derive": Counter(),
-                 "reg_macro": Counter(), "type_usage": Counter(),
-                 "type_usage_family": Counter()})
-    for i in facts["impls"]:
-        crate = i.get("crate")
-        if not crate or i.get("cfg_gated"):
-            continue
-        name = i.get("trait")
-        if not name:
-            continue
-        if _is_generic_pattern("trait_impl", name):
-            continue
-        if not _is_workspace_defined(
-                "trait_impl", name, workspace_traits, macro_defs_idx,
-                workspace_types, lynchpins, pattern_metrics):
-            continue
-        per_crate[crate]["trait_impl"][name] += 1
-    for d in facts.get("derives", []):
-        crate = d.get("crate")
-        if not crate:
-            continue
-        name = d.get("trait")
-        if not name:
-            continue
-        if _is_generic_pattern("derive", name):
-            continue
-        if not _is_workspace_defined(
-                "derive", name, workspace_traits, macro_defs_idx,
-                workspace_types, lynchpins, pattern_metrics):
-            continue
-        per_crate[crate]["derive"][name] += 1
-    for m in facts.get("macros", []):
-        if m.get("kind") != "macro_invocation":
-            continue
-        crate = m.get("crate")
-        if not crate:
-            continue
-        name = m.get("name")
-        if not name:
-            continue
-        if not _is_workspace_defined(
-                "reg_macro", name, workspace_traits, macro_defs_idx,
-                workspace_types, lynchpins, pattern_metrics):
-            continue
-        per_crate[crate]["reg_macro"][name] += 1
-    for tu in facts.get("type_usages", []):
-        crate = tu.get("crate")
-        if not crate:
-            continue
-        name = tu.get("name")
-        if not name:
-            continue
-        if _is_generic_pattern("type_usage", name):
-            continue
-        if not _is_workspace_defined(
-                "type_usage", name, workspace_traits, macro_defs_idx,
-                workspace_types, lynchpins, pattern_metrics):
-            continue
-        per_crate[crate]["type_usage"][name] += 1
-    # 0.0.11 patch 11a: example-only patterns enter the picker pool
-    # CONDITIONALLY - only patterns that have zero src usage get
-    # counted from example_type_usages. AND only entries from
-    # `/examples/` directories count (tests/ + benches/ entries are
-    # excluded). examples/ are CURATED public-API demonstrations the
-    # developers wrote to teach consumers; tests/ are test fixtures
-    # for internal testing infrastructure and shouldn't outrank
-    # architectural patterns. helix's AppBuilder lives in tests/ (test
-    # fixture); tokio's mpsc::channel lives in examples/ (canonical
-    # public-API demo) - the directory filter cleanly distinguishes.
-    src_pattern_names = set()
-    for tu in facts.get("type_usages", []):
-        nm = tu.get("name")
-        if nm:
-            src_pattern_names.add(nm)
-    for tu in facts.get("example_type_usages", []):
-        crate = tu.get("crate")
-        if not crate:
-            continue
-        name = tu.get("name")
-        if not name:
-            continue
-        if name in src_pattern_names:
-            continue
-        file_path = tu.get("file", "")
-        # Only examples/ directory entries (not tests/ or benches/)
-        if "/examples/" not in file_path and not file_path.startswith("examples/"):
-            continue
-        if _is_generic_pattern("type_usage", name):
-            continue
-        if not _is_workspace_defined(
-                "type_usage", name, workspace_traits, macro_defs_idx,
-                workspace_types, lynchpins, pattern_metrics):
-            continue
-        per_crate[crate]["type_usage"][name] += 1
-    # 0.0.9 patch 9a: derive per-crate type_usage_family counters from
-    # the per-crate type_usage Counter. For each crate, walk its
-    # type_usage entries and build outer->inner-set + inner->outer-set
-    # maps; a family qualifies when its variant count meets
-    # _FAMILY_MIN_VARIANTS.
-    for crate, kinds in per_crate.items():
-        type_usage_counter = kinds["type_usage"]
-        if not type_usage_counter:
-            continue
-        outer_inners = defaultdict(set)
-        outer_count = Counter()
-        inner_outers = defaultdict(set)
-        inner_count = Counter()
-        for name, count in type_usage_counter.items():
-            if "::" not in name:
-                continue
-            outer, _, inner = name.partition("::")
-            outer_inners[outer].add(inner)
-            outer_count[outer] += count
-            # 0.0.9 patch 9b: inner-family detection restricted to
-            # snake_case method-like inners (first char lowercase).
-            # Variant constructors (Idle, Busy, Lagged - PascalCase)
-            # don't form meaningful inner-families because variant
-            # names are specific to their enum type; grouping them
-            # by variant name across enums produces noise rather than
-            # architectural signal. Generic method names (new, default,
-            # from, etc.) are still skipped via _GENERIC_INNER_METHODS.
-            if (inner and inner[0].islower()
-                    and inner not in _GENERIC_INNER_METHODS):
-                inner_outers[inner].add(outer)
-                inner_count[inner] += count
-        family_counter = Counter()
-        for outer, count in outer_count.items():
-            if len(outer_inners[outer]) >= _FAMILY_MIN_VARIANTS:
-                family_counter[f"outer:{outer}"] = count
-        for inner, count in inner_count.items():
-            if len(inner_outers[inner]) >= _FAMILY_MIN_VARIANTS:
-                family_counter[f"inner:{inner}"] = count
-        kinds["type_usage_family"] = family_counter
-    return per_crate
-
-
-_PLURAL_KIND_PRIORITY = {"trait_impl": 0, "derive": 1,
-                         "type_usage_family": 2, "type_usage": 3,
-                         "reg_macro": 4}
-
-
-def _aggregate_per_crate_picks(per_crate_counts, facts, n, pattern_metrics=None):
-    """Flatten per-crate top picks into a single deduped list of candidates,
-    capped at n, with kind-aware slot quotas. Returns a list of dicts in the
-    candidate_instances return shape.
-
-    0.0.7 patch 7b initial: pattern_to_pick deduped by pattern name, then
-    sorted by raw count. This made reg_macro test helpers (nu!, current!,
-    trace!) outrank architectural trait_impls on raw-count alone.
-
-    0.0.7 patch 7b refinement A: ordering became (priority tier, raw count).
-    Priority: trait_impl > derive > reg_macro. Surfaced architectural
-    trait_impls but starved derive + reg_macro slots; bevy's derive:Component
-    (architecturally central to ECS) never made the top 5 because trait_impl
-    Plugin/MeshBuilder/etc. filled all slots.
-
-    0.0.7 patch 7b refinement B: slot quotas. For N=5 the default split was
-    3 trait_impl + 1 derive + 1 reg_macro. Quotas allocate by kind; underfilled
-    kinds cede to the trait_impl pool so N total is maintained.
-
-    0.0.8 patch 8c (this version): adds type_usage as a 4th kind with its
-    own slot quota. At N=5 the default split becomes 2 trait_impl + 1 derive
-    + 1 type_usage + 1 reg_macro. Output ordering by _PLURAL_KIND_PRIORITY:
-    trait_impl > derive > type_usage > reg_macro, each tier sorted by count
-    desc. Backfill on underfill draws from the trait_impl pool first."""
-    pattern_metrics = pattern_metrics or {}
-    # 0.0.10 patch 10f: build a per-crate type_usage metric lookup for
-    # family score aggregation. For each per-crate type_usage entry,
-    # find its pattern_metrics record (workspace-wide) - the family
-    # score then aggregates across constituent type_usages by max.
-    per_crate_type_usage_metrics = {}
-    for crate, kinds in per_crate_counts.items():
-        for tu_name in kinds.get("type_usage", Counter()):
-            pattern = f"type_usage:{tu_name}"
-            if pattern in pattern_metrics:
-                per_crate_type_usage_metrics[tu_name] = pattern_metrics[pattern]
-
-    pattern_to_pick = {}
-    for crate, kinds in per_crate_counts.items():
-        for kind in ("trait_impl", "derive", "type_usage",
-                     "type_usage_family", "reg_macro"):
-            counts = kinds.get(kind)
-            if not counts:
-                continue
-            # 0.0.9 patch 9b: families pick top-2 per crate (not just
-            # top-1). This surfaces secondary families like tokio's
-            # `channel` (inner-family) which loses the top-1 spot to
-            # tokio's `State` (outer-family) but is the architectural
-            # protagonist on the manual ground-truth list. Other kinds
-            # still pick top-1 per crate.
-            n_per_crate = 2 if kind == "type_usage_family" else 1
-            for top_name, top_count in counts.most_common(n_per_crate):
-                pattern = f"{kind}:{top_name}"
-                # 0.0.10 patch 10f: combined score for ranking.
-                if kind == "type_usage_family":
-                    family_kind = (
-                        "outer" if top_name.startswith("outer:") else "inner")
-                    family_inner = top_name.split(":", 1)[1]
-                    fm = _aggregate_family_metrics(
-                        family_kind, family_inner,
-                        per_crate_type_usage_metrics)
-                    score = _compute_score(top_count, fm)
-                else:
-                    metrics = pattern_metrics.get(pattern)
-                    score = _compute_score(top_count, metrics)
-                existing = pattern_to_pick.get(pattern)
-                if existing is None or score > existing["score"]:
-                    pattern_to_pick[pattern] = {
-                        "kind": kind,
-                        "pattern": pattern,
-                        "count": top_count,
-                        "score": score,
-                        "source_crate": crate,
-                    }
-    by_kind = {"trait_impl": [], "derive": [], "reg_macro": [],
-               "type_usage": [], "type_usage_family": []}
-    for entry in pattern_to_pick.values():
-        by_kind[entry["kind"]].append(entry)
-    # 0.0.10 patch 10f: sort by combined score (descending) instead of
-    # raw count. Score blends raw count + inter-crate flow + public-API
-    # status + example presence + >=3-examples threshold boost.
-    for kind in by_kind:
-        by_kind[kind].sort(key=lambda x: -x["score"])
-    # 0.0.9 patch 9a: slot quotas at N=5 become 2 trait_impl + 1 derive
-    # + 1 type_usage_family + 1 type_usage. Reg_macro drops to 0 because
-    # the reg_macro slot in 0.0.7+ rarely surfaces architectural patterns
-    # (helix's current!, ratatui's color!, tokio's trace! - none on the
-    # manual ground-truth list).
-    derive_quota = 1 if n >= 3 else 0
-    type_usage_family_quota = 1 if n >= 4 else 0
-    type_usage_quota = 1 if n >= 5 else 0
-    reg_macro_quota = 0
-    # 0.0.9 patch 9b: the 2-family-slot adaptive bump was empirically
-    # tested + reverted. Probing across helix / tokio / nushell / bevy /
-    # ratatui showed the 2-family configuration consistently dropped
-    # the singular type_usage slot's high-value pick (tokio's task::spawn
-    # in particular - a manual ground-truth match) without surfacing
-    # better family alternatives (per-crate aggregation favors high-
-    # count outer-families like State / Error / CommandCompleter over
-    # architecturally-meaningful but lower-count families).
-    #
-    # The 1 family + 1 singular split (9a default) is the empirical
-    # sweet spot for current per-crate aggregation. Mode-adaptive
-    # bumping deferred to a future iteration when the family ranking
-    # signal sharpens (eg by counting workspace-defined-outer matches
-    # or by external-API surface inference).
-    #
-    # The 9b infrastructure that DID survive: top-2 per-crate for
-    # type_usage_family (more candidates available in by_kind sort) +
-    # snake_case-only filter on inner-family detection (skip PascalCase
-    # variant-name pseudo-families). These improve family quality
-    # without changing the slot split.
-    trait_impl_quota = max(
-        1,
-        n - derive_quota - type_usage_family_quota - type_usage_quota
-        - reg_macro_quota,
-    )
-    quotas = {
-        "trait_impl": trait_impl_quota,
-        "derive": derive_quota,
-        "type_usage_family": type_usage_family_quota,
-        "type_usage": type_usage_quota,
-        "reg_macro": reg_macro_quota,
-    }
-    # 0.0.9 patch 9a + 0.0.10 patch 10f revision + 0.0.11 patch 11a:
-    # dedup family/singular re-enabled. With 11a's example pool
-    # extension, families like AppBuilder for helix would surface AND
-    # the singular AppBuilder::new would surface (both about
-    # AppBuilder), starving the singular slot. With dedup, singular
-    # slot picks a different pattern (KeyCode-related, Selection-
-    # related, etc.) covering more architectural ground. For tokio,
-    # task family + task::spawn dedups to task family alone - but the
-    # singular slot then picks mpsc::channel (NEW from 11a, manual
-    # list match) which is a clean trade.
-    covered_family_outers = set()
-    covered_family_inners = set()
-
-    def _record_family_coverage(family_entry):
-        body = family_entry["pattern"].split(":", 1)[1]
-        if body.startswith("outer:"):
-            covered_family_outers.add(body.split(":", 1)[1])
-        elif body.startswith("inner:"):
-            covered_family_inners.add(body.split(":", 1)[1])
-
-    def _type_usage_covered_by_family(type_usage_entry):
-        body = type_usage_entry["pattern"].split(":", 1)[1]
-        if "::" not in body:
-            return False
-        outer, _, inner = body.partition("::")
-        return outer in covered_family_outers or inner in covered_family_inners
-
-    selected = []
-    for kind in ("trait_impl", "derive", "type_usage_family",
-                 "type_usage", "reg_macro"):
-        quota = quotas[kind]
-        if quota <= 0:
-            continue
-        candidates = by_kind[kind]
-        if kind == "type_usage":
-            candidates = [
-                e for e in candidates if not _type_usage_covered_by_family(e)
-            ]
-        picked = candidates[:quota]
-        selected.extend(picked)
-        if kind == "type_usage_family":
-            for entry in picked:
-                _record_family_coverage(entry)
-    # If underfilled (some kind had no picks), backfill from trait_impl pool.
-    if len(selected) < n:
-        chosen_patterns = {e["pattern"] for e in selected}
-        for entry in by_kind["trait_impl"][quotas["trait_impl"]:]:
-            if entry["pattern"] in chosen_patterns:
-                continue
-            selected.append(entry)
-            if len(selected) >= n:
-                break
-    selected.sort(
-        key=lambda x: (_PLURAL_KIND_PRIORITY.get(x["kind"], 99), -x["count"]))
-    out = []
-    for entry in selected[:n]:
-        inst, spans = _instance_for_kind(
-            entry["kind"], entry["pattern"].split(":", 1)[1], facts)
-        if inst is None:
-            continue
-        out.append({
-            "kind": entry["kind"],
-            "pattern": entry["pattern"],
-            "instance": inst,
-            "all_spans": spans,
-            "fallback_reason": (
-                f"Surfaced via per-crate top-pattern aggregation; source crate "
-                f"`{entry['source_crate']}` ({entry['count']} instances of "
-                f"`{entry['pattern']}` in that crate)."
-            ),
-            "source_crate": entry["source_crate"],
-            "count": entry["count"],
-        })
-    return out
 
 
 def _compute_significance_sets(fp: dict, facts: dict,
@@ -1514,173 +925,6 @@ def candidate_instances(fp: dict, facts: dict):
         "top_n_inner_per_crate": sig["top_n_inner_per_crate"],
         "top_n_workspace": sig["top_n_workspace"],
     }
-
-
-def _legacy_candidate_instances_unused(fp: dict, facts: dict):
-    """Kept temporarily for reference; not called. The slot-quota
-    machinery (per_crate_top_patterns + aggregate_per_crate_picks)
-    is preserved below for any consumers + for the eventual
-    extraction into the optional fallback path."""
-    if not fp["pattern_histogram"]:
-        return []
-    histogram = fp["pattern_histogram"]
-    workspace_traits = {t["name"] for t in facts.get("traits", []) if t.get("name")}
-    macro_defs_idx = _macro_defs_index(facts)
-    # 0.0.8 patch 8c: workspace_types is the set of struct / enum / union /
-    # type-alias names declared in the workspace; the outer of a type_usage
-    # pattern is workspace-defined when it appears here.
-    workspace_types = {t["name"] for t in facts.get("types", []) if t.get("name")}
-    # 0.0.8 patch 8c: external lynchpins are type_usage histogram entries
-    # whose combined name appears above _LYNCHPIN_USAGE_MIN (tokio's task::spawn
-    # + Poll::Ready when scanning an app using tokio; nothing for a standalone
-    # workspace whose internal type_usage frequencies are all workspace-
-    # defined). Generic outers (Default / Display / From / etc.) are excluded
-    # so the lynchpin set surfaces only architectural-shape patterns.
-    lynchpins = set()
-    for entry in histogram:
-        dom = entry.get("pattern", "")
-        if not dom.startswith("type_usage:"):
-            continue
-        name = dom.split(":", 1)[1]
-        if _is_generic_pattern("type_usage", name):
-            continue
-        outer = name.split("::", 1)[0]
-        if outer in workspace_types:
-            continue
-        if entry.get("count", 0) >= _LYNCHPIN_USAGE_MIN:
-            lynchpins.add(name)
-    # 0.0.7 patch 7b: per-crate top-pattern aggregation runs FIRST. If it
-    # surfaces any candidates (workspace has multiple crates each with a
-    # workspace-defined non-generic pattern), return those as the plural
-    # protagonist list. If empty (cosmic-epoch-style submodule aggregator
-    # with no workspace-defined patterns at all), fall through to the
-    # single-pick logic from 6a/6b below.
-    # 0.0.10 patch 10f: pass pattern_metrics through to the picker so
-    # combined-score ranking can blend raw count + inter_ratio + is_pub
-    # + example_count signals. Metrics also feed _is_workspace_defined's
-    # mod-via-pattern_metrics check so example-only patterns enter the
-    # per-crate aggregation pool.
-    pattern_metrics = fp.get("pattern_metrics", {})
-    per_crate_counts = _per_crate_top_patterns(
-        facts, workspace_traits, macro_defs_idx, workspace_types,
-        lynchpins, pattern_metrics)
-    plural_picks = _aggregate_per_crate_picks(
-        per_crate_counts, facts, _PLURAL_N, pattern_metrics)
-    if plural_picks:
-        return plural_picks
-    leader_dom = histogram[0]["pattern"]
-    leader_kind, _, leader_name = leader_dom.partition(":")
-    leader_inst, leader_spans = _instance_for_kind(leader_kind, leader_name, facts)
-    leader_is_generic = _is_generic_pattern(leader_kind, leader_name)
-    leader_is_workspace = _is_workspace_defined(
-        leader_kind, leader_name, workspace_traits, macro_defs_idx,
-        workspace_types, lynchpins, pattern_metrics)
-    # Direct return only when the leader is valid + non-generic + workspace-defined.
-    # 0.0.6 patch 6b: non-workspace leaders (trait_impl:From, reg_macro:fl, etc.)
-    # fall through to the walk so a workspace-defined alternative gets a chance.
-    if leader_inst is not None and not leader_is_generic and leader_is_workspace:
-        return [{
-            "kind": leader_kind,
-            "pattern": leader_dom,
-            "instance": leader_inst,
-            "all_spans": leader_spans,
-            "fallback_reason": None,
-        }]
-    # Two-pass walk. Priority: trait_impl > derive > type_usage_family >
-    # type_usage > reg_macro. Pass 1 restricts to workspace-defined
-    # patterns; pass 2 (only runs if pass 1 finds nothing) falls back to
-    # non-workspace patterns. Generic patterns are skipped in both passes
-    # per Patch dd + 6a + 8c + 9a.
-    priority_order = ("trait_impl", "derive", "type_usage_family",
-                      "type_usage", "reg_macro")
-
-    def _walk(prefer_workspace):
-        first_by_priority = {k: None for k in priority_order}
-        for entry in histogram:
-            dom = entry["pattern"]
-            kind, _, name = dom.partition(":")
-            if kind not in first_by_priority or first_by_priority[kind] is not None:
-                continue
-            if _is_generic_pattern(kind, name):
-                continue
-            if prefer_workspace and not _is_workspace_defined(
-                    kind, name, workspace_traits, macro_defs_idx,
-                    workspace_types, lynchpins, pattern_metrics):
-                continue
-            inst, spans = _instance_for_kind(kind, name, facts)
-            if inst is None:
-                continue
-            first_by_priority[kind] = (entry, inst, spans)
-        for priority in priority_order:
-            if first_by_priority[priority] is not None:
-                return first_by_priority[priority]
-        return None
-
-    pick = _walk(prefer_workspace=True)
-    pick_is_workspace = pick is not None
-    if pick is None:
-        pick = _walk(prefer_workspace=False)
-    if pick is None:
-        # No viable structural pattern at all; return leader with no instance.
-        return [{
-            "kind": leader_kind,
-            "pattern": leader_dom,
-            "instance": None,
-            "all_spans": [],
-            "fallback_reason": None,
-        }]
-    entry, inst, spans = pick
-    dom = entry["pattern"]
-    kind = dom.partition(":")[0]
-    # Build fallback_reason explaining why the leader was passed over (if it was)
-    # plus how the pick was chosen (workspace-defined vs fallback).
-    if leader_is_generic:
-        kind_descriptor = (
-            "generic auto-derive" if leader_kind == "derive"
-            else "manual impl of a generic data-shaping trait"
-        )
-        leader_reason = (
-            f"is a {kind_descriptor} ({leader_name} is universally derived or "
-            f"manually implemented across the standard data-shaping traits; "
-            f"not architecturally load-bearing)"
-        )
-    elif leader_inst is None:
-        leader_reason = (
-            f"is a kind-only signal that does not yield a structurally "
-            f"followable item to trace - it counts a category (free functions, "
-            f"an external attribute macro, etc.) rather than a single concrete "
-            f"pattern"
-        )
-    elif not leader_is_workspace:
-        leader_reason = (
-            f"is implemented for an imported trait (`{leader_name}` is not "
-            f"declared in any workspace crate; the workspace's architectural "
-            f"patterns live in workspace-defined traits / macros)"
-        )
-    else:
-        # Shouldn't happen given the direct-return gate; defensive default.
-        leader_reason = f"was passed over by the picker"
-    workspace_note = (
-        " The pick is a workspace-defined pattern (the trait or macro is "
-        "declared inside a workspace crate)."
-        if pick_is_workspace
-        else " No workspace-defined alternative was available at any priority "
-             "tier; the pick is the highest-rank non-workspace structural "
-             "pattern."
-    )
-    return [{
-        "kind": kind,
-        "pattern": dom,
-        "instance": inst,
-        "all_spans": spans,
-        "fallback_reason": (
-            f"Histogram leader `{leader_dom}` ({histogram[0]['count']} instances) "
-            f"{leader_reason}. Picked `{dom}` ({entry['count']} instances) as "
-            f"the load-bearing alternative, prioritizing trait_impl > "
-            f"non-generic-derive > reg_macro within the workspace-defined tier."
-            f"{workspace_note}"
-        ),
-    }]
 
 
 def _is_src_file(file_path: str) -> bool:
@@ -2100,8 +1344,6 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  f"/ DIVISOR)))`. the_user 2026-06-04: 'i'd rather "
                  f"slightly over-produce than under produce'.")
     L.append("")
-    # Use the legacy list-shape for downstream sections.
-    cands_compat = []
     if (architecture_sig or public_sig or inter_crate_sig
             or internals_sig or intra_crate_per_crate or inner_per_crate):
         # 5.1 Architecture (cross-crate AND public).
@@ -2114,7 +1356,6 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
             e = architecture_sig[pattern]
             L.append(f"- `{pattern}` - architecture score "
                      f"{e['count']:.2f} - seed {sp(e['instance'])}")
-            cands_compat.append(e)
         L.append("")
         # 5.2 Public (public-by-example only).
         L.append(f"### 5.2 Public significance "
@@ -2126,7 +1367,6 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
             e = public_sig[pattern]
             L.append(f"- `{pattern}` - public score "
                      f"{e['count']:.2f} - seed {sp(e['instance'])}")
-            cands_compat.append(e)
         L.append("")
         # 5.3 Inter-crate (cross-crate flow only).
         L.append(f"### 5.3 Inter-crate significance "
@@ -2138,7 +1378,6 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
             e = inter_crate_sig[pattern]
             L.append(f"- `{pattern}` - inter_count {e['count']} - "
                      f"seed {sp(e['instance'])}")
-            cands_compat.append(e)
         L.append("")
         # 5.4 Internals (workspace-wide cross-crate-spread from intra
         # picks). 0.0.24: patterns appearing in multiple crates' intra
@@ -2153,7 +1392,6 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
             e = internals_sig[pattern]
             L.append(f"- `{pattern}` - internals score {e['count']} - "
                      f"seed {sp(e['instance'])}")
-            cands_compat.append(e)
         L.append("")
         # 5.5 Intra-crate (per crate; this crate's usage of OTHER
         # workspace crates' patterns, after dedup vs internals).
@@ -2172,8 +1410,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                 e = entries[pattern]
                 L.append(f"- `{pattern}` - {e['count']} occurrences "
                          f"- seed {sp(e['instance'])}")
-                cands_compat.append(e)
-            L.append("")
+                L.append("")
         # 5.6 Inner-crate (per crate; this crate's own architecture -
         # origin AND usage in the crate).
         L.append("### 5.6 Inner-crate significance (per crate; "
@@ -2191,8 +1428,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                 e = entries[pattern]
                 L.append(f"- `{pattern}` - {e['count']} occurrences "
                          f"- seed {sp(e['instance'])}")
-                cands_compat.append(e)
-            L.append("")
+                L.append("")
         L.append("**[AGENT]** Coverage tiering per the_user "
                  "2026-06-03 / 2026-06-04 directives (sets ordered "
                  "by importance):")
@@ -2285,81 +1521,8 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  "NOT handle quoting (upstream tokenizer); shared by "
                  "batch + REPL invocations' is residual.")
         L.append("")
-    # 0.0.13 patch 13i + 0.0.22 + 0.0.24: the six-set sections above
-    # ARE the picker output; drop the legacy per-pick worked-slice
-    # loop. The agent reads the structured 5.1-5.6 lists + traces
-    # patterns of interest by category. For variable N (helix ~158
-    # picks, bevy ~479), a per-pick worked slice rendering would
-    # explode the document; the structured lists keep it scannable.
-    cands = []
-    if cands:
-        n_cands = len(cands)
-        L.append(f"**{n_cands} protagonist pattern{'s' if n_cands != 1 else ''}** "
-                 f"surfaced via per-crate top-pattern aggregation (0.0.7 patch 7b + "
-                 f"7c). Trace each across crate boundaries; the cross-pattern "
-                 f"composition / shared-seam view is at the end of this section.")
-        L.append("")
-        L.append("Pattern shape claude.ai's framework didn't catch: most workspaces "
-                 "have plural architectural patterns. method.md's 'trace one, not "
-                 "three' was claude.ai's hypothesis stated as doctrine. Empirical "
-                 "evidence (9-10 of 10 deployment targets have 4-6 architectural "
-                 "patterns per manual ground-truth audit) refutes it as a default. "
-                 "Plurality is the default; single-protagonist is the exception. See "
-                 "notes/rust_recon/methodology_findings.md in the consuming KB for "
-                 "the empirical record.")
-        L.append("")
-        for idx, c in enumerate(cands, 1):
-            dom = c["pattern"]
-            inst = c["instance"]
-            source_crate = c.get("source_crate", "?")
-            count = c.get("count", 0)
-            L.append(f"### 5.{idx} Worked slice: **`{dom}`**")
-            L.append("")
-            L.append(f"Source crate: `{source_crate}` ({count} instances of this "
-                     f"pattern in that crate, per the per-crate aggregation that "
-                     f"surfaced it).")
-            if c["kind"] == "trait_impl":
-                L.append(f"Seed instance: `impl {dom.split(':')[1]} for "
-                         f"{inst.get('type')}` - {sp(inst)}.")
-            else:
-                L.append(f"Seed instance - {sp(inst)}.")
-            if c.get("fallback_reason"):
-                L.append("")
-                L.append(f"**Pick rationale:** {c['fallback_reason']}")
-            L.append("")
-            L.append(f"**[AGENT]** Trace this instance of `{dom}` across every "
-                     f"crate boundary it touches:")
-            L += ["- **what** it does: inputs / outputs / state + environment "
-                  "changes (load-bearing - read the impl body in source).",
-                  "- **where** it plugs in: how it is registered and invoked "
-                  "(follow the registration path; if it goes through a macro, "
-                  "that is a guardrail - see S6).",
-                  "- **why** it is shaped this way: from doc-comments only, "
-                  "else `why: unverified`.",
-                  "- stop honestly at each seam (S3) with `UNRESOLVED: <what "
-                  "you looked for>, <what you ran>`."]
-            if c.get("all_spans"):
-                L.append("")
-                L.append("Other instances of this pattern (open any to compare): "
-                         + ", ".join(f"`{s}`" for s in c["all_spans"][:15])
-                         + (" ..." if len(c["all_spans"]) > 15 else ""))
-            L.append("")
-        L.append(f"### 5.{n_cands + 1} How these patterns connect")
-        L.append("")
-        L.append(f"**[AGENT]** The {n_cands} patterns above are not independent. "
-                 f"After tracing each individually, identify the composition: "
-                 f"which seams from S3 do they cross together? Which types from "
-                 f"S2 flow between them (e.g. one pattern's output is another's "
-                 f"input)? Which lifecycle dependencies exist (one pattern's "
-                 f"setup precedes another's use)? This composition view is the "
-                 f"architecture the workspace's authors hold in their head; "
-                 f"surface it explicitly here, anchored to the spans you opened "
-                 f"in 5.1 through 5.{n_cands}.")
-    else:
-        L.append("**[AGENT]** No structural patterns surfaced from per-crate "
-                 f"aggregation (mode: {sel['mode']}). Inspect the histogram "
-                 "appendix and pick manually; the workspace shape may be unusual "
-                 "(submodule aggregator, no workspace-defined traits, etc.).")
+    # End of section 5: the six-set significance sections above are
+    # the complete picker output. No further per-protagonist rendering.
     L.append("")
 
     # 6. UNRESOLVED guardrails
@@ -2398,60 +1561,28 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
         L.append("- None seeded. Record trace stops here as you hit them.")
     L.append("")
 
-    # 7. pattern-authoring guides (plural; mirrors S5's worked slices)
+    # 7. pattern-authoring guides
     L += ["## 7. Pattern-authoring guides", ""]
-    if cands:
-        L.append("One authoring checklist per protagonist pattern. Each guide "
-                 "lists the minimal steps to add a NEW instance of that pattern, "
-                 "drawing from the worked slice in the corresponding S5.N section.")
-        L.append("")
-        for idx, c in enumerate(cands, 1):
-            dom = c["pattern"]
-            L.append(f"### 7.{idx} Authoring guide: **`{dom}`**")
-            L.append("")
-            L.append(f"**[AGENT]** From the trait / type definitions in S2 and "
-                     f"the worked slice in S5.{idx}, write the minimal checklist "
-                     f"to author a NEW instance of `{dom}`: which trait to "
-                     f"implement (or macro to invoke), which methods / args are "
-                     f"required (read the trait def in source), how to register "
-                     f"the new instance (the registration path from S5.{idx}), "
-                     f"and which seams (S6) a new instance must respect. Anchor "
-                     f"each step to a span.")
-            L.append("")
-        L.append(f"### 7.{len(cands) + 1} Cross-pattern shared scaffolding")
-        L.append("")
-        L.append(f"**[AGENT]** Collect duplicated steps across the {len(cands)} "
-                 f"authoring guides above. Patterns that share a registration "
-                 f"path (default_context.rs, a common builder), a trait import "
-                 f"(common workspace prelude), or a seam compliance step (PipelineData "
-                 f"shape, Selection invariants, etc.) deserve a 'this applies to all "
-                 f"protagonists' note. The shared scaffolding is the authoring "
-                 f"context a contributor learns once and reuses across patterns.")
-    else:
-        # 0.0.16 patch 16c + 0.0.22 + 0.0.24: S7 fallback prompt
-        # acquires classification tag. The picks come from S5's six
-        # significance sets (5.1 architecture / 5.2 public / 5.3
-        # inter-crate / 5.4 internals / 5.5 intra-crate / 5.6 inner-
-        # crate); the authoring guide should focus on the Tier 1-3
-        # patterns most relevant to this workspace's consumership.
-        cls_tag = (f"Workspace classification: **{use_label}**. "
-                   if use_label else "")
-        L.append("**[AGENT]** From the trait / type definitions in "
-                 "S2 and the significance sets in S5, write the "
-                 "minimal checklist to author a NEW instance of one "
-                 "of the Tier 1-3 patterns (S5.1 architecture, "
-                 "S5.2 public, S5.3 inter-crate, or S5.4 internals). "
-                 + cls_tag +
-                 "Frame the checklist for the consumership the "
-                 "workspace serves: dev_use workspaces author against "
-                 "the library's public API; end_with_dev_use "
-                 "workspaces author internal-product features whose "
-                 "cross-crate flow matters; dev_with_end_use treats "
-                 "the lib as primary; end_use authors user-facing "
-                 "entry points. Anchor each step to a span. Apply the "
-                 "S5 authoring guidance per item: form-vs-role + "
-                 "per-category decomposition + pass discipline + "
-                 "reduction-through-inference.")
+    # Tier 1-3 (architecture + public + inter-crate + internals) hold the
+    # patterns most relevant to the workspace's consumership.
+    cls_tag = (f"Workspace classification: **{use_label}**. "
+               if use_label else "")
+    L.append("**[AGENT]** From the trait / type definitions in "
+             "S2 and the significance sets in S5, write the "
+             "minimal checklist to author a NEW instance of one "
+             "of the Tier 1-3 patterns (S5.1 architecture, "
+             "S5.2 public, S5.3 inter-crate, or S5.4 internals). "
+             + cls_tag +
+             "Frame the checklist for the consumership the "
+             "workspace serves: dev_use workspaces author against "
+             "the library's public API; end_with_dev_use "
+             "workspaces author internal-product features whose "
+             "cross-crate flow matters; dev_with_end_use treats "
+             "the lib as primary; end_use authors user-facing "
+             "entry points. Anchor each step to a span. Apply the "
+             "S5 authoring guidance per item: form-vs-role + "
+             "per-category decomposition + pass discipline + "
+             "reduction-through-inference.")
     L.append("")
     L += ["## Appendix: full pattern histogram", ""]
     for row in fp["pattern_histogram"][:25]:

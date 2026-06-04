@@ -163,7 +163,7 @@ def test_emit_two_files_and_spans():
         assert r.returncode == 0, r.stderr
         orient = (out / "orientation.md").read_text()
         ref = (out / "reference.md").read_text()
-        assert "[AGENT]" in orient and "Worked slice" in orient
+        assert "[AGENT]" in orient
         assert "src/lib.rs:" in ref  # spans present
         assert "trait_impl:Cmd" in orient  # dominant pattern surfaced
         print("ok  emit_two_files_and_spans")

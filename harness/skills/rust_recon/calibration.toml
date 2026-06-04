@@ -4,10 +4,6 @@
 # Env vars (ORIENT_*) override the TOML defaults when set; the env
 # override path is preserved for ad-hoc tuning without touching this
 # file.
-#
-# History of changes to the picker calibration lives in:
-# - notes/rust_recon/probes/0.0.X_findings.md (per-iteration deltas)
-# - notes/rust_recon/overlap_scoreboard.md (aggregate trajectory)
 
 [mode]
 # characterize.py select_mode() histogram-share thresholds. Decide
@@ -21,8 +17,7 @@ seam_dense_per_kloc = 4.0
 [classification]
 # characterize.py _classify_crate_use() flips has-both-bin-and-lib
 # crates from end_with_dev_use to dev_with_end_use when cross-crate
-# pub_inter_count crosses this threshold. Fixed absolute count; see
-# notes/rust_recon/debt.md for the planned conversion to a ratio.
+# pub_inter_count crosses this threshold.
 dev_with_end_threshold = 30
 
 [picker]
@@ -30,21 +25,9 @@ dev_with_end_threshold = 30
 # cap = max(top_n_floor, round(top_n_floor + sloc_multiplier
 #                              * log2(sloc / sloc_divisor)))
 #
-# Current calibration: D=25, M=1.6 (0.0.31 widening). Per the_user
-# 2026-06-04 'calibrate for D=25 M=1.6' after the_user-stated framing
-# that sourcetrait_common exceeding 30% is acceptable due to its
-# small-pieces-meant-to-be-documented structure. ratatui 29.64%
-# (highest non-sourcetrait_common); sourcetrait_common 32.13% (above
-# 30%, expected). All other targets stay under 30%. Function
-# monotonic decreasing in D so smaller D never drops any prior cap.
-#
-# Calibration history:
-# - 0.0.25: D=3100, M=1.6 (initial SLOC-normalized; meet-or-exceed
-#   0.0.24 caps)
-# - 0.0.27: D=300, M=1.6 (widened to ratatui [25, 29] band)
-# - 0.0.29: D=100, M=1.6 (widened to ratatui [27, 29] band)
-# - 0.0.31: D=25, M=1.6 (widened past 30% on sourcetrait_common
-#   accepted; ratatui >29%)
+# The function is monotonic decreasing in sloc_divisor, so smaller
+# divisor never drops a previously assigned cap. Calibration tuning
+# is a single-line edit here; no python source change.
 top_n_floor = 7
 sloc_divisor = 25
 sloc_multiplier = 1.6
@@ -63,85 +46,46 @@ test_weight = 0.3
 bench_weight = 0.3
 
 [picker.internals]
-# 0.0.24 internals set: minimum spread (distinct crates' intra top-N)
-# for a pattern to enter the workspace-wide internals set.
+# Internals workspace-wide set: minimum spread (distinct crates'
+# intra top-N) for a pattern to enter the workspace-wide internals
+# set. Spread captures cross-crate-shared infrastructure that the
+# inter_crate top-N cap missed.
 spread_threshold = 2
 
 [picker.family]
-# 0.0.9 type_usage_family: minimum distinct variants for a family.
-# 0.0.28 method_ref family: minimum distinct workspace-defined outers
-# for a method-reference family to enter pattern_metrics.
-min_variants = 2
+# method_ref family: minimum distinct workspace-defined outers for a
+# `Type::method` reference family to enter pattern_metrics as a
+# `method_ref:_::<inner>` workspace-wide entry. Below threshold, the
+# inner method is treated as per-Type, not architectural.
 method_ref_min_outers = 3
 
 [picker.score]
-# 0.0.10 patch 10f combined-score boost coefficients. Score formula:
-# score = raw_count
-#       * (1 + inter_boost * inter_ratio)
-#       * (1 + pub_boost * is_pub)
-#       * (1 + example_boost * min(example_count, saturation) / saturation)
-#       * (example_threshold_boost if curated_example_count >= threshold else 1)
+# Combined-score boost coefficients for ranking patterns within a
+# significance set. Score formula:
+#   score = raw_count
+#         * (1 + inter_boost * inter_ratio)
+#         * (1 + pub_boost * is_pub)
+#         * (1 + example_boost * min(example_count, saturation) / saturation)
+#         * (example_threshold_boost if curated_example_count >= threshold else 1)
 inter_boost = 0.5
 pub_boost = 0.3
 example_boost = 0.5
 example_threshold_boost = 1.5
 
-[picker.lynchpin]
-# 0.0.8 patch 8c: minimum usage count for an external (non-workspace-
-# defined) type_usage to count as a workspace-relevant lynchpin.
-usage_min = 60
-
 [picker.cluster]
-# 0.0.4 patch 4 (u): emit S1 crate-cluster section thresholds.
+# S1 (crate / region map) emits a "Crate clusters (by name prefix)"
+# sub-section when workspace member count exceeds `threshold`.
+# Each cluster requires at least `min_size` members.
 threshold = 15
 min_size = 3
 
-[picker.plural]
-# 0.0.7 patch 7b: number of plural protagonists candidate_instances
-# surfaces per workspace.
-n = 5
-
 [filters]
-# Filter sets applied at picker time. Lists are loaded as Python
-# frozensets (membership tested O(1)).
+# Filter sets applied at picker / synthesis time. Lists are loaded
+# as Python frozensets (membership tested O(1)).
 
-# Generic auto-derive trait names. Universally derived; not
-# architecturally load-bearing as protagonists.
-generic_auto_derives = [
-    "Debug", "Clone", "PartialEq", "Eq", "Hash", "Default", "Copy",
-    "Serialize", "Deserialize",
-]
-
-# Generic-shape outer names for type_usage entries. Default::default
-# / Display::fmt / From::from / Clone::clone / Poll::Ready etc. are
-# standard trait-method invocations, not workspace-specific
-# architectural patterns.
-generic_auto_types = [
-    "Default", "Display", "Debug",
-    "From", "Into", "TryFrom", "TryInto",
-    "Clone",
-    "AsRef", "AsMut",
-    "Drop",
-    "PartialEq", "Eq", "Hash", "PartialOrd", "Ord",
-    "Iterator", "IntoIterator",
-    "Poll",
-]
-
-# Inner method names treated as generic-shape for inner-family
-# detection. new / default / from / fmt etc. are universal across
-# Rust types; grouping by inner produces meaningless 'all-constructors'
-# families.
-generic_inner_methods = [
-    "new", "default", "from", "into", "try_from", "try_into",
-    "fmt", "clone", "as_ref", "as_mut", "deref", "deref_mut",
-    "eq", "ne", "cmp", "partial_cmp", "hash",
-    "drop", "next", "iter", "into_iter", "iter_mut",
-    "build", "into_inner", "borrow", "borrow_mut",
-]
-
-# 0.0.28: method_ref outer skip set. Mirrors generic_auto_types +
-# adds Self (self-reference inside impls; not architectural at
-# workspace level).
+# method_ref outer skip set. Self is self-reference inside impls
+# (not architectural at workspace level); the std trait shells are
+# universal trait-method-invocation noise.
 method_ref_outer_skip = [
     "Self",
     "Default", "Display", "Debug",
@@ -154,8 +98,8 @@ method_ref_outer_skip = [
     "Poll",
 ]
 
-# 0.0.28: method_ref inner skip set. Mirrors generic_inner_methods
-# exactly (generic constructor/formatter method names).
+# method_ref inner skip set. Generic constructor / formatter method
+# names; not architectural verbs.
 method_ref_inner_skip = [
     "new", "default", "from", "into", "try_from", "try_into",
     "fmt", "clone", "as_ref", "as_mut", "deref", "deref_mut",
@@ -164,6 +108,7 @@ method_ref_inner_skip = [
     "build", "into_inner", "borrow", "borrow_mut",
 ]
 
-# 0.0.8 patch 8b: src-only filter for type_usages. Test / bench /
-# example files are excluded from the architectural aggregation.
+# Test / bench / example file segments excluded from the architectural
+# type-usage aggregation (those files demonstrate canonical usage and
+# belong to the example-mining pool, not the picker pool).
 excluded_dir_segments = ["tests", "benches", "examples"]

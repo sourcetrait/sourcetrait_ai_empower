@@ -38,6 +38,13 @@ const TYPE_USAGE_NOISE_TYPES: &[&str] = &[
     "char", "bool", "str",
 ];
 
+const KEYWORDS: &[&str] = &[
+    "impl", "trait", "struct", "enum", "union", "type", "fn", "mod", "macro_rules",
+    "for", "where", "dyn", "pub", "use", "as", "const", "static", "unsafe", "extern",
+    "async", "move", "ref", "mut", "let", "match", "if", "else", "while", "loop",
+    "return", "self", "Self", "crate", "super", "in",
+];
+
 const NOISE_MACROS: &[&str] = &[
     "vec", "println", "print", "eprintln", "eprint", "format", "write", "writeln",
     "assert", "assert_eq", "assert_ne", "debug_assert", "debug_assert_eq",
@@ -969,6 +976,9 @@ impl FileWalker {
         let outer_seg = segments[segments.len() - 2];
         let outer = outer_seg.ident.to_string();
         let inner = inner_seg.ident.to_string();
+        if KEYWORDS.contains(&outer.as_str()) || KEYWORDS.contains(&inner.as_str()) {
+            return;
+        }
         if TYPE_USAGE_NOISE_TYPES.contains(&outer.as_str()) {
             return;
         }

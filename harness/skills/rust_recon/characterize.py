@@ -23,7 +23,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rustscan  # noqa: E402
 import config  # noqa: E402
 
 try:
@@ -721,31 +720,112 @@ def _compute_sloc(src: str) -> int:
     return sum(1 for line in s.splitlines() if line.strip())
 
 
+_ITEMS_BY_FILE: dict = {}
+
+
+def _run_scan_items(root: Path, out_dir: Path) -> dict:
+    """0.0.34: invoke the syn-based rust_recon `scan items` subcommand
+    against the workspace, parse recon_items.json, and return the per-
+    file lex+structure facts keyed for downstream merging.
+
+    Binary resolves via PATH ($CARGO_HOME/bin/rust_recon after
+    `cargo install --path crates/rust_recon`). If the binary is
+    absent or fails, returns an empty dict and prints a warning - the
+    picker degrades gracefully with whatever AST signal Phase 2 still
+    provides via `scan usages`.
+    """
+    import subprocess
+    try:
+        subprocess.run(
+            ["rust_recon", "scan", "items", str(root), str(out_dir)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        print(
+            "[characterize] warning: rust_recon binary not on PATH; "
+            "items scan skipped. Install via `cargo install --path "
+            "crates/rust_recon` from sourcetrait_empower.",
+            file=sys.stderr,
+        )
+        return {}
+    except subprocess.CalledProcessError as e:
+        print(
+            f"[characterize] warning: rust_recon scan items failed "
+            f"({e.returncode}): {e.stderr[:300]}",
+            file=sys.stderr,
+        )
+        return {}
+    items_path = out_dir / "recon_items.json"
+    if not items_path.is_file():
+        return {}
+    data = json.loads(items_path.read_text())
+    print(
+        f"[characterize] items scan: "
+        f"{len(data.get('impls', []))} impls + "
+        f"{len(data.get('derives', []))} derives + "
+        f"{len(data.get('type_usages', []))} type_usages + "
+        f"{len(data.get('macros', []))} macros"
+    )
+    return data
+
+
+def _build_items_index(items_data: dict) -> dict:
+    """0.0.34: bucket the flat workspace-level recon_items.json lists by
+    file path so scan_crate() can look up per-file facts via rglob's
+    relative-path key. Returns {file: {kind: [...]}} matching the
+    rustscan.py per-file output shape.
+    """
+    by_file: dict = {}
+    kinds = (
+        "impls",
+        "traits",
+        "types",
+        "fns",
+        "uses",
+        "macros",
+        "derives",
+        "macro_defs",
+        "mods",
+        "type_usages",
+        "example_type_usages",
+    )
+    for kind in kinds:
+        for rec in items_data.get(kind, []):
+            file = rec.get("file", "")
+            if not file:
+                continue
+            by_file.setdefault(file, {k: [] for k in kinds})[kind].append(rec)
+    return by_file
+
+
 def scan_crate(root: Path, crate_dir: str):
     """Scan all .rs under a crate dir; return aggregated facts + SLOC count.
 
-    0.0.25 changes:
+    0.0.34: rustscan.py retired. Item facts come from the pre-loaded
+    _ITEMS_BY_FILE index built from recon_items.json (produced by
+    `rust_recon scan items` at workspace level). This function still
+    walks .rs files for SLOC compute (cheap, Python-side) and looks
+    up per-file facts in the index.
+
+    0.0.25 changes still apply:
     - Skips files in `<crate>/tests/` and `<crate>/benches/` entirely
       (no facts, no SLOC). examples/ unchanged.
-    - Strips inline `#[cfg(test)]` blocks before feeding rustscan.
+    - Strips inline `#[cfg(test)]` blocks before SLOC compute. The
+      Rust items walker applies an equivalent cfg(test) item-level
+      skip during its own walk.
     - SLOC count via _compute_sloc (no comments, no blanks, no test
       blocks). Field renamed loc -> sloc."""
     agg = {"impls": [], "traits": [], "types": [], "fns": [], "uses": [],
            "macros": [], "derives": [], "macro_defs": [], "type_usages": [],
            "mods": [],
-           # 0.0.10 patch 10e: example_type_usages collects type_usages
-           # from tests/ + benches/ + examples/ files separately so they
-           # don't pollute the architectural histogram but ARE available
-           # as the example-presence signal for the picker's ranking.
-           "example_type_usages": [],
-           "seams": Counter()}
+           "example_type_usages": []}
     sloc = 0
     base = root / crate_dir
     for rs in base.rglob("*.rs"):
         if "target" in rs.parts:
             continue
-        # 0.0.25: skip tests/ + benches/ entirely (no facts, no SLOC).
-        # examples/ stays.
         rel_parts = rs.relative_to(base).parts
         if any(seg in ("tests", "benches") for seg in rel_parts):
             continue
@@ -753,49 +833,23 @@ def scan_crate(root: Path, crate_dir: str):
             src = rs.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
-        # 0.0.25: strip inline #[cfg(test)] blocks before SLOC + scan.
         src = _strip_cfg_test(src)
         sloc += _compute_sloc(src)
         rel = str(rs.relative_to(root))
-        f = rustscan.scan_file(rel, src)
-        for it in f["impls"]:
-            it["file"] = rel
-        for it in f["traits"] + f["types"] + f["fns"]:
-            it["file"] = rel
-        for it in f["macros"]:
-            it["file"] = rel
-        # 0.0.5 patch cc: rustscan returns derives without a file field; attach it
-        # so derive-flavored seed instances render as `<file>:<line>` instead of
-        # `?:<line>`. Surfaced by the helix 0.0.4 baseline (S5 seed was `?:12`
-        # before this fix). Pre-Patch-dd, this would have hit the derive:Debug
-        # pick directly; post-Patch-dd it hits the rare case where Patch dd's
-        # fallback walk lands on a non-generic derive (e.g. bevy's Component or
-        # a domain-flavored derive in a derive-protagonist workspace).
-        for it in f["derives"]:
-            it["file"] = rel
-        agg["impls"] += f["impls"]
-        agg["traits"] += f["traits"]
-        agg["types"] += f["types"]
-        agg["fns"] += f["fns"]
-        agg["uses"] += [dict(u, file=rel) for u in f["uses"]]
-        agg["macros"] += f["macros"]
-        agg["derives"] += f["derives"]
-        agg["macro_defs"] += [dict(m, file=rel) for m in f["macro_defs"]]
-        agg["mods"] += [dict(m, file=rel) for m in f["mods"]]
-        # 0.0.8 patch 8b: type_usages aggregate only from src/ files
-        # so test/bench/example files (canonical demonstration sites)
-        # are preserved for the 0.0.10 example-mining pass without
-        # polluting the architectural histogram. Each entry gets the
-        # rel path attached so emit.py can render usage sites as
-        # `<file>:<line>`.
-        # 0.0.10 patch 10e: ALSO aggregate the non-src type_usages
-        # into example_type_usages for the example-presence signal.
-        if _is_src_file(rel):
-            agg["type_usages"] += [dict(tu, file=rel) for tu in f["type_usages"]]
-        else:
-            agg["example_type_usages"] += [dict(tu, file=rel) for tu in f["type_usages"]]
-        for k, v in f["seams"].items():
-            agg["seams"][k] += v
+        f = _ITEMS_BY_FILE.get(rel)
+        if f is None:
+            continue
+        agg["impls"] += f.get("impls", [])
+        agg["traits"] += f.get("traits", [])
+        agg["types"] += f.get("types", [])
+        agg["fns"] += f.get("fns", [])
+        agg["uses"] += f.get("uses", [])
+        agg["macros"] += f.get("macros", [])
+        agg["derives"] += f.get("derives", [])
+        agg["macro_defs"] += f.get("macro_defs", [])
+        agg["mods"] += f.get("mods", [])
+        agg["type_usages"] += f.get("type_usages", [])
+        agg["example_type_usages"] += f.get("example_type_usages", [])
     agg["sloc"] = sloc
     return agg
 
@@ -1473,6 +1527,10 @@ def main():
         return 1
     comps = components(crates)
 
+    items_data = _run_scan_items(root, out_dir)
+    global _ITEMS_BY_FILE
+    _ITEMS_BY_FILE = _build_items_index(items_data)
+
     all_facts = {"impls": [], "traits": [], "types": [], "fns": [], "uses": [],
                  "macros": [], "derives": [], "macro_defs": [], "type_usages": [],
                  "mods": [], "example_type_usages": [],
@@ -1485,7 +1543,7 @@ def main():
             "dir": info["dir"], "sloc": cf["sloc"], "deps": info["deps"],
             "n_impls": len(cf["impls"]), "n_types": len(cf["types"]),
             "n_traits": len(cf["traits"]), "n_fns": len(cf["fns"]),
-            "seams": dict(cf["seams"]),
+            "seams": {},
         }
         free_fns_by_crate[name] = sum(1 for f in cf["fns"] if f.get("brace_depth") == 0)
         for key in ("impls", "traits", "types", "fns", "uses", "macros", "derives",
@@ -1493,8 +1551,8 @@ def main():
             for rec in cf[key]:
                 rec["crate"] = name
             all_facts[key] += cf[key]
-        for k, v in cf["seams"].items():
-            all_facts["seams"][k] += v
+    for k, v in items_data.get("seams", {}).items():
+        all_facts["seams"][k] += v
 
     all_facts["_free_fns_by_crate"] = free_fns_by_crate
     ranked, by_kind, reg_calls = pattern_histogram(all_facts)

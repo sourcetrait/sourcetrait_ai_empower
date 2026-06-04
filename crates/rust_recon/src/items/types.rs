@@ -1,6 +1,3 @@
-use crate::*;
-use ext_serde::*;
-
 /// What: top-level facts collected by `rust_recon scan items` across an
 /// entire workspace, serialized to `recon_items.json` and consumed by
 /// characterize.py as the per-file lex+structure feed.
@@ -13,7 +10,7 @@ use ext_serde::*;
 /// Where: instantiated in `items::workspace::scan_workspace` once per
 /// `rust_recon scan items` invocation; serialized to `recon_items.json`
 /// at scan completion.
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Default, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ItemsFacts {
     pub(crate) tool_version: String,
     pub(crate) files_scanned: usize,
@@ -30,7 +27,7 @@ pub(crate) struct ItemsFacts {
     pub(crate) derives: Vec<DeriveEntry>,
     pub(crate) type_usages: Vec<TypeUsageEntry>,
     pub(crate) example_type_usages: Vec<TypeUsageEntry>,
-    pub(crate) seams: BTreeMap<String, usize>,
+    pub(crate) seams: std::collections::BTreeMap<String, usize>,
     pub(crate) doc_count: usize,
 }
 
@@ -57,13 +54,13 @@ pub(crate) struct FileLevelFacts {
     pub(crate) derives: Vec<DeriveEntry>,
     pub(crate) type_usages: Vec<TypeUsageEntry>,
     pub(crate) example_type_usages: Vec<TypeUsageEntry>,
-    pub(crate) seams: HashMap<SeamKind, usize>,
+    pub(crate) seams: std::collections::HashMap<SeamKind, usize>,
     pub(crate) doc_count: usize,
 }
 
 /// What: one impl block seen at item position (`impl X { ... }` or
 /// `impl Trait for X { ... }`).
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ImplEntry {
     pub(crate) file: String,
     #[serde(rename = "trait")]
@@ -77,7 +74,7 @@ pub(crate) struct ImplEntry {
 }
 
 /// What: one trait declaration (`trait T { ... }`).
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TraitEntry {
     pub(crate) file: String,
     pub(crate) name: String,
@@ -89,7 +86,7 @@ pub(crate) struct TraitEntry {
 
 /// What: one type-like declaration: struct, enum, union, or type alias.
 /// `kind` distinguishes which shape was declared.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeEntry {
     pub(crate) file: String,
     pub(crate) kind: TypeEntryKind,
@@ -110,7 +107,7 @@ pub(crate) struct TypeEntry {
 /// methods (`visit_item_struct`, `visit_item_enum`, `visit_item_union`,
 /// `visit_item_type`) and from in-impl / in-trait associated type
 /// emission.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TypeEntryKind {
     Struct,
@@ -121,7 +118,7 @@ pub(crate) enum TypeEntryKind {
 
 /// What: one fn declaration at any depth (free, in-impl, in-trait,
 /// extern-block); `brace_depth` records nesting at emission time.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FnEntry {
     pub(crate) file: String,
     pub(crate) name: String,
@@ -132,7 +129,7 @@ pub(crate) struct FnEntry {
 }
 
 /// What: one `mod X` declaration (with or without inline content).
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModEntry {
     pub(crate) file: String,
     pub(crate) name: String,
@@ -141,7 +138,7 @@ pub(crate) struct ModEntry {
 }
 
 /// What: one `use X::Y` statement; `reexport` flags `pub use ...`.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct UseEntry {
     pub(crate) file: String,
     pub(crate) reexport: bool,
@@ -152,7 +149,7 @@ pub(crate) struct UseEntry {
 /// What: one macro call site (function-form or attribute-form). `kind`
 /// distinguishes the two shapes; `args_count` / `arg_idents` / `brace_depth`
 /// populate only for function-form invocations.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct MacroEntry {
     pub(crate) file: String,
     pub(crate) kind: MacroEntryKind,
@@ -175,7 +172,7 @@ pub(crate) struct MacroEntry {
 ///
 /// Where: held in every `MacroEntry`; `MacroInvocation` for `foo!(...)`
 /// shapes and `AttrMacro` for `#[foo]` shapes.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MacroEntryKind {
     MacroInvocation,
@@ -183,7 +180,7 @@ pub(crate) enum MacroEntryKind {
 }
 
 /// What: one `macro_rules! NAME { ... }` declaration site.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct MacroDefEntry {
     pub(crate) file: String,
     pub(crate) name: String,
@@ -195,7 +192,7 @@ pub(crate) struct MacroDefEntry {
 /// What: one attribute occurrence (`#[...]` or `#![...]`). `inner`
 /// distinguishes file-level inner attrs from item-level outer attrs;
 /// `args` is the literal text inside the attribute's argument list.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AttrEntry {
     pub(crate) file: String,
     pub(crate) path: String,
@@ -207,7 +204,7 @@ pub(crate) struct AttrEntry {
 
 /// What: one trait name inside a `#[derive(...)]` list (one entry per
 /// trait listed, not per derive attribute).
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DeriveEntry {
     pub(crate) file: String,
     #[serde(rename = "trait")]
@@ -221,7 +218,7 @@ pub(crate) struct DeriveEntry {
 /// the usage represents (currently only `FactoryCall`).
 /// `expansion_unverified` is set when the usage was extracted from a
 /// macro body's TokenStream rather than parsed syntax.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeUsageEntry {
     pub(crate) file: String,
     pub(crate) name: String,
@@ -242,7 +239,7 @@ pub(crate) struct TypeUsageEntry {
 /// Where: held in every `TypeUsageEntry`; emitted via
 /// `FileWalker::record_type_usage` from `visit_expr_call`,
 /// `visit_pat_tuple_struct`, and the macro-body token cursor.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TypeUsageKind {
     FactoryCall,
@@ -281,7 +278,7 @@ impl SeamKind {
     /// future field reorderings.
     ///
     /// Where: called at scan_workspace exit when collapsing per-file
-    /// `HashMap<SeamKind, usize>` into the wire `HashMap<String, usize>`.
+    /// `HashMap<SeamKind, usize>` into the wire `BTreeMap<String, usize>`.
     pub(crate) fn wire_key(self) -> &'static str {
         match self {
             SeamKind::Extern => "extern",

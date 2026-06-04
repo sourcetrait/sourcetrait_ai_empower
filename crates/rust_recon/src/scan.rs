@@ -1,5 +1,5 @@
 use crate::*;
-use ext_syn::*;
+use syn::spanned::Spanned as _;
 
 /// What: parse a single .rs file's source text via syn, walk its AST,
 /// and collect type-identifier occurrences in fn signatures, struct
@@ -15,35 +15,35 @@ pub(crate) fn scan_file(
     src: &str,
     rel_path: &str,
 ) -> std::result::Result<FileFacts, syn::Error> {
-    let file: RsFile = syn::parse_str(src)?;
+    let file: syn::File = syn::parse_str(src)?;
     let mut facts = FileFacts::default();
     walk_items(&file.items, "", rel_path, &mut facts);
     Ok(facts)
 }
 
 fn walk_items(
-    items: &[Item],
+    items: &[syn::Item],
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
 ) {
     for it in items {
         match it {
-            Item::Fn(f) => walk_fn(f, container_path, file, facts),
-            Item::Impl(i) => walk_impl(i, container_path, file, facts),
-            Item::Trait(t) => walk_trait(t, container_path, file, facts),
-            Item::Struct(s) => walk_struct(s, container_path, file, facts),
-            Item::Enum(e) => walk_enum(e, container_path, file, facts),
-            Item::Union(u) => walk_union(u, container_path, file, facts),
-            Item::Type(ta) => walk_type_alias(ta, container_path, file, facts),
-            Item::Mod(m) => walk_mod(m, container_path, file, facts),
+            syn::Item::Fn(f) => walk_fn(f, container_path, file, facts),
+            syn::Item::Impl(i) => walk_impl(i, container_path, file, facts),
+            syn::Item::Trait(t) => walk_trait(t, container_path, file, facts),
+            syn::Item::Struct(s) => walk_struct(s, container_path, file, facts),
+            syn::Item::Enum(e) => walk_enum(e, container_path, file, facts),
+            syn::Item::Union(u) => walk_union(u, container_path, file, facts),
+            syn::Item::Type(ta) => walk_type_alias(ta, container_path, file, facts),
+            syn::Item::Mod(m) => walk_mod(m, container_path, file, facts),
             _ => {}
         }
     }
 }
 
 fn walk_mod(
-    m: &ItemMod,
+    m: &syn::ItemMod,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -55,7 +55,7 @@ fn walk_mod(
 }
 
 fn walk_fn(
-    f: &ItemFn,
+    f: &syn::ItemFn,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -75,7 +75,7 @@ fn walk_fn(
 }
 
 fn walk_impl(
-    i: &ItemImpl,
+    i: &syn::ItemImpl,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -83,7 +83,7 @@ fn walk_impl(
     let target = type_string(&i.self_ty);
     let nested = qualify(container_path, &target);
     for item in &i.items {
-        if let ImplItem::Fn(f) = item {
+        if let syn::ImplItem::Fn(f) = item {
             let fn_name = f.sig.ident.to_string();
             let vis = visibility_string(&f.vis);
             collect_fn_sig(
@@ -101,7 +101,7 @@ fn walk_impl(
 }
 
 fn walk_trait(
-    t: &ItemTrait,
+    t: &syn::ItemTrait,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -110,7 +110,7 @@ fn walk_trait(
     let nested = qualify(container_path, &trait_name);
     let trait_vis = visibility_string(&t.vis);
     for item in &t.items {
-        if let TraitItem::Fn(f) = item {
+        if let syn::TraitItem::Fn(f) = item {
             let fn_name = f.sig.ident.to_string();
             collect_fn_sig(
                 &f.sig,
@@ -143,7 +143,7 @@ fn walk_trait(
 /// for each ImplItem::Fn + from walk_trait for each TraitItem::Fn
 /// with a default body.
 fn walk_fn_body(
-    block: &Block,
+    block: &syn::Block,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -154,21 +154,21 @@ fn walk_fn_body(
 }
 
 fn walk_stmt(
-    stmt: &Stmt,
+    stmt: &syn::Stmt,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
 ) {
     match stmt {
-        Stmt::Local(local) => walk_local(local, container_path, file, facts),
-        Stmt::Expr(expr, _) => walk_expr(expr, container_path, file, facts),
-        Stmt::Item(_) => {}
-        Stmt::Macro(_) => {}
+        syn::Stmt::Local(local) => walk_local(local, container_path, file, facts),
+        syn::Stmt::Expr(expr, _) => walk_expr(expr, container_path, file, facts),
+        syn::Stmt::Item(_) => {}
+        syn::Stmt::Macro(_) => {}
     }
 }
 
 fn walk_local(
-    local: &Local,
+    local: &syn::Local,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -182,24 +182,24 @@ fn walk_local(
 }
 
 fn walk_expr(
-    expr: &Expr,
+    expr: &syn::Expr,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
 ) {
     match expr {
-        Expr::Call(call) => walk_call(call, container_path, file, facts),
-        Expr::MethodCall(mc) => walk_method_call(mc, container_path, file, facts),
-        Expr::Closure(cl) => walk_expr(&cl.body, container_path, file, facts),
-        Expr::Block(b) => walk_fn_body(&b.block, container_path, file, facts),
-        Expr::If(i) => {
+        syn::Expr::Call(call) => walk_call(call, container_path, file, facts),
+        syn::Expr::MethodCall(mc) => walk_method_call(mc, container_path, file, facts),
+        syn::Expr::Closure(cl) => walk_expr(&cl.body, container_path, file, facts),
+        syn::Expr::Block(b) => walk_fn_body(&b.block, container_path, file, facts),
+        syn::Expr::If(i) => {
             walk_expr(&i.cond, container_path, file, facts);
             walk_fn_body(&i.then_branch, container_path, file, facts);
             if let Some((_, else_branch)) = &i.else_branch {
                 walk_expr(else_branch, container_path, file, facts);
             }
         }
-        Expr::Match(m) => {
+        syn::Expr::Match(m) => {
             walk_expr(&m.expr, container_path, file, facts);
             for arm in &m.arms {
                 if let Some((_, guard)) = &arm.guard {
@@ -208,45 +208,45 @@ fn walk_expr(
                 walk_expr(&arm.body, container_path, file, facts);
             }
         }
-        Expr::Loop(l) => walk_fn_body(&l.body, container_path, file, facts),
-        Expr::While(w) => {
+        syn::Expr::Loop(l) => walk_fn_body(&l.body, container_path, file, facts),
+        syn::Expr::While(w) => {
             walk_expr(&w.cond, container_path, file, facts);
             walk_fn_body(&w.body, container_path, file, facts);
         }
-        Expr::ForLoop(f) => {
+        syn::Expr::ForLoop(f) => {
             walk_expr(&f.expr, container_path, file, facts);
             walk_fn_body(&f.body, container_path, file, facts);
         }
-        Expr::Return(r) => {
+        syn::Expr::Return(r) => {
             if let Some(e) = &r.expr {
                 walk_expr(e, container_path, file, facts);
             }
         }
-        Expr::Tuple(t) => {
+        syn::Expr::Tuple(t) => {
             for e in &t.elems {
                 walk_expr(e, container_path, file, facts);
             }
         }
-        Expr::Array(a) => {
+        syn::Expr::Array(a) => {
             for e in &a.elems {
                 walk_expr(e, container_path, file, facts);
             }
         }
-        Expr::Binary(b) => {
+        syn::Expr::Binary(b) => {
             walk_expr(&b.left, container_path, file, facts);
             walk_expr(&b.right, container_path, file, facts);
         }
-        Expr::Unary(u) => walk_expr(&u.expr, container_path, file, facts),
-        Expr::Reference(r) => walk_expr(&r.expr, container_path, file, facts),
-        Expr::Paren(p) => walk_expr(&p.expr, container_path, file, facts),
-        Expr::Group(g) => walk_expr(&g.expr, container_path, file, facts),
-        Expr::Cast(c) => walk_expr(&c.expr, container_path, file, facts),
-        Expr::Field(f) => walk_expr(&f.base, container_path, file, facts),
-        Expr::Index(i) => {
+        syn::Expr::Unary(u) => walk_expr(&u.expr, container_path, file, facts),
+        syn::Expr::Reference(r) => walk_expr(&r.expr, container_path, file, facts),
+        syn::Expr::Paren(p) => walk_expr(&p.expr, container_path, file, facts),
+        syn::Expr::Group(g) => walk_expr(&g.expr, container_path, file, facts),
+        syn::Expr::Cast(c) => walk_expr(&c.expr, container_path, file, facts),
+        syn::Expr::Field(f) => walk_expr(&f.base, container_path, file, facts),
+        syn::Expr::Index(i) => {
             walk_expr(&i.expr, container_path, file, facts);
             walk_expr(&i.index, container_path, file, facts);
         }
-        Expr::Range(r) => {
+        syn::Expr::Range(r) => {
             if let Some(s) = &r.start {
                 walk_expr(s, container_path, file, facts);
             }
@@ -254,17 +254,17 @@ fn walk_expr(
                 walk_expr(e, container_path, file, facts);
             }
         }
-        Expr::Try(t) => walk_expr(&t.expr, container_path, file, facts),
-        Expr::Await(a) => walk_expr(&a.base, container_path, file, facts),
-        Expr::Assign(a) => {
+        syn::Expr::Try(t) => walk_expr(&t.expr, container_path, file, facts),
+        syn::Expr::Await(a) => walk_expr(&a.base, container_path, file, facts),
+        syn::Expr::Assign(a) => {
             walk_expr(&a.left, container_path, file, facts);
             walk_expr(&a.right, container_path, file, facts);
         }
-        Expr::Let(l) => walk_expr(&l.expr, container_path, file, facts),
-        Expr::Async(a) => walk_fn_body(&a.block, container_path, file, facts),
-        Expr::Unsafe(u) => walk_fn_body(&u.block, container_path, file, facts),
-        Expr::TryBlock(t) => walk_fn_body(&t.block, container_path, file, facts),
-        Expr::Struct(s) => {
+        syn::Expr::Let(l) => walk_expr(&l.expr, container_path, file, facts),
+        syn::Expr::Async(a) => walk_fn_body(&a.block, container_path, file, facts),
+        syn::Expr::Unsafe(u) => walk_fn_body(&u.block, container_path, file, facts),
+        syn::Expr::TryBlock(t) => walk_fn_body(&t.block, container_path, file, facts),
+        syn::Expr::Struct(s) => {
             for fv in &s.fields {
                 walk_expr(&fv.expr, container_path, file, facts);
             }
@@ -272,7 +272,7 @@ fn walk_expr(
                 walk_expr(rest, container_path, file, facts);
             }
         }
-        Expr::Repeat(r) => {
+        syn::Expr::Repeat(r) => {
             walk_expr(&r.expr, container_path, file, facts);
             walk_expr(&r.len, container_path, file, facts);
         }
@@ -281,7 +281,7 @@ fn walk_expr(
 }
 
 fn walk_call(
-    call: &ExprCall,
+    call: &syn::ExprCall,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -294,7 +294,7 @@ fn walk_call(
 }
 
 fn walk_method_call(
-    mc: &ExprMethodCall,
+    mc: &syn::ExprMethodCall,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -307,13 +307,13 @@ fn walk_method_call(
 }
 
 fn emit_method_ref_if_path(
-    arg: &Expr,
+    arg: &syn::Expr,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
 ) {
     let path = match arg {
-        Expr::Path(p) => &p.path,
+        syn::Expr::Path(p) => &p.path,
         _ => return,
     };
     let segs: Vec<String> = path
@@ -349,7 +349,7 @@ fn collect_fn_sig(
 ) {
     let line = sig.span().start().line;
     for input in &sig.inputs {
-        if let FnArg::Typed(pt) = input {
+        if let syn::FnArg::Typed(pt) = input {
             collect_idents(&pt.ty, |ident| {
                 facts.fn_sig_usages.push(FnSigUsage {
                     file: file.to_string(),
@@ -363,7 +363,7 @@ fn collect_fn_sig(
             });
         }
     }
-    if let ReturnType::Type(_, ty) = &sig.output {
+    if let syn::ReturnType::Type(_, ty) = &sig.output {
         collect_idents(ty, |ident| {
             facts.fn_sig_usages.push(FnSigUsage {
                 file: file.to_string(),
@@ -377,9 +377,9 @@ fn collect_fn_sig(
         });
     }
     for param in &sig.generics.params {
-        if let GenericParam::Type(tp) = param {
+        if let syn::GenericParam::Type(tp) = param {
             for bound in &tp.bounds {
-                if let TypeParamBound::Trait(tb) = bound {
+                if let syn::TypeParamBound::Trait(tb) = bound {
                     let mut emit = |ident: String| {
                         facts.fn_sig_usages.push(FnSigUsage {
                             file: file.to_string(),
@@ -409,7 +409,7 @@ fn collect_fn_sig(
 }
 
 fn collect_where_clause(
-    wc: &WhereClause,
+    wc: &syn::WhereClause,
     fn_name: &str,
     container_path: &str,
     fn_vis: &str,
@@ -417,7 +417,7 @@ fn collect_where_clause(
     facts: &mut FileFacts,
 ) {
     for pred in &wc.predicates {
-        if let WherePredicate::Type(pt) = pred {
+        if let syn::WherePredicate::Type(pt) = pred {
             let line = pt.bounded_ty.span().start().line;
             collect_idents(&pt.bounded_ty, |ident| {
                 facts.fn_sig_usages.push(FnSigUsage {
@@ -431,7 +431,7 @@ fn collect_where_clause(
                 });
             });
             for bound in &pt.bounds {
-                if let TypeParamBound::Trait(tb) = bound {
+                if let syn::TypeParamBound::Trait(tb) = bound {
                     let mut emit = |ident: String| {
                         facts.fn_sig_usages.push(FnSigUsage {
                             file: file.to_string(),
@@ -451,7 +451,7 @@ fn collect_where_clause(
 }
 
 fn walk_struct(
-    s: &ItemStruct,
+    s: &syn::ItemStruct,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -460,7 +460,7 @@ fn walk_struct(
     let nested = qualify(container_path, &name);
     let container_vis = visibility_string(&s.vis);
     match &s.fields {
-        Fields::Named(fields) => {
+        syn::Fields::Named(fields) => {
             for f in &fields.named {
                 emit_field(
                     f,
@@ -472,7 +472,7 @@ fn walk_struct(
                 );
             }
         }
-        Fields::Unnamed(fields) => {
+        syn::Fields::Unnamed(fields) => {
             for (i, f) in fields.unnamed.iter().enumerate() {
                 emit_field_unnamed(
                     f,
@@ -485,12 +485,12 @@ fn walk_struct(
                 );
             }
         }
-        Fields::Unit => {}
+        syn::Fields::Unit => {}
     }
 }
 
 fn walk_enum(
-    e: &ItemEnum,
+    e: &syn::ItemEnum,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -504,7 +504,7 @@ fn walk_enum(
 }
 
 fn walk_enum_variant(
-    v: &Variant,
+    v: &syn::Variant,
     container_path: &str,
     container_vis: &str,
     file: &str,
@@ -513,7 +513,7 @@ fn walk_enum_variant(
     let variant_name = v.ident.to_string();
     let nested = qualify(container_path, &variant_name);
     match &v.fields {
-        Fields::Named(fields) => {
+        syn::Fields::Named(fields) => {
             for f in &fields.named {
                 emit_field(
                     f,
@@ -525,7 +525,7 @@ fn walk_enum_variant(
                 );
             }
         }
-        Fields::Unnamed(fields) => {
+        syn::Fields::Unnamed(fields) => {
             for (i, f) in fields.unnamed.iter().enumerate() {
                 emit_field_unnamed(
                     f,
@@ -538,12 +538,12 @@ fn walk_enum_variant(
                 );
             }
         }
-        Fields::Unit => {}
+        syn::Fields::Unit => {}
     }
 }
 
 fn walk_union(
-    u: &ItemUnion,
+    u: &syn::ItemUnion,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -564,7 +564,7 @@ fn walk_union(
 }
 
 fn walk_type_alias(
-    ta: &ItemType,
+    ta: &syn::ItemType,
     container_path: &str,
     file: &str,
     facts: &mut FileFacts,
@@ -585,7 +585,7 @@ fn walk_type_alias(
 }
 
 fn emit_field(
-    f: &Field,
+    f: &syn::Field,
     container_path: &str,
     container_vis: &str,
     position: FieldPosition,
@@ -614,7 +614,7 @@ fn emit_field(
 }
 
 fn emit_field_unnamed(
-    f: &Field,
+    f: &syn::Field,
     container_path: &str,
     container_vis: &str,
     position: FieldPosition,
@@ -640,57 +640,57 @@ fn emit_field_unnamed(
 }
 
 fn collect_idents<F: FnMut(String)>(
-    ty: &Type,
+    ty: &syn::Type,
     mut emit: F,
 ) {
     collect_idents_inner(ty, &mut emit);
 }
 
 fn collect_idents_inner(
-    ty: &Type,
+    ty: &syn::Type,
     emit: &mut dyn FnMut(String),
 ) {
     match ty {
-        Type::Path(tp) => collect_idents_in_path(tp, emit),
-        Type::Reference(TypeReference { elem, .. }) => collect_idents_inner(elem, emit),
-        Type::Slice(TypeSlice { elem, .. }) => collect_idents_inner(elem, emit),
-        Type::Array(TypeArray { elem, .. }) => collect_idents_inner(elem, emit),
-        Type::Tuple(TypeTuple { elems, .. }) => {
+        syn::Type::Path(tp) => collect_idents_in_path(tp, emit),
+        syn::Type::Reference(syn::TypeReference { elem, .. }) => collect_idents_inner(elem, emit),
+        syn::Type::Slice(syn::TypeSlice { elem, .. }) => collect_idents_inner(elem, emit),
+        syn::Type::Array(syn::TypeArray { elem, .. }) => collect_idents_inner(elem, emit),
+        syn::Type::Tuple(syn::TypeTuple { elems, .. }) => {
             for e in elems {
                 collect_idents_inner(e, emit);
             }
         }
-        Type::Paren(p) => collect_idents_inner(&p.elem, emit),
-        Type::Group(g) => collect_idents_inner(&g.elem, emit),
-        Type::TraitObject(TypeTraitObject { bounds, .. }) => {
+        syn::Type::Paren(p) => collect_idents_inner(&p.elem, emit),
+        syn::Type::Group(g) => collect_idents_inner(&g.elem, emit),
+        syn::Type::TraitObject(syn::TypeTraitObject { bounds, .. }) => {
             for b in bounds {
-                if let TypeParamBound::Trait(tb) = b {
+                if let syn::TypeParamBound::Trait(tb) = b {
                     collect_idents_in_trait_bound(tb, emit);
                 }
             }
         }
-        Type::ImplTrait(TypeImplTrait { bounds, .. }) => {
+        syn::Type::ImplTrait(syn::TypeImplTrait { bounds, .. }) => {
             for b in bounds {
-                if let TypeParamBound::Trait(tb) = b {
+                if let syn::TypeParamBound::Trait(tb) = b {
                     collect_idents_in_trait_bound(tb, emit);
                 }
             }
         }
-        Type::BareFn(TypeBareFn { inputs, output, .. }) => {
+        syn::Type::BareFn(syn::TypeBareFn { inputs, output, .. }) => {
             for i in inputs {
                 collect_idents_inner(&i.ty, emit);
             }
-            if let ReturnType::Type(_, ret) = output {
+            if let syn::ReturnType::Type(_, ret) = output {
                 collect_idents_inner(ret, emit);
             }
         }
-        Type::Ptr(p) => collect_idents_inner(&p.elem, emit),
+        syn::Type::Ptr(p) => collect_idents_inner(&p.elem, emit),
         _ => {}
     }
 }
 
 fn collect_idents_in_path(
-    tp: &TypePath,
+    tp: &syn::TypePath,
     emit: &mut dyn FnMut(String),
 ) {
     for seg in &tp.path.segments {
@@ -699,7 +699,7 @@ fn collect_idents_in_path(
 }
 
 fn collect_idents_in_segment(
-    seg: &PathSegment,
+    seg: &syn::PathSegment,
     emit: &mut dyn FnMut(String),
 ) {
     let name = seg.ident.to_string();
@@ -709,11 +709,11 @@ fn collect_idents_in_segment(
             emit(name);
         }
     }
-    if let PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) = &seg.arguments {
+    if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }) = &seg.arguments {
         for a in args {
             match a {
-                GenericArgument::Type(t) => collect_idents_inner(t, emit),
-                GenericArgument::AssocType(at) => collect_idents_inner(&at.ty, emit),
+                syn::GenericArgument::Type(t) => collect_idents_inner(t, emit),
+                syn::GenericArgument::AssocType(at) => collect_idents_inner(&at.ty, emit),
                 _ => {}
             }
         }
@@ -721,7 +721,7 @@ fn collect_idents_in_segment(
 }
 
 fn collect_idents_in_trait_bound(
-    tb: &TraitBound,
+    tb: &syn::TraitBound,
     emit: &mut dyn FnMut(String),
 ) {
     for seg in &tb.path.segments {
@@ -737,8 +737,8 @@ fn qualify(container: &str, child: &str) -> String {
     }
 }
 
-fn type_string(ty: &Type) -> String {
-    if let Type::Path(tp) = ty {
+fn type_string(ty: &syn::Type) -> String {
+    if let syn::Type::Path(tp) = ty {
         if let Some(last) = tp.path.segments.last() {
             return last.ident.to_string();
         }
@@ -746,10 +746,10 @@ fn type_string(ty: &Type) -> String {
     String::new()
 }
 
-fn visibility_string(vis: &Visibility) -> String {
+fn visibility_string(vis: &syn::Visibility) -> String {
     match vis {
-        Visibility::Public(_) => "pub".to_string(),
-        Visibility::Restricted(r) => {
+        syn::Visibility::Public(_) => "pub".to_string(),
+        syn::Visibility::Restricted(r) => {
             let path = r.path.segments
                 .iter()
                 .map(|s| s.ident.to_string())
@@ -757,6 +757,6 @@ fn visibility_string(vis: &Visibility) -> String {
                 .join("::");
             format!("pub({})", path)
         }
-        Visibility::Inherited => String::new(),
+        syn::Visibility::Inherited => String::new(),
     }
 }

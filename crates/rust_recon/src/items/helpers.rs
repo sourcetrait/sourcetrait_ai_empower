@@ -1,6 +1,3 @@
-use crate::*;
-use ext_syn::*;
-
 /// What: format an attribute's path as a `::`-joined string (the same
 /// shape rustdoc and the AttrEntry wire schema use).
 ///
@@ -9,7 +6,7 @@ use ext_syn::*;
 ///
 /// Where: called from `FileWalker::record_attribute` and the
 /// cfg / macro_export detection logic.
-pub(crate) fn attribute_path_string(attr: &Attribute) -> String {
+pub(crate) fn attribute_path_string(attr: &syn::Attribute) -> String {
     let path = attr.path();
     path.segments
         .iter()
@@ -37,16 +34,16 @@ pub(crate) fn last_segment(path: &str) -> String {
 ///
 /// Where: called from `FileWalker::record_attribute` for cfg expression
 /// capture and derive-list splitting.
-pub(crate) fn attribute_args_string(attr: &Attribute) -> String {
+pub(crate) fn attribute_args_string(attr: &syn::Attribute) -> String {
     match &attr.meta {
-        Meta::Path(_) => String::new(),
-        Meta::List(list) => list.tokens.to_string(),
-        Meta::NameValue(_) => String::new(),
+        syn::Meta::Path(_) => String::new(),
+        syn::Meta::List(list) => list.tokens.to_string(),
+        syn::Meta::NameValue(_) => String::new(),
     }
 }
 
 /// What: the source line of the `#` token opening an attribute.
-pub(crate) fn attr_line(attr: &Attribute) -> usize {
+pub(crate) fn attr_line(attr: &syn::Attribute) -> usize {
     attr.pound_token.span.start().line
 }
 
@@ -58,15 +55,15 @@ pub(crate) fn attr_line(attr: &Attribute) -> usize {
 ///
 /// Where: called from `FileWalker` when emitting `TraitEntry`,
 /// `TypeEntry`, `FnEntry` and friends.
-pub(crate) fn extract_doc(attrs: &[Attribute]) -> String {
+pub(crate) fn extract_doc(attrs: &[syn::Attribute]) -> String {
     let mut parts: Vec<String> = Vec::new();
     for attr in attrs {
         if attribute_path_string(attr) != "doc" {
             continue;
         }
-        if let Meta::NameValue(nv) = &attr.meta {
-            if let Expr::Lit(lit) = &nv.value {
-                if let Lit::Str(s) = &lit.lit {
+        if let syn::Meta::NameValue(nv) = &attr.meta {
+            if let syn::Expr::Lit(lit) = &nv.value {
+                if let syn::Lit::Str(s) = &lit.lit {
                     parts.push(clean_doc_line(&s.value()));
                 }
             }
@@ -87,10 +84,10 @@ pub(crate) fn clean_doc_line(s: &str) -> String {
 
 /// What: render a `syn::Visibility` as the wire string the walker
 /// emits (`""` inherited, `"pub"` plain, `"pub(path)"` restricted).
-pub(crate) fn visibility_string(vis: &Visibility) -> String {
+pub(crate) fn visibility_string(vis: &syn::Visibility) -> String {
     match vis {
-        Visibility::Public(_) => "pub".to_string(),
-        Visibility::Restricted(r) => {
+        syn::Visibility::Public(_) => "pub".to_string(),
+        syn::Visibility::Restricted(r) => {
             let path = r
                 .path
                 .segments
@@ -100,7 +97,7 @@ pub(crate) fn visibility_string(vis: &Visibility) -> String {
                 .join("::");
             format!("pub({})", path)
         }
-        Visibility::Inherited => String::new(),
+        syn::Visibility::Inherited => String::new(),
     }
 }
 
@@ -111,17 +108,17 @@ pub(crate) fn visibility_string(vis: &Visibility) -> String {
 /// generics + lifetimes + references are stripped.
 ///
 /// Where: called when emitting `ImplEntry::type_name`.
-pub(crate) fn type_base_name(ty: &Type) -> String {
+pub(crate) fn type_base_name(ty: &syn::Type) -> String {
     match ty {
-        Type::Path(tp) => tp
+        syn::Type::Path(tp) => tp
             .path
             .segments
             .last()
             .map(|s| s.ident.to_string())
             .unwrap_or_default(),
-        Type::Reference(r) => type_base_name(&r.elem),
-        Type::Paren(p) => type_base_name(&p.elem),
-        Type::Group(g) => type_base_name(&g.elem),
+        syn::Type::Reference(r) => type_base_name(&r.elem),
+        syn::Type::Paren(p) => type_base_name(&p.elem),
+        syn::Type::Group(g) => type_base_name(&g.elem),
         _ => String::new(),
     }
 }
@@ -166,7 +163,7 @@ pub(crate) fn split_top_commas(s: &str) -> Vec<String> {
 
 /// What: the number of top-level comma-separated chunks in a macro
 /// argument TokenStream, or `0` for empty.
-pub(crate) fn count_top_commas_plus_one(tokens: &ext_proc_macro2::TokenStream) -> usize {
+pub(crate) fn count_top_commas_plus_one(tokens: &proc_macro2::TokenStream) -> usize {
     let s = tokens.to_string();
     if s.trim().is_empty() {
         return 0;
@@ -181,7 +178,7 @@ pub(crate) fn count_top_commas_plus_one(tokens: &ext_proc_macro2::TokenStream) -
 /// Why: agents reading the orientation use these as the registered-item
 /// names for `bind_command!(A, B, C)`-style macros without having to
 /// expand the macro.
-pub(crate) fn extract_macro_arg_idents(tokens: &ext_proc_macro2::TokenStream) -> Vec<String> {
+pub(crate) fn extract_macro_arg_idents(tokens: &proc_macro2::TokenStream) -> Vec<String> {
     let s = tokens.to_string();
     let pieces = split_top_commas(&s);
     let mut out = Vec::new();
@@ -221,31 +218,31 @@ pub(crate) fn is_ident(s: &str) -> bool {
 /// Why: characterize.py downstream pulls capitalized identifiers from
 /// the joined-path form to count cross-crate type imports; preserving
 /// the python output shape keeps the merge transparent.
-pub(crate) fn flatten_use_tree(tree: &UseTree) -> String {
+pub(crate) fn flatten_use_tree(tree: &syn::UseTree) -> String {
     let mut buf = String::new();
     flatten_use_tree_inner(tree, &mut buf);
     buf
 }
 
-fn flatten_use_tree_inner(tree: &UseTree, buf: &mut String) {
+fn flatten_use_tree_inner(tree: &syn::UseTree, buf: &mut String) {
     match tree {
-        UseTree::Path(p) => {
+        syn::UseTree::Path(p) => {
             buf.push_str(&p.ident.to_string());
             buf.push_str("::");
             flatten_use_tree_inner(&p.tree, buf);
         }
-        UseTree::Name(n) => {
+        syn::UseTree::Name(n) => {
             buf.push_str(&n.ident.to_string());
         }
-        UseTree::Rename(r) => {
+        syn::UseTree::Rename(r) => {
             buf.push_str(&r.ident.to_string());
             buf.push_str(" as ");
             buf.push_str(&r.rename.to_string());
         }
-        UseTree::Glob(_) => {
+        syn::UseTree::Glob(_) => {
             buf.push('*');
         }
-        UseTree::Group(g) => {
+        syn::UseTree::Group(g) => {
             buf.push('{');
             let mut first = true;
             for item in &g.items {

@@ -1,6 +1,3 @@
-use crate::*;
-use ext_serde::*;
-
 /// What: aggregate facts produced by the scanner across the entire
 /// workspace. Indexed by relative file path; each file carries its
 /// own per-item entries.
@@ -13,7 +10,7 @@ use ext_serde::*;
 /// touching rustscan.py outputs.
 ///
 /// Where: built in walk_workspace(); serialized to scan.json in run().
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub(crate) struct Facts {
     pub(crate) tool_version: String,
     pub(crate) files_scanned: usize,
@@ -45,7 +42,7 @@ pub(crate) struct FileFacts {
 ///
 /// Where: emitted by scan_file() walking each ItemFn (top-level + in
 /// impls + in traits); read by characterize.py's pattern_metrics.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct FnSigUsage {
     pub(crate) file: String,
     pub(crate) fn_name: String,
@@ -56,7 +53,7 @@ pub(crate) struct FnSigUsage {
     pub(crate) fn_visibility: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FnPosition {
     Param,
@@ -74,7 +71,7 @@ pub(crate) enum FnPosition {
 ///
 /// Where: emitted by scan_file() walking each ItemStruct / ItemEnum /
 /// ItemUnion; read by characterize.py.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct FieldUsage {
     pub(crate) file: String,
     pub(crate) container: String,
@@ -86,7 +83,7 @@ pub(crate) struct FieldUsage {
     pub(crate) field_visibility: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FieldPosition {
     StructField,
@@ -103,7 +100,7 @@ pub(crate) enum FieldPosition {
 /// names; their RHS identifiers are real usage.
 ///
 /// Where: emitted by scan_file() walking each ItemType.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct TypeAliasUsage {
     pub(crate) file: String,
     pub(crate) alias_name: String,
@@ -130,7 +127,7 @@ pub(crate) struct TypeAliasUsage {
 ///
 /// Where: emitted by walk_fn_body() recursing through fn bodies
 /// (top-level ItemFn, ImplItem::Fn, TraitItem::Fn with default body).
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct MethodRefUsage {
     pub(crate) file: String,
     pub(crate) container: String,

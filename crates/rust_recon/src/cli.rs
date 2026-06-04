@@ -1,6 +1,3 @@
-use crate::*;
-use ext_clap::*;
-
 /// What: parsed CLI arguments via clap derive. Parent `scan`
 /// subcommand with noun children. `usages` captures AST-derived
 /// cross-item type-reference signals; `items` follows at phase 3+
@@ -12,9 +9,9 @@ use ext_clap::*;
 /// (characterize / emit / measure-overlap / etc.) as top-level
 /// peers of `scan`.
 ///
-/// Where: parsed in run.rs entrypoint via Cli::parse(); dispatched
-/// by subcommand match.
-#[derive(Parser, Debug)]
+/// Where: parsed in run.rs entrypoint via `<Cli as clap::Parser>::parse()`;
+/// dispatched by subcommand match.
+#[derive(clap::Parser, Debug)]
 #[command(
     name = "rust_recon",
     version,
@@ -25,7 +22,7 @@ pub(crate) struct Cli {
     pub(crate) command: Command,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(clap::Subcommand, Debug)]
 pub(crate) enum Command {
     /// Source scans (AST cross-item usages + lex/structure facts).
     Scan {
@@ -34,25 +31,24 @@ pub(crate) enum Command {
     },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(clap::Subcommand, Debug)]
 pub(crate) enum ScanCommand {
     /// AST-derived cross-item usage signals (fn-sig + field +
     /// type-alias + method-ref usages). Writes recon_usages.json
     /// in the output directory.
     Usages {
         /// Workspace root to scan.
-        workspace_root: PathBuf,
+        workspace_root: std::path::PathBuf,
         /// Output directory; recon_usages.json is written here.
-        out_dir: PathBuf,
+        out_dir: std::path::PathBuf,
     },
     /// Per-file lex+structure facts (impls, derives, types,
     /// traits, fns, macros, uses, mods, seams, type_usages).
-    /// Writes recon_items.json in the output directory. Phase 3
-    /// stub; phase 4 ports rustscan.py.
+    /// Writes recon_items.json in the output directory.
     Items {
         /// Workspace root to scan.
-        workspace_root: PathBuf,
+        workspace_root: std::path::PathBuf,
         /// Output directory; recon_items.json is written here.
-        out_dir: PathBuf,
+        out_dir: std::path::PathBuf,
     },
 }

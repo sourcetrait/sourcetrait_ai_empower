@@ -1,10 +1,8 @@
 use crate::*;
-use ext_proc_macro2::*;
-use super::*;
 
-/// What: a small cursor over a `&[TokenTree]` slice with the lex-level
-/// primitives the macro-body walker needs (advance, balanced-bracket
-/// skip, ident-with-`!`/`$`-skip, impl-header parse).
+/// What: a small cursor over a `&[proc_macro2::TokenTree]` slice with the
+/// lex-level primitives the macro-body walker needs (advance, balanced-
+/// bracket skip, ident-with-`!`/`$`-skip, impl-header parse).
 ///
 /// Why: macro_rules! template bodies aren't valid Rust until expansion,
 /// so syn::visit::Visit can't enter them. The macro body walker has to
@@ -17,12 +15,12 @@ use super::*;
 /// `struct` / etc. token); the outer loop reads `cursor.pos()` after
 /// the parse to advance its own index.
 pub(crate) struct TokenCursor<'a> {
-    trees: &'a [TokenTree],
+    trees: &'a [proc_macro2::TokenTree],
     pos: usize,
 }
 
 impl<'a> TokenCursor<'a> {
-    pub(crate) fn new(trees: &'a [TokenTree]) -> Self {
+    pub(crate) fn new(trees: &'a [proc_macro2::TokenTree]) -> Self {
         Self { trees, pos: 0 }
     }
 
@@ -30,7 +28,7 @@ impl<'a> TokenCursor<'a> {
         self.pos
     }
 
-    fn current(&self) -> Option<&TokenTree> {
+    fn current(&self) -> Option<&proc_macro2::TokenTree> {
         self.trees.get(self.pos)
     }
 
@@ -44,7 +42,7 @@ impl<'a> TokenCursor<'a> {
     fn skip_balanced(&mut self, open: char, close: char) {
         let mut depth = 0;
         while let Some(tree) = self.current() {
-            if let TokenTree::Punct(p) = tree {
+            if let proc_macro2::TokenTree::Punct(p) = tree {
                 let c = p.as_char();
                 if c == open {
                     depth += 1;
@@ -67,7 +65,7 @@ impl<'a> TokenCursor<'a> {
     pub(crate) fn next_ident(&mut self) -> Option<String> {
         while let Some(tree) = self.current() {
             match tree {
-                TokenTree::Ident(id) => {
+                proc_macro2::TokenTree::Ident(id) => {
                     let nm = id.to_string();
                     self.advance();
                     let starts_alpha_or_underscore = nm.starts_with('_')
@@ -77,7 +75,7 @@ impl<'a> TokenCursor<'a> {
                     }
                     return None;
                 }
-                TokenTree::Punct(p) if p.as_char() == '!' || p.as_char() == '$' => {
+                proc_macro2::TokenTree::Punct(p) if p.as_char() == '!' || p.as_char() == '$' => {
                     self.advance();
                 }
                 _ => return None,
@@ -90,7 +88,7 @@ impl<'a> TokenCursor<'a> {
     /// generics, optional `Trait for`, the self-type, stopping at the
     /// body brace or `where` clause. Returns `(trait_name, type_name)`.
     pub(crate) fn parse_impl_header(&mut self) -> (Option<String>, Option<String>) {
-        if let Some(TokenTree::Punct(p)) = self.current() {
+        if let Some(proc_macro2::TokenTree::Punct(p)) = self.current() {
             if p.as_char() == '<' {
                 self.skip_balanced('<', '>');
             }
@@ -99,7 +97,7 @@ impl<'a> TokenCursor<'a> {
         let mut found_for = false;
         while let Some(tree) = self.current() {
             match tree {
-                TokenTree::Ident(id) => {
+                proc_macro2::TokenTree::Ident(id) => {
                     let nm = id.to_string();
                     if nm == "for" {
                         found_for = true;
@@ -112,8 +110,8 @@ impl<'a> TokenCursor<'a> {
                     first_idents.push(nm);
                     self.advance();
                 }
-                TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => break,
-                TokenTree::Punct(p) => {
+                proc_macro2::TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Brace => break,
+                proc_macro2::TokenTree::Punct(p) => {
                     if p.as_char() == '<' {
                         self.skip_balanced('<', '>');
                         continue;
@@ -135,7 +133,7 @@ impl<'a> TokenCursor<'a> {
         let mut type_idents: Vec<String> = Vec::new();
         while let Some(tree) = self.current() {
             match tree {
-                TokenTree::Ident(id) => {
+                proc_macro2::TokenTree::Ident(id) => {
                     let nm = id.to_string();
                     if nm == "where" {
                         break;
@@ -143,8 +141,8 @@ impl<'a> TokenCursor<'a> {
                     type_idents.push(nm);
                     self.advance();
                 }
-                TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => break,
-                TokenTree::Punct(p) => {
+                proc_macro2::TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Brace => break,
+                proc_macro2::TokenTree::Punct(p) => {
                     if p.as_char() == '<' {
                         self.skip_balanced('<', '>');
                         continue;
@@ -181,14 +179,14 @@ pub(crate) fn scan_macro_body_tokens(
     facts: &mut FileLevelFacts,
     file: &str,
     is_example: bool,
-    tokens: &TokenStream,
+    tokens: &proc_macro2::TokenStream,
     brace_depth: usize,
 ) {
-    let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
+    let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
     let mut i = 0;
     while i < trees.len() {
         match &trees[i] {
-            TokenTree::Ident(ident) => {
+            proc_macro2::TokenTree::Ident(ident) => {
                 let name = ident.to_string();
                 let line = ident.span().start().line;
                 match name.as_str() {
@@ -302,7 +300,7 @@ pub(crate) fn scan_macro_body_tokens(
                     }
                 }
             }
-            TokenTree::Group(g) => {
+            proc_macro2::TokenTree::Group(g) => {
                 scan_macro_body_tokens(facts, file, is_example, &g.stream(), brace_depth);
             }
             _ => {}
@@ -323,7 +321,7 @@ pub(crate) fn scan_macro_body_tokens(
 ///
 /// Where: called from `scan_macro_body_tokens`' default ident branch.
 fn try_extract_macro_type_usage(
-    trees: &[TokenTree],
+    trees: &[proc_macro2::TokenTree],
     i: usize,
     file: &str,
     brace_depth: usize,
@@ -332,29 +330,29 @@ fn try_extract_macro_type_usage(
         return None;
     }
     let outer_id = match &trees[i] {
-        TokenTree::Ident(id) => id,
+        proc_macro2::TokenTree::Ident(id) => id,
         _ => return None,
     };
     let p1 = match &trees[i + 1] {
-        TokenTree::Punct(p) => p,
+        proc_macro2::TokenTree::Punct(p) => p,
         _ => return None,
     };
     let p2 = match &trees[i + 2] {
-        TokenTree::Punct(p) => p,
+        proc_macro2::TokenTree::Punct(p) => p,
         _ => return None,
     };
     let inner_id = match &trees[i + 3] {
-        TokenTree::Ident(id) => id,
+        proc_macro2::TokenTree::Ident(id) => id,
         _ => return None,
     };
     let group = match &trees[i + 4] {
-        TokenTree::Group(g) => g,
+        proc_macro2::TokenTree::Group(g) => g,
         _ => return None,
     };
     if p1.as_char() != ':' || p2.as_char() != ':' {
         return None;
     }
-    if group.delimiter() != Delimiter::Parenthesis {
+    if group.delimiter() != proc_macro2::Delimiter::Parenthesis {
         return None;
     }
     let outer = outer_id.to_string();

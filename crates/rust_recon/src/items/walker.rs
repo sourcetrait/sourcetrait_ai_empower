@@ -1,7 +1,5 @@
 use crate::*;
-use ext_syn::*;
-use ext_syn_visit::*;
-use super::*;
+use syn::visit::Visit as _;
 
 /// What: per-file walker that drives a syn::visit::Visit traversal,
 /// emitting `*Entry` facts into a `FileLevelFacts` buffer.
@@ -41,7 +39,7 @@ impl FileWalker {
 
     /// What: parse the syn::File, walk it via Visit, and return the
     /// accumulated per-file facts.
-    pub(crate) fn walk_file(mut self, file: &RsFile) -> FileLevelFacts {
+    pub(crate) fn walk_file(mut self, file: &syn::File) -> FileLevelFacts {
         self.in_inner_attr_context = true;
         for attr in &file.attrs {
             self.record_attribute_explicit(attr);
@@ -56,7 +54,7 @@ impl FileWalker {
     /// Record one attribute occurrence, plus the side effects keyed off
     /// its base name (derive list -> DeriveEntry, no_std -> seam, doc ->
     /// doc_count, non-inert attr -> MacroEntry of kind AttrMacro).
-    fn record_attribute_explicit(&mut self, attr: &Attribute) {
+    fn record_attribute_explicit(&mut self, attr: &syn::Attribute) {
         let path_str = attribute_path_string(attr);
         let base = last_segment(&path_str);
         let args = attribute_args_string(attr);
@@ -110,7 +108,7 @@ impl FileWalker {
     /// signaling that the caller should skip the item entirely.
     fn process_item_attrs(
         &mut self,
-        attrs: &[Attribute],
+        attrs: &[syn::Attribute],
     ) -> Option<(bool, String, bool)> {
         let mut cfg_gated = false;
         let mut cfg_expr = String::new();
@@ -143,17 +141,17 @@ impl FileWalker {
     /// If `path` matches the `Outer::inner` shape with no generics on
     /// either segment and the outer ident passes the type-usage filter,
     /// emit a `TypeUsageEntry` at the current brace depth.
-    fn maybe_record_type_usage(&mut self, path: &SynPath) {
-        let segments: Vec<&PathSegment> = path.segments.iter().collect();
+    fn maybe_record_type_usage(&mut self, path: &syn::Path) {
+        let segments: Vec<&syn::PathSegment> = path.segments.iter().collect();
         if segments.len() < 2 {
             return;
         }
         let inner_seg = segments[segments.len() - 1];
         let outer_seg = segments[segments.len() - 2];
-        if !matches!(outer_seg.arguments, PathArguments::None) {
+        if !matches!(outer_seg.arguments, syn::PathArguments::None) {
             return;
         }
-        if !matches!(inner_seg.arguments, PathArguments::None) {
+        if !matches!(inner_seg.arguments, syn::PathArguments::None) {
             return;
         }
         let outer = outer_seg.ident.to_string();
@@ -179,7 +177,7 @@ impl FileWalker {
         }
     }
 
-    fn scan_path_for_seams(&mut self, path: &SynPath) {
+    fn scan_path_for_seams(&mut self, path: &syn::Path) {
         for seg in &path.segments {
             match seg.ident.to_string().as_str() {
                 "libc" | "syscall" => self.bump_seam(SeamKind::SyscallLibc, 1),
@@ -195,7 +193,7 @@ impl FileWalker {
     /// further increment). Used by impl-item / trait-item fn handlers,
     /// which fold the impl/trait brace and the fn body brace into one
     /// depth level to match the python rustscan convention.
-    fn walk_block_stmts(&mut self, block: &Block) {
+    fn walk_block_stmts(&mut self, block: &syn::Block) {
         for stmt in &block.stmts {
             self.visit_stmt(stmt);
         }
@@ -205,25 +203,78 @@ impl FileWalker {
     /// the field types themselves aren't emitted (the AST scanner in
     /// `crate::scan` handles cross-item type-reference signals
     /// separately).
-    fn process_fields_attrs(&mut self, fields: &Fields) {
+    fn process_fields_attrs(&mut self, fields: &syn::Fields) {
         match fields {
-            Fields::Named(named) => {
+            syn::Fields::Named(named) => {
                 for f in &named.named {
                     self.process_item_attrs(&f.attrs);
                 }
             }
-            Fields::Unnamed(unnamed) => {
+            syn::Fields::Unnamed(unnamed) => {
                 for f in &unnamed.unnamed {
                     self.process_item_attrs(&f.attrs);
                 }
             }
-            Fields::Unit => {}
+            syn::Fields::Unit => {}
+        }
+    }
+
+    /// Process attrs of a trait item; visibility flows from the trait
+    /// definition since trait items inherit visibility from the trait.
+    fn visit_trait_item_with_vis(&mut self, item: &syn::TraitItem, trait_vis: &str) {
+        match item {
+            syn::TraitItem::Fn(f) => {
+                if self.process_item_attrs(&f.attrs).is_none() {
+                    return;
+                }
+                self.brace_depth += 1;
+                self.facts.fns.push(FnEntry {
+                    file: self.file.clone(),
+                    name: f.sig.ident.to_string(),
+                    line: f.sig.ident.span().start().line,
+                    brace_depth: self.brace_depth,
+                    doc: extract_doc(&f.attrs),
+                    visibility: trait_vis.to_string(),
+                });
+                if f.sig.unsafety.is_some() {
+                    self.bump_seam(SeamKind::Unsafe, 1);
+                }
+                if let Some(b) = &f.default {
+                    self.walk_block_stmts(b);
+                }
+                self.brace_depth -= 1;
+            }
+            syn::TraitItem::Type(ty) => {
+                if self.process_item_attrs(&ty.attrs).is_none() {
+                    return;
+                }
+                self.facts.types.push(TypeEntry {
+                    file: self.file.clone(),
+                    kind: TypeEntryKind::Type,
+                    name: ty.ident.to_string(),
+                    line: ty.ident.span().start().line,
+                    cfg_gated: false,
+                    doc: String::new(),
+                    visibility: trait_vis.to_string(),
+                });
+            }
+            syn::TraitItem::Const(c) => {
+                if self.process_item_attrs(&c.attrs).is_none() {
+                    return;
+                }
+                if let Some((_, expr)) = &c.default {
+                    self.brace_depth += 1;
+                    self.visit_expr(expr);
+                    self.brace_depth -= 1;
+                }
+            }
+            _ => {}
         }
     }
 }
 
-impl<'ast> Visit<'ast> for FileWalker {
-    fn visit_item_impl(&mut self, i: &'ast ItemImpl) {
+impl<'ast> syn::visit::Visit<'ast> for FileWalker {
+    fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {
         let Some((cfg_gated, cfg_expr, _)) = self.process_item_attrs(&i.attrs) else {
             return;
         };
@@ -251,7 +302,7 @@ impl<'ast> Visit<'ast> for FileWalker {
         }
     }
 
-    fn visit_item_trait(&mut self, t: &'ast ItemTrait) {
+    fn visit_item_trait(&mut self, t: &'ast syn::ItemTrait) {
         let Some((cfg_gated, _, _)) = self.process_item_attrs(&t.attrs) else {
             return;
         };
@@ -269,13 +320,14 @@ impl<'ast> Visit<'ast> for FileWalker {
         }
         let saved = self.current_trait_vis.take();
         self.current_trait_vis = Some(visibility_string(&t.vis));
+        let trait_vis = visibility_string(&t.vis);
         for item in &t.items {
-            self.visit_trait_item(item);
+            self.visit_trait_item_with_vis(item, &trait_vis);
         }
         self.current_trait_vis = saved;
     }
 
-    fn visit_item_struct(&mut self, s: &'ast ItemStruct) {
+    fn visit_item_struct(&mut self, s: &'ast syn::ItemStruct) {
         let Some((cfg_gated, _, _)) = self.process_item_attrs(&s.attrs) else {
             return;
         };
@@ -291,7 +343,7 @@ impl<'ast> Visit<'ast> for FileWalker {
         self.process_fields_attrs(&s.fields);
     }
 
-    fn visit_item_enum(&mut self, e: &'ast ItemEnum) {
+    fn visit_item_enum(&mut self, e: &'ast syn::ItemEnum) {
         let Some((cfg_gated, _, _)) = self.process_item_attrs(&e.attrs) else {
             return;
         };
@@ -319,7 +371,7 @@ impl<'ast> Visit<'ast> for FileWalker {
         }
     }
 
-    fn visit_item_union(&mut self, u: &'ast ItemUnion) {
+    fn visit_item_union(&mut self, u: &'ast syn::ItemUnion) {
         let Some((cfg_gated, _, _)) = self.process_item_attrs(&u.attrs) else {
             return;
         };
@@ -337,7 +389,7 @@ impl<'ast> Visit<'ast> for FileWalker {
         }
     }
 
-    fn visit_item_type(&mut self, ta: &'ast ItemType) {
+    fn visit_item_type(&mut self, ta: &'ast syn::ItemType) {
         if self.process_item_attrs(&ta.attrs).is_none() {
             return;
         }
@@ -352,7 +404,7 @@ impl<'ast> Visit<'ast> for FileWalker {
         });
     }
 
-    fn visit_item_fn(&mut self, f: &'ast ItemFn) {
+    fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
         if self.process_item_attrs(&f.attrs).is_none() {
             return;
         }
@@ -370,7 +422,7 @@ impl<'ast> Visit<'ast> for FileWalker {
         self.visit_block(&f.block);
     }
 
-    fn visit_item_mod(&mut self, m: &'ast ItemMod) {
+    fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
         if self.process_item_attrs(&m.attrs).is_none() {
             return;
         }
@@ -389,7 +441,7 @@ impl<'ast> Visit<'ast> for FileWalker {
         }
     }
 
-    fn visit_item_macro(&mut self, mc: &'ast ItemMacro) {
+    fn visit_item_macro(&mut self, mc: &'ast syn::ItemMacro) {
         let Some((_, _, has_macro_export)) = self.process_item_attrs(&mc.attrs) else {
             return;
         };
@@ -444,11 +496,11 @@ impl<'ast> Visit<'ast> for FileWalker {
         );
     }
 
-    fn visit_item_use(&mut self, u: &'ast ItemUse) {
+    fn visit_item_use(&mut self, u: &'ast syn::ItemUse) {
         let _ = self.process_item_attrs(&u.attrs);
         self.facts.uses.push(UseEntry {
             file: self.file.clone(),
-            reexport: matches!(u.vis, Visibility::Public(_)),
+            reexport: matches!(u.vis, syn::Visibility::Public(_)),
             path: flatten_use_tree(&u.tree),
             line: u.use_token.span.start().line,
         });
@@ -463,7 +515,7 @@ impl<'ast> Visit<'ast> for FileWalker {
         let _ = self.process_item_attrs(&fm.attrs);
         self.bump_seam(SeamKind::Extern, 1);
         for it in &fm.items {
-            if let ForeignItem::Fn(ff) = it {
+            if let syn::ForeignItem::Fn(ff) = it {
                 let _ = self.process_item_attrs(&ff.attrs);
                 self.facts.fns.push(FnEntry {
                     file: self.file.clone(),
@@ -538,64 +590,14 @@ impl<'ast> Visit<'ast> for FileWalker {
         self.brace_depth -= 1;
     }
 
-    fn visit_trait_item_fn(&mut self, f: &'ast syn::TraitItemFn) {
-        if self.process_item_attrs(&f.attrs).is_none() {
-            return;
-        }
-        let trait_vis = self.current_trait_vis.clone().unwrap_or_default();
-        self.brace_depth += 1;
-        self.facts.fns.push(FnEntry {
-            file: self.file.clone(),
-            name: f.sig.ident.to_string(),
-            line: f.sig.ident.span().start().line,
-            brace_depth: self.brace_depth,
-            doc: extract_doc(&f.attrs),
-            visibility: trait_vis,
-        });
-        if f.sig.unsafety.is_some() {
-            self.bump_seam(SeamKind::Unsafe, 1);
-        }
-        if let Some(b) = &f.default {
-            self.walk_block_stmts(b);
-        }
-        self.brace_depth -= 1;
-    }
-
-    fn visit_trait_item_type(&mut self, ty: &'ast syn::TraitItemType) {
-        if self.process_item_attrs(&ty.attrs).is_none() {
-            return;
-        }
-        let trait_vis = self.current_trait_vis.clone().unwrap_or_default();
-        self.facts.types.push(TypeEntry {
-            file: self.file.clone(),
-            kind: TypeEntryKind::Type,
-            name: ty.ident.to_string(),
-            line: ty.ident.span().start().line,
-            cfg_gated: false,
-            doc: String::new(),
-            visibility: trait_vis,
-        });
-    }
-
-    fn visit_trait_item_const(&mut self, c: &'ast syn::TraitItemConst) {
-        if self.process_item_attrs(&c.attrs).is_none() {
-            return;
-        }
-        if let Some((_, expr)) = &c.default {
-            self.brace_depth += 1;
-            self.visit_expr(expr);
-            self.brace_depth -= 1;
-        }
-    }
-
-    fn visit_block(&mut self, b: &'ast Block) {
+    fn visit_block(&mut self, b: &'ast syn::Block) {
         self.brace_depth += 1;
         self.walk_block_stmts(b);
         self.brace_depth -= 1;
     }
 
-    fn visit_expr_call(&mut self, c: &'ast ExprCall) {
-        if let Expr::Path(p) = &*c.func {
+    fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(p) = &*c.func {
             self.maybe_record_type_usage(&p.path);
         }
         self.visit_expr(&c.func);
@@ -604,7 +606,7 @@ impl<'ast> Visit<'ast> for FileWalker {
         }
     }
 
-    fn visit_expr_method_call(&mut self, mc: &'ast ExprMethodCall) {
+    fn visit_expr_method_call(&mut self, mc: &'ast syn::ExprMethodCall) {
         if mc.method == "spawn" {
             self.bump_seam(SeamKind::ProcessSpawn, 1);
         }

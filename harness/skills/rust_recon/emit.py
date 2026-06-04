@@ -1142,46 +1142,71 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         if sig:
             significant_intra_per_crate[crate] = sig
 
-    # 2. Workspace-wide inter significance. Top top_n_workspace patterns
-    # by inter_count. 0.0.20 patch 20a: top_n_workspace SLOC-scaled.
-    inter_counts = {}
-    for pattern, m in pattern_metrics.items():
-        if m.get("defining_crate") is None:
-            continue
-        ic = m.get("inter_count", 0) or 0
-        if ic > 0:
-            inter_counts[pattern] = ic
-    significant_inter = {}
-    if inter_counts:
-        sorted_inter = sorted(inter_counts.items(), key=lambda x: -x[1])
-        significant_inter = dict(sorted_inter[:top_n_workspace])
-
-    # 3. Workspace-wide public significance. the_user 2026-06-04 update:
-    # 'use number of example rs files logarathmically to determine the
-    # weight applied to public category'. Public set count =
-    # inter_count + (curated_example_count * example_weight) where
-    # example_weight = max(1.0, log2(num_example_rs_files)). Workspaces
-    # with heavy docs-by-example (iced, bevy, ratatui) get a higher
-    # multiplier reflecting stronger developer attention on those
-    # patterns. Examples DO NOT contribute to intra or inter sets -
-    # their other-set significance is captured by raw counts already.
+    # 2 + 3 + 4. Workspace-wide significance partitioned into THREE
+    # disjoint sets per the_user 2026-06-04: 'create one more category
+    # that is a union of inter-crate and public where they share, which
+    # would remove slots from both inter-crate and public'.
+    #
+    # Raw signals:
+    # - Inter signal (cross-crate flow): inter_count.
+    # - Public signal (docs-by-example): curated_example_count * weight.
+    #
+    # Partition:
+    # - intersection: pattern has BOTH signals (is_pub + curated > 0 +
+    #   inter_count > 0). Doubly-strong architectural protagonists.
+    # - inter-only: inter_count > 0 but not in intersection (no curated
+    #   example signal or not is_pub).
+    # - public-only: curated * weight > 0 but not in intersection
+    #   (no cross-crate flow).
+    #
+    # The intersection set takes slots from both inter and public so
+    # the agent's reading doesn't waste slots on duplication.
     num_example_rs_files = fp.get("totals", {}).get("example_rs_files", 0)
     public_example_weight = _compute_public_example_weight(num_example_rs_files)
-    public_counts = {}
+
+    # Build raw-signal scores per pattern.
+    public_scores = {}  # curated * weight (pure docs signal)
+    inter_scores = {}   # inter_count (pure cross-crate-flow signal)
     for pattern, m in pattern_metrics.items():
-        if not m.get("is_pub"):
-            continue
         if m.get("defining_crate") is None:
             continue
         ic = m.get("inter_count", 0) or 0
         curated = m.get("curated_example_count", 0) or 0
-        public_contribution = ic + curated * public_example_weight
-        if public_contribution > 0:
-            public_counts[pattern] = public_contribution
+        is_pub = bool(m.get("is_pub"))
+        if is_pub and curated > 0:
+            public_scores[pattern] = curated * public_example_weight
+        if ic > 0:
+            inter_scores[pattern] = ic
+
+    # Intersection: patterns with both signals.
+    intersection_keys = set(public_scores) & set(inter_scores)
+    intersection_counts = {
+        p: public_scores[p] + inter_scores[p]
+        for p in intersection_keys
+    }
+
+    # Inter-only and public-only: residuals after intersection removal.
+    inter_counts = {
+        p: s for p, s in inter_scores.items() if p not in intersection_keys
+    }
+    public_counts = {
+        p: s for p, s in public_scores.items() if p not in intersection_keys
+    }
+
+    # Top N per disjoint set.
+    significant_inter = {}
+    if inter_counts:
+        sorted_inter = sorted(inter_counts.items(), key=lambda x: -x[1])
+        significant_inter = dict(sorted_inter[:top_n_workspace])
     significant_public = {}
     if public_counts:
         sorted_public = sorted(public_counts.items(), key=lambda x: -x[1])
         significant_public = dict(sorted_public[:top_n_workspace])
+    significant_intersection = {}
+    if intersection_counts:
+        sorted_isect = sorted(intersection_counts.items(),
+                              key=lambda x: -x[1])
+        significant_intersection = dict(sorted_isect[:top_n_workspace])
 
     # UNION with category tags.
     all_patterns = set()
@@ -1189,6 +1214,7 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         all_patterns.update(sig.keys())
     all_patterns.update(significant_inter.keys())
     all_patterns.update(significant_public.keys())
+    all_patterns.update(significant_intersection.keys())
 
     picks = []
     for pattern in sorted(all_patterns):
@@ -1200,6 +1226,8 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         categories = []
         if intra_crates:
             categories.append("intra")
+        if pattern in significant_intersection:
+            categories.append("intersection")
         if pattern in significant_inter:
             categories.append("inter")
         if pattern in significant_public:
@@ -1222,6 +1250,7 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         },
         "significant_inter": dict(significant_inter),
         "significant_public": dict(significant_public),
+        "significant_intersection": dict(significant_intersection),
         "picks": picks,
         "top_n_intra": top_n_intra,
         "top_n_workspace": top_n_workspace,
@@ -1305,10 +1334,12 @@ def candidate_instances(fp: dict, facts: dict):
     }
     enriched_inter = _enrich(sig["significant_inter"])
     enriched_public = _enrich(sig["significant_public"])
+    enriched_intersection = _enrich(sig.get("significant_intersection", {}))
     return {
         "intra_per_crate": enriched_intra_per_crate,
         "inter": enriched_inter,
         "public": enriched_public,
+        "intersection": enriched_intersection,
         "top_n_intra": sig["top_n_intra"],
         "top_n_workspace": sig["top_n_workspace"],
     }
@@ -1858,6 +1889,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     intra_per_crate = cands.get("intra_per_crate", {}) if isinstance(cands, dict) else {}
     inter_sig = cands.get("inter", {}) if isinstance(cands, dict) else {}
     public_sig = cands.get("public", {}) if isinstance(cands, dict) else {}
+    intersection_sig = cands.get("intersection", {}) if isinstance(cands, dict) else {}
     top_n_intra = (cands.get("top_n_intra", 7)
                    if isinstance(cands, dict) else 7)
     top_n_workspace = (cands.get("top_n_workspace", top_n_intra)
@@ -1881,7 +1913,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     L.append("")
     # Use the legacy list-shape for downstream sections.
     cands_compat = []
-    if intra_per_crate or inter_sig or public_sig:
+    if intra_per_crate or inter_sig or public_sig or intersection_sig:
         # 5.1 Intra-crate significance (per crate).
         L.append("### 5.1 Intra-crate significance (per crate)")
         L.append("")
@@ -1897,9 +1929,25 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                          f"seed {sp(e['instance'])}")
                 cands_compat.append(e)
             L.append("")
-        # 5.2 Inter-crate significance.
-        L.append(f"### 5.2 Inter-crate significance "
-                 f"({len(inter_sig)} significant)")
+        # 5.2 Intersection significance (cross-crate AND public). 0.0.21
+        # patch 21d: the_user 2026-06-04: 'create one more category that
+        # is a union of inter-crate and public where they share' -
+        # patterns with both signals get their own slot; inter and public
+        # below are residuals (patterns with only one signal each).
+        L.append(f"### 5.2 Intersection significance "
+                 f"({len(intersection_sig)} significant; "
+                 f"cross-crate AND public-by-example)")
+        L.append("")
+        for pattern in sorted(intersection_sig.keys(),
+                              key=lambda p: -intersection_sig[p]["count"]):
+            e = intersection_sig[pattern]
+            L.append(f"- `{pattern}` - intersection score {e['count']:.2f} - "
+                     f"seed {sp(e['instance'])}")
+            cands_compat.append(e)
+        L.append("")
+        # 5.3 Inter-only significance (cross-crate flow, not in intersection).
+        L.append(f"### 5.3 Inter-crate significance "
+                 f"({len(inter_sig)} significant; cross-crate flow only)")
         L.append("")
         for pattern in sorted(inter_sig.keys(), key=lambda p: -inter_sig[p]["count"]):
             e = inter_sig[pattern]
@@ -1907,13 +1955,13 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                      f"seed {sp(e['instance'])}")
             cands_compat.append(e)
         L.append("")
-        # 5.3 Public-API significance (is_pub + inter_count).
-        L.append(f"### 5.3 Public-API significance "
-                 f"({len(public_sig)} significant; is_pub + inter_count)")
+        # 5.4 Public-only significance (public-by-example, not in intersection).
+        L.append(f"### 5.4 Public-API significance "
+                 f"({len(public_sig)} significant; public-by-example only)")
         L.append("")
         for pattern in sorted(public_sig.keys(), key=lambda p: -public_sig[p]["count"]):
             e = public_sig[pattern]
-            L.append(f"- `{pattern}` - public inter_count {e['count']} - "
+            L.append(f"- `{pattern}` - public score {e['count']:.2f} - "
                      f"seed {sp(e['instance'])}")
             cands_compat.append(e)
         L.append("")
@@ -1921,10 +1969,14 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  "2026-06-03 directive:")
         L.append("")
         L.append("- **Tier 1 (heaviest coverage)**: patterns in the "
-                 "PUBLIC set OR the INTER-CRATE set. These are "
-                 "architecturally central - either public-API surface "
-                 "(5.3) or cross-crate flow (5.2). Allocate deep "
-                 "worked-slice attention to each.")
+                 "INTERSECTION set (5.2, cross-crate AND public-by-"
+                 "example) plus patterns in the INTER-only set (5.3) "
+                 "OR the PUBLIC-only set (5.4). Intersection patterns "
+                 "are the doubly-strong architectural protagonists - "
+                 "they flow across the workspace AND surface in the "
+                 "workspace's examples; allocate the deepest worked-"
+                 "slice attention to each. Inter-only and public-only "
+                 "are single-signal patterns - still load-bearing.")
         L.append("- **Tier 2 (secondary coverage)**: patterns in "
                  "INTRA-CRATE sets only (5.1) without inter/public "
                  "qualification. Internal to their defining crate; "

@@ -1537,6 +1537,59 @@ def emit_container_routing(root: Path, fp: dict, facts: dict, out: Path):
     out.write_text("\n".join(L))
 
 
+# 0.0.16 patch 16b: per-classification modifier for the Tier 1/2/3
+# coverage tiering prose. Surfaces the workspace's consumership-axis
+# implications inline with the existing coverage guidance. dev_use
+# and end_with_dev_use have empirical anchors in the 10-target
+# reference set; dev_with_end_use and end_use are speculative until
+# representative targets (gitoxide, etc.) are added.
+_USE_TIER_MODIFIERS = {
+    "dev_use": (
+        "Workspace is a **dev_use library** consumed by other "
+        "developers. Tier 1's public set (5.3) IS the workspace's "
+        "external API surface - the items most readers writing "
+        "against this crate will encounter first - and warrants the "
+        "deepest worked-slice attention. Tier 1's inter set (5.2) "
+        "captures cross-crate flow within the library's internal "
+        "composition; useful for understanding how the lib's "
+        "components compose."
+    ),
+    "end_with_dev_use": (
+        "Workspace ships an **end-user product** "
+        "(end_with_dev_use) with internal libraries composing it. "
+        "Tier 1's inter set (5.2) captures cross-crate flow that "
+        "makes the product work; Tier 1's public set (5.3) is the "
+        "(often narrower) external face the product offers to "
+        "embedders or extension authors. Tier 2 intra picks within "
+        "the product's primary crate matter more than usual - they "
+        "show how the product's internal coordination is "
+        "organized."
+    ),
+    "dev_with_end_use": (
+        "Workspace's primary deliverable is a **library with an "
+        "auxiliary CLI** (dev_with_end_use, gitoxide pattern). "
+        "Tier 1's public set (5.3) is the library API; Tier 1's "
+        "inter set (5.2) is the cross-crate flow within the lib. "
+        "The CLI binary is part of the public face but should be "
+        "treated as a thin wrapper around the lib unless its own "
+        "complexity warrants attention. Note: this bucket has no "
+        "empirical anchor in the current 10-target reference set; "
+        "guidance is speculative until a gitoxide-class target "
+        "probes through (see "
+        "notes/rust_recon/next-phase-agent-augmentation.md "
+        "for the related 5th-bucket arbitration hatch debt)."
+    ),
+    "end_use": (
+        "Workspace is a pure **end-user product** (end_use). Tier "
+        "1 picks are the user-facing entry points and the cross-"
+        "crate flows that compose the product's behavior. No "
+        "external library face to track. Note: this bucket has no "
+        "empirical anchor in the current 10-target reference set; "
+        "guidance is speculative."
+    ),
+}
+
+
 def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     sel = fp["selection"]
     core, core_types, core_traits = core_vocabulary(fp, facts)
@@ -1565,6 +1618,19 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     if shape_label and shape_label != "container":
         L.append(f"- structural shape: **{shape_label}** -- "
                  f"{shape_info.get('reasoning', '')}")
+    # 0.0.16 patch 16a: surface the workspace use-classification so
+    # the agent knows the workspace's consumership axis (dev_use
+    # libraries consumed by other developers, end_with_dev_use
+    # products that ship to end-users with libs composing them,
+    # dev_with_end_use libraries with CLI auxiliaries, end_use pure
+    # binaries). Mechanically derived from per-crate has_bin /
+    # has_lib + cross-crate is_pub usage at characterize.py
+    # _classify_workspace_use (0.0.15 patch 15a).
+    use_info = fp.get("workspace_use_classification", {})
+    use_label = use_info.get("workspace") if isinstance(use_info, dict) else None
+    if use_label:
+        L.append(f"- use classification: **{use_label}** -- "
+                 f"{use_info.get('reasoning', '')}")
     if sel.get("runner_up"):
         L.append(f"- **UNRESOLVED (method-selection):** runner-up mode `{sel['runner_up']}` "
                  f"is within the ambiguity band. Confirm against the histogram below.")
@@ -1765,6 +1831,12 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  "its external API surface. Single-set Tier 1 is "
                  "still load-bearing.")
         L.append("")
+        # 0.0.16 patch 16b: classification-aware tier modifier. Per-
+        # bucket guidance from _USE_TIER_MODIFIERS surfaces what the
+        # workspace's consumership axis means for coverage decisions.
+        if use_label and use_label in _USE_TIER_MODIFIERS:
+            L.append(_USE_TIER_MODIFIERS[use_label])
+            L.append("")
     # 0.0.13 patch 13i: the three-set sections above ARE the picker
     # output; drop the legacy per-pick worked-slice loop. The agent
     # reads the structured 5.1/5.2/5.3 lists + traces patterns of
@@ -1908,9 +1980,27 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  f"protagonists' note. The shared scaffolding is the authoring "
                  f"context a contributor learns once and reuses across patterns.")
     else:
-        L.append("**[AGENT]** From the trait / struct definitions in S2 and the "
-                 "worked slice in S5, write the minimal checklist to author a "
-                 "NEW instance of the dominant pattern.")
+        # 0.0.16 patch 16c: S7 fallback prompt acquires classification
+        # tag so the agent knows what authoring a new instance MEANS
+        # for the workspace's consumership axis. The picks themselves
+        # come from S5's three significance sets (5.1 intra / 5.2
+        # inter / 5.3 public); the authoring guide should focus on
+        # the Tier 1 patterns most relevant to this workspace's
+        # consumership.
+        cls_tag = (f"Workspace classification: **{use_label}**. "
+                   if use_label else "")
+        L.append("**[AGENT]** From the trait / type definitions in "
+                 "S2 and the significance sets in S5, write the "
+                 "minimal checklist to author a NEW instance of one "
+                 "of the Tier 1 patterns (S5.2 inter or S5.3 public). "
+                 + cls_tag +
+                 "Frame the checklist for the consumership the "
+                 "workspace serves: dev_use workspaces author against "
+                 "the library's public API; end_with_dev_use "
+                 "workspaces author internal-product features whose "
+                 "cross-crate flow matters; dev_with_end_use treats "
+                 "the lib as primary; end_use authors user-facing "
+                 "entry points. Anchor each step to a span.")
     L.append("")
     L += ["## Appendix: full pattern histogram", ""]
     for row in fp["pattern_histogram"][:25]:

@@ -553,6 +553,18 @@ def _instance_for_kind(kind, name, facts):
                     if tu.get("name") == name]
         return (inst[0] if inst else None,
                 [f"{tu.get('file','?')}:{tu['line']}" for tu in inst[:200]])
+    if kind == "pub_type":
+        # 0.0.26: pub_type instance is the type's or trait's
+        # definition site from facts.types / facts.traits.
+        # Workspace-defined pub items synthesized in
+        # _compute_pattern_metrics; instance points to the def.
+        inst = [t for t in facts.get("types", [])
+                if t.get("name") == name]
+        if not inst:
+            inst = [t for t in facts.get("traits", [])
+                    if t.get("name") == name]
+        return (inst[0] if inst else None,
+                [f"{t.get('file','?')}:{t['line']}" for t in inst[:200]])
     if kind == "type_usage_family":
         # 0.0.9 patch 9a: family instances aggregate call sites from all
         # matching type_usages. outer:X matches names starting with X::;
@@ -1148,6 +1160,14 @@ def _compute_significance_sets(fp: dict, facts: dict,
             p = f"type_usage:{nm}"
             if _is_workspace_originated(p):
                 per_crate_counts[c][p] += 1
+    # 0.0.26: AST-derived pub_type entries deliberately NOT added to
+    # per_crate_counts. The_user 2026-06-04 cost-of-displacement
+    # lesson: bumping pub_type counts into the per-crate sets crowds
+    # out trait_impl entries (helix's trait_impl:Component dropped
+    # when pub_type:Context with 503 hits muscled in). pub_type
+    # entries serve workspace-wide sets (architecture / public /
+    # inter-crate / internals) via pattern_metrics; per-crate sets
+    # stay backed by the original facts data.
     for m in facts.get("macros", []):
         c = m.get("crate")
         kind = m.get("kind")

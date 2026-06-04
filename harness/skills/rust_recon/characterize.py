@@ -856,7 +856,93 @@ def select_mode(ranked, by_kind, workspace_roots, n_components):
     }
 
 
-def _compute_pattern_metrics(all_facts: dict) -> dict:
+def _run_ast_scan(root: Path, out_dir: Path, crates: dict) -> dict:
+    """0.0.26: invoke the syn-based rust_recon_scan binary against the
+    workspace, parse scan.json, and return the AST-derived signal data
+    keyed for downstream merging.
+
+    Binary path resolution: ORIENT_AST_SCAN_BIN env var ->
+    ~/app/bin/rust_recon_scan -> sourcetrait_empower/target/release/
+    rust_recon_scan. If none exists OR the binary fails, returns an
+    empty dict and prints a warning - the picker degrades gracefully
+    to the regex-based scanner's output (Frame-class types won't
+    surface but the rest of the pipeline works).
+    """
+    import subprocess
+    candidates = []
+    env_path = os.environ.get("ORIENT_AST_SCAN_BIN")
+    if env_path:
+        candidates.append(Path(env_path))
+    home = Path(os.environ.get("HOME", "/home/box"))
+    candidates.append(home / "app" / "bin" / "rust_recon_scan")
+    candidates.append(
+        Path("/home/box/proj/sourcetrait/sourcetrait_empower")
+        / "target" / "release" / "rust_recon_scan"
+    )
+    binary = next((p for p in candidates if p.is_file()), None)
+    if not binary:
+        print(
+            "[characterize] warning: rust_recon_scan binary not found; "
+            "AST signal skipped (Frame-class types won't surface)",
+            file=sys.stderr,
+        )
+        return {"fn_sig_usages": [], "field_usages": [],
+                "type_alias_usages": []}
+    try:
+        subprocess.run(
+            [str(binary), str(root), str(out_dir)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(
+            f"[characterize] warning: rust_recon_scan failed "
+            f"({e.returncode}): {e.stderr[:300]}",
+            file=sys.stderr,
+        )
+        return {"fn_sig_usages": [], "field_usages": [],
+                "type_alias_usages": []}
+    scan_path = out_dir / "scan.json"
+    if not scan_path.is_file():
+        return {"fn_sig_usages": [], "field_usages": [],
+                "type_alias_usages": []}
+    data = json.loads(scan_path.read_text())
+    print(
+        f"[characterize] ast scan: "
+        f"{len(data.get('ast_fn_sig_usages', []))} fn-sig + "
+        f"{len(data.get('ast_field_usages', []))} field + "
+        f"{len(data.get('ast_type_alias_usages', []))} type-alias entries"
+    )
+    return {
+        "fn_sig_usages": data.get("ast_fn_sig_usages", []),
+        "field_usages": data.get("ast_field_usages", []),
+        "type_alias_usages": data.get("ast_type_alias_usages", []),
+    }
+
+
+def _resolve_crate_for_file(file_path: str, crate_dirs: dict) -> str:
+    """For an AST entry's file path (workspace-relative), find the
+    crate it belongs to via longest-prefix-match on crate_dirs."""
+    norm = file_path.replace("\\", "/")
+    best = None
+    best_len = -1
+    for name, dir_str in crate_dirs.items():
+        d = (dir_str or "").replace("\\", "/").rstrip("/")
+        if not d or d == ".":
+            if best is None:
+                best = name
+                best_len = 0
+            continue
+        prefix = d + "/"
+        if norm.startswith(prefix) and len(prefix) > best_len:
+            best = name
+            best_len = len(prefix)
+    return best or ""
+
+
+def _compute_pattern_metrics(all_facts: dict, ast_facts: dict = None,
+                             crates: dict = None) -> dict:
     """0.0.10 patches 10b + 10c + 10d: per-pattern metrics dictionary.
     Key is the pattern name as it appears in pattern_histogram (e.g.
     `trait_impl:Plugin`, `type_usage:Selection::new`, `derive:Component`).
@@ -907,7 +993,7 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
             key = (name, crate)
             type_visibility[key] = t.get("visibility", "")
     type_def_lookup = {}
-    for name, crates in type_candidates.items():
+    for name, _cand_crates in type_candidates.items():
         canonical = _pick_canonical_crate(type_candidates, name,
                                           impl_target_count[name])
         if canonical:
@@ -1162,6 +1248,70 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
                 _curated_example_count_for_type_usage(inner)
                 if kind == "type_usage" else 0),
         }
+
+    # 0.0.26: synthesize pub_type:<Name> entries from AST data.
+    # For each unique identifier appearing in fn signatures + struct
+    # fields + type aliases (the_user 2026-06-04: 'those two are
+    # primarily where you are going to see usage'), if the identifier
+    # matches a workspace-defined pub type or trait, build a
+    # pattern_metrics entry with intra/inter counts attributing
+    # AST hits to the using crate (the crate where the fn/struct
+    # lives) vs the defining crate.
+    if ast_facts and crates:
+        crate_dirs = {n: c.get("dir", "") for n, c in crates.items()}
+        ast_by_ident = defaultdict(list)
+        for ent in ast_facts.get("fn_sig_usages", []):
+            ast_by_ident[ent.get("ident", "")].append(ent)
+        for ent in ast_facts.get("field_usages", []):
+            ast_by_ident[ent.get("ident", "")].append(ent)
+        for ent in ast_facts.get("type_alias_usages", []):
+            ast_by_ident[ent.get("ident", "")].append(ent)
+
+        for ident, hits in ast_by_ident.items():
+            if not ident:
+                continue
+            defn = (type_def_lookup.get(ident)
+                    or trait_def_lookup.get(ident))
+            if not defn or not defn.get("crate"):
+                continue
+            vis = defn.get("visibility", "")
+            if not vis.startswith("pub"):
+                continue
+            pattern = f"pub_type:{ident}"
+            if pattern in metrics:
+                continue
+            defining_crate = defn["crate"]
+            intra = 0
+            inter = 0
+            example_files = set()
+            curated_files = set()
+            for h in hits:
+                file_path = h.get("file") or ""
+                using = _resolve_crate_for_file(file_path, crate_dirs)
+                if not using:
+                    continue
+                if using == defining_crate:
+                    intra += 1
+                else:
+                    inter += 1
+                if "/examples/" in file_path or file_path.startswith("examples/"):
+                    example_files.add(file_path)
+                    curated_files.add(file_path)
+                elif "/tests/" in file_path or file_path.startswith("tests/"):
+                    example_files.add(file_path)
+                elif "/benches/" in file_path or file_path.startswith("benches/"):
+                    example_files.add(file_path)
+            total = intra + inter
+            ratio = (inter / total) if total > 0 else 0.0
+            metrics[pattern] = {
+                "defining_crate": defining_crate,
+                "intra_count": intra,
+                "inter_count": inter,
+                "inter_ratio": round(ratio, 3),
+                "is_pub": True,
+                "example_count": float(len(example_files)),
+                "curated_example_count": len(curated_files),
+            }
     return metrics
 
 
@@ -1225,6 +1375,35 @@ def main():
         if any(seg == "examples" for seg in parts):
             example_rs_files += 1
 
+    # 0.0.26: AST scanner extension. Invoke rust_recon_scan binary
+    # (syn-based) to capture type-identifier occurrences in fn
+    # signatures + struct fields + type aliases - the primary usage
+    # sites the regex-based rustscan.py can't reach. Merged into
+    # pattern_metrics as synthesized pub_type:Name entries with
+    # real intra_count + inter_count from the AST hits. Also written
+    # into all_facts as `ast_type_refs` so emit.py can pick them up
+    # in its per_crate_counts builder.
+    ast_facts = _run_ast_scan(root, out_dir, crates)
+    crate_dirs = {n: c.get("dir", "") for n, c in crates.items()}
+    ast_type_refs = []
+    for src_key in ("fn_sig_usages", "field_usages", "type_alias_usages"):
+        for ent in ast_facts.get(src_key, []):
+            ident = ent.get("ident", "")
+            if not ident:
+                continue
+            file_path = ent.get("file", "")
+            using_crate = _resolve_crate_for_file(file_path, crate_dirs)
+            if not using_crate:
+                continue
+            ast_type_refs.append({
+                "name": ident,
+                "file": file_path,
+                "line": ent.get("line", 0),
+                "crate": using_crate,
+                "source": src_key,
+            })
+    all_facts["ast_type_refs"] = ast_type_refs
+
     # 0.0.10 patches 10b + 10c + 10d: per-pattern metrics. For each
     # pattern in pattern_histogram + per-crate aggregation, compute:
     # - defining_crate: where the type / trait / macro was declared.
@@ -1236,7 +1415,7 @@ def main():
     #   For type_usage patterns, looks up the outer type's visibility.
     #   For reg_macro patterns, looks up the macro_def's visibility +
     #   detects #[macro_export] attribute on it.
-    pattern_metrics = _compute_pattern_metrics(all_facts)
+    pattern_metrics = _compute_pattern_metrics(all_facts, ast_facts, crates)
 
     # 0.0.13 patches 13d + 13e + 0.0.15 patch 15a: 4-bucket
     # use-classification at workspace level. Runs AFTER pattern_metrics

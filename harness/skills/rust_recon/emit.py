@@ -1837,6 +1837,55 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
         if use_label and use_label in _USE_TIER_MODIFIERS:
             L.append(_USE_TIER_MODIFIERS[use_label])
             L.append("")
+        # 0.0.17 patch 17a: framework adoption - surface what-why-where-
+        # axes writing-process principles in the [AGENT] prompts. The
+        # picker output is the structured starting material; the framework
+        # tells the agent how to THINK about each picked pattern before
+        # composing prose. See notes/rust_recon/what-why-where-axes.md
+        # for the rolling design (axis quick view at the top + per-
+        # category decomposition + pass discipline + reduction-through-
+        # inference sections).
+        L.append("**[AGENT] Authoring guidance.** The picker hands you "
+                 "patterns; the framework tells you HOW to write about "
+                 "them. Four cues:")
+        L.append("")
+        L.append("- **Form vs role.** Each pattern's `kind:name` is its "
+                 "FORM (mechanical, derived from syntax: trait_impl / "
+                 "derive / type_usage / reg_macro). Its ROLE is "
+                 "semantic and surfaces from signals - is_pub + "
+                 "inter_ratio + curated_example_count + the workspace's "
+                 "use classification (above). Most items align (form = "
+                 "role); when they diverge (a fn whose role is data-"
+                 "modeling like `to_string`; a struct whose role is "
+                 "functional like a builder), surface BOTH explicitly.")
+        L.append("- **Per-category decomposition.** Pick the category "
+                 "first then think through its data slots: "
+                 "*functional* (operation + parameterized input + "
+                 "state read + parameterized output + state mutated); "
+                 "*data-modeling* (broad category + sub-categories + "
+                 "sub-representational ops + transformative ops + "
+                 "intended use); *labeling* (load-bearing vs "
+                 "considered-but-arbitrary vs broadly insignificant); "
+                 "*organizing* (means of containment + items "
+                 "maintained + parent context + structural shape).")
+        L.append("- **Pass discipline.** Obvious pass writes from "
+                 "source + doc-comments at the cited spans. Return "
+                 "pass re-reads for skimmed slots and marks "
+                 "UNRESOLVED rather than backfilling with speculation. "
+                 "UNRESOLVED is a guardrail applied PER ITEM, not "
+                 "only per seam (S6).")
+        L.append("- **Reduction through inference.** The reader sees "
+                 "`kind:name` + the span - don't restate what name + "
+                 "form already convey. Spend the prose budget on the "
+                 "non-inferrable residual: gotchas, edge cases, "
+                 "internal-vs-external state effects, call-site "
+                 "context, workspace invariants. A summary that says "
+                 "'Parses an input string into a Command' tells the "
+                 "reader nothing they didn't already infer; one that "
+                 "says 'Strict parser; rejects empty strings; does "
+                 "NOT handle quoting (upstream tokenizer); shared by "
+                 "batch + REPL invocations' is residual.")
+        L.append("")
     # 0.0.13 patch 13i: the three-set sections above ARE the picker
     # output; drop the legacy per-pick worked-slice loop. The agent
     # reads the structured 5.1/5.2/5.3 lists + traces patterns of
@@ -2000,7 +2049,10 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  "workspaces author internal-product features whose "
                  "cross-crate flow matters; dev_with_end_use treats "
                  "the lib as primary; end_use authors user-facing "
-                 "entry points. Anchor each step to a span.")
+                 "entry points. Anchor each step to a span. Apply the "
+                 "S5 authoring guidance per item: form-vs-role + "
+                 "per-category decomposition + pass discipline + "
+                 "reduction-through-inference.")
     L.append("")
     L += ["## Appendix: full pattern histogram", ""]
     for row in fp["pattern_histogram"][:25]:

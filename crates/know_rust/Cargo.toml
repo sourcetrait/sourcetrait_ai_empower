@@ -1,8 +1,8 @@
 [package]
-name = "rust_recon"
+name = "know_rust"
 version = "0.0.34"
 edition = "2024"
-description = "Rust source scanner for rust_recon - extracts type-identifier usages (fn signatures, struct fields, generic bounds, method refs) plus per-file lex+structure facts (items, traits, impls, derives, macros, uses, mods, seams) for the rust_recon orientation pipeline"
+description = "Rust source scanner for know_rust - extracts type-identifier usages (fn signatures, struct fields, generic bounds, method refs) plus per-file lex+structure facts (items, traits, impls, derives, macros, uses, mods, seams) for the know_rust orientation pipeline"
 authors = ["SourceTrait <development@sourcetrait.com>"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/sourcetrait/sourcetrait_empower"
@@ -11,7 +11,7 @@ categories = []
 keywords = ["sourcetrait", "empower", "rust", "ast", "scanner"]
 
 [[bin]]
-name = "rust_recon"
+name = "know_rust"
 path = "src/main.rs"
 
 [dependencies]

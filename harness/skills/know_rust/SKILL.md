@@ -1,5 +1,5 @@
 ---
-name: rust_recon 
+name: know_rust 
 description: Generate a durable, span-anchored architectural orientation for a large or unfamiliar Rust workspace. Use when you need to understand how a Rust codebase is structured before authoring non-trivial features - when asked to "orient", "map", "get up to speed on", "understand the architecture of", or "find the main pattern in" a Rust repo, monorepo, or Cargo workspace, especially codebases where reading top-to-bottom is infeasible. Also use to refresh that understanding after a clean session or context compaction. Produces two files (orientation.md + reference.md) on disk, not a chat answer.
 ---
 

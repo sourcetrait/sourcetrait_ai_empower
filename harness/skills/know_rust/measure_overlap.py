@@ -8,7 +8,7 @@ Usage:
   python3 measure_overlap.py <baseline_dir> <ground_truth_json>
 
   baseline_dir: directory containing per-target subdirs, each with an
-                orientation.md (e.g. notes/rust_recon/historical/recon/0.0.24/).
+                orientation.md (e.g. notes/know_rust/historical/know_rust/0.0.24/).
   ground_truth_json: path to manual_ground_truth.json.
 
 Output: human-readable scoreboard to stdout. Exit 0 always (this is a

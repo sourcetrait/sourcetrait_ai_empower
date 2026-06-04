@@ -1049,7 +1049,7 @@ def emit_container_routing(root: Path, fp: dict, facts: dict, out: Path):
     # Workspace members listing
     L += ["## Workspace members", "",
           "Each member is a separate topical library. To produce an "
-          "architectural orientation for a specific topic, run rust_recon "
+          "architectural orientation for a specific topic, run know_rust "
           "against the sub-workspace of interest.", ""]
     for name in sorted(fp["per_crate"]):
         c = fp["per_crate"][name]
@@ -1059,7 +1059,7 @@ def emit_container_routing(root: Path, fp: dict, facts: dict, out: Path):
                  f"{c['n_impls']} impls, {c['n_types']} types){dep_str}")
     L.append("")
     L.append("**[AGENT]** Pick the member whose architectural pattern "
-             "you want to trace, then run rust_recon against that "
+             "you want to trace, then run know_rust against that "
              "member's directory. Open the corresponding orientation.md "
              "for the per-topic worked slices and authoring guides. The "
              "container workspace itself has no unifying architectural "
@@ -1124,7 +1124,7 @@ _USE_TIER_MODIFIERS = {
         "bucket has no empirical anchor in the current 10-target "
         "reference set; guidance is speculative until a gitoxide-"
         "class target probes through (see "
-        "notes/rust_recon/next-phase-agent-augmentation.md "
+        "notes/know_rust/next-phase-agent-augmentation.md "
         "for the related 5th-bucket arbitration hatch debt)."
     ),
     "end_use": (
@@ -1476,7 +1476,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
         # axes writing-process principles in the [AGENT] prompts. The
         # picker output is the structured starting material; the framework
         # tells the agent how to THINK about each picked pattern before
-        # composing prose. See notes/rust_recon/what-why-where-axes.md
+        # composing prose. See notes/know_rust/what-why-where-axes.md
         # for the rolling design (axis quick view at the top + per-
         # category decomposition + pass discipline + reduction-through-
         # inference sections).

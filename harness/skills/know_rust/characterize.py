@@ -174,7 +174,7 @@ def find_crates(root: Path):
 # workspace's might be 500. Long-term we want a ratio (e.g.
 # pub_inter_count / max_pub_inter_count_in_workspace, or
 # pub_inter_count / pub_count). Tracked in
-# notes/rust_recon/debt.md.
+# notes/know_rust/debt.md.
 _DEV_WITH_END_THRESHOLD = config.int_param(
     "ORIENT_DEV_WITH_END_USE_THRESHOLD",
     "classification", "dev_with_end_threshold", default=30)
@@ -196,7 +196,7 @@ def _classify_crate_use(name: str, info: dict,
     primary'. The_user 2026-06-03: 'it will bite us'. Will surface
     when a gitoxide-class workspace is probed or when downstream
     consumership-aware emit prompts depend on the distinction.
-    Tracked in notes/rust_recon/debt.md.
+    Tracked in notes/know_rust/debt.md.
 
     Rubric (the_user 2026-06-03):
     - has_lib and not has_bin -> dev_use.
@@ -724,12 +724,12 @@ _ITEMS_BY_FILE: dict = {}
 
 
 def _run_scan_items(root: Path, out_dir: Path) -> dict:
-    """0.0.34: invoke the syn-based rust_recon `scan items` subcommand
-    against the workspace, parse recon_items.json, and return the per-
+    """0.0.34: invoke the syn-based know_rust `scan items` subcommand
+    against the workspace, parse know_rust_items.json, and return the per-
     file lex+structure facts keyed for downstream merging.
 
-    Binary resolves via PATH ($CARGO_HOME/bin/rust_recon after
-    `cargo install --path crates/rust_recon`). If the binary is
+    Binary resolves via PATH ($CARGO_HOME/bin/know_rust after
+    `cargo install --path crates/know_rust`). If the binary is
     absent or fails, returns an empty dict and prints a warning - the
     picker degrades gracefully with whatever AST signal Phase 2 still
     provides via `scan usages`.
@@ -737,27 +737,27 @@ def _run_scan_items(root: Path, out_dir: Path) -> dict:
     import subprocess
     try:
         subprocess.run(
-            ["rust_recon", "scan", "items", str(root), str(out_dir)],
+            ["know_rust", "scan", "items", str(root), str(out_dir)],
             check=True,
             capture_output=True,
             text=True,
         )
     except FileNotFoundError:
         print(
-            "[characterize] warning: rust_recon binary not on PATH; "
+            "[characterize] warning: know_rust binary not on PATH; "
             "items scan skipped. Install via `cargo install --path "
-            "crates/rust_recon` from sourcetrait_empower.",
+            "crates/know_rust` from sourcetrait_empower.",
             file=sys.stderr,
         )
         return {}
     except subprocess.CalledProcessError as e:
         print(
-            f"[characterize] warning: rust_recon scan items failed "
+            f"[characterize] warning: know_rust scan items failed "
             f"({e.returncode}): {e.stderr[:300]}",
             file=sys.stderr,
         )
         return {}
-    items_path = out_dir / "recon_items.json"
+    items_path = out_dir / "know_rust_items.json"
     if not items_path.is_file():
         return {}
     data = json.loads(items_path.read_text())
@@ -772,7 +772,7 @@ def _run_scan_items(root: Path, out_dir: Path) -> dict:
 
 
 def _build_items_index(items_data: dict) -> dict:
-    """0.0.34: bucket the flat workspace-level recon_items.json lists by
+    """0.0.34: bucket the flat workspace-level know_rust_items.json lists by
     file path so scan_crate() can look up per-file facts via rglob's
     relative-path key. Returns {file: {kind: [...]}} matching the
     rustscan.py per-file output shape.
@@ -804,8 +804,8 @@ def scan_crate(root: Path, crate_dir: str):
     """Scan all .rs under a crate dir; return aggregated facts + SLOC count.
 
     0.0.34: rustscan.py retired. Item facts come from the pre-loaded
-    _ITEMS_BY_FILE index built from recon_items.json (produced by
-    `rust_recon scan items` at workspace level). This function still
+    _ITEMS_BY_FILE index built from know_rust_items.json (produced by
+    `know_rust scan items` at workspace level). This function still
     walks .rs files for SLOC compute (cheap, Python-side) and looks
     up per-file facts in the index.
 
@@ -956,12 +956,12 @@ def select_mode(ranked, by_kind, workspace_roots, n_components):
 
 
 def _run_ast_scan(root: Path, out_dir: Path, crates: dict) -> dict:
-    """Invoke the syn-based rust_recon binary against the workspace,
+    """Invoke the syn-based know_rust binary against the workspace,
     parse scan.json, and return the AST-derived signal data keyed for
     downstream merging.
 
-    Binary resolves via PATH ($CARGO_HOME/bin/rust_recon after
-    `cargo install --path crates/rust_recon`). If the binary is
+    Binary resolves via PATH ($CARGO_HOME/bin/know_rust after
+    `cargo install --path crates/know_rust`). If the binary is
     absent or fails, returns an empty dict and prints a warning -
     the picker degrades gracefully (Frame-class types won't surface
     but the rest of the pipeline works).
@@ -969,16 +969,16 @@ def _run_ast_scan(root: Path, out_dir: Path, crates: dict) -> dict:
     import subprocess
     try:
         subprocess.run(
-            ["rust_recon", "scan", "usages", str(root), str(out_dir)],
+            ["know_rust", "scan", "usages", str(root), str(out_dir)],
             check=True,
             capture_output=True,
             text=True,
         )
     except FileNotFoundError:
         print(
-            "[characterize] warning: rust_recon binary not on PATH; "
+            "[characterize] warning: know_rust binary not on PATH; "
             "AST signal skipped (Frame-class types won't surface). "
-            "Install via `cargo install --path crates/rust_recon` "
+            "Install via `cargo install --path crates/know_rust` "
             "from the sourcetrait_empower workspace.",
             file=sys.stderr,
         )
@@ -986,13 +986,13 @@ def _run_ast_scan(root: Path, out_dir: Path, crates: dict) -> dict:
                 "type_alias_usages": [], "method_ref_usages": []}
     except subprocess.CalledProcessError as e:
         print(
-            f"[characterize] warning: rust_recon scan usages failed "
+            f"[characterize] warning: know_rust scan usages failed "
             f"({e.returncode}): {e.stderr[:300]}",
             file=sys.stderr,
         )
         return {"fn_sig_usages": [], "field_usages": [],
                 "type_alias_usages": [], "method_ref_usages": []}
-    scan_path = out_dir / "recon_usages.json"
+    scan_path = out_dir / "know_rust_usages.json"
     if not scan_path.is_file():
         return {"fn_sig_usages": [], "field_usages": [],
                 "type_alias_usages": [], "method_ref_usages": []}
@@ -1574,7 +1574,7 @@ def main():
         if any(seg == "examples" for seg in parts):
             example_rs_files += 1
 
-    # 0.0.26: AST scanner extension. Invoke rust_recon binary
+    # 0.0.26: AST scanner extension. Invoke know_rust binary
     # (syn-based) to capture type-identifier occurrences in fn
     # signatures + struct fields + type aliases - the primary usage
     # sites the regex-based rustscan.py can't reach. Merged into

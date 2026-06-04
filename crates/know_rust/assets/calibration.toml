@@ -1,4 +1,4 @@
-# rust_recon calibration constants.
+# know_rust calibration constants.
 #
 # Defaults consumed by characterize.py + emit.py via config.py.
 # Env vars (ORIENT_*) override the TOML defaults when set; the env

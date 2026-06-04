@@ -1,4 +1,4 @@
-"""config.py - rust_recon calibration loader.
+"""config.py - know_rust calibration loader.
 
 Reads calibration.toml (sibling file) on first import. Exposes typed
 accessor helpers used by characterize.py + emit.py:

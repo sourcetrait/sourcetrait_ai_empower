@@ -5,7 +5,7 @@ members = [
   "crates/sourcetrait_libcli_empower",
   "crates/nu_plugin_empower",
   "crates/nu_sh_mcp",
-  "crates/rust_recon",
+  "crates/know_rust",
 ]
 
 [workspace.dependencies]

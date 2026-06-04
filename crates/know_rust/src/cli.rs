@@ -15,9 +15,9 @@ use crate::*;
 /// by subcommand match.
 #[derive(clap::Parser, Debug)]
 #[command(
-    name = "rust_recon",
+    name = "know_rust",
     version,
-    about = "Rust source scanner for the rust_recon orientation pipeline",
+    about = "Rust source scanner for the know_rust orientation pipeline",
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
@@ -36,21 +36,21 @@ pub(crate) enum Command {
 #[derive(clap::Subcommand, Debug)]
 pub(crate) enum ScanCommand {
     /// AST-derived cross-item usage signals (fn-sig + field +
-    /// type-alias + method-ref usages). Writes recon_usages.json
+    /// type-alias + method-ref usages). Writes know_rust_usages.json
     /// in the output directory.
     Usages {
         /// Workspace root to scan.
         workspace_root: PathBuf,
-        /// Output directory; recon_usages.json is written here.
+        /// Output directory; know_rust_usages.json is written here.
         out_dir: PathBuf,
     },
     /// Per-file lex+structure facts (impls, derives, types,
     /// traits, fns, macros, uses, mods, seams, type_usages).
-    /// Writes recon_items.json in the output directory.
+    /// Writes know_rust_items.json in the output directory.
     Items {
         /// Workspace root to scan.
         workspace_root: PathBuf,
-        /// Output directory; recon_items.json is written here.
+        /// Output directory; know_rust_items.json is written here.
         out_dir: PathBuf,
     },
 }

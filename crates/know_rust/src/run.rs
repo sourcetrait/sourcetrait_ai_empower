@@ -36,7 +36,7 @@ fn scan_usages(
     out_dir: &Path,
 ) -> std::result::Result<(), Error> {
     let facts = walk_workspace(workspace_root)?;
-    let out_path = out_dir.join("recon_usages.json");
+    let out_path = out_dir.join("know_rust_usages.json");
     let json = serde_json::to_string_pretty(&facts)
         .map_err(|source| Error::Serialize { source })?;
     let write_path = out_path.clone();
@@ -45,7 +45,7 @@ fn scan_usages(
         source,
     })?;
     eprintln!(
-        "[rust_recon scan usages] {} files scanned, {} parse failed, wrote {}",
+        "[know_rust scan usages] {} files scanned, {} parse failed, wrote {}",
         facts.files_scanned,
         facts.files_parse_failed,
         out_path.display()

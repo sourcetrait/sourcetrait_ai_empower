@@ -1,7 +1,7 @@
 use crate::*;
 
-/// What: top-level facts collected by `rust_recon scan items` across an
-/// entire workspace, serialized to `recon_items.json` and consumed by
+/// What: top-level facts collected by `know_rust scan items` across an
+/// entire workspace, serialized to `know_rust_items.json` and consumed by
 /// characterize.py as the per-file lex+structure feed.
 ///
 /// Why: the python rustscan implementation it replaces produced flat
@@ -10,7 +10,7 @@ use crate::*;
 /// the new source of truth.
 ///
 /// Where: instantiated in `items::workspace::scan_workspace` once per
-/// `rust_recon scan items` invocation; serialized to `recon_items.json`
+/// `know_rust scan items` invocation; serialized to `know_rust_items.json`
 /// at scan completion.
 #[derive(Default, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ItemsFacts {
@@ -273,7 +273,7 @@ pub(crate) enum SeamKind {
 
 impl SeamKind {
     /// What: the canonical snake_case key used in the
-    /// `recon_items.json` `seams` map.
+    /// `know_rust_items.json` `seams` map.
     ///
     /// Why: serde_json maps require string keys; using a manual
     /// mapping keeps the wire schema explicit and bullet-proof against

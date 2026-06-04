@@ -1,10 +1,10 @@
 use crate::*;
 
-/// What: orchestrate the `rust_recon scan items` invocation. Walk every
+/// What: orchestrate the `know_rust scan items` invocation. Walk every
 /// non-test, non-bench `.rs` file under `workspace_root`, parse it via
 /// `syn::parse_file`, drive a `FileWalker` over the AST, and merge each
 /// file's facts into the aggregate `ItemsFacts` written to
-/// `recon_items.json`.
+/// `know_rust_items.json`.
 ///
 /// Why: characterize.py consumes the produced JSON file as its source
 /// of per-file lex+structure facts (impls / traits / types / fns / etc.
@@ -47,7 +47,7 @@ pub(crate) fn scan_workspace(
         }
     }
     facts.seams = seams_wire;
-    let out_path = out_dir.join("recon_items.json");
+    let out_path = out_dir.join("know_rust_items.json");
     let json = serde_json::to_string_pretty(&facts)
         .map_err(|source| Error::Serialize { source })?;
     let write_path = out_path.clone();
@@ -56,7 +56,7 @@ pub(crate) fn scan_workspace(
         source,
     })?;
     eprintln!(
-        "[rust_recon scan items] {} files scanned, {} parse failed, wrote {}",
+        "[know_rust scan items] {} files scanned, {} parse failed, wrote {}",
         facts.files_scanned,
         facts.files_parse_failed,
         out_path.display()

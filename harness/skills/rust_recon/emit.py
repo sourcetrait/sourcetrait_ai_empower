@@ -138,8 +138,19 @@ _GENERIC_INNER_METHODS = frozenset([
 # 8 measurable targets at 100% (only iced Update remains). Displaced
 # 0.0.25 factory-call picks (EngineState::new, Selection::range,
 # Buffer::with_lines, etc.) recover alongside the pub_type entries.
+#
+# 0.0.29 widening: D dropped to 100, M held at 1.6. After 0.0.28
+# closed iced Update via method_ref family entries, the_user 2026-
+# 06-04 asked for the higher-band calibration variables. The 0.0.27
+# grid search had identified (D=100, M=1.6) as the highest-sum_cov
+# candidate that still keeps all targets <30%: ratatui 28.23%,
+# sum_cov 188.23. Single-parameter change from 0.0.27 (D 300 -> 100).
+# All caps rise further (monotonicity preserved). Aggregate
+# measure_overlap continues to hold at 100% (mechanical-only ceiling
+# reached at 0.0.28; widening admits MORE picks per ground-truth
+# entry without changing match counts).
 _TOP_N_FLOOR = int(os.environ.get("ORIENT_TOP_N_FLOOR", "7"))
-_SLOC_DIVISOR = int(os.environ.get("ORIENT_SLOC_DIVISOR", "300"))
+_SLOC_DIVISOR = int(os.environ.get("ORIENT_SLOC_DIVISOR", "100"))
 _SLOC_MULTIPLIER = float(os.environ.get("ORIENT_SLOC_MULTIPLIER", "1.6"))
 
 

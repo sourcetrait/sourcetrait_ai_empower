@@ -121,8 +121,25 @@ _GENERIC_INNER_METHODS = frozenset([
 # per-crate entries) with minimum sum-of-rises. the_user 2026-06-04:
 # 'log is the right tool for the job. run through variants of the
 # formula and find one that meets or exceeds caps'.
+#
+# 0.0.27 recalibration: D dropped to 300, M held at 1.6. After 0.0.26
+# landed pub_type entries (AST-derived), pattern_metrics grew (e.g.
+# ratatui 423 -> 496) while picks stayed bounded by the prior cap.
+# Coverage on the highest-covered repo (ratatui) dropped to 21.37%.
+# the_user 2026-06-04: 'we have a lot of room ... start with hitting
+# 25% or higher'. Grid search at the workspace level (10 targets, 7
+# (D, M) candidates) ranked by sum_coverage subject to:
+#   1. ratatui coverage in [25%, 29%]
+#   2. no target coverage > 30% (per mem:rust-recon-coverage-cap-30pct)
+#   3. no cap drops vs 0.0.25 (formula monotonic decreasing in D, so
+#      lowering D never drops any workspace or per-crate cap)
+# Picked (D=300, M=1.6): ratatui 26.41% (middle of band), all targets
+# <30%, all caps rise. Aggregate measure_overlap holds at 97.5%; 7 of
+# 8 measurable targets at 100% (only iced Update remains). Displaced
+# 0.0.25 factory-call picks (EngineState::new, Selection::range,
+# Buffer::with_lines, etc.) recover alongside the pub_type entries.
 _TOP_N_FLOOR = int(os.environ.get("ORIENT_TOP_N_FLOOR", "7"))
-_SLOC_DIVISOR = int(os.environ.get("ORIENT_SLOC_DIVISOR", "3100"))
+_SLOC_DIVISOR = int(os.environ.get("ORIENT_SLOC_DIVISOR", "300"))
 _SLOC_MULTIPLIER = float(os.environ.get("ORIENT_SLOC_MULTIPLIER", "1.6"))
 
 

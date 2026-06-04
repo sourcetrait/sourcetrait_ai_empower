@@ -89,17 +89,62 @@ _GENERIC_INNER_METHODS = frozenset([
     "build", "into_inner", "borrow", "borrow_mut",
 ])
 
-# 0.0.13 patch 13h + 0.0.14 patch 14a: top-N per set for the three-
-# set picker. Originally the_user 2026-06-03 set a 13% sum-cutoff,
-# but the 0.0.13 refresh empirically showed 6 of 9 measurable targets
-# produced ZERO inter/public significance under that cutoff - long-
-# tail workspaces dilute the sum-denominator. the_user 2026-06-03
-# follow-up: 'take the top 7 for each set (and support that number
-# with 13% as the guiding principle)' - 1 / 0.13 = 7.69, rounded to 7.
-# Each set keeps its top _SET_TOP_N patterns by count: intra-per-crate
-# (top N per crate), inter (top N by inter_count workspace-wide),
-# public (top N by public_count workspace-wide).
-_SET_TOP_N = int(os.environ.get("ORIENT_SET_TOP_N", "7"))
+# 0.0.13 patch 13h + 0.0.14 patch 14a + 0.0.20 patch 20a: top-N per
+# set for the three-set picker. History:
+#
+# 13h originally used a 13% sum-cutoff. The 0.0.13 refresh empirically
+# showed 6 of 9 measurable targets produced ZERO inter/public
+# significance under that cutoff - long-tail workspaces dilute the
+# sum-denominator. the_user 2026-06-03 follow-up: 'take the top 7
+# for each set (and support that number with 13% as the guiding
+# principle)' - 1 / 0.13 = 7.69, rounded to 7.
+#
+# 0.0.20 patch 20a: top_n becomes SLOC-scaled for workspace-wide
+# sets (inter, public) so larger projects get more picks. Intra-per-
+# crate stays at 7 because each crate is locally bounded. the_user
+# 2026-06-04 directive: 'i'd rather slightly over-produce than
+# under produce, because if we don't capture enough ... the knowledge
+# product ends up requiring the agent to do code-reads anyway. 19
+# for bevy gives us breathing room there'.
+#
+# Floor (7) preserved as the original 13% argument's anchor; scaling
+# extends beyond when the workspace's architectural surface is
+# empirically larger. The 15K LoC anchor is sourcetrait_common's
+# size (14K) - the smallest measurable workspace, defining
+# 'small enough to fit in 7 picks'. 2.0 multiplier per doubling
+# makes the picker generous - the_user 2026-06-04 over-produce
+# preference.
+_TOP_N_FLOOR = int(os.environ.get("ORIENT_TOP_N_FLOOR", "7"))
+_LOC_DIVISOR = int(os.environ.get("ORIENT_LOC_DIVISOR", "15000"))
+_LOC_MULTIPLIER = float(os.environ.get("ORIENT_LOC_MULTIPLIER", "2.0"))
+
+
+def _compute_loc_scaled_top_n(loc: int) -> int:
+    """0.0.20 patch 20a: compute the SLOC-scaled top_n for workspace-
+    wide significance sets (inter / public).
+
+    Formula: max(_TOP_N_FLOOR, round(_TOP_N_FLOOR + _LOC_MULTIPLIER *
+    log2(loc / _LOC_DIVISOR))).
+
+    For loc below _LOC_DIVISOR, returns the floor (7). For loc >=
+    _LOC_DIVISOR, scales up. Each doubling adds _LOC_MULTIPLIER picks.
+
+    Projection at default constants (15K div, 2.0 mult, 7 floor):
+    - 14K (sourcetrait_common) -> 7
+    - 64K (libcosmic) -> 11
+    - 96K (helix) -> 12
+    - 192K (iced) -> 14
+    - 723K (nushell) -> 18
+    - 955K (bevy) -> 19
+    """
+    import math
+    if loc <= 0:
+        return _TOP_N_FLOOR
+    ratio = loc / _LOC_DIVISOR
+    if ratio < 1.0:
+        return _TOP_N_FLOOR
+    scaled = _TOP_N_FLOOR + _LOC_MULTIPLIER * math.log2(ratio)
+    return max(_TOP_N_FLOOR, round(scaled))
 
 # 0.0.13 patch 13k: examples contribute to PUBLIC SET ONLY. Each
 # curated example (in /examples/ directory) contributes 1x to the
@@ -976,36 +1021,37 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n, pattern_metrics=None)
 
 
 def _compute_three_set_significance(fp: dict, facts: dict,
-                                    top_n: int = None):
-    """0.0.13 patch 13h + 0.0.14 patch 14a: top-N per set picker.
+                                    top_n_intra: int = None,
+                                    top_n_workspace: int = None):
+    """0.0.13 patch 13h + 0.0.14 patch 14a + 0.0.20 patch 20a:
+    top-N per set picker with SLOC-scaled workspace top_n.
 
     Returns dict with:
     - significant_intra_per_crate: {crate: {pattern: count}}
-        per-crate top top_n patterns by count.
+        per-crate top top_n_intra patterns by count.
     - significant_inter: {pattern: inter_count}
-        top top_n patterns by inter_count workspace-wide.
+        top top_n_workspace patterns by inter_count workspace-wide.
     - significant_public: {pattern: public_count}
-        top top_n patterns by public_count = inter_count +
+        top top_n_workspace patterns by public_count = inter_count +
         curated_example_count * weight, is_pub only.
     - picks: list of {pattern, kind, categories, intra_crates,
         inter_count, public_count} entries - the UNION with category
         tags.
 
-    the_user 2026-06-03 follow-up: 'take the top 7 for each set (and
-    support that number with 13% as the guiding principle)'. The
-    13j sum-cutoff at 13% produced empty inter/public sets for 6 of
-    9 measurable targets at the 0.0.13 refresh because long-tail
-    workspaces dilute the sum-denominator; top-N preserves the
-    statistical-significance framing (1 / 0.13 = 7.69 conceptual
-    ceiling, rounded to 7) while guaranteeing each set has up to
-    top_n picks where data exists.
+    top_n_intra defaults to _TOP_N_FLOOR (7) because each crate is
+    locally bounded - per-crate complexity doesn't scale with total
+    workspace size. top_n_workspace defaults to _TOP_N_FLOOR but
+    callers should compute the SLOC-scaled value via
+    _compute_loc_scaled_top_n and pass it explicitly.
 
     Categories are added to picks based on which sets the pattern
     appears in. A pub item used intra-crate qualifies via its crate's
     intra list; its inter-crate qualification (if heavy) shows via
     inter; its public-API qualification (if pub) shows via public."""
-    if top_n is None:
-        top_n = _SET_TOP_N
+    if top_n_intra is None:
+        top_n_intra = _TOP_N_FLOOR
+    if top_n_workspace is None:
+        top_n_workspace = _TOP_N_FLOOR
     pattern_metrics = fp.get("pattern_metrics", {})
 
     # Build per-crate counts across all pattern kinds.
@@ -1035,24 +1081,21 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             elif kind == "attr_macro":
                 per_crate_counts[c][f"attr_macro:{nm}"] += 1
 
-    # 1. Per-crate intra significance. the_user 2026-06-03 follow-up:
-    # 'take the top 7 for each set (and support that number with 13%
-    # as the guiding principle)'. Each crate keeps its top top_n
-    # patterns by raw count. 13j's sum-cutoff replaced by top-N
-    # because the 0.0.13 refresh showed sum-cutoff produced empty
-    # inter/public sets for long-tail workspaces; top-N preserves
-    # the same 1 / 0.13 = 7.69 conceptual ceiling (rounded to 7).
+    # 1. Per-crate intra significance. Per-crate locally bounded;
+    # uses top_n_intra (default 7). 0.0.20 patch 20a keeps intra
+    # at floor because each crate's surface is locally constrained -
+    # SLOC scaling applies to workspace-wide sets only.
     significant_intra_per_crate = {}
     for crate, counts in per_crate_counts.items():
         if not counts:
             continue
         sorted_items = sorted(counts.items(), key=lambda x: -x[1])
-        sig = dict(sorted_items[:top_n])
+        sig = dict(sorted_items[:top_n_intra])
         if sig:
             significant_intra_per_crate[crate] = sig
 
-    # 2. Workspace-wide inter significance. Top top_n patterns by
-    # inter_count.
+    # 2. Workspace-wide inter significance. Top top_n_workspace patterns
+    # by inter_count. 0.0.20 patch 20a: top_n_workspace SLOC-scaled.
     inter_counts = {}
     for pattern, m in pattern_metrics.items():
         if m.get("defining_crate") is None:
@@ -1063,7 +1106,7 @@ def _compute_three_set_significance(fp: dict, facts: dict,
     significant_inter = {}
     if inter_counts:
         sorted_inter = sorted(inter_counts.items(), key=lambda x: -x[1])
-        significant_inter = dict(sorted_inter[:top_n])
+        significant_inter = dict(sorted_inter[:top_n_workspace])
 
     # 3. Workspace-wide public significance. the_user 2026-06-03:
     # 'examples is a public set weight only... any hit there is worth
@@ -1092,7 +1135,7 @@ def _compute_three_set_significance(fp: dict, facts: dict,
     significant_public = {}
     if public_counts:
         sorted_public = sorted(public_counts.items(), key=lambda x: -x[1])
-        significant_public = dict(sorted_public[:top_n])
+        significant_public = dict(sorted_public[:top_n_workspace])
 
     # UNION with category tags.
     all_patterns = set()
@@ -1134,7 +1177,8 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         "significant_inter": dict(significant_inter),
         "significant_public": dict(significant_public),
         "picks": picks,
-        "top_n": top_n,
+        "top_n_intra": top_n_intra,
+        "top_n_workspace": top_n_workspace,
     }
 
 
@@ -1183,7 +1227,15 @@ def candidate_instances(fp: dict, facts: dict):
     # candidate_instances now returns a STRUCTURED dict not a flat
     # list. emit_orientation renders the three sets as separate
     # sections preserving granularity.
-    sig = _compute_three_set_significance(fp, facts, _SET_TOP_N)
+    # 0.0.20 patch 20a: workspace top_n SLOC-scaled. Intra stays at
+    # the floor. LoC read from fp.totals.loc populated by characterize.
+    workspace_loc = fp.get("totals", {}).get("loc", 0)
+    top_n_workspace = _compute_loc_scaled_top_n(workspace_loc)
+    sig = _compute_three_set_significance(
+        fp, facts,
+        top_n_intra=_TOP_N_FLOOR,
+        top_n_workspace=top_n_workspace,
+    )
     # Enrich each set with instance + spans per pattern.
     def _enrich(pattern_map):
         out = {}
@@ -1211,7 +1263,8 @@ def candidate_instances(fp: dict, facts: dict):
         "intra_per_crate": enriched_intra_per_crate,
         "inter": enriched_inter,
         "public": enriched_public,
-        "top_n": sig["top_n"],
+        "top_n_intra": sig["top_n_intra"],
+        "top_n_workspace": sig["top_n_workspace"],
     }
 
 
@@ -1759,15 +1812,26 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
     intra_per_crate = cands.get("intra_per_crate", {}) if isinstance(cands, dict) else {}
     inter_sig = cands.get("inter", {}) if isinstance(cands, dict) else {}
     public_sig = cands.get("public", {}) if isinstance(cands, dict) else {}
-    top_n = cands.get("top_n", 7) if isinstance(cands, dict) else 7
+    top_n_intra = (cands.get("top_n_intra", 7)
+                   if isinstance(cands, dict) else 7)
+    top_n_workspace = (cands.get("top_n_workspace", top_n_intra)
+                      if isinstance(cands, dict) else top_n_intra)
 
     # 5. worked slices (plural; surfaced via per-crate top-pattern aggregation
     # under 0.0.7 patch 7b + 7c).
     L += ["## 5. Significance sets - the authoring templates", ""]
-    L.append(f"Top {top_n} per set. the_user 2026-06-03: 'take the "
-             f"top 7 for each set (and support that number with 13% "
-             f"as the guiding principle)' - 1 / 0.13 = 7.69, rounded "
-             f"to {top_n}. Each section below preserves its axis.")
+    if top_n_intra == top_n_workspace:
+        L.append(f"Top {top_n_intra} per set (intra per crate, inter, "
+                 f"public). Each section below preserves its axis.")
+    else:
+        L.append(f"Top {top_n_intra} per crate intra; top {top_n_workspace} "
+                 f"for inter / public (SLOC-scaled per "
+                 f"`max(7, round(7 + 2 * log2(LoC / 15000)))`). "
+                 f"the_user 2026-06-04: 'i'd rather slightly over-produce "
+                 f"than under produce, because if we don't capture enough "
+                 f"... the knowledge product ends up requiring the agent "
+                 f"to do code-reads anyway'. Each section below preserves "
+                 f"its axis.")
     L.append("")
     # Use the legacy list-shape for downstream sections.
     cands_compat = []
@@ -1820,10 +1884,11 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  "qualification. Internal to their defining crate; "
                  "mention briefly with context for the crate's "
                  "architecture.")
-        L.append("- **Tier 3 (baseline coverage)**: patterns NOT "
-                 "in any set's top N picks. The reference index "
-                 "(`reference.md`) is the inventory; no per-pattern "
-                 "attention beyond the listing.")
+        L.append(f"- **Tier 3 (baseline coverage)**: patterns NOT "
+                 f"in any set's top picks ({top_n_intra} intra / "
+                 f"{top_n_workspace} workspace-wide). The reference "
+                 f"index (`reference.md`) is the inventory; no per-"
+                 f"pattern attention beyond the listing.")
         L.append("")
         L.append("A pattern qualifying in multiple Tier 1 sets "
                  "(public AND inter) is the strongest signal - the "

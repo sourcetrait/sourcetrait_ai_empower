@@ -41,6 +41,7 @@ pub(crate) fn walk_workspace(root: &Path) -> Result<Facts> {
                 facts.ast_fn_sig_usages.extend(ff.fn_sig_usages);
                 facts.ast_field_usages.extend(ff.field_usages);
                 facts.ast_type_alias_usages.extend(ff.type_alias_usages);
+                facts.ast_method_ref_usages.extend(ff.method_ref_usages);
                 facts.files_scanned += 1;
             }
             Err(_) => {

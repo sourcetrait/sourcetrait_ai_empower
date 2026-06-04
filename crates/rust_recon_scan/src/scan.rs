@@ -70,6 +70,8 @@ fn walk_fn(
         file,
         facts,
     );
+    let body_container = qualify(container_path, &fn_name);
+    walk_fn_body(&f.block, &body_container, file, facts);
 }
 
 fn walk_impl(
@@ -92,6 +94,8 @@ fn walk_impl(
                 file,
                 facts,
             );
+            let body_container = qualify(&nested, &fn_name);
+            walk_fn_body(&f.block, &body_container, file, facts);
         }
     }
 }
@@ -116,8 +120,223 @@ fn walk_trait(
                 file,
                 facts,
             );
+            if let Some(default_body) = &f.default {
+                let body_container = qualify(&nested, &fn_name);
+                walk_fn_body(default_body, &body_container, file, facts);
+            }
         }
     }
+}
+
+/// What: walk a fn body block, recursively visiting all expressions,
+/// and emit a MethodRefUsage for each multi-segment Expr::Path that
+/// appears in argument position of Call or MethodCall.
+///
+/// Why: closes the iced Update gap (0.0.28 Phase 0 validated that
+/// canonical iced examples use `Type::method` multi-segment refs).
+/// Recurses into closure bodies, blocks, if/match/loop branches,
+/// let initializers, etc. - argument-position Path detection happens
+/// once per walk, then every sub-expression is recursed for nested
+/// patterns.
+///
+/// Where: called from walk_fn after collect_fn_sig + from walk_impl
+/// for each ImplItem::Fn + from walk_trait for each TraitItem::Fn
+/// with a default body.
+fn walk_fn_body(
+    block: &Block,
+    container_path: &str,
+    file: &str,
+    facts: &mut FileFacts,
+) {
+    for stmt in &block.stmts {
+        walk_stmt(stmt, container_path, file, facts);
+    }
+}
+
+fn walk_stmt(
+    stmt: &Stmt,
+    container_path: &str,
+    file: &str,
+    facts: &mut FileFacts,
+) {
+    match stmt {
+        Stmt::Local(local) => walk_local(local, container_path, file, facts),
+        Stmt::Expr(expr, _) => walk_expr(expr, container_path, file, facts),
+        Stmt::Item(_) => {}
+        Stmt::Macro(_) => {}
+    }
+}
+
+fn walk_local(
+    local: &Local,
+    container_path: &str,
+    file: &str,
+    facts: &mut FileFacts,
+) {
+    if let Some(init) = &local.init {
+        walk_expr(&init.expr, container_path, file, facts);
+        if let Some((_, diverge)) = &init.diverge {
+            walk_expr(diverge, container_path, file, facts);
+        }
+    }
+}
+
+fn walk_expr(
+    expr: &Expr,
+    container_path: &str,
+    file: &str,
+    facts: &mut FileFacts,
+) {
+    match expr {
+        Expr::Call(call) => walk_call(call, container_path, file, facts),
+        Expr::MethodCall(mc) => walk_method_call(mc, container_path, file, facts),
+        Expr::Closure(cl) => walk_expr(&cl.body, container_path, file, facts),
+        Expr::Block(b) => walk_fn_body(&b.block, container_path, file, facts),
+        Expr::If(i) => {
+            walk_expr(&i.cond, container_path, file, facts);
+            walk_fn_body(&i.then_branch, container_path, file, facts);
+            if let Some((_, else_branch)) = &i.else_branch {
+                walk_expr(else_branch, container_path, file, facts);
+            }
+        }
+        Expr::Match(m) => {
+            walk_expr(&m.expr, container_path, file, facts);
+            for arm in &m.arms {
+                if let Some((_, guard)) = &arm.guard {
+                    walk_expr(guard, container_path, file, facts);
+                }
+                walk_expr(&arm.body, container_path, file, facts);
+            }
+        }
+        Expr::Loop(l) => walk_fn_body(&l.body, container_path, file, facts),
+        Expr::While(w) => {
+            walk_expr(&w.cond, container_path, file, facts);
+            walk_fn_body(&w.body, container_path, file, facts);
+        }
+        Expr::ForLoop(f) => {
+            walk_expr(&f.expr, container_path, file, facts);
+            walk_fn_body(&f.body, container_path, file, facts);
+        }
+        Expr::Return(r) => {
+            if let Some(e) = &r.expr {
+                walk_expr(e, container_path, file, facts);
+            }
+        }
+        Expr::Tuple(t) => {
+            for e in &t.elems {
+                walk_expr(e, container_path, file, facts);
+            }
+        }
+        Expr::Array(a) => {
+            for e in &a.elems {
+                walk_expr(e, container_path, file, facts);
+            }
+        }
+        Expr::Binary(b) => {
+            walk_expr(&b.left, container_path, file, facts);
+            walk_expr(&b.right, container_path, file, facts);
+        }
+        Expr::Unary(u) => walk_expr(&u.expr, container_path, file, facts),
+        Expr::Reference(r) => walk_expr(&r.expr, container_path, file, facts),
+        Expr::Paren(p) => walk_expr(&p.expr, container_path, file, facts),
+        Expr::Group(g) => walk_expr(&g.expr, container_path, file, facts),
+        Expr::Cast(c) => walk_expr(&c.expr, container_path, file, facts),
+        Expr::Field(f) => walk_expr(&f.base, container_path, file, facts),
+        Expr::Index(i) => {
+            walk_expr(&i.expr, container_path, file, facts);
+            walk_expr(&i.index, container_path, file, facts);
+        }
+        Expr::Range(r) => {
+            if let Some(s) = &r.start {
+                walk_expr(s, container_path, file, facts);
+            }
+            if let Some(e) = &r.end {
+                walk_expr(e, container_path, file, facts);
+            }
+        }
+        Expr::Try(t) => walk_expr(&t.expr, container_path, file, facts),
+        Expr::Await(a) => walk_expr(&a.base, container_path, file, facts),
+        Expr::Assign(a) => {
+            walk_expr(&a.left, container_path, file, facts);
+            walk_expr(&a.right, container_path, file, facts);
+        }
+        Expr::Let(l) => walk_expr(&l.expr, container_path, file, facts),
+        Expr::Async(a) => walk_fn_body(&a.block, container_path, file, facts),
+        Expr::Unsafe(u) => walk_fn_body(&u.block, container_path, file, facts),
+        Expr::TryBlock(t) => walk_fn_body(&t.block, container_path, file, facts),
+        Expr::Struct(s) => {
+            for fv in &s.fields {
+                walk_expr(&fv.expr, container_path, file, facts);
+            }
+            if let Some(rest) = &s.rest {
+                walk_expr(rest, container_path, file, facts);
+            }
+        }
+        Expr::Repeat(r) => {
+            walk_expr(&r.expr, container_path, file, facts);
+            walk_expr(&r.len, container_path, file, facts);
+        }
+        _ => {}
+    }
+}
+
+fn walk_call(
+    call: &ExprCall,
+    container_path: &str,
+    file: &str,
+    facts: &mut FileFacts,
+) {
+    walk_expr(&call.func, container_path, file, facts);
+    for arg in &call.args {
+        emit_method_ref_if_path(arg, container_path, file, facts);
+        walk_expr(arg, container_path, file, facts);
+    }
+}
+
+fn walk_method_call(
+    mc: &ExprMethodCall,
+    container_path: &str,
+    file: &str,
+    facts: &mut FileFacts,
+) {
+    walk_expr(&mc.receiver, container_path, file, facts);
+    for arg in &mc.args {
+        emit_method_ref_if_path(arg, container_path, file, facts);
+        walk_expr(arg, container_path, file, facts);
+    }
+}
+
+fn emit_method_ref_if_path(
+    arg: &Expr,
+    container_path: &str,
+    file: &str,
+    facts: &mut FileFacts,
+) {
+    let path = match arg {
+        Expr::Path(p) => &p.path,
+        _ => return,
+    };
+    let segs: Vec<String> = path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+    if segs.len() < 2 {
+        return;
+    }
+    let inner = segs.last().cloned().unwrap_or_default();
+    let outer = segs[segs.len() - 2].clone();
+    if inner.is_empty() || outer.is_empty() {
+        return;
+    }
+    let line = arg.span().start().line;
+    facts.method_ref_usages.push(MethodRefUsage {
+        file: file.to_string(),
+        container: container_path.to_string(),
+        outer,
+        inner,
+        line,
+    });
 }
 
 fn collect_fn_sig(

@@ -570,6 +570,18 @@ def _instance_for_kind(kind, name, facts):
                     if tu.get("name") == name]
         return (inst[0] if inst else None,
                 [f"{tu.get('file','?')}:{tu['line']}" for tu in inst[:200]])
+    if kind == "method_ref":
+        # 0.0.28: method_ref pattern names are FAMILY entries shaped
+        # as "_::<inner>" (placeholder outer per family aggregation;
+        # each entry represents the method name as architectural
+        # protagonist across N workspace-defined-pub outers). Instance
+        # lookup matches by inner: any ast_method_refs entry whose
+        # inner equals the family's inner is a valid seed.
+        family_inner = name.split("::", 1)[1] if "::" in name else name
+        inst = [r for r in facts.get("ast_method_refs", [])
+                if r.get("inner") == family_inner]
+        return (inst[0] if inst else None,
+                [f"{r.get('file','?')}:{r['line']}" for r in inst[:200]])
     if kind == "pub_type":
         # 0.0.26: pub_type instance is the type's or trait's
         # definition site from facts.types / facts.traits.

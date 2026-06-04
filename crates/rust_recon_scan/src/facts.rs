@@ -21,6 +21,7 @@ pub(crate) struct Facts {
     pub(crate) ast_fn_sig_usages: Vec<FnSigUsage>,
     pub(crate) ast_field_usages: Vec<FieldUsage>,
     pub(crate) ast_type_alias_usages: Vec<TypeAliasUsage>,
+    pub(crate) ast_method_ref_usages: Vec<MethodRefUsage>,
 }
 
 /// What: per-file facts produced by scan_file(). The aggregator
@@ -30,6 +31,7 @@ pub(crate) struct FileFacts {
     pub(crate) fn_sig_usages: Vec<FnSigUsage>,
     pub(crate) field_usages: Vec<FieldUsage>,
     pub(crate) type_alias_usages: Vec<TypeAliasUsage>,
+    pub(crate) method_ref_usages: Vec<MethodRefUsage>,
 }
 
 /// What: a single type-identifier occurrence inside a function
@@ -108,4 +110,31 @@ pub(crate) struct TypeAliasUsage {
     pub(crate) ident: String,
     pub(crate) line: usize,
     pub(crate) alias_visibility: String,
+}
+
+/// What: a single method-reference occurrence inside a fn body.
+/// Captures multi-segment ExprPath `Type::method` patterns in
+/// argument position of Call / MethodCall (not as receiver, not as
+/// call head). `outer` is the path's last-but-one segment ("Type"),
+/// `inner` is the final segment ("method"). Single-segment refs
+/// (bare `method` ident) are NOT captured per 0.0.28 Phase 0
+/// scoping - iced examples canonically use the multi-segment form.
+///
+/// Why: closes the iced Update gap. iced's
+/// `iced::application(Clock::new, Clock::update, Clock::view)`
+/// passes update as a fn pointer not a call; the existing scanner
+/// only walked fn signatures + struct fields + type aliases and
+/// couldn't see body expressions. characterize.py synthesizes
+/// `method_ref:<outer>::<inner>` pattern_metrics entries from these
+/// usages.
+///
+/// Where: emitted by walk_fn_body() recursing through fn bodies
+/// (top-level ItemFn, ImplItem::Fn, TraitItem::Fn with default body).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct MethodRefUsage {
+    pub(crate) file: String,
+    pub(crate) container: String,
+    pub(crate) outer: String,
+    pub(crate) inner: String,
+    pub(crate) line: usize,
 }

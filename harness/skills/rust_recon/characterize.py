@@ -47,6 +47,55 @@ SEAM_DENSE_PER_KLOC = float(os.environ.get("ORIENT_SEAM_DENSE_PER_KLOC", "4.0"))
 # (`tests/...` as nushell uses).
 _EXCLUDED_DIR_SEGMENTS = ("tests", "benches", "examples")
 
+# 0.0.28: filters for method_ref synthesis from AST scanner output.
+# Tighter than emit.py's _GENERIC_AUTO_TYPES + _GENERIC_INNER_METHODS
+# because method_ref entries grow pattern_metrics size (the coverage
+# denominator); admitting noise broadly would degrade the coverage
+# metric without surfacing architectural protagonists.
+#
+# Self:: refs are inside impl blocks and refer to the impl target;
+# they're not architectural signal at the workspace level.
+#
+# Generic outer trait shells (Default, From, etc.) are universally
+# implemented + universally referenced; they're not workspace-
+# specific architectural patterns. Matches emit.py's
+# _GENERIC_AUTO_TYPES exactly.
+#
+# Generic inner method names (new, default, from, fmt, clone, etc.)
+# are constructor / formatter conventions, not architectural verbs.
+# iced's `update` and similar workspace-specific verbs survive this
+# filter. Matches emit.py's _GENERIC_INNER_METHODS exactly.
+_METHOD_REF_OUTER_SKIP = frozenset([
+    "Self",
+    # Mirror of emit.py _GENERIC_AUTO_TYPES:
+    "Default", "Display", "Debug",
+    "From", "Into", "TryFrom", "TryInto",
+    "Clone",
+    "AsRef", "AsMut",
+    "Drop",
+    "PartialEq", "Eq", "Hash", "PartialOrd", "Ord",
+    "Iterator", "IntoIterator",
+    "Poll",
+])
+_METHOD_REF_INNER_SKIP = frozenset([
+    # Mirror of emit.py _GENERIC_INNER_METHODS:
+    "new", "default", "from", "into", "try_from", "try_into",
+    "fmt", "clone", "as_ref", "as_mut", "deref", "deref_mut",
+    "eq", "ne", "cmp", "partial_cmp", "hash",
+    "drop", "next", "iter", "into_iter", "iter_mut",
+    "build", "into_inner", "borrow", "borrow_mut",
+])
+
+# 0.0.28: minimum distinct workspace-defined-pub outers for a
+# method_ref family to qualify as a workspace-wide protagonist.
+# 3 is the working threshold: 1-2 outers indicates per-Type
+# methodology; 3+ outers across multiple Type definitions indicates
+# the method name is the architectural concept the workspace's
+# external API uses as a hook (iced's update + view + draw etc.).
+# Env-tunable.
+_METHOD_REF_FAMILY_MIN_OUTERS = int(
+    os.environ.get("ORIENT_METHOD_REF_FAMILY_MIN_OUTERS", "3"))
+
 
 def _is_src_file(rel: str) -> bool:
     parts = rel.replace("\\", "/").split("/")
@@ -906,18 +955,20 @@ def _run_ast_scan(root: Path, out_dir: Path, crates: dict) -> dict:
     scan_path = out_dir / "scan.json"
     if not scan_path.is_file():
         return {"fn_sig_usages": [], "field_usages": [],
-                "type_alias_usages": []}
+                "type_alias_usages": [], "method_ref_usages": []}
     data = json.loads(scan_path.read_text())
     print(
         f"[characterize] ast scan: "
         f"{len(data.get('ast_fn_sig_usages', []))} fn-sig + "
         f"{len(data.get('ast_field_usages', []))} field + "
-        f"{len(data.get('ast_type_alias_usages', []))} type-alias entries"
+        f"{len(data.get('ast_type_alias_usages', []))} type-alias + "
+        f"{len(data.get('ast_method_ref_usages', []))} method-ref entries"
     )
     return {
         "fn_sig_usages": data.get("ast_fn_sig_usages", []),
         "field_usages": data.get("ast_field_usages", []),
         "type_alias_usages": data.get("ast_type_alias_usages", []),
+        "method_ref_usages": data.get("ast_method_ref_usages", []),
     }
 
 
@@ -1312,6 +1363,106 @@ def _compute_pattern_metrics(all_facts: dict, ast_facts: dict = None,
                 "example_count": float(len(example_files)),
                 "curated_example_count": len(curated_files),
             }
+
+    # 0.0.28: synthesize method_ref:_::<inner> FAMILY entries from
+    # AST method-reference data. Captures `Type::method` ExprPath
+    # patterns in argument position (e.g. iced's
+    # `iced::application(Clock::new, Clock::update, Clock::view)`).
+    # Multi-segment only per 0.0.28 Phase 0 scoping; single-segment
+    # bare refs not captured (iced examples canonically use the
+    # qualified form).
+    #
+    # Family aggregation is the load-bearing move: each individual
+    # `Type::update` ref scores intra=0, inter=1 (one call site)
+    # which never reaches top-N. Aggregating across the family of
+    # outers that share the inner method ("update", "view", "draw",
+    # etc.) sums the architectural signal: iced's `update`-family
+    # spans 50 example crates -> sum score competes with pub_type
+    # entries.
+    #
+    # Family threshold (>= _METHOD_REF_FAMILY_MIN_OUTERS distinct
+    # workspace-defined-pub outers) keeps single-outer per-Type
+    # method names out (those aren't architectural protagonists).
+    # Defining_crate set to most-common-outer's defining_crate so
+    # the picker treats family entries as workspace-defined.
+    #
+    # Filters at synthesis time (NOT picker time): outer in
+    # _METHOD_REF_OUTER_SKIP (Self + std trait shells); inner in
+    # _METHOD_REF_INNER_SKIP (generic constructor / formatter
+    # method names). Tighter than the generic-pattern picker filters
+    # because method-refs grow pattern_metrics size + would inflate
+    # the coverage denominator if admitted broadly.
+    if ast_facts and crates:
+        crate_dirs = {n: c.get("dir", "") for n, c in crates.items()}
+        method_refs_by_inner = defaultdict(list)
+        for ent in ast_facts.get("method_ref_usages", []):
+            outer = ent.get("outer", "")
+            inner = ent.get("inner", "")
+            if not outer or not inner:
+                continue
+            if outer in _METHOD_REF_OUTER_SKIP:
+                continue
+            if inner in _METHOD_REF_INNER_SKIP:
+                continue
+            defn = (type_def_lookup.get(outer)
+                    or trait_def_lookup.get(outer))
+            if not defn or not defn.get("crate"):
+                continue
+            # 0.0.28: NO visibility filter on outer for method_ref.
+            # iced example types like Clock / Editor / Tour are
+            # workspace-defined but private (struct, not pub struct);
+            # they're consumer types in binary crates that pass their
+            # methods as fn pointers to iced::application. The
+            # architectural signal is in the method ref shape, not
+            # the outer's visibility.
+            method_refs_by_inner[inner].append({
+                "outer": outer,
+                "defining_crate": defn["crate"],
+                "entry": ent,
+            })
+
+        for inner, members in method_refs_by_inner.items():
+            distinct_outers = {m["outer"] for m in members}
+            if len(distinct_outers) < _METHOD_REF_FAMILY_MIN_OUTERS:
+                continue
+            pattern = f"method_ref:_::{inner}"
+            if pattern in metrics:
+                continue
+            defining_crate = Counter(
+                m["defining_crate"] for m in members
+            ).most_common(1)[0][0]
+            intra = 0
+            inter = 0
+            example_files = set()
+            curated_files = set()
+            for m in members:
+                ent = m["entry"]
+                file_path = ent.get("file") or ""
+                using = _resolve_crate_for_file(file_path, crate_dirs)
+                if not using:
+                    continue
+                if using == defining_crate:
+                    intra += 1
+                else:
+                    inter += 1
+                if "/examples/" in file_path or file_path.startswith("examples/"):
+                    example_files.add(file_path)
+                    curated_files.add(file_path)
+                elif "/tests/" in file_path or file_path.startswith("tests/"):
+                    example_files.add(file_path)
+                elif "/benches/" in file_path or file_path.startswith("benches/"):
+                    example_files.add(file_path)
+            total = intra + inter
+            ratio = (inter / total) if total > 0 else 0.0
+            metrics[pattern] = {
+                "defining_crate": defining_crate,
+                "intra_count": intra,
+                "inter_count": inter,
+                "inter_ratio": round(ratio, 3),
+                "is_pub": True,
+                "example_count": float(len(example_files)),
+                "curated_example_count": len(curated_files),
+            }
     return metrics
 
 
@@ -1403,6 +1554,30 @@ def main():
                 "source": src_key,
             })
     all_facts["ast_type_refs"] = ast_type_refs
+
+    # 0.0.28: store method_ref usages in all_facts so emit.py can
+    # produce seed instances. Keyed by "<Outer>::<inner>" combined
+    # name to match the pattern format produced in pattern_metrics.
+    ast_method_refs = []
+    for ent in ast_facts.get("method_ref_usages", []):
+        outer = ent.get("outer", "")
+        inner = ent.get("inner", "")
+        if not outer or not inner:
+            continue
+        file_path = ent.get("file", "")
+        using_crate = _resolve_crate_for_file(file_path, crate_dirs)
+        if not using_crate:
+            continue
+        ast_method_refs.append({
+            "name": f"{outer}::{inner}",
+            "outer": outer,
+            "inner": inner,
+            "file": file_path,
+            "line": ent.get("line", 0),
+            "container": ent.get("container", ""),
+            "crate": using_crate,
+        })
+    all_facts["ast_method_refs"] = ast_method_refs
 
     # 0.0.10 patches 10b + 10c + 10d: per-pattern metrics. For each
     # pattern in pattern_histogram + per-crate aggregation, compute:

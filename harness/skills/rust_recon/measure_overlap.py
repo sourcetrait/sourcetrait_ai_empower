@@ -37,17 +37,17 @@ def parse_picks(orientation_text: str) -> dict[str, list[str]]:
 
     Returns a dict:
       {'architecture': [...], 'public': [...], 'inter_crate': [...],
-       'intra': [...], 'inner_crate': [...]}
+       'intra_crate': [...], 'inner_crate': [...]}
     where each list contains kind:name strings from the bullet lines.
 
     The workspace-wide sets (architecture / public / inter-crate) are
-    single lists; the per-crate sets (intra / inner-crate) are the
-    union across all per-crate sub-lists. The combined picks set is
-    the union across all five.
+    single lists; the per-crate sets (intra-crate / inner-crate) are
+    the union across all per-crate sub-lists. The combined picks set
+    is the union across all five.
     """
     lines = orientation_text.splitlines()
     sections = {"architecture": [], "public": [], "inter_crate": [],
-                "intra": [], "inner_crate": []}
+                "intra_crate": [], "inner_crate": []}
     current_section: str | None = None
     in_s5 = False
     for line in lines:
@@ -70,7 +70,7 @@ def parse_picks(orientation_text: str) -> dict[str, list[str]]:
             current_section = "inter_crate"
             continue
         if stripped.startswith("### 5.4"):
-            current_section = "intra"
+            current_section = "intra_crate"
             continue
         if stripped.startswith("### 5.5"):
             current_section = "inner_crate"
@@ -95,7 +95,7 @@ def match_ground_truth(picks: dict[str, list[str]],
     matched (bool)}].
     """
     all_picks = (picks["architecture"] + picks["public"]
-                 + picks["inter_crate"] + picks["intra"]
+                 + picks["inter_crate"] + picks["intra_crate"]
                  + picks["inner_crate"])
     results = []
     for gt in ground_truth:
@@ -136,11 +136,11 @@ def score_target(orientation_path: Path,
         "n_architecture_picks": len(picks["architecture"]),
         "n_public_picks": len(picks["public"]),
         "n_inter_crate_picks": len(picks["inter_crate"]),
-        "n_intra_picks": len(picks["intra"]),
+        "n_intra_crate_picks": len(picks["intra_crate"]),
         "n_inner_crate_picks": len(picks["inner_crate"]),
         "n_total_picks_union": len(set(
             picks["architecture"] + picks["public"]
-            + picks["inter_crate"] + picks["intra"]
+            + picks["inter_crate"] + picks["intra_crate"]
             + picks["inner_crate"])),
         "n_ground_truth": n_total,
         "n_matched": n_matched,

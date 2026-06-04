@@ -1054,32 +1054,55 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         top_n_workspace = _TOP_N_FLOOR
     pattern_metrics = fp.get("pattern_metrics", {})
 
+    # 0.0.20 patch 20b: filter per_crate_counts to workspace-originated
+    # patterns only. the_user 2026-06-04: 'drop std results entirely in
+    # our scripts. it needs to be originated code, not usage of external
+    # libraries'. Same filter the inter / public sets already apply
+    # (defining_crate is not None means the trait / type / macro is
+    # declared in a workspace crate). Without this filter, intra picks
+    # were dominated by std-derived patterns (derive:Debug / Clone /
+    # PartialEq / Default / Copy / etc.) that are universally derived
+    # for utility rather than architectural insight.
+    def _is_workspace_originated(pattern: str) -> bool:
+        m = pattern_metrics.get(pattern, {})
+        return m.get("defining_crate") is not None
+
     # Build per-crate counts across all pattern kinds.
     per_crate_counts = defaultdict(lambda: defaultdict(int))
     for it in facts.get("impls", []):
         if it.get("trait") and not it.get("cfg_gated"):
             c = it.get("crate")
             if c:
-                per_crate_counts[c][f"trait_impl:{it['trait']}"] += 1
+                p = f"trait_impl:{it['trait']}"
+                if _is_workspace_originated(p):
+                    per_crate_counts[c][p] += 1
     for d in facts.get("derives", []):
         c = d.get("crate")
         nm = d.get("trait")
         if c and nm:
-            per_crate_counts[c][f"derive:{nm}"] += 1
+            p = f"derive:{nm}"
+            if _is_workspace_originated(p):
+                per_crate_counts[c][p] += 1
     for tu in facts.get("type_usages", []):
         c = tu.get("crate")
         nm = tu.get("name")
         if c and nm:
-            per_crate_counts[c][f"type_usage:{nm}"] += 1
+            p = f"type_usage:{nm}"
+            if _is_workspace_originated(p):
+                per_crate_counts[c][p] += 1
     for m in facts.get("macros", []):
         c = m.get("crate")
         kind = m.get("kind")
         nm = m.get("name")
         if c and nm:
             if kind == "macro_invocation":
-                per_crate_counts[c][f"reg_macro:{nm}"] += 1
+                p = f"reg_macro:{nm}"
+                if _is_workspace_originated(p):
+                    per_crate_counts[c][p] += 1
             elif kind == "attr_macro":
-                per_crate_counts[c][f"attr_macro:{nm}"] += 1
+                p = f"attr_macro:{nm}"
+                if _is_workspace_originated(p):
+                    per_crate_counts[c][p] += 1
 
     # 1. Per-crate intra significance. Per-crate locally bounded;
     # uses top_n_intra (default 7). 0.0.20 patch 20a keeps intra

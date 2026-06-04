@@ -843,14 +843,44 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
                 "visibility": m.get("visibility", ""),
             }
 
+    # 0.0.21 patch 21b: crate_name_lookup for type_usage where the outer
+    # is a workspace CRATE itself (iced's `iced::application(...)` is
+    # called through the crate's root namespace - there's no `mod
+    # application` and no `Application` type; the public free function
+    # `application(...)` lives at iced/src/lib.rs root). Without crate-
+    # name lookup, those entries would show defining_crate=None even
+    # though the workspace defines them. the_user 2026-06-04: 'basic
+    # end-dev usage is to define your own App struct and then call
+    # iced::application() with it'. Same shape applies to iced::run,
+    # iced::exit, iced::daemon, and analogous crate::function entry
+    # points across other workspaces.
+    crate_name_lookup = {}
+    crate_names_seen = set()
+    for key in ("impls", "derives", "uses", "types", "traits", "fns",
+                "macros", "macro_defs", "type_usages", "mods",
+                "example_type_usages"):
+        for f in all_facts.get(key, []):
+            c = f.get("crate")
+            if c:
+                crate_names_seen.add(c)
+    for cn in crate_names_seen:
+        crate_name_lookup[cn] = {
+            "crate": cn,
+            # crate-as-namespace access implies pub-from-crate-root
+            "visibility": "pub",
+        }
+
     def _pattern_def(kind, pattern_inner):
         if kind in ("trait_impl", "derive"):
             return trait_def_lookup.get(pattern_inner)
         if kind == "type_usage":
             outer = pattern_inner.split("::", 1)[0]
-            # Prefer type lookup; fall back to module lookup for
-            # tokio-style `mod mpsc { pub fn channel() ... }` shape.
-            return type_def_lookup.get(outer) or mod_def_lookup.get(outer)
+            # Prefer type lookup; fall back to module lookup (10e); fall
+            # back to crate-name lookup (21b) so iced::application etc.
+            # surface as workspace-defined.
+            return (type_def_lookup.get(outer)
+                    or mod_def_lookup.get(outer)
+                    or crate_name_lookup.get(outer))
         if kind in ("reg_macro", "attr_macro"):
             return macro_def_lookup.get(pattern_inner)
         return None

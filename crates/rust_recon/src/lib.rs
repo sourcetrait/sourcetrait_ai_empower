@@ -2,6 +2,7 @@
 pub(crate) mod cli;
 pub(crate) mod error;
 pub(crate) mod facts;
+pub(crate) mod items;
 pub(crate) mod run;
 pub(crate) mod scan;
 pub(crate) mod walk;

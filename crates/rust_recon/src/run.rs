@@ -25,6 +25,10 @@ fn dispatch_scan(scan: ScanCommand) -> std::result::Result<(), Error> {
             workspace_root,
             out_dir,
         } => scan_usages(&workspace_root, &out_dir),
+        ScanCommand::Items {
+            workspace_root,
+            out_dir,
+        } => items::scan_workspace(&workspace_root, &out_dir),
     }
 }
 

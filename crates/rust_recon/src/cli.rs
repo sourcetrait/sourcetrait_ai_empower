@@ -45,4 +45,14 @@ pub(crate) enum ScanCommand {
         /// Output directory; recon_usages.json is written here.
         out_dir: PathBuf,
     },
+    /// Per-file lex+structure facts (impls, derives, types,
+    /// traits, fns, macros, uses, mods, seams, type_usages).
+    /// Writes recon_items.json in the output directory. Phase 3
+    /// stub; phase 4 ports rustscan.py.
+    Items {
+        /// Workspace root to scan.
+        workspace_root: PathBuf,
+        /// Output directory; recon_items.json is written here.
+        out_dir: PathBuf,
+    },
 }

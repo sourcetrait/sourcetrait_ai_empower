@@ -1070,6 +1070,17 @@ def main():
     seam_total = sum(all_facts["seams"].values())
     seam_density = seam_total / (total_loc / 1000.0)
 
+    # 0.0.21 patch 21a: count .rs files under any examples/ directory
+    # in the workspace. Used by emit's public-set example-weight log
+    # scaling. the_user 2026-06-04: 'use number of example rs files
+    # logarathmically to determine the weight applied to public
+    # category'.
+    example_rs_files = 0
+    for rs_path in root.rglob("*.rs"):
+        parts = rs_path.relative_to(root).parts
+        if any(seg == "examples" for seg in parts):
+            example_rs_files += 1
+
     # 0.0.10 patches 10b + 10c + 10d: per-pattern metrics. For each
     # pattern in pattern_histogram + per-crate aggregation, compute:
     # - defining_crate: where the type / trait / macro was declared.
@@ -1098,6 +1109,7 @@ def main():
             "crates": len(crates), "loc": total_loc,
             "impls": len(all_facts["impls"]), "types": len(all_facts["types"]),
             "traits": len(all_facts["traits"]), "fns": len(all_facts["fns"]),
+            "example_rs_files": example_rs_files,
         },
         "workspace_roots": workspace_roots,
         "components": comps,

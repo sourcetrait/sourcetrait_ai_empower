@@ -146,18 +146,43 @@ def _compute_loc_scaled_top_n(loc: int) -> int:
     scaled = _TOP_N_FLOOR + _LOC_MULTIPLIER * math.log2(ratio)
     return max(_TOP_N_FLOOR, round(scaled))
 
-# 0.0.13 patch 13k: examples contribute to PUBLIC SET ONLY. Each
-# curated example (in /examples/ directory) contributes 1x to the
-# public set's count by default. When 'examples are serious' (>= 3
-# curated examples - the_user 2026-06-03 threshold), the per-example
-# weight is bumped above 1x. Calibration needed; default at 1.5
-# matches the prior delta-threshold semantics.
-_PUBLIC_EXAMPLE_WEIGHT = float(
-    os.environ.get("ORIENT_PUBLIC_EXAMPLE_WEIGHT", "1.0"))
-_PUBLIC_EXAMPLE_SERIOUS_WEIGHT = float(
-    os.environ.get("ORIENT_PUBLIC_EXAMPLE_SERIOUS_WEIGHT", "1.5"))
-_PUBLIC_EXAMPLES_SERIOUS_THRESHOLD = int(
-    os.environ.get("ORIENT_PUBLIC_EXAMPLES_SERIOUS_THRESHOLD", "3"))
+# 0.0.13 patch 13k + 0.0.21 patch 21a: examples contribute to PUBLIC
+# SET ONLY. Each curated example (in /examples/ directory)
+# contributes example_weight to the public set's count. the_user
+# 2026-06-04 directive replaces the prior dual-weight (1.0 default /
+# 1.5 serious-when-curated-count>=3) with log-scaled weight per
+# workspace: 'use number of example rs files logarathmically to
+# determine the weight applied to public category'. Workspaces with
+# more example files signal stronger developer attention; the weight
+# scales accordingly.
+#
+# Formula: max(_EXAMPLE_WEIGHT_FLOOR, log2(max(1, num_example_rs_files))).
+# - 0-1 example files: 1.0 (floor)
+# - 2: 1.0 (still at floor or just at log2)
+# - 4: 2.0
+# - 16: 4.0
+# - 64: 6.0
+# - 128 (bevy / iced scale): 7.0
+_EXAMPLE_WEIGHT_FLOOR = float(
+    os.environ.get("ORIENT_EXAMPLE_WEIGHT_FLOOR", "1.0"))
+
+
+def _compute_public_example_weight(num_example_rs_files: int) -> float:
+    """0.0.21 patch 21a: log-scaled per-example weight for public set.
+
+    Returns the per-example multiplier applied to curated_example_count
+    in the public-set significance computation. Workspaces with more
+    example .rs files get a larger multiplier, reflecting that heavy
+    documentation-by-example signals stronger developer attention on
+    the patterns those examples demonstrate.
+
+    Floor at _EXAMPLE_WEIGHT_FLOOR (1.0) for workspaces with 0 or 1
+    example file; otherwise log2 of the file count. Reaches 7.0 at
+    128 example files (bevy / iced scale)."""
+    import math
+    if num_example_rs_files <= 1:
+        return _EXAMPLE_WEIGHT_FLOOR
+    return max(_EXAMPLE_WEIGHT_FLOOR, math.log2(num_example_rs_files))
 
 
 # 0.0.9 patch 9a: minimum distinct variants for a type-usage family.
@@ -1131,14 +1156,17 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         sorted_inter = sorted(inter_counts.items(), key=lambda x: -x[1])
         significant_inter = dict(sorted_inter[:top_n_workspace])
 
-    # 3. Workspace-wide public significance. the_user 2026-06-03:
-    # 'examples is a public set weight only... any hit there is worth
-    # 1x. if the "examples are serious" signal is present, the weight
-    # ratio is higher than 1x'. Public set count = inter_count +
-    # (curated_example_count * per_example_weight). per_example_weight
-    # = 1.0 default; 1.5 (calibration) when curated >= 3 examples.
-    # Examples DO NOT contribute to intra or inter sets - their
-    # other-set significance is captured by raw counts already.
+    # 3. Workspace-wide public significance. the_user 2026-06-04 update:
+    # 'use number of example rs files logarathmically to determine the
+    # weight applied to public category'. Public set count =
+    # inter_count + (curated_example_count * example_weight) where
+    # example_weight = max(1.0, log2(num_example_rs_files)). Workspaces
+    # with heavy docs-by-example (iced, bevy, ratatui) get a higher
+    # multiplier reflecting stronger developer attention on those
+    # patterns. Examples DO NOT contribute to intra or inter sets -
+    # their other-set significance is captured by raw counts already.
+    num_example_rs_files = fp.get("totals", {}).get("example_rs_files", 0)
+    public_example_weight = _compute_public_example_weight(num_example_rs_files)
     public_counts = {}
     for pattern, m in pattern_metrics.items():
         if not m.get("is_pub"):
@@ -1147,12 +1175,7 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             continue
         ic = m.get("inter_count", 0) or 0
         curated = m.get("curated_example_count", 0) or 0
-        per_example_weight = (
-            _PUBLIC_EXAMPLE_SERIOUS_WEIGHT
-            if curated >= _PUBLIC_EXAMPLES_SERIOUS_THRESHOLD
-            else _PUBLIC_EXAMPLE_WEIGHT
-        )
-        public_contribution = ic + curated * per_example_weight
+        public_contribution = ic + curated * public_example_weight
         if public_contribution > 0:
             public_counts[pattern] = public_contribution
     significant_public = {}

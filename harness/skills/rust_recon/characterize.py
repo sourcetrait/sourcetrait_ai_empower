@@ -1111,72 +1111,7 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
         # total including tests.
         return curated_example_count_by_name.get(name, 0)
 
-    # 0.0.26: pub_surface_count - workspace-wide occurrences of each
-    # identifier name in `pub use crate::{...}` re-export trees.
-    # The_user 2026-06-04: the lib.rs manifest convention (pub use
-    # block as deliberate public face) is a strong public-API surface
-    # signal independent of curated_example_count. Without this,
-    # workspace-defined pub types that are method-receivers in
-    # examples (ratatui Frame, etc.) slip past the public set's
-    # curated_example_count gate.
-    pub_surface_count_by_name = defaultdict(int)
-    _TYPE_IDENT_RE = re.compile(r"\b[A-Z]\w*\b")
-    for u in all_facts.get("uses", []):
-        if not u.get("reexport"):
-            continue
-        path = u.get("path", "")
-        for ident in _TYPE_IDENT_RE.findall(path):
-            pub_surface_count_by_name[ident] += 1
-
-    def _pub_surface_count_for(kind, inner):
-        # For type_usage:Outer::Inner, count occurrences of Outer
-        # (the type being method-called on). For other kinds the
-        # inner IS the trait/type name.
-        if kind == "type_usage":
-            outer = inner.split("::", 1)[0]
-            return pub_surface_count_by_name.get(outer, 0)
-        return pub_surface_count_by_name.get(inner, 0)
-
-    # 0.0.26: synthesize pub_type:Name entries for workspace-defined
-    # pub types/traits that have pub_surface_count > 0 but are NOT
-    # already present in seen_patterns. Otherwise types like
-    # ratatui::Frame (defined as `pub struct Frame`, heavily used as a
-    # method-receiver but never via qualified-path syntax) can't enter
-    # the picker at all. The pub_use re-export occurrences act as the
-    # public-API surface signal; no intra/inter count contribution.
-    existing_names = set()
-    for k, inner, _ in seen_patterns:
-        existing_names.add(inner)
-        if k == "type_usage" and "::" in inner:
-            existing_names.add(inner.split("::", 1)[0])
-    for name, count in pub_surface_count_by_name.items():
-        if name in existing_names:
-            continue
-        defn = type_def_lookup.get(name) or trait_def_lookup.get(name)
-        if not defn or not defn.get("crate"):
-            continue
-        vis = defn.get("visibility", "")
-        if not vis.startswith("pub"):
-            continue
-        seen_patterns.add(("pub_type", name, f"pub_type:{name}"))
-
     for kind, inner, pattern in seen_patterns:
-        if kind == "pub_type":
-            defn = (type_def_lookup.get(inner)
-                    or trait_def_lookup.get(inner))
-            if not defn or not defn.get("crate"):
-                continue
-            metrics[pattern] = {
-                "defining_crate": defn["crate"],
-                "intra_count": 0,
-                "inter_count": 0,
-                "inter_ratio": 0.0,
-                "is_pub": True,
-                "example_count": 0,
-                "curated_example_count": 0,
-                "pub_surface_count": pub_surface_count_by_name.get(inner, 0),
-            }
-            continue
         defn = _pattern_def(kind, inner)
         if defn is None:
             metrics[pattern] = {
@@ -1191,7 +1126,6 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
                 "curated_example_count": (
                     _curated_example_count_for_type_usage(inner)
                     if kind == "type_usage" else 0),
-                "pub_surface_count": _pub_surface_count_for(kind, inner),
             }
             continue
         defining_crate = defn["crate"]
@@ -1227,7 +1161,6 @@ def _compute_pattern_metrics(all_facts: dict) -> dict:
             "curated_example_count": (
                 _curated_example_count_for_type_usage(inner)
                 if kind == "type_usage" else 0),
-            "pub_surface_count": _pub_surface_count_for(kind, inner),
         }
     return metrics
 

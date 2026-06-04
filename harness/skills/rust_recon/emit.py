@@ -188,17 +188,6 @@ _EXAMPLE_WEIGHT_FLOOR = float(
 _INTERNALS_SPREAD_THRESHOLD = int(
     os.environ.get("ORIENT_INTERNALS_SPREAD_THRESHOLD", "2"))
 
-# 0.0.26: per-occurrence weight for the public-API surface signal.
-# Linear count from pub_surface_count (workspace-wide pub use re-export
-# occurrences of the pattern's name). Default 1.0 - each lib.rs
-# re-export = 1 example-equivalent in the public score. the_user
-# 2026-06-04: 'i'm not sure if we have to weight separately on #1.
-# even if they're pulling an interface to use it against a type
-# (::foo()), we would count a hit against ::foo()'. So linear count
-# is the baseline; calibrate if measure_overlap suggests otherwise.
-_PUB_SURFACE_WEIGHT = float(
-    os.environ.get("ORIENT_PUB_SURFACE_WEIGHT", "5.0"))
-
 
 def _compute_public_example_weight(num_example_rs_files: int) -> float:
     """0.0.21 patch 21a: log-scaled per-example weight for public set.
@@ -564,16 +553,6 @@ def _instance_for_kind(kind, name, facts):
                     if tu.get("name") == name]
         return (inst[0] if inst else None,
                 [f"{tu.get('file','?')}:{tu['line']}" for tu in inst[:200]])
-    if kind == "pub_type":
-        # 0.0.26: pub_type instance is the type's or trait's
-        # definition site from facts.types / facts.traits.
-        inst = [t for t in facts.get("types", [])
-                if t.get("name") == name]
-        if not inst:
-            inst = [t for t in facts.get("traits", [])
-                    if t.get("name") == name]
-        return (inst[0] if inst else None,
-                [f"{t.get('file','?')}:{t['line']}" for t in inst[:200]])
     if kind == "type_usage_family":
         # 0.0.9 patch 9a: family instances aggregate call sites from all
         # matching type_usages. outer:X matches names starting with X::;
@@ -1212,25 +1191,16 @@ def _compute_significance_sets(fp: dict, facts: dict,
     public_example_weight = _compute_public_example_weight(num_example_rs_files)
 
     # Build raw-signal scores per pattern.
-    # 0.0.26: public_attention = curated_example_count (docs-by-example
-    # signal) + pub_surface_count * _PUB_SURFACE_WEIGHT (lib.rs pub use
-    # re-export occurrences - the manifest convention's public-API
-    # surface signal). Both signals share the per-workspace
-    # public_example_weight multiplier so they're on the same scale.
-    # the_user 2026-06-04: 'the lib.rs manifest convention isn't
-    # sourcetrait-specific; surface latent picks across all targets'.
-    public_scores = {}  # combined public-attention * workspace weight
+    public_scores = {}  # curated * weight (pure docs signal)
     inter_scores = {}   # inter_count (pure cross-crate-flow signal)
     for pattern, m in pattern_metrics.items():
         if m.get("defining_crate") is None:
             continue
         ic = m.get("inter_count", 0) or 0
         curated = m.get("curated_example_count", 0) or 0
-        pub_surface = m.get("pub_surface_count", 0) or 0
         is_pub = bool(m.get("is_pub"))
-        attention = curated + pub_surface * _PUB_SURFACE_WEIGHT
-        if is_pub and attention > 0:
-            public_scores[pattern] = attention * public_example_weight
+        if is_pub and curated > 0:
+            public_scores[pattern] = curated * public_example_weight
         if ic > 0:
             inter_scores[pattern] = ic
 

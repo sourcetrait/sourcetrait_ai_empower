@@ -17,6 +17,7 @@ build environment cannot run).
 from __future__ import annotations
 import json
 import os
+import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -576,8 +577,114 @@ def components(crates):
     return [sorted(g) for g in groups.values()]
 
 
+# 0.0.25: SLOC normalization helpers per the_user 2026-06-04.
+# - Strip block comments `/* ... */` (non-nested via re.DOTALL).
+# - Strip line + doc comments `//.*$`, `///.*$`, `//!.*$`.
+# - Strip blank lines after comment removal.
+# - Strip inline `#[cfg(test)] <item>` blocks (brace-matched).
+# Result feeds both SLOC count + rustscan facts: tests are
+# meaningless to us so they should not contribute to either.
+
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
+
+
+def _strip_cfg_test(src: str) -> str:
+    """Remove inline `#[cfg(test)] <item>` regions from source.
+
+    Walks the text, finds each `#[cfg(test)]` attribute, scans
+    forward past any additional attributes, then brace-matches the
+    following item body and removes the [attribute .. body] range.
+    Single-line items without a body (e.g. `#[cfg(test)] use foo;`)
+    fall through to the next semicolon.
+
+    Pragmatic: ignores string/comment context (false positives only
+    in the vanishingly rare case where `#[cfg(test)]` literally
+    appears inside a string). Doesn't handle `#[cfg_attr(test, ...)]`
+    or other gated variants - workspaces overwhelmingly use the bare
+    form for inline test modules."""
+    needle = "#[cfg(test)]"
+    out = []
+    i = 0
+    while True:
+        idx = src.find(needle, i)
+        if idx < 0:
+            out.append(src[i:])
+            break
+        # Keep everything up to the attribute.
+        out.append(src[i:idx])
+        # Scan past the attribute + any subsequent attributes / whitespace.
+        j = idx + len(needle)
+        while j < len(src):
+            # Skip whitespace.
+            while j < len(src) and src[j] in " \t\n\r":
+                j += 1
+            # Skip another attribute like `#[derive(...)]` or `#[allow(...)]`.
+            if j < len(src) and src[j] == "#" and j + 1 < len(src) and src[j + 1] == "[":
+                # Find the matching ].
+                depth = 0
+                k = j
+                while k < len(src):
+                    if src[k] == "[":
+                        depth += 1
+                    elif src[k] == "]":
+                        depth -= 1
+                        if depth == 0:
+                            k += 1
+                            break
+                    k += 1
+                j = k
+                continue
+            break
+        # Now look for the item body. Either next `{` (mod/fn/impl/struct/enum/trait)
+        # or next `;` for single-line items (use/const/etc.).
+        brace = src.find("{", j)
+        semi = src.find(";", j)
+        if brace < 0 and semi < 0:
+            # Malformed; bail.
+            break
+        if semi >= 0 and (brace < 0 or semi < brace):
+            # Single-line item.
+            i = semi + 1
+            continue
+        # Brace-matched item body.
+        depth = 0
+        k = brace
+        while k < len(src):
+            c = src[k]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    k += 1
+                    break
+            k += 1
+        i = k
+    return "".join(out)
+
+
+def _compute_sloc(src: str) -> int:
+    """Count SLOC: source lines of code with comments + blanks removed.
+
+    Strips block comments, line/doc comments, then counts non-blank
+    lines. Pragmatic: doesn't handle `//` inside strings (rare).
+    Apply `_strip_cfg_test` first if you want test-block exclusion;
+    SLOC counts whatever non-test source you give it."""
+    s = _BLOCK_COMMENT_RE.sub("", src)
+    s = _LINE_COMMENT_RE.sub("", s)
+    return sum(1 for line in s.splitlines() if line.strip())
+
+
 def scan_crate(root: Path, crate_dir: str):
-    """Scan all .rs under a crate dir; return aggregated facts + line count."""
+    """Scan all .rs under a crate dir; return aggregated facts + SLOC count.
+
+    0.0.25 changes:
+    - Skips files in `<crate>/tests/` and `<crate>/benches/` entirely
+      (no facts, no SLOC). examples/ unchanged.
+    - Strips inline `#[cfg(test)]` blocks before feeding rustscan.
+    - SLOC count via _compute_sloc (no comments, no blanks, no test
+      blocks). Field renamed loc -> sloc."""
     agg = {"impls": [], "traits": [], "types": [], "fns": [], "uses": [],
            "macros": [], "derives": [], "macro_defs": [], "type_usages": [],
            "mods": [],
@@ -587,16 +694,23 @@ def scan_crate(root: Path, crate_dir: str):
            # as the example-presence signal for the picker's ranking.
            "example_type_usages": [],
            "seams": Counter()}
-    loc = 0
+    sloc = 0
     base = root / crate_dir
     for rs in base.rglob("*.rs"):
         if "target" in rs.parts:
+            continue
+        # 0.0.25: skip tests/ + benches/ entirely (no facts, no SLOC).
+        # examples/ stays.
+        rel_parts = rs.relative_to(base).parts
+        if any(seg in ("tests", "benches") for seg in rel_parts):
             continue
         try:
             src = rs.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
-        loc += src.count("\n") + 1
+        # 0.0.25: strip inline #[cfg(test)] blocks before SLOC + scan.
+        src = _strip_cfg_test(src)
+        sloc += _compute_sloc(src)
         rel = str(rs.relative_to(root))
         f = rustscan.scan_file(rel, src)
         for it in f["impls"]:
@@ -637,7 +751,7 @@ def scan_crate(root: Path, crate_dir: str):
             agg["example_type_usages"] += [dict(tu, file=rel) for tu in f["type_usages"]]
         for k, v in f["seams"].items():
             agg["seams"][k] += v
-    agg["loc"] = loc
+    agg["sloc"] = sloc
     return agg
 
 
@@ -1077,7 +1191,7 @@ def main():
     for name, info in crates.items():
         cf = scan_crate(root, info["dir"])
         per_crate[name] = {
-            "dir": info["dir"], "loc": cf["loc"], "deps": info["deps"],
+            "dir": info["dir"], "sloc": cf["sloc"], "deps": info["deps"],
             "n_impls": len(cf["impls"]), "n_types": len(cf["types"]),
             "n_traits": len(cf["traits"]), "n_fns": len(cf["fns"]),
             "seams": dict(cf["seams"]),
@@ -1096,9 +1210,9 @@ def main():
     del all_facts["_free_fns_by_crate"]
     sel = select_mode(ranked, by_kind, workspace_roots, len(comps))
 
-    total_loc = sum(c["loc"] for c in per_crate.values()) or 1
+    total_sloc = sum(c["sloc"] for c in per_crate.values()) or 1
     seam_total = sum(all_facts["seams"].values())
-    seam_density = seam_total / (total_loc / 1000.0)
+    seam_density = seam_total / (total_sloc / 1000.0)
 
     # 0.0.21 patch 21a: count .rs files under any examples/ directory
     # in the workspace. Used by emit's public-set example-weight log
@@ -1136,7 +1250,7 @@ def main():
         "tool_version": "0.1.0",
         "repo_root": str(root),
         "totals": {
-            "crates": len(crates), "loc": total_loc,
+            "crates": len(crates), "sloc": total_sloc,
             "impls": len(all_facts["impls"]), "types": len(all_facts["types"]),
             "traits": len(all_facts["traits"]), "fns": len(all_facts["fns"]),
             "example_rs_files": example_rs_files,
@@ -1173,7 +1287,7 @@ def main():
     all_facts["seams"] = dict(all_facts["seams"])
     (out_dir / "facts.json").write_text(json.dumps(all_facts, indent=2))
 
-    print(f"[characterize] {len(crates)} crates, {total_loc} LoC, "
+    print(f"[characterize] {len(crates)} crates, {total_sloc} SLOC, "
           f"{len(comps)} component(s), {len(workspace_roots)} workspace root(s)")
     print(f"[characterize] mode = {sel['mode']}  (histogram: {sel['histogram_mode']}, "
           f"top_share={sel['top_share']})")

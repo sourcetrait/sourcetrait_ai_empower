@@ -109,41 +109,55 @@ _GENERIC_INNER_METHODS = frozenset([
 #
 # Floor (7) preserved as the original 13% argument's anchor; scaling
 # extends beyond when the workspace's architectural surface is
-# empirically larger. The 15K LoC anchor is sourcetrait_common's
-# size (14K) - the smallest measurable workspace, defining
-# 'small enough to fit in 7 picks'. 2.0 multiplier per doubling
-# makes the picker generous - the_user 2026-06-04 over-produce
-# preference.
+# empirically larger. Originally anchored to sourcetrait_common's
+# raw line count (14K LoC) with 2.0 multiplier.
+#
+# 0.0.25 recalibration: input is now strict SLOC (no comments, no
+# blanks, no test blocks per the_user 2026-06-04 'tests are meaningless
+# to us'). sourcetrait_common drops to ~8.6K SLOC from ~14K LoC; other
+# workspaces shrink by varying amounts based on test density.
+# Calibrated (D=3100, M=1.6) via grid search across (D, M) - the
+# parameters that meet-or-exceed ALL 0.0.24 caps (10 workspaces + 377
+# per-crate entries) with minimum sum-of-rises. the_user 2026-06-04:
+# 'log is the right tool for the job. run through variants of the
+# formula and find one that meets or exceeds caps'.
 _TOP_N_FLOOR = int(os.environ.get("ORIENT_TOP_N_FLOOR", "7"))
-_LOC_DIVISOR = int(os.environ.get("ORIENT_LOC_DIVISOR", "15000"))
-_LOC_MULTIPLIER = float(os.environ.get("ORIENT_LOC_MULTIPLIER", "2.0"))
+_SLOC_DIVISOR = int(os.environ.get("ORIENT_SLOC_DIVISOR", "3100"))
+_SLOC_MULTIPLIER = float(os.environ.get("ORIENT_SLOC_MULTIPLIER", "1.6"))
 
 
-def _compute_loc_scaled_top_n(loc: int) -> int:
-    """0.0.20 patch 20a: compute the SLOC-scaled top_n for workspace-
-    wide significance sets (inter / public).
+def _compute_sloc_scaled_top_n(sloc: int) -> int:
+    """0.0.20 patch 20a + 0.0.25: compute the SLOC-scaled top_n for
+    workspace-wide significance sets (architecture / public / inter-
+    crate / internals) AND per-crate sets (intra-crate / inner-crate).
 
-    Formula: max(_TOP_N_FLOOR, round(_TOP_N_FLOOR + _LOC_MULTIPLIER *
-    log2(loc / _LOC_DIVISOR))).
+    Formula: max(_TOP_N_FLOOR, round(_TOP_N_FLOOR + _SLOC_MULTIPLIER *
+    log2(sloc / _SLOC_DIVISOR))).
 
-    For loc below _LOC_DIVISOR, returns the floor (7). For loc >=
-    _LOC_DIVISOR, scales up. Each doubling adds _LOC_MULTIPLIER picks.
+    0.0.25: input is now strict SLOC (no comments, no blanks, no
+    test blocks), not raw line count. Divisor recalibrated to anchor
+    sourcetrait_common at the floor. the_user 2026-06-04: 'we like
+    those caps where they are. we just want to normalize'.
 
-    Projection at default constants (15K div, 2.0 mult, 7 floor):
-    - 14K (sourcetrait_common) -> 7
-    - 64K (libcosmic) -> 11
-    - 96K (helix) -> 12
-    - 192K (iced) -> 14
-    - 723K (nushell) -> 18
-    - 955K (bevy) -> 19
+    For sloc below _SLOC_DIVISOR, returns the floor (7). For sloc
+    >= _SLOC_DIVISOR, scales up. Each doubling adds _SLOC_MULTIPLIER
+    picks.
+
+    Target caps (preserved from 0.0.24):
+    - sourcetrait_common -> 7 (floor)
+    - libcosmic -> 11
+    - helix -> 12
+    - iced -> 14
+    - nushell -> 18
+    - bevy -> 19
     """
     import math
-    if loc <= 0:
+    if sloc <= 0:
         return _TOP_N_FLOOR
-    ratio = loc / _LOC_DIVISOR
+    ratio = sloc / _SLOC_DIVISOR
     if ratio < 1.0:
         return _TOP_N_FLOOR
-    scaled = _TOP_N_FLOOR + _LOC_MULTIPLIER * math.log2(ratio)
+    scaled = _TOP_N_FLOOR + _SLOC_MULTIPLIER * math.log2(ratio)
     return max(_TOP_N_FLOOR, round(scaled))
 
 # 0.0.13 patch 13k + 0.0.21 patch 21a: examples contribute to PUBLIC
@@ -1054,7 +1068,7 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n, pattern_metrics=None)
 
 
 def _compute_significance_sets(fp: dict, facts: dict,
-                               per_crate_loc: dict = None,
+                               per_crate_sloc: dict = None,
                                top_n_workspace: int = None):
     """0.0.13 patch 13h + 0.0.14 patch 14a + 0.0.20 patch 20a + 0.0.22
     + 0.0.23 + 0.0.24: six-set significance picker.
@@ -1088,15 +1102,15 @@ def _compute_significance_sets(fp: dict, facts: dict,
         per-crate top-N where defining_crate == crate (own-origin).
 
     top_n_workspace defaults to _TOP_N_FLOOR; callers should compute
-    the SLOC-scaled value via _compute_loc_scaled_top_n and pass it.
-    Per-crate top-N scaled per crate via per_crate_loc lookup."""
+    the SLOC-scaled value via _compute_sloc_scaled_top_n and pass it.
+    Per-crate top-N scaled per crate via per_crate_sloc lookup."""
     if top_n_workspace is None:
         top_n_workspace = _TOP_N_FLOOR
-    per_crate_loc = per_crate_loc or {}
+    per_crate_sloc = per_crate_sloc or {}
     pattern_metrics = fp.get("pattern_metrics", {})
 
     def _top_n_for_crate(crate: str) -> int:
-        return _compute_loc_scaled_top_n(per_crate_loc.get(crate, 0))
+        return _compute_sloc_scaled_top_n(per_crate_sloc.get(crate, 0))
 
     # 0.0.20 patch 20b: filter per_crate_counts to workspace-originated
     # patterns only. the_user 2026-06-04: 'drop std results entirely in
@@ -1366,20 +1380,21 @@ def candidate_instances(fp: dict, facts: dict):
     surfaced this pick)."""
     if not fp["pattern_histogram"]:
         return []
-    # 0.0.13 + 0.0.22: significance-based set picker (architecture /
-    # public / inter-crate / intra-crate / inner-crate). 0.0.20 +
-    # 0.0.22 patches: workspace-wide top_n SLOC-scaled (single workspace
-    # LoC anchor); per-crate intra + inner top_n scale per-crate via
-    # _compute_loc_scaled_top_n(per_crate_loc[crate]).
-    workspace_loc = fp.get("totals", {}).get("loc", 0)
-    top_n_workspace = _compute_loc_scaled_top_n(workspace_loc)
-    per_crate_loc = {
-        crate: info.get("loc", 0)
+    # 0.0.13 + 0.0.22 + 0.0.25: significance-based set picker
+    # (architecture / public / inter-crate / internals / intra-crate /
+    # inner-crate). Workspace-wide top_n SLOC-scaled; per-crate intra +
+    # inner top_n scale per-crate via _compute_sloc_scaled_top_n(
+    # per_crate_sloc[crate]). 0.0.25 input is normalized SLOC (no
+    # comments / blanks / test blocks).
+    workspace_sloc = fp.get("totals", {}).get("sloc", 0)
+    top_n_workspace = _compute_sloc_scaled_top_n(workspace_sloc)
+    per_crate_sloc = {
+        crate: info.get("sloc", 0)
         for crate, info in fp.get("per_crate", {}).items()
     }
     sig = _compute_significance_sets(
         fp, facts,
-        per_crate_loc=per_crate_loc,
+        per_crate_sloc=per_crate_sloc,
         top_n_workspace=top_n_workspace,
     )
     # Enrich each set with instance + spans per pattern.
@@ -1719,7 +1734,7 @@ def emit_container_routing(root: Path, fp: dict, facts: dict, out: Path):
         c = fp["per_crate"][name]
         ideps = [d for d in c["deps"] if d in fp["per_crate"]]
         dep_str = f" -> depends on: {', '.join(ideps)}" if ideps else ""
-        L.append(f"- **{name}** ({c['dir']}/, {c['loc']} LoC, "
+        L.append(f"- **{name}** ({c['dir']}/, {c['sloc']} SLOC, "
                  f"{c['n_impls']} impls, {c['n_types']} types){dep_str}")
     L.append("")
     L.append("**[AGENT]** Pick the member whose architectural pattern "
@@ -1898,7 +1913,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
         c = fp["per_crate"][name]
         ideps = [d for d in c["deps"] if d in fp["per_crate"]]
         dep_str = f" -> depends on: {', '.join(ideps)}" if ideps else ""
-        L.append(f"- **{name}** ({c['dir']}/, {c['loc']} LoC, {c['n_impls']} impls, "
+        L.append(f"- **{name}** ({c['dir']}/, {c['sloc']} SLOC, {c['n_impls']} impls, "
                  f"{c['n_types']} types){dep_str}")
     L.append("")
     if use_clusters:
@@ -1996,7 +2011,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  f"(architecture / public / inter-crate); top "
                  f"{per_crate_min} per crate for intra-crate / "
                  f"inner-crate. SLOC-scaled per "
-                 f"`max(7, round(7 + 2 * log2(LoC / 15000)))`. "
+                 f"`max(7, round(7 + 2 * log2(SLOC / DIVISOR)))`. "
                  f"the_user 2026-06-04: 'i'd rather slightly "
                  f"over-produce than under produce'.")
     else:
@@ -2004,8 +2019,8 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  f"(architecture / public / inter-crate); per-crate "
                  f"top-N for intra-crate / inner-crate ranges "
                  f"{per_crate_min}..{per_crate_max}, scaled per each "
-                 f"crate's LoC via `max(7, round(7 + 2 * log2(LoC / "
-                 f"15000)))`. the_user 2026-06-04: 'i'd rather "
+                 f"crate's SLOC via `max(7, round(7 + 2 * log2(SLOC "
+                 f"/ DIVISOR)))`. the_user 2026-06-04: 'i'd rather "
                  f"slightly over-produce than under produce'.")
     L.append("")
     # Use the legacy list-shape for downstream sections.

@@ -21,7 +21,7 @@ pub fn run() -> std::result::Result<(), Error> {
         source,
     })?;
     eprintln!(
-        "[rust_recon_scan] {} files scanned, {} parse failed, wrote {}",
+        "[rust_recon] {} files scanned, {} parse failed, wrote {}",
         facts.files_scanned,
         facts.files_parse_failed,
         out_path.display()

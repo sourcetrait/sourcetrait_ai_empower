@@ -902,52 +902,42 @@ def select_mode(ranked, by_kind, workspace_roots, n_components):
 
 
 def _run_ast_scan(root: Path, out_dir: Path, crates: dict) -> dict:
-    """0.0.26: invoke the syn-based rust_recon_scan binary against the
-    workspace, parse scan.json, and return the AST-derived signal data
-    keyed for downstream merging.
+    """Invoke the syn-based rust_recon binary against the workspace,
+    parse scan.json, and return the AST-derived signal data keyed for
+    downstream merging.
 
-    Binary path resolution: ORIENT_AST_SCAN_BIN env var ->
-    ~/app/bin/rust_recon_scan -> sourcetrait_empower/target/release/
-    rust_recon_scan. If none exists OR the binary fails, returns an
-    empty dict and prints a warning - the picker degrades gracefully
-    to the regex-based scanner's output (Frame-class types won't
-    surface but the rest of the pipeline works).
+    Binary resolves via PATH ($CARGO_HOME/bin/rust_recon after
+    `cargo install --path crates/rust_recon`). If the binary is
+    absent or fails, returns an empty dict and prints a warning -
+    the picker degrades gracefully (Frame-class types won't surface
+    but the rest of the pipeline works).
     """
     import subprocess
-    candidates = []
-    env_path = os.environ.get("ORIENT_AST_SCAN_BIN")
-    if env_path:
-        candidates.append(Path(env_path))
-    home = Path(os.environ.get("HOME", "/home/box"))
-    candidates.append(home / "app" / "bin" / "rust_recon_scan")
-    candidates.append(
-        Path("/home/box/proj/sourcetrait/sourcetrait_empower")
-        / "target" / "release" / "rust_recon_scan"
-    )
-    binary = next((p for p in candidates if p.is_file()), None)
-    if not binary:
-        print(
-            "[characterize] warning: rust_recon_scan binary not found; "
-            "AST signal skipped (Frame-class types won't surface)",
-            file=sys.stderr,
-        )
-        return {"fn_sig_usages": [], "field_usages": [],
-                "type_alias_usages": []}
     try:
         subprocess.run(
-            [str(binary), str(root), str(out_dir)],
+            ["rust_recon", str(root), str(out_dir)],
             check=True,
             capture_output=True,
             text=True,
         )
+    except FileNotFoundError:
+        print(
+            "[characterize] warning: rust_recon binary not on PATH; "
+            "AST signal skipped (Frame-class types won't surface). "
+            "Install via `cargo install --path crates/rust_recon` "
+            "from the sourcetrait_empower workspace.",
+            file=sys.stderr,
+        )
+        return {"fn_sig_usages": [], "field_usages": [],
+                "type_alias_usages": [], "method_ref_usages": []}
     except subprocess.CalledProcessError as e:
         print(
-            f"[characterize] warning: rust_recon_scan failed "
+            f"[characterize] warning: rust_recon failed "
             f"({e.returncode}): {e.stderr[:300]}",
             file=sys.stderr,
         )
         return {"fn_sig_usages": [], "field_usages": [],
-                "type_alias_usages": []}
+                "type_alias_usages": [], "method_ref_usages": []}
     scan_path = out_dir / "scan.json"
     if not scan_path.is_file():
         return {"fn_sig_usages": [], "field_usages": [],
@@ -1526,7 +1516,7 @@ def main():
         if any(seg == "examples" for seg in parts):
             example_rs_files += 1
 
-    # 0.0.26: AST scanner extension. Invoke rust_recon_scan binary
+    # 0.0.26: AST scanner extension. Invoke rust_recon binary
     # (syn-based) to capture type-identifier occurrences in fn
     # signatures + struct fields + type aliases - the primary usage
     # sites the regex-based rustscan.py can't reach. Merged into

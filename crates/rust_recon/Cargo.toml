@@ -1,8 +1,8 @@
 [package]
-name = "rust_recon_scan"
-version = "0.0.1"
+name = "rust_recon"
+version = "0.0.34"
 edition = "2024"
-description = "AST-based Rust source scanner for rust_recon - extracts type-identifier usage in fn signatures, struct fields, generic bounds; complements the existing rustscan.py extraction"
+description = "Rust source scanner for rust_recon - extracts type-identifier usages (fn signatures, struct fields, generic bounds, method refs) plus per-file lex+structure facts (items, traits, impls, derives, macros, uses, mods, seams) for the rust_recon orientation pipeline"
 authors = ["SourceTrait <development@sourcetrait.com>"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/sourcetrait/sourcetrait_empower"
@@ -11,10 +11,11 @@ categories = []
 keywords = ["sourcetrait", "empower", "rust", "ast", "scanner"]
 
 [[bin]]
-name = "rust_recon_scan"
+name = "rust_recon"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
 proc-macro2.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -5,9 +5,10 @@ use snafu::Snafu;
 /// root to scan + the output directory where scan.json is written.
 ///
 /// Why: the scanner is invoked from characterize.py with the same
-/// workspace-root + output-directory contract as the existing
-/// rustscan.py call. Keeping the surface minimal eases the Python
-/// wrapper.
+/// workspace-root + output-directory contract. Keeping the surface
+/// minimal eases the Python wrapper. Phase 1 of the 0.0.34 sweep
+/// retains the bare-positional shape; Phase 2 wraps this under a
+/// clap-derived `scan usages` subcommand.
 ///
 /// Where: built by `Cli::from_args()` in run.rs; consumed by walk()
 /// and the JSON write at the end.
@@ -20,7 +21,7 @@ pub(crate) struct Cli {
 #[derive(Debug, Snafu)]
 pub enum CliError {
     #[snafu(display(
-        "usage: rust_recon_scan <workspace_root> <out_dir>"
+        "usage: rust_recon <workspace_root> <out_dir>"
     ))]
     BadArgs,
 }

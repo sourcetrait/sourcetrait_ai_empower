@@ -2,6 +2,7 @@ use crate::*;
 use ext_serde::*;
 use ext_syn::*;
 use ext_walkdir::*;
+use proc_macro2::{Delimiter, TokenTree};
 use std::collections::HashMap;
 
 /// What: per-file lex+structure facts walker. Ports rustscan.py
@@ -724,6 +725,165 @@ impl FileWalker {
         }
     }
 
+    fn scan_macro_body_tokens(
+        &mut self,
+        tokens: &proc_macro2::TokenStream,
+        brace_depth: usize,
+    ) {
+        let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
+        let mut i = 0;
+        while i < trees.len() {
+            match &trees[i] {
+                TokenTree::Ident(ident) => {
+                    let name = ident.to_string();
+                    match name.as_str() {
+                        "impl" => {
+                            let line = ident.span().start().line;
+                            let (trait_name, type_name, next_i) =
+                                parse_impl_from_tokens(&trees, i + 1);
+                            self.file_facts.impls.push(ImplEntry {
+                                file: self.file.clone(),
+                                trait_name,
+                                type_name,
+                                line,
+                                end_line: line,
+                                cfg_gated: false,
+                                cfg: String::new(),
+                            });
+                            i = next_i;
+                            continue;
+                        }
+                        "trait" => {
+                            if let Some((nm, next)) = next_ident(&trees, i + 1) {
+                                let line = ident.span().start().line;
+                                self.file_facts.traits.push(TraitEntry {
+                                    file: self.file.clone(),
+                                    name: nm,
+                                    line,
+                                    cfg_gated: false,
+                                    doc: String::new(),
+                                    visibility: String::new(),
+                                });
+                                i = next;
+                                continue;
+                            }
+                        }
+                        "struct" | "enum" | "union" => {
+                            if let Some((nm, next)) = next_ident(&trees, i + 1) {
+                                let line = ident.span().start().line;
+                                self.file_facts.types.push(TypeEntry {
+                                    file: self.file.clone(),
+                                    kind: name.clone(),
+                                    name: nm,
+                                    line,
+                                    cfg_gated: false,
+                                    doc: String::new(),
+                                    visibility: String::new(),
+                                });
+                                i = next;
+                                continue;
+                            }
+                        }
+                        "fn" => {
+                            if let Some((nm, next)) = next_ident(&trees, i + 1) {
+                                let line = ident.span().start().line;
+                                self.file_facts.fns.push(FnEntry {
+                                    file: self.file.clone(),
+                                    name: nm,
+                                    line,
+                                    brace_depth,
+                                    doc: String::new(),
+                                    visibility: String::new(),
+                                });
+                                i = next;
+                                continue;
+                            }
+                        }
+                        "mod" => {
+                            if let Some((nm, next)) = next_ident(&trees, i + 1) {
+                                let line = ident.span().start().line;
+                                self.file_facts.mods.push(ModEntry {
+                                    file: self.file.clone(),
+                                    name: nm,
+                                    line,
+                                    visibility: String::new(),
+                                });
+                                i = next;
+                                continue;
+                            }
+                        }
+                        "type" => {
+                            if let Some((nm, next)) = next_ident(&trees, i + 1) {
+                                let line = ident.span().start().line;
+                                self.file_facts.types.push(TypeEntry {
+                                    file: self.file.clone(),
+                                    kind: "type".to_string(),
+                                    name: nm,
+                                    line,
+                                    cfg_gated: false,
+                                    doc: String::new(),
+                                    visibility: String::new(),
+                                });
+                                i = next;
+                                continue;
+                            }
+                        }
+                        _ => {
+                            if i + 4 < trees.len() {
+                                if let (
+                                    TokenTree::Punct(p1),
+                                    TokenTree::Punct(p2),
+                                    TokenTree::Ident(inner_id),
+                                    TokenTree::Group(g),
+                                ) = (
+                                    &trees[i + 1],
+                                    &trees[i + 2],
+                                    &trees[i + 3],
+                                    &trees[i + 4],
+                                ) {
+                                    if p1.as_char() == ':'
+                                        && p2.as_char() == ':'
+                                        && g.delimiter() == Delimiter::Parenthesis
+                                    {
+                                        let outer = ident.to_string();
+                                        let inner = inner_id.to_string();
+                                        if !KEYWORDS.contains(&outer.as_str())
+                                            && !KEYWORDS.contains(&inner.as_str())
+                                            && !TYPE_USAGE_NOISE_TYPES
+                                                .contains(&outer.as_str())
+                                        {
+                                            let line = ident.span().start().line;
+                                            let entry = TypeUsageEntry {
+                                                file: self.file.clone(),
+                                                name: format!("{}::{}", outer, inner),
+                                                kind_hint: "factory_call".to_string(),
+                                                line,
+                                                brace_depth,
+                                                expansion_unverified: true,
+                                            };
+                                            if self.is_example {
+                                                self.file_facts
+                                                    .example_type_usages
+                                                    .push(entry);
+                                            } else {
+                                                self.file_facts.type_usages.push(entry);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                TokenTree::Group(g) => {
+                    self.scan_macro_body_tokens(&g.stream(), brace_depth);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+
     fn walk_macro_item(
         &mut self,
         mc: &syn::ItemMacro,
@@ -749,6 +909,7 @@ impl FileWalker {
                     macro_exported: has_macro_export,
                 });
             }
+            self.scan_macro_body_tokens(&mc.mac.tokens, brace_depth);
         } else {
             let line = mc.mac.path.segments.last().map(|s| s.ident.span().start().line).unwrap_or(0);
             let arg_idents = extract_macro_arg_idents(&mc.mac.tokens);
@@ -765,6 +926,7 @@ impl FileWalker {
                     brace_depth: Some(brace_depth),
                 });
             }
+            self.scan_macro_body_tokens(&mc.mac.tokens, brace_depth);
         }
     }
 
@@ -789,6 +951,7 @@ impl FileWalker {
     fn walk_stmt(&mut self, stmt: &Stmt, brace_depth: usize) {
         match stmt {
             Stmt::Local(l) => {
+                self.walk_pat(&l.pat, brace_depth);
                 if let Some(init) = &l.init {
                     self.walk_expr(&init.expr, brace_depth);
                     if let Some((_, diverge)) = &init.diverge {
@@ -822,6 +985,7 @@ impl FileWalker {
                         brace_depth: Some(brace_depth),
                     });
                 }
+                self.scan_macro_body_tokens(&sm.mac.tokens, brace_depth);
             }
         }
     }
@@ -849,7 +1013,12 @@ impl FileWalker {
             Expr::Path(p) => {
                 self.scan_path_for_seams(&p.path);
             }
-            Expr::Closure(cl) => self.walk_expr(&cl.body, brace_depth),
+            Expr::Closure(cl) => {
+                for input in &cl.inputs {
+                    self.walk_pat(input, brace_depth);
+                }
+                self.walk_expr(&cl.body, brace_depth);
+            }
             Expr::Block(b) => self.walk_block(&b.block, brace_depth + 1),
             Expr::If(i) => {
                 self.walk_expr(&i.cond, brace_depth);
@@ -861,6 +1030,7 @@ impl FileWalker {
             Expr::Match(m) => {
                 self.walk_expr(&m.expr, brace_depth);
                 for arm in &m.arms {
+                    self.walk_pat(&arm.pat, brace_depth);
                     if let Some((_, g)) = &arm.guard {
                         self.walk_expr(g, brace_depth);
                     }
@@ -873,6 +1043,7 @@ impl FileWalker {
                 self.walk_block(&w.body, brace_depth + 1);
             }
             Expr::ForLoop(fl) => {
+                self.walk_pat(&fl.pat, brace_depth);
                 self.walk_expr(&fl.expr, brace_depth);
                 self.walk_block(&fl.body, brace_depth + 1);
             }
@@ -919,7 +1090,10 @@ impl FileWalker {
                 self.walk_expr(&a.left, brace_depth);
                 self.walk_expr(&a.right, brace_depth);
             }
-            Expr::Let(l) => self.walk_expr(&l.expr, brace_depth),
+            Expr::Let(l) => {
+                self.walk_pat(&l.pat, brace_depth);
+                self.walk_expr(&l.expr, brace_depth);
+            }
             Expr::Async(a) => self.walk_block(&a.block, brace_depth + 1),
             Expr::Unsafe(u) => {
                 self.file_facts.seams_unsafe += 1;
@@ -962,6 +1136,7 @@ impl FileWalker {
                         brace_depth: Some(brace_depth),
                     });
                 }
+                self.scan_macro_body_tokens(&m.mac.tokens, brace_depth);
             }
             _ => {}
         }
@@ -974,6 +1149,12 @@ impl FileWalker {
         }
         let inner_seg = segments[segments.len() - 1];
         let outer_seg = segments[segments.len() - 2];
+        if !matches!(outer_seg.arguments, PathArguments::None) {
+            return;
+        }
+        if !matches!(inner_seg.arguments, PathArguments::None) {
+            return;
+        }
         let outer = outer_seg.ident.to_string();
         let inner = inner_seg.ident.to_string();
         if KEYWORDS.contains(&outer.as_str()) || KEYWORDS.contains(&inner.as_str()) {
@@ -995,6 +1176,48 @@ impl FileWalker {
             self.file_facts.example_type_usages.push(entry);
         } else {
             self.file_facts.type_usages.push(entry);
+        }
+    }
+
+    fn walk_pat(&mut self, pat: &syn::Pat, brace_depth: usize) {
+        match pat {
+            syn::Pat::TupleStruct(ts) => {
+                self.maybe_record_type_usage(&ts.path, brace_depth);
+                for elem in &ts.elems {
+                    self.walk_pat(elem, brace_depth);
+                }
+            }
+            syn::Pat::Tuple(t) => {
+                for elem in &t.elems {
+                    self.walk_pat(elem, brace_depth);
+                }
+            }
+            syn::Pat::Struct(s) => {
+                for field in &s.fields {
+                    self.walk_pat(&field.pat, brace_depth);
+                }
+            }
+            syn::Pat::Or(o) => {
+                for p in &o.cases {
+                    self.walk_pat(p, brace_depth);
+                }
+            }
+            syn::Pat::Reference(r) => self.walk_pat(&r.pat, brace_depth),
+            syn::Pat::Slice(s) => {
+                for elem in &s.elems {
+                    self.walk_pat(elem, brace_depth);
+                }
+            }
+            syn::Pat::Paren(p) => self.walk_pat(&p.pat, brace_depth),
+            syn::Pat::Range(r) => {
+                if let Some(s) = &r.start {
+                    self.walk_expr(s, brace_depth);
+                }
+                if let Some(e) = &r.end {
+                    self.walk_expr(e, brace_depth);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1228,6 +1451,128 @@ fn is_ident(s: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn next_ident(trees: &[TokenTree], start: usize) -> Option<(String, usize)> {
+    let mut i = start;
+    while i < trees.len() {
+        match &trees[i] {
+            TokenTree::Ident(id) => {
+                let nm = id.to_string();
+                if nm.starts_with('_') || nm.chars().next().map_or(false, |c| c.is_alphabetic()) {
+                    return Some((nm, i + 1));
+                }
+                return None;
+            }
+            TokenTree::Punct(p) => {
+                if p.as_char() == '!' || p.as_char() == '$' {
+                    i += 1;
+                    continue;
+                }
+                return None;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn parse_impl_from_tokens(
+    trees: &[TokenTree],
+    start: usize,
+) -> (Option<String>, Option<String>, usize) {
+    let mut i = start;
+    if i < trees.len() {
+        if let TokenTree::Punct(p) = &trees[i] {
+            if p.as_char() == '<' {
+                i = skip_balanced(trees, i, '<', '>');
+            }
+        }
+    }
+    let mut first_idents: Vec<String> = Vec::new();
+    let mut found_for = false;
+    while i < trees.len() {
+        match &trees[i] {
+            TokenTree::Ident(id) => {
+                let nm = id.to_string();
+                if nm == "for" {
+                    found_for = true;
+                    i += 1;
+                    break;
+                }
+                if nm == "where" {
+                    break;
+                }
+                first_idents.push(nm);
+                i += 1;
+            }
+            TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
+                break;
+            }
+            TokenTree::Punct(p) => {
+                if p.as_char() == '<' {
+                    i = skip_balanced(trees, i, '<', '>');
+                    continue;
+                }
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    if !found_for {
+        let type_name = first_idents.into_iter().rfind(|s| !KEYWORDS.contains(&s.as_str()));
+        return (None, type_name, i);
+    }
+    let trait_name = first_idents.into_iter().rfind(|s| !KEYWORDS.contains(&s.as_str()));
+    let mut type_idents: Vec<String> = Vec::new();
+    while i < trees.len() {
+        match &trees[i] {
+            TokenTree::Ident(id) => {
+                let nm = id.to_string();
+                if nm == "where" {
+                    break;
+                }
+                type_idents.push(nm);
+                i += 1;
+            }
+            TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
+                break;
+            }
+            TokenTree::Punct(p) => {
+                if p.as_char() == '<' {
+                    i = skip_balanced(trees, i, '<', '>');
+                    continue;
+                }
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    let type_name = type_idents.into_iter().rfind(|s| !KEYWORDS.contains(&s.as_str()));
+    (trait_name, type_name, i)
+}
+
+fn skip_balanced(trees: &[TokenTree], start: usize, open: char, close: char) -> usize {
+    let mut depth = 0;
+    let mut i = start;
+    while i < trees.len() {
+        if let TokenTree::Punct(p) = &trees[i] {
+            if p.as_char() == open {
+                depth += 1;
+            } else if p.as_char() == close {
+                depth -= 1;
+                if depth == 0 {
+                    return i + 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    i
 }
 
 fn flatten_use_tree(tree: &syn::UseTree) -> String {

@@ -30,13 +30,23 @@ dev_with_end_threshold = 30
 # cap = max(top_n_floor, round(top_n_floor + sloc_multiplier
 #                              * log2(sloc / sloc_divisor)))
 #
-# Current calibration: D=100, M=1.6 (0.0.29 widening, per the_user
-# 2026-06-04 'calibrate for D=100 M=1.6'). Picks ratatui 27.22% +
-# sourcetrait_common 27.25% as highest-covered repos; all targets
-# stay under 30%. Function monotonic decreasing in D so smaller D
-# never drops any prior cap.
+# Current calibration: D=25, M=1.6 (0.0.31 widening). Per the_user
+# 2026-06-04 'calibrate for D=25 M=1.6' after the_user-stated framing
+# that sourcetrait_common exceeding 30% is acceptable due to its
+# small-pieces-meant-to-be-documented structure. ratatui 29.64%
+# (highest non-sourcetrait_common); sourcetrait_common 32.13% (above
+# 30%, expected). All other targets stay under 30%. Function
+# monotonic decreasing in D so smaller D never drops any prior cap.
+#
+# Calibration history:
+# - 0.0.25: D=3100, M=1.6 (initial SLOC-normalized; meet-or-exceed
+#   0.0.24 caps)
+# - 0.0.27: D=300, M=1.6 (widened to ratatui [25, 29] band)
+# - 0.0.29: D=100, M=1.6 (widened to ratatui [27, 29] band)
+# - 0.0.31: D=25, M=1.6 (widened past 30% on sourcetrait_common
+#   accepted; ratatui >29%)
 top_n_floor = 7
-sloc_divisor = 100
+sloc_divisor = 25
 sloc_multiplier = 1.6
 
 [picker.example]

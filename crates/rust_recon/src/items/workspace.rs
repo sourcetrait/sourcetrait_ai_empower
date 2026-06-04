@@ -14,17 +14,17 @@ use crate::*;
 /// Where: called from `crate::run::run` via the `Scan::Items` clap
 /// subcommand match.
 pub(crate) fn scan_workspace(
-    workspace_root: &std::path::Path,
-    out_dir: &std::path::Path,
+    workspace_root: &Path,
+    out_dir: &Path,
 ) -> std::result::Result<(), Error> {
     let mut facts = ItemsFacts {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         ..Default::default()
     };
-    let mut aggregate_seams: std::collections::HashMap<SeamKind, usize> = std::collections::HashMap::new();
+    let mut aggregate_seams: HashMap<SeamKind, usize> = HashMap::new();
     let rs_files = collect_rs_files(workspace_root);
     for (path, rel) in &rs_files {
-        let src = match std::fs::read_to_string(path) {
+        let src = match fs::read_to_string(path) {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -40,7 +40,7 @@ pub(crate) fn scan_workspace(
         let file_facts = walker.walk_file(&parsed);
         merge_file_facts(&mut facts, &mut aggregate_seams, file_facts);
     }
-    let mut seams_wire: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut seams_wire: BTreeMap<String, usize> = BTreeMap::new();
     for (k, n) in aggregate_seams {
         if n > 0 {
             seams_wire.insert(k.wire_key().to_string(), n);
@@ -51,7 +51,7 @@ pub(crate) fn scan_workspace(
     let json = serde_json::to_string_pretty(&facts)
         .map_err(|source| Error::Serialize { source })?;
     let write_path = out_path.clone();
-    std::fs::write(&out_path, json).map_err(|source| Error::Write {
+    fs::write(&out_path, json).map_err(|source| Error::Write {
         path: write_path,
         source,
     })?;
@@ -67,7 +67,7 @@ pub(crate) fn scan_workspace(
 /// Collect every `.rs` file under `workspace_root`, sorted by relative
 /// path for determinism. Skips `target/`, `tests/`, and `benches/`
 /// segments anywhere in the path.
-fn collect_rs_files(workspace_root: &std::path::Path) -> Vec<(std::path::PathBuf, String)> {
+fn collect_rs_files(workspace_root: &Path) -> Vec<(PathBuf, String)> {
     let mut rs_files = Vec::new();
     for entry in walkdir::WalkDir::new(workspace_root)
         .into_iter()
@@ -95,7 +95,7 @@ fn collect_rs_files(workspace_root: &std::path::Path) -> Vec<(std::path::PathBuf
     rs_files
 }
 
-fn is_target_dir(p: &std::path::Path) -> bool {
+fn is_target_dir(p: &Path) -> bool {
     p.components()
         .any(|c| c.as_os_str().to_str() == Some("target"))
 }
@@ -104,7 +104,7 @@ fn is_target_dir(p: &std::path::Path) -> bool {
 /// and merge its seam counters into the workspace `SeamKind` map.
 fn merge_file_facts(
     facts: &mut ItemsFacts,
-    aggregate_seams: &mut std::collections::HashMap<SeamKind, usize>,
+    aggregate_seams: &mut HashMap<SeamKind, usize>,
     file_facts: FileLevelFacts,
 ) {
     facts.impls.extend(file_facts.impls);

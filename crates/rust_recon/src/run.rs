@@ -12,7 +12,7 @@ use crate::*;
 /// Where: called from main.rs; surfaces Error to the binary entry
 /// point.
 pub fn run() -> std::result::Result<(), Error> {
-    let cli = <Cli as clap::Parser>::parse();
+    let cli = Cli::parse();
     match cli.command {
         Command::Scan { scan } => dispatch_scan(scan),
     }
@@ -32,15 +32,15 @@ fn dispatch_scan(scan: ScanCommand) -> std::result::Result<(), Error> {
 }
 
 fn scan_usages(
-    workspace_root: &std::path::Path,
-    out_dir: &std::path::Path,
+    workspace_root: &Path,
+    out_dir: &Path,
 ) -> std::result::Result<(), Error> {
     let facts = walk_workspace(workspace_root)?;
     let out_path = out_dir.join("recon_usages.json");
     let json = serde_json::to_string_pretty(&facts)
         .map_err(|source| Error::Serialize { source })?;
     let write_path = out_path.clone();
-    std::fs::write(&out_path, json).map_err(|source| Error::Write {
+    fs::write(&out_path, json).map_err(|source| Error::Write {
         path: write_path,
         source,
     })?;

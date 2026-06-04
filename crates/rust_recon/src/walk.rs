@@ -10,7 +10,7 @@ use crate::*;
 /// Aggregation by crate happens Python-side.
 ///
 /// Where: called by run() with the cli-supplied workspace_root.
-pub(crate) fn walk_workspace(root: &std::path::Path) -> Result<Facts> {
+pub(crate) fn walk_workspace(root: &Path) -> Result<Facts> {
     let mut facts = Facts {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         ..Default::default()
@@ -31,7 +31,7 @@ pub(crate) fn walk_workspace(root: &std::path::Path) -> Result<Facts> {
             Ok(r) => r.to_string_lossy().to_string(),
             Err(_) => continue,
         };
-        let src = match std::fs::read_to_string(p) {
+        let src = match fs::read_to_string(p) {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -51,7 +51,7 @@ pub(crate) fn walk_workspace(root: &std::path::Path) -> Result<Facts> {
     Ok(facts)
 }
 
-fn is_target_dir(p: &std::path::Path) -> bool {
+fn is_target_dir(p: &Path) -> bool {
     p.components().any(|c| {
         c.as_os_str().to_str() == Some("target")
     })

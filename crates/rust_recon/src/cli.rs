@@ -1,7 +1,9 @@
+use crate::*;
+
 /// What: parsed CLI arguments via clap derive. Parent `scan`
 /// subcommand with noun children. `usages` captures AST-derived
-/// cross-item type-reference signals; `items` follows at phase 3+
-/// (per-file lex+structure facts ported from rustscan.py).
+/// cross-item type-reference signals; `items` captures per-file
+/// lex+structure facts (ported from rustscan.py).
 ///
 /// Why: clap derive gives subcommand structure + automatic
 /// help/version + future extensibility. Surface mirrors the python
@@ -9,8 +11,8 @@
 /// (characterize / emit / measure-overlap / etc.) as top-level
 /// peers of `scan`.
 ///
-/// Where: parsed in run.rs entrypoint via `<Cli as clap::Parser>::parse()`;
-/// dispatched by subcommand match.
+/// Where: parsed in run.rs entrypoint via `Cli::parse()`; dispatched
+/// by subcommand match.
 #[derive(clap::Parser, Debug)]
 #[command(
     name = "rust_recon",
@@ -38,17 +40,17 @@ pub(crate) enum ScanCommand {
     /// in the output directory.
     Usages {
         /// Workspace root to scan.
-        workspace_root: std::path::PathBuf,
+        workspace_root: PathBuf,
         /// Output directory; recon_usages.json is written here.
-        out_dir: std::path::PathBuf,
+        out_dir: PathBuf,
     },
     /// Per-file lex+structure facts (impls, derives, types,
     /// traits, fns, macros, uses, mods, seams, type_usages).
     /// Writes recon_items.json in the output directory.
     Items {
         /// Workspace root to scan.
-        workspace_root: std::path::PathBuf,
+        workspace_root: PathBuf,
         /// Output directory; recon_items.json is written here.
-        out_dir: std::path::PathBuf,
+        out_dir: PathBuf,
     },
 }

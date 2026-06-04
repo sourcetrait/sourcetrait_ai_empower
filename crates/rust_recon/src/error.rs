@@ -1,3 +1,5 @@
+use crate::*;
+
 /// What: error type unified across the scanner pipeline.
 ///
 /// Why: a single Snafu enum lets the binary entry point format
@@ -10,20 +12,20 @@
 pub enum Error {
     #[snafu(display("read failed for {path:?}: {source}"))]
     Read {
-        path: std::path::PathBuf,
-        source: std::io::Error,
+        path: PathBuf,
+        source: io::Error,
     },
 
     #[snafu(display("parse failed for {path:?}: {source}"))]
     Parse {
-        path: std::path::PathBuf,
+        path: PathBuf,
         source: syn::Error,
     },
 
     #[snafu(display("write failed for {path:?}: {source}"))]
     Write {
-        path: std::path::PathBuf,
-        source: std::io::Error,
+        path: PathBuf,
+        source: io::Error,
     },
 
     #[snafu(display("serialize failed: {source}"))]

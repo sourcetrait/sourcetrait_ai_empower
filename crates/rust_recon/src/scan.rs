@@ -1,5 +1,4 @@
 use crate::*;
-use syn::spanned::Spanned as _;
 
 /// What: parse a single .rs file's source text via syn, walk its AST,
 /// and collect type-identifier occurrences in fn signatures, struct

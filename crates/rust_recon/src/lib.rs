@@ -27,4 +27,24 @@ pub(crate) use crate::{
     walk::*,
 };
 
+pub(crate) use std::{
+    collections::{
+        BTreeMap,
+        HashMap,
+    },
+    fs,
+    io,
+    path::{
+        Path,
+        PathBuf,
+    },
+};
+
+pub(crate) use clap::Parser;
+
+pub(crate) use syn::{
+    spanned::Spanned,
+    visit::Visit,
+};
+
 pub use crate::run::run;

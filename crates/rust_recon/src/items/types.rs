@@ -1,3 +1,5 @@
+use crate::*;
+
 /// What: top-level facts collected by `rust_recon scan items` across an
 /// entire workspace, serialized to `recon_items.json` and consumed by
 /// characterize.py as the per-file lex+structure feed.
@@ -27,7 +29,7 @@ pub(crate) struct ItemsFacts {
     pub(crate) derives: Vec<DeriveEntry>,
     pub(crate) type_usages: Vec<TypeUsageEntry>,
     pub(crate) example_type_usages: Vec<TypeUsageEntry>,
-    pub(crate) seams: std::collections::BTreeMap<String, usize>,
+    pub(crate) seams: BTreeMap<String, usize>,
     pub(crate) doc_count: usize,
 }
 
@@ -54,7 +56,7 @@ pub(crate) struct FileLevelFacts {
     pub(crate) derives: Vec<DeriveEntry>,
     pub(crate) type_usages: Vec<TypeUsageEntry>,
     pub(crate) example_type_usages: Vec<TypeUsageEntry>,
-    pub(crate) seams: std::collections::HashMap<SeamKind, usize>,
+    pub(crate) seams: HashMap<SeamKind, usize>,
     pub(crate) doc_count: usize,
 }
 

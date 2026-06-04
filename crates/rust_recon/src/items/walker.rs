@@ -1,5 +1,4 @@
 use crate::*;
-use syn::visit::Visit as _;
 
 /// What: per-file walker that drives a syn::visit::Visit traversal,
 /// emitting `*Entry` facts into a `FileLevelFacts` buffer.

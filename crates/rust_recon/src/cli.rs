@@ -1,39 +1,48 @@
 use crate::*;
-use snafu::Snafu;
+use ext_clap::*;
 
-/// What: parsed command-line arguments. Two positionals: the workspace
-/// root to scan + the output directory where scan.json is written.
+/// What: parsed CLI arguments via clap derive. Parent `scan`
+/// subcommand with noun children. `usages` captures AST-derived
+/// cross-item type-reference signals; `items` follows at phase 3+
+/// (per-file lex+structure facts ported from rustscan.py).
 ///
-/// Why: the scanner is invoked from characterize.py with the same
-/// workspace-root + output-directory contract. Keeping the surface
-/// minimal eases the Python wrapper. Phase 1 of the 0.0.34 sweep
-/// retains the bare-positional shape; Phase 2 wraps this under a
-/// clap-derived `scan usages` subcommand.
+/// Why: clap derive gives subcommand structure + automatic
+/// help/version + future extensibility. Surface mirrors the python
+/// CLI structure; future iterations port more subcommands
+/// (characterize / emit / measure-overlap / etc.) as top-level
+/// peers of `scan`.
 ///
-/// Where: built by `Cli::from_args()` in run.rs; consumed by walk()
-/// and the JSON write at the end.
-#[derive(Debug)]
+/// Where: parsed in run.rs entrypoint via Cli::parse(); dispatched
+/// by subcommand match.
+#[derive(Parser, Debug)]
+#[command(
+    name = "rust_recon",
+    version,
+    about = "Rust source scanner for the rust_recon orientation pipeline",
+)]
 pub(crate) struct Cli {
-    pub(crate) workspace_root: PathBuf,
-    pub(crate) out_dir: PathBuf,
+    #[command(subcommand)]
+    pub(crate) command: Command,
 }
 
-#[derive(Debug, Snafu)]
-pub enum CliError {
-    #[snafu(display(
-        "usage: rust_recon <workspace_root> <out_dir>"
-    ))]
-    BadArgs,
+#[derive(Subcommand, Debug)]
+pub(crate) enum Command {
+    /// Source scans (AST cross-item usages + lex/structure facts).
+    Scan {
+        #[command(subcommand)]
+        scan: ScanCommand,
+    },
 }
 
-impl Cli {
-    pub(crate) fn from_args() -> std::result::Result<Self, CliError> {
-        let mut args = std::env::args().skip(1);
-        let root = args.next().ok_or(CliError::BadArgs)?;
-        let out = args.next().ok_or(CliError::BadArgs)?;
-        Ok(Cli {
-            workspace_root: PathBuf::from(root),
-            out_dir: PathBuf::from(out),
-        })
-    }
+#[derive(Subcommand, Debug)]
+pub(crate) enum ScanCommand {
+    /// AST-derived cross-item usage signals (fn-sig + field +
+    /// type-alias + method-ref usages). Writes recon_usages.json
+    /// in the output directory.
+    Usages {
+        /// Workspace root to scan.
+        workspace_root: PathBuf,
+        /// Output directory; recon_usages.json is written here.
+        out_dir: PathBuf,
+    },
 }

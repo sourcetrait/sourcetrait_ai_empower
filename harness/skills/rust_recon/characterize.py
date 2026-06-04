@@ -915,7 +915,7 @@ def _run_ast_scan(root: Path, out_dir: Path, crates: dict) -> dict:
     import subprocess
     try:
         subprocess.run(
-            ["rust_recon", str(root), str(out_dir)],
+            ["rust_recon", "scan", "usages", str(root), str(out_dir)],
             check=True,
             capture_output=True,
             text=True,
@@ -932,13 +932,13 @@ def _run_ast_scan(root: Path, out_dir: Path, crates: dict) -> dict:
                 "type_alias_usages": [], "method_ref_usages": []}
     except subprocess.CalledProcessError as e:
         print(
-            f"[characterize] warning: rust_recon failed "
+            f"[characterize] warning: rust_recon scan usages failed "
             f"({e.returncode}): {e.stderr[:300]}",
             file=sys.stderr,
         )
         return {"fn_sig_usages": [], "field_usages": [],
                 "type_alias_usages": [], "method_ref_usages": []}
-    scan_path = out_dir / "scan.json"
+    scan_path = out_dir / "recon_usages.json"
     if not scan_path.is_file():
         return {"fn_sig_usages": [], "field_usages": [],
                 "type_alias_usages": [], "method_ref_usages": []}

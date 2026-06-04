@@ -8,7 +8,11 @@ pub(crate) mod walk;
 
 // 2. Crate-internal re-exports - the workhorse of `use crate::*`:
 pub(crate) use crate::{
-    cli::Cli,
+    cli::{
+        Cli,
+        Command,
+        ScanCommand,
+    },
     error::{
         Error,
         Result,
@@ -37,6 +41,14 @@ pub(crate) use std::{
 };
 
 // 4. External-crate types under namespaced shim mods:
+pub(crate) mod ext_clap {
+    pub(crate) use clap::{
+        Parser,
+        Subcommand,
+    };
+}
+
+
 pub(crate) mod ext_serde {
     pub(crate) use serde::{
         Deserialize,

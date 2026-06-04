@@ -11,9 +11,6 @@ use snafu::Snafu;
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum Error {
-    #[snafu(display("argv parse failed: {source}"))]
-    CliParse { source: cli::CliError },
-
     #[snafu(display("read failed for {path:?}: {source}"))]
     Read {
         path: PathBuf,

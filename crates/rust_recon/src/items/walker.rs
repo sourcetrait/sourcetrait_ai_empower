@@ -1,0 +1,710 @@
+use crate::*;
+use ext_syn::*;
+use ext_syn_visit::*;
+use super::*;
+
+/// What: per-file walker that drives a syn::visit::Visit traversal,
+/// emitting `*Entry` facts into a `FileLevelFacts` buffer.
+///
+/// Why: the python rustscan implementation it replaced did manual
+/// regex / token-stream traversal; syn::visit::Visit lets the parser
+/// drive recursion, which keeps the walker focused on per-node fact
+/// emission and naturally handles new syntax variants as syn evolves.
+/// Manual brace-depth tracking is preserved as a state field so the
+/// downstream `fn_table` heuristic in characterize.py keeps the same
+/// "free fn" semantics (brace_depth == 0).
+///
+/// Where: instantiated once per file in `items::workspace::scan_workspace`;
+/// `walk_file` runs Visit over the parsed File, then `facts` is drained
+/// into the workspace-level `ItemsFacts`.
+pub(crate) struct FileWalker {
+    file: String,
+    is_example: bool,
+    brace_depth: usize,
+    in_inner_attr_context: bool,
+    current_trait_vis: Option<String>,
+    facts: FileLevelFacts,
+}
+
+impl FileWalker {
+    pub(crate) fn new(rel_path: String) -> Self {
+        let is_example = is_example_file(&rel_path);
+        Self {
+            file: rel_path,
+            is_example,
+            brace_depth: 0,
+            in_inner_attr_context: false,
+            current_trait_vis: None,
+            facts: FileLevelFacts::default(),
+        }
+    }
+
+    /// What: parse the syn::File, walk it via Visit, and return the
+    /// accumulated per-file facts.
+    pub(crate) fn walk_file(mut self, file: &RsFile) -> FileLevelFacts {
+        self.in_inner_attr_context = true;
+        for attr in &file.attrs {
+            self.record_attribute_explicit(attr);
+        }
+        self.in_inner_attr_context = false;
+        for item in &file.items {
+            self.visit_item(item);
+        }
+        self.facts
+    }
+
+    /// Record one attribute occurrence, plus the side effects keyed off
+    /// its base name (derive list -> DeriveEntry, no_std -> seam, doc ->
+    /// doc_count, non-inert attr -> MacroEntry of kind AttrMacro).
+    fn record_attribute_explicit(&mut self, attr: &Attribute) {
+        let path_str = attribute_path_string(attr);
+        let base = last_segment(&path_str);
+        let args = attribute_args_string(attr);
+        let line = attr_line(attr);
+        if path_str == "doc" {
+            self.facts.doc_count += 1;
+        }
+        self.facts.attrs.push(AttrEntry {
+            file: self.file.clone(),
+            path: path_str.clone(),
+            base: base.clone(),
+            args: args.clone(),
+            inner: self.in_inner_attr_context,
+            line,
+        });
+        if base == "no_std" {
+            self.facts.seams.insert(SeamKind::NoStd, 1);
+        }
+        if base == "derive" {
+            for piece in split_top_commas(&args) {
+                let cleaned = last_segment(piece.trim());
+                if !cleaned.is_empty() {
+                    self.facts.derives.push(DeriveEntry {
+                        file: self.file.clone(),
+                        trait_name: cleaned,
+                        line,
+                    });
+                }
+            }
+        } else if !is_inert_attr(&base) && !is_noise_attr(&path_str, &base) {
+            let args_count = split_top_commas(&args)
+                .iter()
+                .filter(|s| !s.trim().is_empty())
+                .count();
+            self.facts.macros.push(MacroEntry {
+                file: self.file.clone(),
+                kind: MacroEntryKind::AttrMacro,
+                name: path_str.clone(),
+                line,
+                expansion_unverified: true,
+                args_count: Some(args_count),
+                arg_idents: None,
+                brace_depth: None,
+            });
+        }
+    }
+
+    /// Process an item's attrs list, extracting cfg-gating + the
+    /// macro_export flag along the way. Returns `(cfg_gated, cfg_expr,
+    /// has_macro_export)` or `None` when `cfg_expr.trim() == "test"`,
+    /// signaling that the caller should skip the item entirely.
+    fn process_item_attrs(
+        &mut self,
+        attrs: &[Attribute],
+    ) -> Option<(bool, String, bool)> {
+        let mut cfg_gated = false;
+        let mut cfg_expr = String::new();
+        let mut has_macro_export = false;
+        for attr in attrs {
+            let path_str = attribute_path_string(attr);
+            let base = last_segment(&path_str);
+            if base == "cfg" {
+                cfg_gated = true;
+                cfg_expr = attribute_args_string(attr);
+                if cfg_expr.trim() == "test" {
+                    return None;
+                }
+            }
+            if base == "macro_export" {
+                has_macro_export = true;
+            }
+            self.record_attribute_explicit(attr);
+        }
+        Some((cfg_gated, cfg_expr, has_macro_export))
+    }
+
+    fn bump_seam(&mut self, kind: SeamKind, n: usize) {
+        if n == 0 {
+            return;
+        }
+        *self.facts.seams.entry(kind).or_default() += n;
+    }
+
+    /// If `path` matches the `Outer::inner` shape with no generics on
+    /// either segment and the outer ident passes the type-usage filter,
+    /// emit a `TypeUsageEntry` at the current brace depth.
+    fn maybe_record_type_usage(&mut self, path: &SynPath) {
+        let segments: Vec<&PathSegment> = path.segments.iter().collect();
+        if segments.len() < 2 {
+            return;
+        }
+        let inner_seg = segments[segments.len() - 1];
+        let outer_seg = segments[segments.len() - 2];
+        if !matches!(outer_seg.arguments, PathArguments::None) {
+            return;
+        }
+        if !matches!(inner_seg.arguments, PathArguments::None) {
+            return;
+        }
+        let outer = outer_seg.ident.to_string();
+        let inner = inner_seg.ident.to_string();
+        if KEYWORDS.contains(&outer.as_str()) || KEYWORDS.contains(&inner.as_str()) {
+            return;
+        }
+        if TYPE_USAGE_NOISE_TYPES.contains(&outer.as_str()) {
+            return;
+        }
+        let entry = TypeUsageEntry {
+            file: self.file.clone(),
+            name: format!("{}::{}", outer, inner),
+            kind_hint: TypeUsageKind::FactoryCall,
+            line: outer_seg.ident.span().start().line,
+            brace_depth: self.brace_depth,
+            expansion_unverified: false,
+        };
+        if self.is_example {
+            self.facts.example_type_usages.push(entry);
+        } else {
+            self.facts.type_usages.push(entry);
+        }
+    }
+
+    fn scan_path_for_seams(&mut self, path: &SynPath) {
+        for seg in &path.segments {
+            match seg.ident.to_string().as_str() {
+                "libc" | "syscall" => self.bump_seam(SeamKind::SyscallLibc, 1),
+                "Serialize" | "Deserialize" => self.bump_seam(SeamKind::SerdeSerialize, 1),
+                "stdin" | "stdout" => self.bump_seam(SeamKind::StdIoStream, 1),
+                "Command" => self.bump_seam(SeamKind::ProcessSpawn, 1),
+                _ => {}
+            }
+        }
+    }
+
+    /// Iterate the stmts of a block at the CURRENT brace depth (no
+    /// further increment). Used by impl-item / trait-item fn handlers,
+    /// which fold the impl/trait brace and the fn body brace into one
+    /// depth level to match the python rustscan convention.
+    fn walk_block_stmts(&mut self, block: &Block) {
+        for stmt in &block.stmts {
+            self.visit_stmt(stmt);
+        }
+    }
+
+    /// Process attrs on every field in a struct / enum-variant / union;
+    /// the field types themselves aren't emitted (the AST scanner in
+    /// `crate::scan` handles cross-item type-reference signals
+    /// separately).
+    fn process_fields_attrs(&mut self, fields: &Fields) {
+        match fields {
+            Fields::Named(named) => {
+                for f in &named.named {
+                    self.process_item_attrs(&f.attrs);
+                }
+            }
+            Fields::Unnamed(unnamed) => {
+                for f in &unnamed.unnamed {
+                    self.process_item_attrs(&f.attrs);
+                }
+            }
+            Fields::Unit => {}
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for FileWalker {
+    fn visit_item_impl(&mut self, i: &'ast ItemImpl) {
+        let Some((cfg_gated, cfg_expr, _)) = self.process_item_attrs(&i.attrs) else {
+            return;
+        };
+        let line = i.impl_token.span.start().line;
+        let end_line = i.brace_token.span.close().start().line;
+        let trait_name = i
+            .trait_
+            .as_ref()
+            .and_then(|(_, path, _)| path.segments.last().map(|s| s.ident.to_string()));
+        let type_name = type_base_name(&i.self_ty);
+        self.facts.impls.push(ImplEntry {
+            file: self.file.clone(),
+            trait_name,
+            type_name: Some(type_name),
+            line,
+            end_line,
+            cfg_gated,
+            cfg: cfg_expr,
+        });
+        if i.unsafety.is_some() {
+            self.bump_seam(SeamKind::Unsafe, 1);
+        }
+        for item in &i.items {
+            self.visit_impl_item(item);
+        }
+    }
+
+    fn visit_item_trait(&mut self, t: &'ast ItemTrait) {
+        let Some((cfg_gated, _, _)) = self.process_item_attrs(&t.attrs) else {
+            return;
+        };
+        let line = t.ident.span().start().line;
+        self.facts.traits.push(TraitEntry {
+            file: self.file.clone(),
+            name: t.ident.to_string(),
+            line,
+            cfg_gated,
+            doc: extract_doc(&t.attrs),
+            visibility: visibility_string(&t.vis),
+        });
+        if t.unsafety.is_some() {
+            self.bump_seam(SeamKind::Unsafe, 1);
+        }
+        let saved = self.current_trait_vis.take();
+        self.current_trait_vis = Some(visibility_string(&t.vis));
+        for item in &t.items {
+            self.visit_trait_item(item);
+        }
+        self.current_trait_vis = saved;
+    }
+
+    fn visit_item_struct(&mut self, s: &'ast ItemStruct) {
+        let Some((cfg_gated, _, _)) = self.process_item_attrs(&s.attrs) else {
+            return;
+        };
+        self.facts.types.push(TypeEntry {
+            file: self.file.clone(),
+            kind: TypeEntryKind::Struct,
+            name: s.ident.to_string(),
+            line: s.ident.span().start().line,
+            cfg_gated,
+            doc: extract_doc(&s.attrs),
+            visibility: visibility_string(&s.vis),
+        });
+        self.process_fields_attrs(&s.fields);
+    }
+
+    fn visit_item_enum(&mut self, e: &'ast ItemEnum) {
+        let Some((cfg_gated, _, _)) = self.process_item_attrs(&e.attrs) else {
+            return;
+        };
+        self.facts.types.push(TypeEntry {
+            file: self.file.clone(),
+            kind: TypeEntryKind::Enum,
+            name: e.ident.to_string(),
+            line: e.ident.span().start().line,
+            cfg_gated,
+            doc: extract_doc(&e.attrs),
+            visibility: visibility_string(&e.vis),
+        });
+        for v in &e.variants {
+            self.process_item_attrs(&v.attrs);
+            self.process_fields_attrs(&v.fields);
+            if let Some((_, expr)) = &v.discriminant {
+                // Quirk preserved from the python rustscan: enum
+                // discriminants walk at brace_depth 0 regardless of
+                // the enclosing context.
+                let saved = self.brace_depth;
+                self.brace_depth = 0;
+                self.visit_expr(expr);
+                self.brace_depth = saved;
+            }
+        }
+    }
+
+    fn visit_item_union(&mut self, u: &'ast ItemUnion) {
+        let Some((cfg_gated, _, _)) = self.process_item_attrs(&u.attrs) else {
+            return;
+        };
+        self.facts.types.push(TypeEntry {
+            file: self.file.clone(),
+            kind: TypeEntryKind::Union,
+            name: u.ident.to_string(),
+            line: u.ident.span().start().line,
+            cfg_gated,
+            doc: extract_doc(&u.attrs),
+            visibility: visibility_string(&u.vis),
+        });
+        for f in &u.fields.named {
+            self.process_item_attrs(&f.attrs);
+        }
+    }
+
+    fn visit_item_type(&mut self, ta: &'ast ItemType) {
+        if self.process_item_attrs(&ta.attrs).is_none() {
+            return;
+        }
+        self.facts.types.push(TypeEntry {
+            file: self.file.clone(),
+            kind: TypeEntryKind::Type,
+            name: ta.ident.to_string(),
+            line: ta.ident.span().start().line,
+            cfg_gated: false,
+            doc: String::new(),
+            visibility: visibility_string(&ta.vis),
+        });
+    }
+
+    fn visit_item_fn(&mut self, f: &'ast ItemFn) {
+        if self.process_item_attrs(&f.attrs).is_none() {
+            return;
+        }
+        self.facts.fns.push(FnEntry {
+            file: self.file.clone(),
+            name: f.sig.ident.to_string(),
+            line: f.sig.ident.span().start().line,
+            brace_depth: self.brace_depth,
+            doc: extract_doc(&f.attrs),
+            visibility: visibility_string(&f.vis),
+        });
+        if f.sig.unsafety.is_some() {
+            self.bump_seam(SeamKind::Unsafe, 1);
+        }
+        self.visit_block(&f.block);
+    }
+
+    fn visit_item_mod(&mut self, m: &'ast ItemMod) {
+        if self.process_item_attrs(&m.attrs).is_none() {
+            return;
+        }
+        self.facts.mods.push(ModEntry {
+            file: self.file.clone(),
+            name: m.ident.to_string(),
+            line: m.ident.span().start().line,
+            visibility: visibility_string(&m.vis),
+        });
+        if let Some((_, items)) = &m.content {
+            self.brace_depth += 1;
+            for item in items {
+                self.visit_item(item);
+            }
+            self.brace_depth -= 1;
+        }
+    }
+
+    fn visit_item_macro(&mut self, mc: &'ast ItemMacro) {
+        let Some((_, _, has_macro_export)) = self.process_item_attrs(&mc.attrs) else {
+            return;
+        };
+        let name_segs: Vec<String> = mc
+            .mac
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        let path_name = name_segs.join("::");
+        let is_macro_rules = path_name == "macro_rules" || mc.ident.is_some();
+        if is_macro_rules {
+            if let Some(ident) = &mc.ident {
+                self.facts.macro_defs.push(MacroDefEntry {
+                    file: self.file.clone(),
+                    name: ident.to_string(),
+                    line: ident.span().start().line,
+                    visibility: String::new(),
+                    macro_exported: has_macro_export,
+                });
+            }
+        } else {
+            let line = mc
+                .mac
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.span().start().line)
+                .unwrap_or(0);
+            let arg_idents = extract_macro_arg_idents(&mc.mac.tokens);
+            let args_count = count_top_commas_plus_one(&mc.mac.tokens);
+            if !is_noise_macro(&path_name) {
+                self.facts.macros.push(MacroEntry {
+                    file: self.file.clone(),
+                    kind: MacroEntryKind::MacroInvocation,
+                    name: path_name,
+                    line,
+                    expansion_unverified: true,
+                    args_count: Some(args_count),
+                    arg_idents: Some(arg_idents.into_iter().take(64).collect()),
+                    brace_depth: Some(self.brace_depth),
+                });
+            }
+        }
+        scan_macro_body_tokens(
+            &mut self.facts,
+            &self.file,
+            self.is_example,
+            &mc.mac.tokens,
+            self.brace_depth,
+        );
+    }
+
+    fn visit_item_use(&mut self, u: &'ast ItemUse) {
+        let _ = self.process_item_attrs(&u.attrs);
+        self.facts.uses.push(UseEntry {
+            file: self.file.clone(),
+            reexport: matches!(u.vis, Visibility::Public(_)),
+            path: flatten_use_tree(&u.tree),
+            line: u.use_token.span.start().line,
+        });
+    }
+
+    fn visit_item_extern_crate(&mut self, ec: &'ast syn::ItemExternCrate) {
+        let _ = self.process_item_attrs(&ec.attrs);
+        self.bump_seam(SeamKind::Extern, 1);
+    }
+
+    fn visit_item_foreign_mod(&mut self, fm: &'ast syn::ItemForeignMod) {
+        let _ = self.process_item_attrs(&fm.attrs);
+        self.bump_seam(SeamKind::Extern, 1);
+        for it in &fm.items {
+            if let ForeignItem::Fn(ff) = it {
+                let _ = self.process_item_attrs(&ff.attrs);
+                self.facts.fns.push(FnEntry {
+                    file: self.file.clone(),
+                    name: ff.sig.ident.to_string(),
+                    line: ff.sig.ident.span().start().line,
+                    brace_depth: self.brace_depth,
+                    doc: extract_doc(&ff.attrs),
+                    visibility: visibility_string(&ff.vis),
+                });
+            }
+        }
+    }
+
+    fn visit_item_const(&mut self, c: &'ast syn::ItemConst) {
+        if self.process_item_attrs(&c.attrs).is_none() {
+            return;
+        }
+        self.visit_expr(&c.expr);
+    }
+
+    fn visit_item_static(&mut self, s: &'ast syn::ItemStatic) {
+        if self.process_item_attrs(&s.attrs).is_none() {
+            return;
+        }
+        self.visit_expr(&s.expr);
+    }
+
+    fn visit_impl_item_fn(&mut self, f: &'ast syn::ImplItemFn) {
+        if self.process_item_attrs(&f.attrs).is_none() {
+            return;
+        }
+        // Fold the impl block's brace into the fn body's brace: emit the
+        // FnEntry at brace_depth+1 AND iterate body stmts at the same
+        // brace_depth+1 (no further increment via visit_block).
+        self.brace_depth += 1;
+        self.facts.fns.push(FnEntry {
+            file: self.file.clone(),
+            name: f.sig.ident.to_string(),
+            line: f.sig.ident.span().start().line,
+            brace_depth: self.brace_depth,
+            doc: extract_doc(&f.attrs),
+            visibility: visibility_string(&f.vis),
+        });
+        if f.sig.unsafety.is_some() {
+            self.bump_seam(SeamKind::Unsafe, 1);
+        }
+        self.walk_block_stmts(&f.block);
+        self.brace_depth -= 1;
+    }
+
+    fn visit_impl_item_type(&mut self, ty: &'ast syn::ImplItemType) {
+        if self.process_item_attrs(&ty.attrs).is_none() {
+            return;
+        }
+        self.facts.types.push(TypeEntry {
+            file: self.file.clone(),
+            kind: TypeEntryKind::Type,
+            name: ty.ident.to_string(),
+            line: ty.ident.span().start().line,
+            cfg_gated: false,
+            doc: String::new(),
+            visibility: visibility_string(&ty.vis),
+        });
+    }
+
+    fn visit_impl_item_const(&mut self, c: &'ast syn::ImplItemConst) {
+        if self.process_item_attrs(&c.attrs).is_none() {
+            return;
+        }
+        self.brace_depth += 1;
+        self.visit_expr(&c.expr);
+        self.brace_depth -= 1;
+    }
+
+    fn visit_trait_item_fn(&mut self, f: &'ast syn::TraitItemFn) {
+        if self.process_item_attrs(&f.attrs).is_none() {
+            return;
+        }
+        let trait_vis = self.current_trait_vis.clone().unwrap_or_default();
+        self.brace_depth += 1;
+        self.facts.fns.push(FnEntry {
+            file: self.file.clone(),
+            name: f.sig.ident.to_string(),
+            line: f.sig.ident.span().start().line,
+            brace_depth: self.brace_depth,
+            doc: extract_doc(&f.attrs),
+            visibility: trait_vis,
+        });
+        if f.sig.unsafety.is_some() {
+            self.bump_seam(SeamKind::Unsafe, 1);
+        }
+        if let Some(b) = &f.default {
+            self.walk_block_stmts(b);
+        }
+        self.brace_depth -= 1;
+    }
+
+    fn visit_trait_item_type(&mut self, ty: &'ast syn::TraitItemType) {
+        if self.process_item_attrs(&ty.attrs).is_none() {
+            return;
+        }
+        let trait_vis = self.current_trait_vis.clone().unwrap_or_default();
+        self.facts.types.push(TypeEntry {
+            file: self.file.clone(),
+            kind: TypeEntryKind::Type,
+            name: ty.ident.to_string(),
+            line: ty.ident.span().start().line,
+            cfg_gated: false,
+            doc: String::new(),
+            visibility: trait_vis,
+        });
+    }
+
+    fn visit_trait_item_const(&mut self, c: &'ast syn::TraitItemConst) {
+        if self.process_item_attrs(&c.attrs).is_none() {
+            return;
+        }
+        if let Some((_, expr)) = &c.default {
+            self.brace_depth += 1;
+            self.visit_expr(expr);
+            self.brace_depth -= 1;
+        }
+    }
+
+    fn visit_block(&mut self, b: &'ast Block) {
+        self.brace_depth += 1;
+        self.walk_block_stmts(b);
+        self.brace_depth -= 1;
+    }
+
+    fn visit_expr_call(&mut self, c: &'ast ExprCall) {
+        if let Expr::Path(p) = &*c.func {
+            self.maybe_record_type_usage(&p.path);
+        }
+        self.visit_expr(&c.func);
+        for a in &c.args {
+            self.visit_expr(a);
+        }
+    }
+
+    fn visit_expr_method_call(&mut self, mc: &'ast ExprMethodCall) {
+        if mc.method == "spawn" {
+            self.bump_seam(SeamKind::ProcessSpawn, 1);
+        }
+        self.visit_expr(&mc.receiver);
+        for a in &mc.args {
+            self.visit_expr(a);
+        }
+    }
+
+    fn visit_expr_path(&mut self, p: &'ast syn::ExprPath) {
+        self.scan_path_for_seams(&p.path);
+    }
+
+    fn visit_expr_unsafe(&mut self, u: &'ast syn::ExprUnsafe) {
+        self.bump_seam(SeamKind::Unsafe, 1);
+        self.visit_block(&u.block);
+    }
+
+    fn visit_expr_macro(&mut self, m: &'ast syn::ExprMacro) {
+        let name_segs: Vec<String> = m
+            .mac
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        let name = name_segs.last().cloned().unwrap_or_default();
+        let line = m
+            .mac
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.span().start().line)
+            .unwrap_or(0);
+        if !is_noise_macro(&name) {
+            let arg_idents = extract_macro_arg_idents(&m.mac.tokens);
+            let args_count = count_top_commas_plus_one(&m.mac.tokens);
+            self.facts.macros.push(MacroEntry {
+                file: self.file.clone(),
+                kind: MacroEntryKind::MacroInvocation,
+                name,
+                line,
+                expansion_unverified: true,
+                args_count: Some(args_count),
+                arg_idents: Some(arg_idents.into_iter().take(64).collect()),
+                brace_depth: Some(self.brace_depth),
+            });
+        }
+        scan_macro_body_tokens(
+            &mut self.facts,
+            &self.file,
+            self.is_example,
+            &m.mac.tokens,
+            self.brace_depth,
+        );
+    }
+
+    fn visit_stmt_macro(&mut self, sm: &'ast syn::StmtMacro) {
+        let name_segs: Vec<String> = sm
+            .mac
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        let name = name_segs.last().cloned().unwrap_or_default();
+        let line = sm
+            .mac
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.span().start().line)
+            .unwrap_or(0);
+        if !is_noise_macro(&name) {
+            let arg_idents = extract_macro_arg_idents(&sm.mac.tokens);
+            let args_count = count_top_commas_plus_one(&sm.mac.tokens);
+            self.facts.macros.push(MacroEntry {
+                file: self.file.clone(),
+                kind: MacroEntryKind::MacroInvocation,
+                name,
+                line,
+                expansion_unverified: true,
+                args_count: Some(args_count),
+                arg_idents: Some(arg_idents.into_iter().take(64).collect()),
+                brace_depth: Some(self.brace_depth),
+            });
+        }
+        scan_macro_body_tokens(
+            &mut self.facts,
+            &self.file,
+            self.is_example,
+            &sm.mac.tokens,
+            self.brace_depth,
+        );
+    }
+
+    fn visit_pat_tuple_struct(&mut self, ts: &'ast syn::PatTupleStruct) {
+        self.maybe_record_type_usage(&ts.path);
+        for elem in &ts.elems {
+            self.visit_pat(elem);
+        }
+    }
+}

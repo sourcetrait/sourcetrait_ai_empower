@@ -1,6 +1,6 @@
-"""measure_overlap.py - 0.0.18 patch 18a: strict-overlap measurement
+"""measure_overlap.py - 0.0.18 + 0.0.22: strict-overlap measurement
 harness. Reads a structured manual-ground-truth JSON (the_user-validated
-architectural-protagonist list per target) + parses S5.1/5.2/5.3 pick
+architectural-protagonist list per target) + parses S5.1..5.5 pick
 entries from orientation.md per target in a baseline directory, then
 reports per-target overlap + missing + aggregate.
 
@@ -8,7 +8,7 @@ Usage:
   python3 measure_overlap.py <baseline_dir> <ground_truth_json>
 
   baseline_dir: directory containing per-target subdirs, each with an
-                orientation.md (e.g. notes/rust_recon/historical/recon/0.0.17/).
+                orientation.md (e.g. notes/rust_recon/historical/recon/0.0.22/).
   ground_truth_json: path to manual_ground_truth.json.
 
 Output: human-readable scoreboard to stdout. Exit 0 always (this is a
@@ -16,7 +16,8 @@ measurement tool, not a gate).
 
 Matching semantics: each ground-truth entry has aliases (case-sensitive
 substrings). An entry is matched if any alias appears as a substring
-in any pick across S5.1+5.2+5.3. The picker output items are like
+in any pick across S5.1..5.5 (architecture, public, inter-crate,
+intra-crate, inner-crate). The picker output items are like
 'derive:Component' or 'type_usage:World::new'; the substring match
 runs against the full kind:name string.
 """
@@ -32,17 +33,21 @@ _PICK_LINE_RE = re.compile(r"^-\s+`([^`]+)`")
 
 
 def parse_picks(orientation_text: str) -> dict[str, list[str]]:
-    """Parse S5.1, S5.2, S5.3 pick lists from an orientation.md.
+    """Parse S5.1..5.5 pick lists from an orientation.md.
 
-    Returns a dict: {'intra': [...], 'inter': [...], 'public': [...]}
+    Returns a dict:
+      {'architecture': [...], 'public': [...], 'inter_crate': [...],
+       'intra': [...], 'inner_crate': [...]}
     where each list contains kind:name strings from the bullet lines.
 
-    Intra is the union of all per-crate intra lists. Inter and public
-    are the workspace-wide single lists. The combined picks set is
-    the union across all three.
+    The workspace-wide sets (architecture / public / inter-crate) are
+    single lists; the per-crate sets (intra / inner-crate) are the
+    union across all per-crate sub-lists. The combined picks set is
+    the union across all five.
     """
     lines = orientation_text.splitlines()
-    sections = {"intra": [], "inter": [], "public": []}
+    sections = {"architecture": [], "public": [], "inter_crate": [],
+                "intra": [], "inner_crate": []}
     current_section: str | None = None
     in_s5 = False
     for line in lines:
@@ -56,16 +61,21 @@ def parse_picks(orientation_text: str) -> dict[str, list[str]]:
         if not in_s5:
             continue
         if stripped.startswith("### 5.1"):
-            current_section = "intra"
+            current_section = "architecture"
             continue
         if stripped.startswith("### 5.2"):
-            current_section = "inter"
-            continue
-        if stripped.startswith("### 5.3"):
             current_section = "public"
             continue
-        # End of significance lists when we hit the [AGENT] header or
-        # a new sub-section that isn't a per-crate header.
+        if stripped.startswith("### 5.3"):
+            current_section = "inter_crate"
+            continue
+        if stripped.startswith("### 5.4"):
+            current_section = "intra"
+            continue
+        if stripped.startswith("### 5.5"):
+            current_section = "inner_crate"
+            continue
+        # End of significance lists when we hit the [AGENT] header.
         if stripped.startswith("**[AGENT]"):
             current_section = None
             continue
@@ -84,7 +94,9 @@ def match_ground_truth(picks: dict[str, list[str]],
     Returns a list of dicts: [{label, aliases, matched_picks (list),
     matched (bool)}].
     """
-    all_picks = picks["intra"] + picks["inter"] + picks["public"]
+    all_picks = (picks["architecture"] + picks["public"]
+                 + picks["inter_crate"] + picks["intra"]
+                 + picks["inner_crate"])
     results = []
     for gt in ground_truth:
         aliases = gt.get("aliases", [])
@@ -121,11 +133,15 @@ def score_target(orientation_path: Path,
     n_matched = sum(1 for m in matches if m["matched"])
     pct = (100.0 * n_matched / n_total) if n_total > 0 else 0.0
     return {
-        "n_intra_picks": len(picks["intra"]),
-        "n_inter_picks": len(picks["inter"]),
+        "n_architecture_picks": len(picks["architecture"]),
         "n_public_picks": len(picks["public"]),
-        "n_total_picks_union": len(set(picks["intra"] + picks["inter"]
-                                       + picks["public"])),
+        "n_inter_crate_picks": len(picks["inter_crate"]),
+        "n_intra_picks": len(picks["intra"]),
+        "n_inner_crate_picks": len(picks["inner_crate"]),
+        "n_total_picks_union": len(set(
+            picks["architecture"] + picks["public"]
+            + picks["inter_crate"] + picks["intra"]
+            + picks["inner_crate"])),
         "n_ground_truth": n_total,
         "n_matched": n_matched,
         "overlap_pct": pct,

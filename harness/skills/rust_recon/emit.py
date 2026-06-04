@@ -1045,39 +1045,45 @@ def _aggregate_per_crate_picks(per_crate_counts, facts, n, pattern_metrics=None)
     return out
 
 
-def _compute_three_set_significance(fp: dict, facts: dict,
-                                    top_n_intra: int = None,
-                                    top_n_workspace: int = None):
-    """0.0.13 patch 13h + 0.0.14 patch 14a + 0.0.20 patch 20a:
-    top-N per set picker with SLOC-scaled workspace top_n.
+def _compute_significance_sets(fp: dict, facts: dict,
+                               per_crate_loc: dict = None,
+                               top_n_workspace: int = None):
+    """0.0.13 patch 13h + 0.0.14 patch 14a + 0.0.20 patch 20a + 0.0.22:
+    top-N per set picker with SLOC-scaled workspace top_n. 0.0.22
+    renames intersection -> architecture and inter -> inter_crate;
+    follow-up patches restructure intra into a strict-origin split
+    (defining_crate != crate) and add inner_crate_per_crate
+    (defining_crate == crate).
 
     Returns dict with:
     - significant_intra_per_crate: {crate: {pattern: count}}
         per-crate top top_n_intra patterns by count.
-    - significant_inter: {pattern: inter_count}
+    - significant_inter_crate: {pattern: inter_count}
         top top_n_workspace patterns by inter_count workspace-wide.
     - significant_public: {pattern: public_count}
-        top top_n_workspace patterns by public_count = inter_count +
-        curated_example_count * weight, is_pub only.
+        top top_n_workspace patterns by curated_example_count *
+        public_example_weight, is_pub only.
+    - significant_architecture: {pattern: combined_score}
+        top top_n_workspace patterns scoring on BOTH cross-crate
+        flow AND public-by-example signals (the doubly-strong set).
     - picks: list of {pattern, kind, categories, intra_crates,
         inter_count, public_count} entries - the UNION with category
         tags.
 
-    top_n_intra defaults to _TOP_N_FLOOR (7) because each crate is
-    locally bounded - per-crate complexity doesn't scale with total
-    workspace size. top_n_workspace defaults to _TOP_N_FLOOR but
-    callers should compute the SLOC-scaled value via
-    _compute_loc_scaled_top_n and pass it explicitly.
+    top_n_intra defaults to _TOP_N_FLOOR (7); top_n_workspace defaults
+    to _TOP_N_FLOOR but callers should compute the SLOC-scaled value
+    via _compute_loc_scaled_top_n and pass it explicitly.
 
-    Categories are added to picks based on which sets the pattern
-    appears in. A pub item used intra-crate qualifies via its crate's
-    intra list; its inter-crate qualification (if heavy) shows via
-    inter; its public-API qualification (if pub) shows via public."""
-    if top_n_intra is None:
-        top_n_intra = _TOP_N_FLOOR
+    Categories on picks: 'intra', 'architecture', 'inter_crate',
+    'public'. A pattern qualifying in multiple categories is the
+    strongest signal."""
     if top_n_workspace is None:
         top_n_workspace = _TOP_N_FLOOR
+    per_crate_loc = per_crate_loc or {}
     pattern_metrics = fp.get("pattern_metrics", {})
+
+    def _top_n_for_crate(crate: str) -> int:
+        return _compute_loc_scaled_top_n(per_crate_loc.get(crate, 0))
 
     # 0.0.20 patch 20b: filter per_crate_counts to workspace-originated
     # patterns only. the_user 2026-06-04: 'drop std results entirely in
@@ -1129,38 +1135,31 @@ def _compute_three_set_significance(fp: dict, facts: dict,
                 if _is_workspace_originated(p):
                     per_crate_counts[c][p] += 1
 
-    # 1. Per-crate intra significance. Per-crate locally bounded;
-    # uses top_n_intra (default 7). 0.0.20 patch 20a keeps intra
-    # at floor because each crate's surface is locally constrained -
-    # SLOC scaling applies to workspace-wide sets only.
-    significant_intra_per_crate = {}
-    for crate, counts in per_crate_counts.items():
-        if not counts:
-            continue
-        sorted_items = sorted(counts.items(), key=lambda x: -x[1])
-        sig = dict(sorted_items[:top_n_intra])
-        if sig:
-            significant_intra_per_crate[crate] = sig
+    # 0.0.22 reorder: workspace-wide sets are computed FIRST; per-crate
+    # intra + inner-crate sets dedup against them. Strict-origin split
+    # for intra/inner is applied below the workspace block.
 
-    # 2 + 3 + 4. Workspace-wide significance partitioned into THREE
+    # 1. Workspace-wide significance partitioned into THREE
     # disjoint sets per the_user 2026-06-04: 'create one more category
     # that is a union of inter-crate and public where they share, which
-    # would remove slots from both inter-crate and public'.
+    # would remove slots from both inter-crate and public'. 0.0.22
+    # rename: the doubly-strong category is "architecture"
+    # (the_user 2026-06-04: 'intersection is too vague').
     #
     # Raw signals:
-    # - Inter signal (cross-crate flow): inter_count.
+    # - Inter-crate signal (cross-crate flow): inter_count.
     # - Public signal (docs-by-example): curated_example_count * weight.
     #
     # Partition:
-    # - intersection: pattern has BOTH signals (is_pub + curated > 0 +
+    # - architecture: pattern has BOTH signals (is_pub + curated > 0 +
     #   inter_count > 0). Doubly-strong architectural protagonists.
-    # - inter-only: inter_count > 0 but not in intersection (no curated
+    # - inter-crate: inter_count > 0 but not in architecture (no curated
     #   example signal or not is_pub).
-    # - public-only: curated * weight > 0 but not in intersection
+    # - public: curated * weight > 0 but not in architecture
     #   (no cross-crate flow).
     #
-    # The intersection set takes slots from both inter and public so
-    # the agent's reading doesn't waste slots on duplication.
+    # The architecture set takes slots from both inter-crate and public
+    # so the agent's reading doesn't waste slots on duplication.
     num_example_rs_files = fp.get("totals", {}).get("example_rs_files", 0)
     public_example_weight = _compute_public_example_weight(num_example_rs_files)
 
@@ -1178,43 +1177,102 @@ def _compute_three_set_significance(fp: dict, facts: dict,
         if ic > 0:
             inter_scores[pattern] = ic
 
-    # Intersection: patterns with both signals.
-    intersection_keys = set(public_scores) & set(inter_scores)
-    intersection_counts = {
+    # Architecture: patterns with both signals.
+    architecture_keys = set(public_scores) & set(inter_scores)
+    architecture_counts = {
         p: public_scores[p] + inter_scores[p]
-        for p in intersection_keys
+        for p in architecture_keys
     }
 
-    # Inter-only and public-only: residuals after intersection removal.
+    # Inter-crate and public: residuals after architecture removal.
     inter_counts = {
-        p: s for p, s in inter_scores.items() if p not in intersection_keys
+        p: s for p, s in inter_scores.items() if p not in architecture_keys
     }
     public_counts = {
-        p: s for p, s in public_scores.items() if p not in intersection_keys
+        p: s for p, s in public_scores.items() if p not in architecture_keys
     }
 
     # Top N per disjoint set.
-    significant_inter = {}
+    significant_inter_crate = {}
     if inter_counts:
         sorted_inter = sorted(inter_counts.items(), key=lambda x: -x[1])
-        significant_inter = dict(sorted_inter[:top_n_workspace])
+        significant_inter_crate = dict(sorted_inter[:top_n_workspace])
     significant_public = {}
     if public_counts:
         sorted_public = sorted(public_counts.items(), key=lambda x: -x[1])
         significant_public = dict(sorted_public[:top_n_workspace])
-    significant_intersection = {}
-    if intersection_counts:
-        sorted_isect = sorted(intersection_counts.items(),
+    significant_architecture = {}
+    if architecture_counts:
+        sorted_isect = sorted(architecture_counts.items(),
                               key=lambda x: -x[1])
-        significant_intersection = dict(sorted_isect[:top_n_workspace])
+        significant_architecture = dict(sorted_isect[:top_n_workspace])
+
+    # 2 + 3. Per-crate intra + inner-crate, strict origin split,
+    # dedup against workspace-wide.
+    #
+    # the_user 2026-06-04: 'intra-crate should be reserved for usage
+    # of other crates' + 'inner-crate: source-code item originates in
+    # the crate and is called by the crate'. The strict origin split
+    # makes the two sets disjoint by construction:
+    # - intra-X = patterns USED in X with defining_crate != X
+    #   (this crate's usage of OTHER workspace crates' patterns).
+    # - inner-X = patterns USED in X with defining_crate == X
+    #   (this crate's own architecture, defined here + used here).
+    #
+    # Both dedup against the workspace-wide sets so the agent's per-
+    # crate view doesn't waste slots on patterns already covered in
+    # 5.1 architecture / 5.2 public / 5.3 inter-crate. Both top-N
+    # scale per-crate via _compute_loc_scaled_top_n(crate_loc) - large
+    # crates get more picks, small crates stay at the floor (7).
+    workspace_wide_keys = (
+        set(significant_architecture)
+        | set(significant_inter_crate)
+        | set(significant_public)
+    )
+
+    def _per_crate_picks(origin_match):
+        """Return (sig_dict, top_n_dict). origin_match: True means
+        defining_crate == crate (inner-crate); False means
+        defining_crate != crate (intra-crate, strict-origin)."""
+        sig_per_crate = {}
+        top_n_per_crate = {}
+        for crate, counts in per_crate_counts.items():
+            if not counts:
+                continue
+            top_n = _top_n_for_crate(crate)
+            top_n_per_crate[crate] = top_n
+            filtered = []
+            for p, c in counts.items():
+                if p in workspace_wide_keys:
+                    continue
+                defining = pattern_metrics.get(p, {}).get("defining_crate")
+                if origin_match and defining != crate:
+                    continue
+                if (not origin_match) and (defining is None or defining == crate):
+                    continue
+                filtered.append((p, c))
+            if not filtered:
+                continue
+            filtered.sort(key=lambda x: -x[1])
+            sig = dict(filtered[:top_n])
+            if sig:
+                sig_per_crate[crate] = sig
+        return sig_per_crate, top_n_per_crate
+
+    significant_intra_per_crate, top_n_intra_per_crate = _per_crate_picks(
+        origin_match=False)
+    significant_inner_crate_per_crate, top_n_inner_per_crate = _per_crate_picks(
+        origin_match=True)
 
     # UNION with category tags.
     all_patterns = set()
     for sig in significant_intra_per_crate.values():
         all_patterns.update(sig.keys())
-    all_patterns.update(significant_inter.keys())
+    for sig in significant_inner_crate_per_crate.values():
+        all_patterns.update(sig.keys())
+    all_patterns.update(significant_inter_crate.keys())
     all_patterns.update(significant_public.keys())
-    all_patterns.update(significant_intersection.keys())
+    all_patterns.update(significant_architecture.keys())
 
     picks = []
     for pattern in sorted(all_patterns):
@@ -1223,36 +1281,48 @@ def _compute_three_set_significance(fp: dict, facts: dict,
             if pattern in sig:
                 intra_crates.append((crate, sig[pattern]))
         intra_crates.sort(key=lambda x: -x[1])
+        inner_crates = []
+        for crate, sig in significant_inner_crate_per_crate.items():
+            if pattern in sig:
+                inner_crates.append((crate, sig[pattern]))
+        inner_crates.sort(key=lambda x: -x[1])
         categories = []
-        if intra_crates:
-            categories.append("intra")
-        if pattern in significant_intersection:
-            categories.append("intersection")
-        if pattern in significant_inter:
-            categories.append("inter")
+        if pattern in significant_architecture:
+            categories.append("architecture")
         if pattern in significant_public:
             categories.append("public")
+        if pattern in significant_inter_crate:
+            categories.append("inter_crate")
+        if intra_crates:
+            categories.append("intra")
+        if inner_crates:
+            categories.append("inner_crate")
         kind, _, name = pattern.partition(":")
         picks.append({
             "kind": kind,
             "pattern": pattern,
             "categories": categories,
             "intra_crates": [{"crate": c, "count": n} for c, n in intra_crates],
-            "inter_count": significant_inter.get(pattern, 0),
+            "inner_crates": [{"crate": c, "count": n} for c, n in inner_crates],
+            "inter_count": significant_inter_crate.get(pattern, 0),
             "public_count": significant_public.get(pattern, 0),
         })
     # Sort picks by total category count desc, then by name. Patterns
-    # qualifying in all 3 categories are strongest signal.
+    # qualifying in multiple categories are strongest signal.
     picks.sort(key=lambda x: (-len(x["categories"]), x["pattern"]))
     return {
         "significant_intra_per_crate": {
             c: dict(s) for c, s in significant_intra_per_crate.items()
         },
-        "significant_inter": dict(significant_inter),
+        "significant_inner_crate_per_crate": {
+            c: dict(s) for c, s in significant_inner_crate_per_crate.items()
+        },
+        "significant_inter_crate": dict(significant_inter_crate),
         "significant_public": dict(significant_public),
-        "significant_intersection": dict(significant_intersection),
+        "significant_architecture": dict(significant_architecture),
         "picks": picks,
-        "top_n_intra": top_n_intra,
+        "top_n_intra_per_crate": top_n_intra_per_crate,
+        "top_n_inner_per_crate": top_n_inner_per_crate,
         "top_n_workspace": top_n_workspace,
     }
 
@@ -1295,20 +1365,20 @@ def candidate_instances(fp: dict, facts: dict):
     surfaced this pick)."""
     if not fp["pattern_histogram"]:
         return []
-    # 0.0.13 patch 13h + 13i: significance-based three-SET picker
-    # (not union). the_user 2026-06-03: 'carry three sets of
-    # significance... we need granularity along those 3 axes... the
-    # whole premise of "there is 1 set" we've shown to be wrong'.
-    # candidate_instances now returns a STRUCTURED dict not a flat
-    # list. emit_orientation renders the three sets as separate
-    # sections preserving granularity.
-    # 0.0.20 patch 20a: workspace top_n SLOC-scaled. Intra stays at
-    # the floor. LoC read from fp.totals.loc populated by characterize.
+    # 0.0.13 + 0.0.22: significance-based set picker (architecture /
+    # public / inter-crate / intra-crate / inner-crate). 0.0.20 +
+    # 0.0.22 patches: workspace-wide top_n SLOC-scaled (single workspace
+    # LoC anchor); per-crate intra + inner top_n scale per-crate via
+    # _compute_loc_scaled_top_n(per_crate_loc[crate]).
     workspace_loc = fp.get("totals", {}).get("loc", 0)
     top_n_workspace = _compute_loc_scaled_top_n(workspace_loc)
-    sig = _compute_three_set_significance(
+    per_crate_loc = {
+        crate: info.get("loc", 0)
+        for crate, info in fp.get("per_crate", {}).items()
+    }
+    sig = _compute_significance_sets(
         fp, facts,
-        top_n_intra=_TOP_N_FLOOR,
+        per_crate_loc=per_crate_loc,
         top_n_workspace=top_n_workspace,
     )
     # Enrich each set with instance + spans per pattern.
@@ -1332,15 +1402,21 @@ def candidate_instances(fp: dict, facts: dict):
         crate: _enrich(s) for crate, s in
         sig["significant_intra_per_crate"].items()
     }
-    enriched_inter = _enrich(sig["significant_inter"])
+    enriched_inner_crate_per_crate = {
+        crate: _enrich(s) for crate, s in
+        sig["significant_inner_crate_per_crate"].items()
+    }
+    enriched_inter_crate = _enrich(sig["significant_inter_crate"])
     enriched_public = _enrich(sig["significant_public"])
-    enriched_intersection = _enrich(sig.get("significant_intersection", {}))
+    enriched_architecture = _enrich(sig.get("significant_architecture", {}))
     return {
         "intra_per_crate": enriched_intra_per_crate,
-        "inter": enriched_inter,
+        "inner_crate_per_crate": enriched_inner_crate_per_crate,
+        "inter_crate": enriched_inter_crate,
         "public": enriched_public,
-        "intersection": enriched_intersection,
-        "top_n_intra": sig["top_n_intra"],
+        "architecture": enriched_architecture,
+        "top_n_intra_per_crate": sig["top_n_intra_per_crate"],
+        "top_n_inner_per_crate": sig["top_n_inner_per_crate"],
         "top_n_workspace": sig["top_n_workspace"],
     }
 
@@ -1676,30 +1752,29 @@ def emit_container_routing(root: Path, fp: dict, facts: dict, out: Path):
 _USE_TIER_MODIFIERS = {
     "dev_use": (
         "Workspace is a **dev_use library** consumed by other "
-        "developers. Tier 1's public set (5.3) IS the workspace's "
-        "external API surface - the items most readers writing "
-        "against this crate will encounter first - and warrants the "
-        "deepest worked-slice attention. Tier 1's inter set (5.2) "
-        "captures cross-crate flow within the library's internal "
-        "composition; useful for understanding how the lib's "
-        "components compose."
+        "developers. The ARCHITECTURE set (5.1) is the workspace's "
+        "doubly-strong external API surface; the PUBLIC set (5.2) "
+        "is the broader public-by-example face; the INTER-CRATE "
+        "set (5.3) is the library's internal composition flow. "
+        "INNER-CRATE (5.5) per-crate shows where each library "
+        "crate's own architecture lives."
     ),
     "end_with_dev_use": (
         "Workspace ships an **end-user product** "
         "(end_with_dev_use) with internal libraries composing it. "
-        "Tier 1's inter set (5.2) captures cross-crate flow that "
-        "makes the product work; Tier 1's public set (5.3) is the "
+        "The INTER-CRATE set (5.3) captures cross-crate flow that "
+        "makes the product work; the PUBLIC set (5.2) is the "
         "(often narrower) external face the product offers to "
-        "embedders or extension authors. Tier 2 intra picks within "
-        "the product's primary crate matter more than usual - they "
-        "show how the product's internal coordination is "
-        "organized."
+        "embedders or extension authors. INTRA-CRATE (5.4) within "
+        "the product's primary crate shows what it consumes from "
+        "the internal libraries; INNER-CRATE (5.5) shows each "
+        "library crate's own architecture."
     ),
     "dev_with_end_use": (
         "Workspace's primary deliverable is a **library with an "
         "auxiliary CLI** (dev_with_end_use, gitoxide pattern). "
-        "Tier 1's public set (5.3) is the library API; Tier 1's "
-        "inter set (5.2) is the cross-crate flow within the lib. "
+        "The PUBLIC set (5.2) is the library API; the INTER-CRATE "
+        "set (5.3) is the cross-crate flow within the lib. "
         "The CLI binary is part of the public face but should be "
         "treated as a thin wrapper around the lib unless its own "
         "complexity warrants attention. Note: this bucket has no "
@@ -1710,12 +1785,13 @@ _USE_TIER_MODIFIERS = {
         "for the related 5th-bucket arbitration hatch debt)."
     ),
     "end_use": (
-        "Workspace is a pure **end-user product** (end_use). Tier "
-        "1 picks are the user-facing entry points and the cross-"
-        "crate flows that compose the product's behavior. No "
-        "external library face to track. Note: this bucket has no "
-        "empirical anchor in the current 10-target reference set; "
-        "guidance is speculative."
+        "Workspace is a pure **end-user product** (end_use). "
+        "Architecture / public / inter-crate sets are the user-"
+        "facing entry points and the cross-crate flows that "
+        "compose the product's behavior. No external library "
+        "face to track. Note: this bucket has no empirical anchor "
+        "in the current 10-target reference set; guidance is "
+        "speculative."
     ),
 }
 
@@ -1882,40 +1958,93 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
           "through the core crates. 1-2 short paragraphs, each sentence anchored to a span "
           "from reference.md. Stop at any seam from S3 with an explicit UNRESOLVED.", ""]
 
-    # 0.0.13 patch 13i: cands is now a structured dict with three
-    # significance sets (intra_per_crate / inter / public) instead of
-    # a flat list. Render each set as its own subsection preserving
-    # granularity per the_user 2026-06-03 directive.
+    # 0.0.22: cands is a structured dict with five significance sets:
+    # architecture / public / inter-crate (workspace-wide) +
+    # intra-crate / inner-crate (per-crate, strict origin split).
+    # Render order is by importance per the_user 2026-06-04.
     intra_per_crate = cands.get("intra_per_crate", {}) if isinstance(cands, dict) else {}
-    inter_sig = cands.get("inter", {}) if isinstance(cands, dict) else {}
+    inner_per_crate = cands.get("inner_crate_per_crate", {}) if isinstance(cands, dict) else {}
+    inter_crate_sig = cands.get("inter_crate", {}) if isinstance(cands, dict) else {}
     public_sig = cands.get("public", {}) if isinstance(cands, dict) else {}
-    intersection_sig = cands.get("intersection", {}) if isinstance(cands, dict) else {}
-    top_n_intra = (cands.get("top_n_intra", 7)
-                   if isinstance(cands, dict) else 7)
-    top_n_workspace = (cands.get("top_n_workspace", top_n_intra)
-                      if isinstance(cands, dict) else top_n_intra)
+    architecture_sig = cands.get("architecture", {}) if isinstance(cands, dict) else {}
+    top_n_intra_per_crate = (cands.get("top_n_intra_per_crate", {})
+                             if isinstance(cands, dict) else {})
+    top_n_inner_per_crate = (cands.get("top_n_inner_per_crate", {})
+                             if isinstance(cands, dict) else {})
+    top_n_workspace = (cands.get("top_n_workspace", _TOP_N_FLOOR)
+                      if isinstance(cands, dict) else _TOP_N_FLOOR)
+    all_per_crate_top_ns = (list(top_n_intra_per_crate.values())
+                            + list(top_n_inner_per_crate.values()))
+    per_crate_min = min(all_per_crate_top_ns) if all_per_crate_top_ns else _TOP_N_FLOOR
+    per_crate_max = max(all_per_crate_top_ns) if all_per_crate_top_ns else _TOP_N_FLOOR
 
-    # 5. worked slices (plural; surfaced via per-crate top-pattern aggregation
-    # under 0.0.7 patch 7b + 7c).
+    # 5. significance sets
     L += ["## 5. Significance sets - the authoring templates", ""]
-    if top_n_intra == top_n_workspace:
-        L.append(f"Top {top_n_intra} per set (intra per crate, inter, "
-                 f"public). Each section below preserves its axis.")
+    if per_crate_min == per_crate_max == top_n_workspace:
+        L.append(f"Top {top_n_workspace} per set. Each section below "
+                 f"preserves its axis.")
+    elif per_crate_min == per_crate_max:
+        L.append(f"Top {top_n_workspace} for workspace-wide sets "
+                 f"(architecture / public / inter-crate); top "
+                 f"{per_crate_min} per crate for intra-crate / "
+                 f"inner-crate. SLOC-scaled per "
+                 f"`max(7, round(7 + 2 * log2(LoC / 15000)))`. "
+                 f"the_user 2026-06-04: 'i'd rather slightly "
+                 f"over-produce than under produce'.")
     else:
-        L.append(f"Top {top_n_intra} per crate intra; top {top_n_workspace} "
-                 f"for inter / public (SLOC-scaled per "
-                 f"`max(7, round(7 + 2 * log2(LoC / 15000)))`). "
-                 f"the_user 2026-06-04: 'i'd rather slightly over-produce "
-                 f"than under produce, because if we don't capture enough "
-                 f"... the knowledge product ends up requiring the agent "
-                 f"to do code-reads anyway'. Each section below preserves "
-                 f"its axis.")
+        L.append(f"Top {top_n_workspace} for workspace-wide sets "
+                 f"(architecture / public / inter-crate); per-crate "
+                 f"top-N for intra-crate / inner-crate ranges "
+                 f"{per_crate_min}..{per_crate_max}, scaled per each "
+                 f"crate's LoC via `max(7, round(7 + 2 * log2(LoC / "
+                 f"15000)))`. the_user 2026-06-04: 'i'd rather "
+                 f"slightly over-produce than under produce'.")
     L.append("")
     # Use the legacy list-shape for downstream sections.
     cands_compat = []
-    if intra_per_crate or inter_sig or public_sig or intersection_sig:
-        # 5.1 Intra-crate significance (per crate).
-        L.append("### 5.1 Intra-crate significance (per crate)")
+    if (architecture_sig or public_sig or inter_crate_sig
+            or intra_per_crate or inner_per_crate):
+        # 5.1 Architecture (cross-crate AND public).
+        L.append(f"### 5.1 Architecture significance "
+                 f"({len(architecture_sig)} significant; "
+                 f"workspace-wide cross-crate AND public-by-example)")
+        L.append("")
+        for pattern in sorted(architecture_sig.keys(),
+                              key=lambda p: -architecture_sig[p]["count"]):
+            e = architecture_sig[pattern]
+            L.append(f"- `{pattern}` - architecture score "
+                     f"{e['count']:.2f} - seed {sp(e['instance'])}")
+            cands_compat.append(e)
+        L.append("")
+        # 5.2 Public (public-by-example only).
+        L.append(f"### 5.2 Public significance "
+                 f"({len(public_sig)} significant; "
+                 f"workspace-wide public-by-example only)")
+        L.append("")
+        for pattern in sorted(public_sig.keys(),
+                              key=lambda p: -public_sig[p]["count"]):
+            e = public_sig[pattern]
+            L.append(f"- `{pattern}` - public score "
+                     f"{e['count']:.2f} - seed {sp(e['instance'])}")
+            cands_compat.append(e)
+        L.append("")
+        # 5.3 Inter-crate (cross-crate flow only).
+        L.append(f"### 5.3 Inter-crate significance "
+                 f"({len(inter_crate_sig)} significant; "
+                 f"workspace-wide cross-crate flow only)")
+        L.append("")
+        for pattern in sorted(inter_crate_sig.keys(),
+                              key=lambda p: -inter_crate_sig[p]["count"]):
+            e = inter_crate_sig[pattern]
+            L.append(f"- `{pattern}` - inter_count {e['count']} - "
+                     f"seed {sp(e['instance'])}")
+            cands_compat.append(e)
+        L.append("")
+        # 5.4 Intra-crate (per crate; this crate's usage of OTHER
+        # workspace crates' patterns).
+        L.append("### 5.4 Intra-crate significance (per crate; "
+                 "patterns this crate uses with origin in OTHER "
+                 "workspace crates)")
         L.append("")
         for crate in sorted(intra_per_crate.keys()):
             entries = intra_per_crate[crate]
@@ -1923,76 +2052,62 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                 continue
             L.append(f"#### crate `{crate}` ({len(entries)} significant)")
             L.append("")
-            for pattern in sorted(entries.keys(), key=lambda p: -entries[p]["count"]):
+            for pattern in sorted(entries.keys(),
+                                  key=lambda p: -entries[p]["count"]):
                 e = entries[pattern]
-                L.append(f"- `{pattern}` - {e['count']} occurrences - "
-                         f"seed {sp(e['instance'])}")
+                L.append(f"- `{pattern}` - {e['count']} occurrences "
+                         f"- seed {sp(e['instance'])}")
                 cands_compat.append(e)
             L.append("")
-        # 5.2 Intersection significance (cross-crate AND public). 0.0.21
-        # patch 21d: the_user 2026-06-04: 'create one more category that
-        # is a union of inter-crate and public where they share' -
-        # patterns with both signals get their own slot; inter and public
-        # below are residuals (patterns with only one signal each).
-        L.append(f"### 5.2 Intersection significance "
-                 f"({len(intersection_sig)} significant; "
-                 f"cross-crate AND public-by-example)")
+        # 5.5 Inner-crate (per crate; this crate's own architecture -
+        # origin AND usage in the crate).
+        L.append("### 5.5 Inner-crate significance (per crate; "
+                 "patterns originating IN and used IN this crate - "
+                 "the crate's own architecture)")
         L.append("")
-        for pattern in sorted(intersection_sig.keys(),
-                              key=lambda p: -intersection_sig[p]["count"]):
-            e = intersection_sig[pattern]
-            L.append(f"- `{pattern}` - intersection score {e['count']:.2f} - "
-                     f"seed {sp(e['instance'])}")
-            cands_compat.append(e)
-        L.append("")
-        # 5.3 Inter-only significance (cross-crate flow, not in intersection).
-        L.append(f"### 5.3 Inter-crate significance "
-                 f"({len(inter_sig)} significant; cross-crate flow only)")
-        L.append("")
-        for pattern in sorted(inter_sig.keys(), key=lambda p: -inter_sig[p]["count"]):
-            e = inter_sig[pattern]
-            L.append(f"- `{pattern}` - inter_count {e['count']} - "
-                     f"seed {sp(e['instance'])}")
-            cands_compat.append(e)
-        L.append("")
-        # 5.4 Public-only significance (public-by-example, not in intersection).
-        L.append(f"### 5.4 Public-API significance "
-                 f"({len(public_sig)} significant; public-by-example only)")
-        L.append("")
-        for pattern in sorted(public_sig.keys(), key=lambda p: -public_sig[p]["count"]):
-            e = public_sig[pattern]
-            L.append(f"- `{pattern}` - public score {e['count']:.2f} - "
-                     f"seed {sp(e['instance'])}")
-            cands_compat.append(e)
-        L.append("")
+        for crate in sorted(inner_per_crate.keys()):
+            entries = inner_per_crate[crate]
+            if not entries:
+                continue
+            L.append(f"#### crate `{crate}` ({len(entries)} significant)")
+            L.append("")
+            for pattern in sorted(entries.keys(),
+                                  key=lambda p: -entries[p]["count"]):
+                e = entries[pattern]
+                L.append(f"- `{pattern}` - {e['count']} occurrences "
+                         f"- seed {sp(e['instance'])}")
+                cands_compat.append(e)
+            L.append("")
         L.append("**[AGENT]** Coverage tiering per the_user "
-                 "2026-06-03 directive:")
+                 "2026-06-03 / 2026-06-04 directives (sets ordered "
+                 "by importance):")
         L.append("")
-        L.append("- **Tier 1 (heaviest coverage)**: patterns in the "
-                 "INTERSECTION set (5.2, cross-crate AND public-by-"
-                 "example) plus patterns in the INTER-only set (5.3) "
-                 "OR the PUBLIC-only set (5.4). Intersection patterns "
-                 "are the doubly-strong architectural protagonists - "
-                 "they flow across the workspace AND surface in the "
-                 "workspace's examples; allocate the deepest worked-"
-                 "slice attention to each. Inter-only and public-only "
-                 "are single-signal patterns - still load-bearing.")
-        L.append("- **Tier 2 (secondary coverage)**: patterns in "
-                 "INTRA-CRATE sets only (5.1) without inter/public "
-                 "qualification. Internal to their defining crate; "
-                 "mention briefly with context for the crate's "
-                 "architecture.")
-        L.append(f"- **Tier 3 (baseline coverage)**: patterns NOT "
-                 f"in any set's top picks ({top_n_intra} intra / "
-                 f"{top_n_workspace} workspace-wide). The reference "
-                 f"index (`reference.md`) is the inventory; no per-"
-                 f"pattern attention beyond the listing.")
+        L.append("- **Tier 1 (heaviest coverage)**: the ARCHITECTURE "
+                 "set (5.1, cross-crate AND public-by-example). "
+                 "Doubly-strong architectural protagonists - they "
+                 "flow across the workspace AND surface in its "
+                 "examples; allocate the deepest worked-slice "
+                 "attention to each.")
+        L.append("- **Tier 2 (heavy coverage)**: the PUBLIC set "
+                 "(5.2, public-by-example only) and the INTER-"
+                 "CRATE set (5.3, cross-crate flow only). Single-"
+                 "signal workspace-wide patterns - still load-"
+                 "bearing.")
+        L.append("- **Tier 3 (per-crate coverage)**: INTRA-CRATE "
+                 "(5.4) and INNER-CRATE (5.5) per-crate sets. "
+                 "Intra-crate shows what each crate USES from "
+                 "elsewhere in the workspace; inner-crate shows "
+                 "each crate's own architecture (defined here + "
+                 "used here). Mention with context for the crate's "
+                 "role.")
+        L.append("- **Tier 4 (baseline coverage)**: patterns NOT "
+                 "in any set's top picks. The reference index "
+                 "(`reference.md`) is the inventory; no per-"
+                 "pattern attention beyond the listing.")
         L.append("")
-        L.append("A pattern qualifying in multiple Tier 1 sets "
-                 "(public AND inter) is the strongest signal - the "
-                 "pattern flows across the workspace AND is part of "
-                 "its external API surface. Single-set Tier 1 is "
-                 "still load-bearing.")
+        L.append("A pattern appearing in multiple sets is a "
+                 "stronger signal - the `categories` field on each "
+                 "pick surfaces multi-set membership.")
         L.append("")
         # 0.0.16 patch 16b: classification-aware tier modifier. Per-
         # bucket guidance from _USE_TIER_MODIFIERS surfaces what the
@@ -2049,12 +2164,12 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  "NOT handle quoting (upstream tokenizer); shared by "
                  "batch + REPL invocations' is residual.")
         L.append("")
-    # 0.0.13 patch 13i: the three-set sections above ARE the picker
-    # output; drop the legacy per-pick worked-slice loop. The agent
-    # reads the structured 5.1/5.2/5.3 lists + traces patterns of
-    # interest by category. For variable N (helix ~158 picks, bevy
-    # ~479), a per-pick worked slice rendering would explode the
-    # document; the structured lists keep it scannable.
+    # 0.0.13 patch 13i + 0.0.22: the five-set sections above ARE the
+    # picker output; drop the legacy per-pick worked-slice loop. The
+    # agent reads the structured 5.1/5.2/5.3/5.4/5.5 lists + traces
+    # patterns of interest by category. For variable N (helix ~158
+    # picks, bevy ~479), a per-pick worked slice rendering would
+    # explode the document; the structured lists keep it scannable.
     cands = []
     if cands:
         n_cands = len(cands)
@@ -2192,19 +2307,19 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  f"protagonists' note. The shared scaffolding is the authoring "
                  f"context a contributor learns once and reuses across patterns.")
     else:
-        # 0.0.16 patch 16c: S7 fallback prompt acquires classification
-        # tag so the agent knows what authoring a new instance MEANS
-        # for the workspace's consumership axis. The picks themselves
-        # come from S5's three significance sets (5.1 intra / 5.2
-        # inter / 5.3 public); the authoring guide should focus on
-        # the Tier 1 patterns most relevant to this workspace's
-        # consumership.
+        # 0.0.16 patch 16c + 0.0.22: S7 fallback prompt acquires
+        # classification tag. The picks come from S5's five
+        # significance sets (5.1 architecture / 5.2 public / 5.3
+        # inter-crate / 5.4 intra-crate / 5.5 inner-crate); the
+        # authoring guide should focus on the Tier 1 + Tier 2
+        # patterns most relevant to this workspace's consumership.
         cls_tag = (f"Workspace classification: **{use_label}**. "
                    if use_label else "")
         L.append("**[AGENT]** From the trait / type definitions in "
                  "S2 and the significance sets in S5, write the "
                  "minimal checklist to author a NEW instance of one "
-                 "of the Tier 1 patterns (S5.2 inter or S5.3 public). "
+                 "of the Tier 1 + 2 patterns (S5.1 architecture, "
+                 "S5.2 public, or S5.3 inter-crate). "
                  + cls_tag +
                  "Frame the checklist for the consumership the "
                  "workspace serves: dev_use workspaces author against "

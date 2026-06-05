@@ -13,7 +13,7 @@ use crate::*;
 ///
 /// Where: instantiated once per file in `items::workspace::scan_workspace`;
 /// `walk_file` runs Visit over the parsed File, then `facts` is drained
-/// into the workspace-level `ItemsFacts`.
+/// into the workspace-level `ItemFacts`.
 pub(crate) struct FileWalker {
     file: String,
     is_example: bool,

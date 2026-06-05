@@ -1,23 +1,22 @@
 use crate::*;
 
-/// What: orchestrate the `know_rust scan items` invocation. Walk every
-/// non-test, non-bench `.rs` file under `workspace_root`, parse it via
-/// `syn::parse_file`, drive a `FileWalker` over the AST, and merge each
-/// file's facts into the aggregate `ItemsFacts` written to
-/// `know_rust_items.json`.
+/// What: orchestrate the workspace walk for `know_rust scan items`.
+/// Walk every non-test, non-bench `.rs` file under `workspace_root`,
+/// parse it via `syn::parse_file`, drive a `FileWalker` over the AST,
+/// and merge each file's facts into the aggregate `ItemFacts`
+/// returned to the caller.
 ///
-/// Why: characterize.py consumes the produced JSON file as its source
-/// of per-file lex+structure facts (impls / traits / types / fns / etc.
-/// keyed by file). Centralizing the workspace walk + file iteration
-/// here keeps the visitor focused on per-file emission.
+/// Why: characterize.py consumes the produced JSON file as its
+/// per-file lex+structure facts source. Separating walk from I/O lets
+/// the entry point (`scan_items` in `scan::items::run`) own the
+/// serialization + write step and lets integration tests assert
+/// against the returned `ItemFacts` directly without rebinding via
+/// JSON.
 ///
-/// Where: called from `crate::run::run` via the `Scan::Items` clap
-/// subcommand match.
-pub(crate) fn scan_workspace(
-    workspace_root: &Path,
-    out_dir: &Path,
-) -> std::result::Result<(), Error> {
-    let mut facts = ItemsFacts {
+/// Where: called from `scan::items::run::scan_items` with the
+/// cli-supplied workspace_root.
+pub(crate) fn scan_workspace(workspace_root: &Path) -> ItemFacts {
+    let mut facts = ItemFacts {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         ..Default::default()
     };
@@ -47,26 +46,18 @@ pub(crate) fn scan_workspace(
         }
     }
     facts.seams = seams_wire;
-    let out_path = out_dir.join("know_rust_items.json");
-    let json = serde_json::to_string_pretty(&facts)
-        .map_err(|source| Error::Serialize { source })?;
-    let write_path = out_path.clone();
-    fs::write(&out_path, json).map_err(|source| Error::Write {
-        path: write_path,
-        source,
-    })?;
-    eprintln!(
-        "[know_rust scan items] {} files scanned, {} parse failed, wrote {}",
-        facts.files_scanned,
-        facts.files_parse_failed,
-        out_path.display()
-    );
-    Ok(())
+    facts
 }
 
-/// Collect every `.rs` file under `workspace_root`, sorted by relative
-/// path for determinism. Skips `target/`, `.git/`, `tests/`, and
-/// `benches/` segments anywhere in the path.
+/// What: collect every `.rs` file under `workspace_root`, sorted by
+/// relative path for determinism. Skips `target/`, `.git/`, `tests/`,
+/// and `benches/` segments anywhere in the path.
+///
+/// Why: the items walker emits per-file facts; collecting the file
+/// list up front keeps the orchestrator simple and lets the walker
+/// loop iterate deterministically.
+///
+/// Where: called from `scan_workspace`'s top-of-fn file enumeration.
 fn collect_rs_files(workspace_root: &Path) -> Vec<(PathBuf, String)> {
     let mut rs_files = Vec::new();
     for entry in walkdir::WalkDir::new(workspace_root)
@@ -95,29 +86,17 @@ fn collect_rs_files(workspace_root: &Path) -> Vec<(PathBuf, String)> {
     rs_files
 }
 
-/// What: path predicate that returns true when any path component is
-/// `target` or `.git`, signaling the workspace walker should skip the
-/// subtree entirely.
+/// What: drain a per-file accumulator into the workspace-level
+/// `ItemFacts` and merge its seam counters into the workspace
+/// `SeamKind` map.
 ///
-/// Why: `target/` holds cargo build artifacts (recompilable / generated
-/// .rs); `.git/` holds version-control internals (no source). Walking
-/// either pollutes the scan with non-source entries. Bundled into one
-/// predicate so the call site at the WalkDir filter_entry stays a
-/// single negation.
+/// Why: keeping the merge logic in one place lets the walker stay
+/// focused on per-node emission and lets the aggregator handle the
+/// fact-list extension + seam-counter merge symmetrically.
 ///
-/// Where: called from `collect_rs_files`'s `WalkDir::filter_entry`;
-/// mirrored at `crate::walk::is_skip_dir` for the `scan usages` walker.
-fn is_skip_dir(p: &Path) -> bool {
-    p.components().any(|c| {
-        let name = c.as_os_str().to_str();
-        name == Some("target") || name == Some(".git")
-    })
-}
-
-/// Drain a per-file accumulator into the workspace-level `ItemsFacts`
-/// and merge its seam counters into the workspace `SeamKind` map.
+/// Where: called from `scan_workspace` once per processed file.
 fn merge_file_facts(
-    facts: &mut ItemsFacts,
+    facts: &mut ItemFacts,
     aggregate_seams: &mut HashMap<SeamKind, usize>,
     file_facts: FileLevelFacts,
 ) {

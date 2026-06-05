@@ -82,25 +82,6 @@ pub(crate) fn clean_doc_line(s: &str) -> String {
     s.trim().trim_start_matches('*').trim().to_string()
 }
 
-/// What: render a `syn::Visibility` as the wire string the walker
-/// emits (`""` inherited, `"pub"` plain, `"pub(path)"` restricted).
-pub(crate) fn visibility_string(vis: &syn::Visibility) -> String {
-    match vis {
-        syn::Visibility::Public(_) => "pub".to_string(),
-        syn::Visibility::Restricted(r) => {
-            let path = r
-                .path
-                .segments
-                .iter()
-                .map(|s| s.ident.to_string())
-                .collect::<Vec<_>>()
-                .join("::");
-            format!("pub({})", path)
-        }
-        syn::Visibility::Inherited => String::new(),
-    }
-}
-
 /// What: extract the leaf identifier of a type expression (`Foo` from
 /// `Foo<T>`, `Foo` from `&mut Foo`, etc.).
 ///

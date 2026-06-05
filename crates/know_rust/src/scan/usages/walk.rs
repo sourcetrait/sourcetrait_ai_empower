@@ -1,17 +1,18 @@
 use crate::*;
 
 /// What: walk the workspace root recursively, parse every `.rs` file
-/// via syn, accumulate FnSigUsage + FieldUsage + TypeAliasUsage
-/// entries into Facts.
+/// via syn, accumulate FnSigUsage + FieldUsage + TypeAliasUsage +
+/// MethodRefUsage entries into UsageFacts.
 ///
 /// Why: characterize.py drives the workspace boundary (Cargo.toml
 /// detection, per-crate aggregation); this binary's job is just to
 /// produce the AST-derived supplemental signal across all source.
 /// Aggregation by crate happens Python-side.
 ///
-/// Where: called by run() with the cli-supplied workspace_root.
-pub(crate) fn walk_workspace(root: &Path) -> Result<Facts> {
-    let mut facts = Facts {
+/// Where: called by `scan::usages::run::scan_usages` with the
+/// cli-supplied workspace_root.
+pub(crate) fn walk_workspace(root: &Path) -> Result<UsageFacts> {
+    let mut facts = UsageFacts {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         ..Default::default()
     };
@@ -53,24 +54,4 @@ pub(crate) fn walk_workspace(root: &Path) -> Result<Facts> {
         }
     }
     Ok(facts)
-}
-
-/// What: path predicate that returns true when any path component is
-/// `target` or `.git`, signaling the usages walker should skip the
-/// subtree entirely.
-///
-/// Why: `target/` holds cargo build artifacts (recompilable / generated
-/// .rs); `.git/` holds version-control internals (no source). Walking
-/// either pollutes the scan with non-source entries. Bundled into one
-/// predicate so the call site at the WalkDir filter_entry stays a
-/// single negation.
-///
-/// Where: called from `walk_workspace`'s `WalkDir::filter_entry`;
-/// mirrored at `crate::items::workspace::is_skip_dir` for the
-/// `scan items` walker.
-fn is_skip_dir(p: &Path) -> bool {
-    p.components().any(|c| {
-        let name = c.as_os_str().to_str();
-        name == Some("target") || name == Some(".git")
-    })
 }

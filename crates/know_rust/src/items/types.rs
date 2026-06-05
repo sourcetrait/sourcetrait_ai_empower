@@ -262,6 +262,7 @@ pub(crate) enum TypeUsageKind {
 /// `ItemsFacts::seams`.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub(crate) enum SeamKind {
+    DynTraitObject,
     Extern,
     NoStd,
     ProcessSpawn,
@@ -283,6 +284,7 @@ impl SeamKind {
     /// `HashMap<SeamKind, usize>` into the wire `BTreeMap<String, usize>`.
     pub(crate) fn wire_key(self) -> &'static str {
         match self {
+            SeamKind::DynTraitObject => "dyn_trait_object",
             SeamKind::Extern => "extern",
             SeamKind::NoStd => "no_std",
             SeamKind::ProcessSpawn => "process_spawn",

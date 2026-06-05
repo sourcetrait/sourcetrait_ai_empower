@@ -222,7 +222,35 @@ pub(crate) fn scan_macro_body_tokens(
                             if !path_segs.is_empty() {
                                 let name = path_segs.last().cloned().unwrap_or_default();
                                 let path_str = path_segs.join("::");
-                                if !is_inert_attr(&name)
+                                if path_segs.len() == 1 && name == "derive" {
+                                    if let Some(proc_macro2::TokenTree::Group(args_g)) =
+                                        inner.get(j + 1)
+                                    {
+                                        if args_g.delimiter()
+                                            == proc_macro2::Delimiter::Parenthesis
+                                        {
+                                            let args_text = args_g.stream().to_string();
+                                            for piece in split_top_commas(&args_text) {
+                                                let cleaned = last_segment(piece.trim());
+                                                if !cleaned.is_empty() {
+                                                    if cleaned == "Serialize"
+                                                        || cleaned == "Deserialize"
+                                                    {
+                                                        *facts
+                                                            .seams
+                                                            .entry(SeamKind::SerdeSerialize)
+                                                            .or_default() += 1;
+                                                    }
+                                                    facts.derives.push(DeriveEntry {
+                                                        file: file.to_string(),
+                                                        trait_name: cleaned,
+                                                        line: p.span().start().line,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if !is_inert_attr(&name)
                                     && !is_noise_attr(&path_str, &name)
                                     && !is_noise_macro(&name)
                                 {
@@ -257,6 +285,61 @@ pub(crate) fn scan_macro_body_tokens(
             proc_macro2::TokenTree::Ident(ident) => {
                 let name = ident.to_string();
                 let line = ident.span().start().line;
+                if emit_attrs {
+                    let mut path_segs: Vec<String> = vec![name.clone()];
+                    let mut k = i + 1;
+                    while k + 2 < trees.len() {
+                        let c1 = match &trees[k] {
+                            proc_macro2::TokenTree::Punct(p) => p,
+                            _ => break,
+                        };
+                        let c2 = match &trees[k + 1] {
+                            proc_macro2::TokenTree::Punct(p) => p,
+                            _ => break,
+                        };
+                        if c1.as_char() != ':' || c2.as_char() != ':' {
+                            break;
+                        }
+                        let id = match &trees[k + 2] {
+                            proc_macro2::TokenTree::Ident(id) => id,
+                            _ => break,
+                        };
+                        path_segs.push(id.to_string());
+                        k += 3;
+                    }
+                    if k < trees.len() {
+                        if let proc_macro2::TokenTree::Punct(bang) = &trees[k] {
+                            if bang.as_char() == '!' {
+                                if let Some(proc_macro2::TokenTree::Group(g)) = trees.get(k + 1) {
+                                    let inv_name =
+                                        path_segs.last().cloned().unwrap_or_default();
+                                    if !is_noise_macro(&inv_name) {
+                                        facts.macros.push(MacroEntry {
+                                            file: file.to_string(),
+                                            kind: MacroEntryKind::MacroInvocation,
+                                            name: inv_name,
+                                            line,
+                                            expansion_unverified: true,
+                                            args_count: None,
+                                            arg_idents: None,
+                                            brace_depth: Some(brace_depth),
+                                        });
+                                    }
+                                    scan_macro_body_tokens(
+                                        facts,
+                                        file,
+                                        is_example,
+                                        &g.stream(),
+                                        brace_depth,
+                                        emit_attrs,
+                                    );
+                                    i = k + 2;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
                 match name.as_str() {
                     "impl" => {
                         let mut cursor = TokenCursor::new(&trees[i + 1..]);

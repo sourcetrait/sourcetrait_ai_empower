@@ -76,6 +76,9 @@ impl FileWalker {
             for piece in split_top_commas(&args) {
                 let cleaned = last_segment(piece.trim());
                 if !cleaned.is_empty() {
+                    if cleaned == "Serialize" || cleaned == "Deserialize" {
+                        self.bump_seam(SeamKind::SerdeSerialize, 1);
+                    }
                     self.facts.derives.push(DeriveEntry {
                         file: self.file.clone(),
                         trait_name: cleaned,
@@ -189,7 +192,7 @@ impl FileWalker {
             match seg.ident.to_string().as_str() {
                 "libc" | "syscall" => self.bump_seam(SeamKind::SyscallLibc, 1),
                 "Serialize" | "Deserialize" => self.bump_seam(SeamKind::SerdeSerialize, 1),
-                "stdin" | "stdout" => self.bump_seam(SeamKind::StdIoStream, 1),
+                "stdin" | "stdout" | "stderr" => self.bump_seam(SeamKind::StdIoStream, 1),
                 "Command" => self.bump_seam(SeamKind::ProcessSpawn, 1),
                 _ => {}
             }
@@ -597,6 +600,9 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
     fn visit_item_foreign_mod(&mut self, fm: &'ast syn::ItemForeignMod) {
         let _ = self.process_item_attrs(&fm.attrs);
         self.bump_seam(SeamKind::Extern, 1);
+        if fm.unsafety.is_some() {
+            self.bump_seam(SeamKind::Unsafe, 1);
+        }
         for it in &fm.items {
             match it {
                 syn::ForeignItem::Fn(ff) => {
@@ -656,6 +662,34 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         }
         self.visit_type(&s.ty);
         self.visit_expr(&s.expr);
+    }
+
+    fn visit_item(&mut self, i: &'ast syn::Item) {
+        if let syn::Item::Verbatim(tokens) = i {
+            eprintln!(
+                "[know_rust] unhandled syn::Item::Verbatim in {} (tokens: {})",
+                self.file,
+                tokens.to_string().chars().take(64).collect::<String>(),
+            );
+            scan_macro_body_tokens(
+                &mut self.facts,
+                &self.file,
+                self.is_example,
+                tokens,
+                self.brace_depth,
+                true,
+            );
+            return;
+        }
+        syn::visit::visit_item(self, i);
+    }
+
+    fn visit_item_trait_alias(&mut self, ta: &'ast syn::ItemTraitAlias) {
+        eprintln!(
+            "[know_rust] unhandled syn::Item::TraitAlias in {} (ident: {})",
+            self.file,
+            ta.ident,
+        );
     }
 
     fn visit_impl_item_fn(&mut self, f: &'ast syn::ImplItemFn) {
@@ -751,6 +785,28 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         );
     }
 
+    fn visit_impl_item(&mut self, i: &'ast syn::ImplItem) {
+        if let syn::ImplItem::Verbatim(tokens) = i {
+            eprintln!(
+                "[know_rust] unhandled syn::ImplItem::Verbatim in {} (tokens: {})",
+                self.file,
+                tokens.to_string().chars().take(64).collect::<String>(),
+            );
+            self.brace_depth += 1;
+            scan_macro_body_tokens(
+                &mut self.facts,
+                &self.file,
+                self.is_example,
+                tokens,
+                self.brace_depth,
+                true,
+            );
+            self.brace_depth -= 1;
+            return;
+        }
+        syn::visit::visit_impl_item(self, i);
+    }
+
     fn visit_type_macro(&mut self, tm: &'ast syn::TypeMacro) {
         let name_segs: Vec<String> = tm
             .mac
@@ -838,9 +894,18 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         }
     }
 
+    fn visit_path(&mut self, p: &'ast syn::Path) {
+        self.scan_path_for_seams(p);
+        syn::visit::visit_path(self, p);
+    }
+
+    fn visit_type_trait_object(&mut self, t: &'ast syn::TypeTraitObject) {
+        self.bump_seam(SeamKind::DynTraitObject, 1);
+        syn::visit::visit_type_trait_object(self, t);
+    }
+
     fn visit_expr_path(&mut self, p: &'ast syn::ExprPath) {
-        self.scan_path_for_seams(&p.path);
-        syn::visit::visit_path(self, &p.path);
+        self.visit_path(&p.path);
     }
 
     fn visit_expr_unsafe(&mut self, u: &'ast syn::ExprUnsafe) {

@@ -17,7 +17,7 @@ pub(crate) fn walk_workspace(root: &Path) -> Result<Facts> {
     };
     for entry in walkdir::WalkDir::new(root)
         .into_iter()
-        .filter_entry(|e| !is_target_dir(e.path()))
+        .filter_entry(|e| !is_skip_dir(e.path()))
         .filter_map(|e| e.ok())
     {
         let p = entry.path();
@@ -55,7 +55,20 @@ pub(crate) fn walk_workspace(root: &Path) -> Result<Facts> {
     Ok(facts)
 }
 
-fn is_target_dir(p: &Path) -> bool {
+/// What: path predicate that returns true when any path component is
+/// `target` or `.git`, signaling the usages walker should skip the
+/// subtree entirely.
+///
+/// Why: `target/` holds cargo build artifacts (recompilable / generated
+/// .rs); `.git/` holds version-control internals (no source). Walking
+/// either pollutes the scan with non-source entries. Bundled into one
+/// predicate so the call site at the WalkDir filter_entry stays a
+/// single negation.
+///
+/// Where: called from `walk_workspace`'s `WalkDir::filter_entry`;
+/// mirrored at `crate::items::workspace::is_skip_dir` for the
+/// `scan items` walker.
+fn is_skip_dir(p: &Path) -> bool {
     p.components().any(|c| {
         let name = c.as_os_str().to_str();
         name == Some("target") || name == Some(".git")

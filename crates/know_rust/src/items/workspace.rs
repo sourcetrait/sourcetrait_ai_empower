@@ -65,13 +65,13 @@ pub(crate) fn scan_workspace(
 }
 
 /// Collect every `.rs` file under `workspace_root`, sorted by relative
-/// path for determinism. Skips `target/`, `tests/`, and `benches/`
-/// segments anywhere in the path.
+/// path for determinism. Skips `target/`, `.git/`, `tests/`, and
+/// `benches/` segments anywhere in the path.
 fn collect_rs_files(workspace_root: &Path) -> Vec<(PathBuf, String)> {
     let mut rs_files = Vec::new();
     for entry in walkdir::WalkDir::new(workspace_root)
         .into_iter()
-        .filter_entry(|e| !is_target_dir(e.path()))
+        .filter_entry(|e| !is_skip_dir(e.path()))
         .filter_map(|e| e.ok())
     {
         let p = entry.path();
@@ -95,7 +95,19 @@ fn collect_rs_files(workspace_root: &Path) -> Vec<(PathBuf, String)> {
     rs_files
 }
 
-fn is_target_dir(p: &Path) -> bool {
+/// What: path predicate that returns true when any path component is
+/// `target` or `.git`, signaling the workspace walker should skip the
+/// subtree entirely.
+///
+/// Why: `target/` holds cargo build artifacts (recompilable / generated
+/// .rs); `.git/` holds version-control internals (no source). Walking
+/// either pollutes the scan with non-source entries. Bundled into one
+/// predicate so the call site at the WalkDir filter_entry stays a
+/// single negation.
+///
+/// Where: called from `collect_rs_files`'s `WalkDir::filter_entry`;
+/// mirrored at `crate::walk::is_skip_dir` for the `scan usages` walker.
+fn is_skip_dir(p: &Path) -> bool {
     p.components().any(|c| {
         let name = c.as_os_str().to_str();
         name == Some("target") || name == Some(".git")

@@ -14,6 +14,7 @@ pub(crate) mod characterize {
 }
 pub(crate) mod cli;
 pub(crate) mod emit {
+    pub(crate) mod picker;
     pub(crate) mod reference;
     pub(crate) mod run;
 }

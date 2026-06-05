@@ -1,0 +1,248 @@
+use crate::*;
+
+/// What: orchestrate the `know_rust characterize` invocation. Walk
+/// Cargo.tomls, run scan items + scan usages in-process, build the
+/// per-file items index, aggregate per-crate, compute pattern
+/// histogram + select_mode + pattern_metrics + use-classification +
+/// workspace_shape, and write `facts.json` + `fingerprint.json` to
+/// the output directory.
+///
+/// Why: characterize.py's `main` rewritten as a pure rust orchestrator
+/// that calls `scan_workspace` (items) and `walk_workspace` (usages)
+/// directly rather than subprocessing the binary. The subprocess hop
+/// disappears; intermediate `know_rust_items.json` +
+/// `know_rust_usages.json` are still written to preserve baseline
+/// parity for downstream tooling that expects them.
+///
+/// Where: dispatched by `crate::run::run` via the
+/// `Command::Characterize` clap variant; called from
+/// `tests/characterize_integration.rs` when phase 6 lands.
+pub fn characterize(
+    workspace_root: &Path,
+    out_dir: &Path,
+    calibration: &Calibration,
+) -> std::result::Result<(), Error> {
+    fs::create_dir_all(out_dir).map_err(|source| Error::Write {
+        path: out_dir.to_path_buf(),
+        source,
+    })?;
+
+    let (crates, workspace_roots) = find_crates(workspace_root);
+    if crates.is_empty() {
+        eprintln!(
+            "[characterize] no Cargo packages found under {}",
+            workspace_root.display()
+        );
+        return Ok(());
+    }
+    let components = compute_components(&crates);
+
+    let item_facts = scan_workspace(workspace_root);
+    {
+        let path = out_dir.join("know_rust_items.json");
+        let json = serde_json::to_string_pretty(&item_facts)
+            .map_err(|source| Error::Serialize { source })?;
+        fs::write(&path, json).map_err(|source| Error::Write {
+            path,
+            source,
+        })?;
+    }
+    let items_by_file = build_items_index(&item_facts);
+
+    let usage_facts = walk_workspace(workspace_root)?;
+    {
+        let path = out_dir.join("know_rust_usages.json");
+        let json = serde_json::to_string_pretty(&usage_facts)
+            .map_err(|source| Error::Serialize { source })?;
+        fs::write(&path, json).map_err(|source| Error::Write {
+            path,
+            source,
+        })?;
+    }
+
+    let mut all_facts = WorkspaceFacts {
+        impls: Vec::new(),
+        traits: Vec::new(),
+        types: Vec::new(),
+        fns: Vec::new(),
+        uses: Vec::new(),
+        macros: Vec::new(),
+        derives: Vec::new(),
+        macro_defs: Vec::new(),
+        type_usages: Vec::new(),
+        mods: Vec::new(),
+        example_type_usages: Vec::new(),
+        seams: indexmap::IndexMap::new(),
+        ast_type_refs: Vec::new(),
+        ast_method_refs: Vec::new(),
+    };
+    let mut per_crate: indexmap::IndexMap<String, PerCrateFingerprint> = indexmap::IndexMap::new();
+    let mut free_fns_by_crate: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+
+    for (name, info) in &crates {
+        let cf = scan_crate(workspace_root, &info.dir, &items_by_file);
+        per_crate.insert(
+            name.clone(),
+            PerCrateFingerprint {
+                dir: info.dir.clone(),
+                sloc: cf.sloc,
+                deps: info.deps.clone(),
+                n_impls: cf.impls.len(),
+                n_types: cf.types.len(),
+                n_traits: cf.traits.len(),
+                n_fns: cf.fns.len(),
+                seams: indexmap::IndexMap::new(),
+            },
+        );
+        let free_fns_count = cf
+            .fns
+            .iter()
+            .filter(|f| f.get("brace_depth").and_then(|v| v.as_u64()).unwrap_or(99) == 0)
+            .count();
+        free_fns_by_crate.insert(name.clone(), free_fns_count);
+
+        extend_with_crate(&mut all_facts.impls, cf.impls, name);
+        extend_with_crate(&mut all_facts.traits, cf.traits, name);
+        extend_with_crate(&mut all_facts.types, cf.types, name);
+        extend_with_crate(&mut all_facts.fns, cf.fns, name);
+        extend_with_crate(&mut all_facts.uses, cf.uses, name);
+        extend_with_crate(&mut all_facts.macros, cf.macros, name);
+        extend_with_crate(&mut all_facts.derives, cf.derives, name);
+        extend_with_crate(&mut all_facts.macro_defs, cf.macro_defs, name);
+        extend_with_crate(&mut all_facts.mods, cf.mods, name);
+        extend_with_crate(&mut all_facts.type_usages, cf.type_usages, name);
+        extend_with_crate(&mut all_facts.example_type_usages, cf.example_type_usages, name);
+    }
+    for (k, v) in &item_facts.seams {
+        *all_facts.seams.entry(k.clone()).or_default() += v;
+    }
+
+    let (ranked, by_kind, reg_calls) = pattern_histogram(&all_facts, &free_fns_by_crate);
+    let selection = select_mode(&ranked, &workspace_roots, components.len(), calibration);
+
+    let total_sloc: usize = per_crate.values().map(|c| c.sloc).sum::<usize>().max(1);
+    let seam_total: usize = all_facts.seams.values().sum();
+    let seam_density = seam_total as f64 / (total_sloc as f64 / 1000.0);
+
+    let mut example_rs_files = 0usize;
+    for entry in walkdir::WalkDir::new(workspace_root) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if entry.path().extension().and_then(|s| s.to_str()) != Some("rs") {
+            continue;
+        }
+        let rel = match entry.path().strip_prefix(workspace_root) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if rel.components().any(|c| c.as_os_str() == "examples") {
+            example_rs_files += 1;
+        }
+    }
+
+    let pattern_metrics = compute_pattern_metrics(&all_facts, Some(&usage_facts), &crates, calibration);
+    let workspace_use_classification =
+        classify_workspace_use(&crates, &pattern_metrics, calibration);
+
+    let totals = Totals {
+        crates: crates.len(),
+        sloc: total_sloc,
+        impls: all_facts.impls.len(),
+        types: all_facts.types.len(),
+        traits: all_facts.traits.len(),
+        fns: all_facts.fns.len(),
+        example_rs_files,
+    };
+
+    let thresholds = Thresholds {
+        dominance_share: calibration.mode.dominance_share,
+        coequal_topk: calibration.mode.coequal_topk,
+        coequal_share: calibration.mode.coequal_share,
+        ambiguous_band: calibration.mode.ambiguous_band,
+        seam_dense_per_kloc: calibration.mode.seam_dense_per_kloc,
+        note: "Declared defaults, not validated constants. Override via ORIENT_* env vars. The full histogram is reported so the choice is auditable.".to_string(),
+    };
+
+    let mut fp = Fingerprint {
+        tool_version: "0.1.0".to_string(),
+        repo_root: workspace_root.display().to_string(),
+        totals,
+        workspace_roots,
+        components,
+        n_components: 0,
+        pattern_histogram: ranked
+            .iter()
+            .take(40)
+            .map(|(p, c)| PatternHistogramEntry { pattern: p.clone(), count: *c })
+            .collect(),
+        pattern_by_kind: by_kind,
+        registration_macros: reg_calls,
+        seam_inventory: all_facts.seams.clone(),
+        seam_density_per_kloc: (seam_density * 100.0).round() / 100.0,
+        selection,
+        pattern_metrics,
+        workspace_use_classification,
+        thresholds,
+        per_crate: per_crate.clone(),
+        workspace_shape: WorkspaceShape {
+            shape: "monolith".to_string(),
+            signals: indexmap::IndexMap::new(),
+            reasoning: String::new(),
+        },
+    };
+    fp.n_components = fp.components.len();
+    fp.workspace_shape = classify_workspace_shape(&per_crate, &all_facts);
+
+    {
+        let path = out_dir.join("fingerprint.json");
+        let json = serde_json::to_string_pretty(&fp)
+            .map_err(|source| Error::Serialize { source })?;
+        fs::write(&path, json).map_err(|source| Error::Write {
+            path,
+            source,
+        })?;
+    }
+    {
+        let path = out_dir.join("facts.json");
+        let json = serde_json::to_string_pretty(&all_facts)
+            .map_err(|source| Error::Serialize { source })?;
+        fs::write(&path, json).map_err(|source| Error::Write {
+            path,
+            source,
+        })?;
+    }
+
+    eprintln!(
+        "[characterize] {} crates, {} SLOC, {} component(s), {} workspace root(s)",
+        crates.len(),
+        total_sloc,
+        fp.n_components,
+        fp.workspace_roots.len()
+    );
+    eprintln!(
+        "[characterize] mode = {}  (histogram: {}, top_share={})",
+        fp.selection.mode, fp.selection.histogram_mode, fp.selection.top_share
+    );
+    Ok(())
+}
+
+fn extend_with_crate(
+    dst: &mut Vec<serde_json::Value>,
+    src: Vec<serde_json::Value>,
+    crate_name: &str,
+) {
+    for mut v in src {
+        if let serde_json::Value::Object(ref mut map) = v {
+            map.insert(
+                "crate".to_string(),
+                serde_json::Value::String(crate_name.to_string()),
+            );
+        }
+        dst.push(v);
+    }
+}

@@ -62,7 +62,7 @@ pub struct FileLevelFacts {
 
 /// What: one impl block seen at item position (`impl X { ... }` or
 /// `impl Trait for X { ... }`).
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImplEntry {
     pub file: String,
     #[serde(rename = "trait")]
@@ -76,7 +76,7 @@ pub struct ImplEntry {
 }
 
 /// What: one trait declaration (`trait T { ... }`).
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TraitEntry {
     pub file: String,
     pub name: String,
@@ -88,7 +88,7 @@ pub struct TraitEntry {
 
 /// What: one type-like declaration: struct, enum, union, or type alias.
 /// `kind` distinguishes which shape was declared.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TypeEntry {
     pub file: String,
     pub kind: TypeEntryKind,
@@ -120,7 +120,7 @@ pub enum TypeEntryKind {
 
 /// What: one fn declaration at any depth (free, in-impl, in-trait,
 /// extern-block); `brace_depth` records nesting at emission time.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FnEntry {
     pub file: String,
     pub name: String,
@@ -131,7 +131,7 @@ pub struct FnEntry {
 }
 
 /// What: one `mod X` declaration (with or without inline content).
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModEntry {
     pub file: String,
     pub name: String,
@@ -140,7 +140,7 @@ pub struct ModEntry {
 }
 
 /// What: one `use X::Y` statement; `reexport` flags `pub use ...`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UseEntry {
     pub file: String,
     pub reexport: bool,
@@ -151,7 +151,7 @@ pub struct UseEntry {
 /// What: one macro call site (function-form or attribute-form). `kind`
 /// distinguishes the two shapes; `args_count` / `arg_idents` /
 /// `brace_depth` populate only for function-form invocations.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MacroEntry {
     pub file: String,
     pub kind: MacroEntryKind,
@@ -182,7 +182,7 @@ pub enum MacroEntryKind {
 }
 
 /// What: one `macro_rules! NAME { ... }` declaration site.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MacroDefEntry {
     pub file: String,
     pub name: String,
@@ -194,7 +194,7 @@ pub struct MacroDefEntry {
 /// What: one attribute occurrence (`#[...]` or `#![...]`). `inner`
 /// distinguishes file-level inner attrs from item-level outer attrs;
 /// `args` is the literal text inside the attribute's argument list.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AttrEntry {
     pub file: String,
     pub path: String,
@@ -206,7 +206,7 @@ pub struct AttrEntry {
 
 /// What: one trait name inside a `#[derive(...)]` list (one entry per
 /// trait listed, not per derive attribute).
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeriveEntry {
     pub file: String,
     #[serde(rename = "trait")]
@@ -220,7 +220,7 @@ pub struct DeriveEntry {
 /// the usage represents (currently only `FactoryCall`).
 /// `expansion_unverified` is set when the usage was extracted from a
 /// macro body's TokenStream rather than parsed syntax.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TypeUsageEntry {
     pub file: String,
     pub name: String,

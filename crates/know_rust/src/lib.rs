@@ -1,3 +1,17 @@
+pub(crate) mod characterize {
+    pub(crate) mod cargo_toml;
+    pub(crate) mod components;
+    pub(crate) mod items_index;
+    pub(crate) mod mode;
+    pub(crate) mod pattern_histogram;
+    pub(crate) mod pattern_metrics;
+    pub(crate) mod run;
+    pub(crate) mod scan_crate;
+    pub(crate) mod shape;
+    pub(crate) mod sloc;
+    pub(crate) mod types;
+    pub(crate) mod use_classification;
+}
 pub(crate) mod cli;
 pub(crate) mod config {
     pub(crate) mod calibration;
@@ -26,6 +40,17 @@ pub(crate) mod scan {
 }
 
 pub(crate) use crate::{
+    characterize::cargo_toml::*,
+    characterize::components::*,
+    characterize::items_index::*,
+    characterize::mode::*,
+    characterize::pattern_histogram::*,
+    characterize::pattern_metrics::*,
+    characterize::scan_crate::*,
+    characterize::shape::*,
+    characterize::sloc::*,
+    characterize::types::*,
+    characterize::use_classification::*,
     cli::*,
     error::*,
     scan::helpers::*,
@@ -59,6 +84,7 @@ pub(crate) use syn::{
 };
 
 pub use crate::run::run;
+pub use crate::characterize::run::*;
 pub use crate::config::calibration::*;
 pub use crate::config::loader::*;
 pub use crate::config::templates::*;

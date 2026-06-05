@@ -42,6 +42,20 @@ pub(crate) enum Command {
         #[command(subcommand)]
         scan: ScanCommand,
     },
+    /// Characterize a workspace: build the dependency graph, run the
+    /// item + usage scans in-process, aggregate per-crate, compute
+    /// pattern_metrics + workspace_shape + use-classification, and
+    /// write facts.json + fingerprint.json (plus the intermediate
+    /// know_rust_items.json + know_rust_usages.json) to the output
+    /// directory.
+    Characterize {
+        /// Workspace root to characterize.
+        workspace_root: PathBuf,
+        /// Output directory; facts.json + fingerprint.json (plus
+        /// know_rust_items.json + know_rust_usages.json) are written
+        /// here.
+        out_dir: PathBuf,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]

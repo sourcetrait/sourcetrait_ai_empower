@@ -38,6 +38,10 @@ pub(crate) mod measure_overlap {
     pub(crate) mod types;
 }
 pub(crate) mod run;
+pub(crate) mod rustdoc_overlay {
+    pub(crate) mod run;
+    pub(crate) mod types;
+}
 pub(crate) mod scan {
     pub(crate) mod helpers;
     pub(crate) mod items {
@@ -83,6 +87,7 @@ pub(crate) use crate::{
     measure_overlap::parse::*,
     measure_overlap::score::*,
     measure_overlap::types::*,
+    rustdoc_overlay::types::*,
     scan::helpers::*,
     scan::items::filters::*,
     scan::items::helpers::*,
@@ -119,6 +124,7 @@ pub use crate::run::run;
 pub use crate::characterize::run::*;
 pub use crate::emit::run::*;
 pub use crate::measure_overlap::run::*;
+pub use crate::rustdoc_overlay::run::*;
 pub use crate::config::calibration::*;
 pub use crate::config::loader::*;
 pub use crate::config::templates::*;

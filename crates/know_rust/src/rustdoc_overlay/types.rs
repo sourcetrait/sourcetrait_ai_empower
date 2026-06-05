@@ -1,0 +1,101 @@
+use crate::*;
+
+/// What: serde-serializable overlay structure mirroring
+/// rustdoc_overlay.py's `overlay` dict shape. The top-level fields
+/// serialize in declaration order via serde to match Python's dict
+/// insertion order for byte-equal JSON output.
+///
+/// Why: rustdoc_overlay.py writes its result as
+/// `json.dumps(overlay, indent=2)` so the consumer can read a
+/// human-friendly indented JSON. The Rust port maintains that exact
+/// shape so existing the_user verification tooling stays compatible.
+///
+/// Where: built by `crate::rustdoc_overlay::run::rustdoc_overlay`
+/// after the reconcile pass; serialized via `serde_json::to_string_
+/// pretty` and written to `<orientation_dir>/rustdoc_overlay.json`.
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct Overlay {
+    pub status: &'static str,
+    pub format_version: u64,
+    pub macro_generated: Vec<MacroGenerated>,
+    pub reexports: Vec<Reexport>,
+    pub null_span_items: Vec<NullSpanItem>,
+    pub disagreements: Vec<Disagreement>,
+}
+
+/// What: one macro-generated impl entry - the trait name, a null span
+/// (because rustdoc reports null for blanket / synthesized / macro
+/// items), and a fixed "no span" note.
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct MacroGenerated {
+    #[serde(rename = "trait")]
+    pub trait_name: String,
+    pub span: Option<String>,
+    pub note: &'static str,
+}
+
+/// What: one re-export entry - the export's name and its source path
+/// (rustdoc resolves the target through `pub use`).
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct Reexport {
+    pub name: Option<String>,
+    pub source: Option<serde_json::Value>,
+}
+
+/// What: one null-span item - rustdoc emits null spans for re-
+/// exports, blanket / synthesized impls, and macro-generated items.
+/// The overlay flags them rather than dropping.
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct NullSpanItem {
+    pub name: String,
+    pub kind: Option<String>,
+}
+
+/// What: one disagreement entry partitioning rustdoc-only impl traits
+/// into either std-blanket coverage (informational) or user-domain
+/// macro-only impls (the loud signal of a registration-macro seam).
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct Disagreement {
+    pub kind: &'static str,
+    pub traits: Vec<String>,
+    pub note: &'static str,
+}
+
+/// What: format versions this overlay has been verified against. The
+/// rustdoc JSON schema changes between nightlies; reconcile() degrades
+/// (errors in the hard-nightly Rust port) when an unknown version
+/// shows up rather than risk misreading.
+pub const FORMAT_VERSION_MIN: u64 = 26;
+
+/// What: highest format version verified through rustdoc_overlay.py;
+/// the format-57 rename of `trait.name` to `trait.path` is handled in
+/// reconcile.
+pub const FORMAT_VERSION_MAX: u64 = 57;
+
+/// What: standard-library blanket / auto-impl traits. The compiler
+/// synthesizes these for every type satisfying their bounds, so they
+/// always land in the disagreement list under the naive logic. Split
+/// out as an informational std-blanket-coverage disagreement so the
+/// loud `impls_only_in_rustdoc` signal surfaces only user-domain
+/// macro registration.
+pub const STD_BLANKET_TRAITS: &[&str] = &[
+    "Any",
+    "Borrow",
+    "BorrowMut",
+    "CloneToUninit",
+    "Freeze",
+    "From",
+    "Into",
+    "Receiver",
+    "RefUnwindSafe",
+    "Send",
+    "Sized",
+    "Sync",
+    "ToOwned",
+    "ToString",
+    "TryFrom",
+    "TryInto",
+    "Unpin",
+    "UnsafeUnpin",
+    "UnwindSafe",
+];

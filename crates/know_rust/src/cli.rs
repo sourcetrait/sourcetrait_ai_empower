@@ -78,6 +78,23 @@ pub(crate) enum Command {
         /// (notes/know_rust/manual_ground_truth.json).
         ground_truth: PathBuf,
     },
+    /// Apply the rustdoc semantic overlay (hard-requires cargo
+    /// +nightly per locked decision 4). Invokes
+    /// `cargo +nightly rustdoc -p <pkg> --lib -- -Z unstable-options
+    /// --output-format json` at the workspace root, reconciles the
+    /// resulting rustdoc JSON against `facts.json`, and writes
+    /// `rustdoc_overlay.json` to the orientation directory.
+    RustdocOverlay {
+        /// Workspace root the characterize output was produced from.
+        workspace_root: PathBuf,
+        /// Directory containing facts.json + fingerprint.json;
+        /// rustdoc_overlay.json is written here.
+        orientation_dir: PathBuf,
+        /// Package to pass to `cargo rustdoc -p`. When omitted,
+        /// resolved via cargo metadata + the characterize
+        /// fingerprint's most-depended-on in-workspace crate.
+        package: Option<String>,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]

@@ -45,6 +45,15 @@ pub enum Error {
 
     #[snafu(display("template not found: {name}"))]
     TemplateNotFound { name: String },
+
+    #[snafu(display("rustdoc overlay requires a nightly cargo toolchain: {reason}"))]
+    ToolchainMissing { reason: String },
+
+    #[snafu(display("cargo +nightly rustdoc failed: {reason}"))]
+    RustdocFailed { reason: String },
+
+    #[snafu(display("unknown rustdoc format_version={version}; aborting per the hard-nightly requirement"))]
+    UnknownRustdocFormatVersion { version: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

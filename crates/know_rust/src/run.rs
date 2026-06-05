@@ -28,6 +28,11 @@ pub fn run() -> std::result::Result<(), Error> {
             baseline_dir,
             ground_truth,
         } => measure_overlap(&baseline_dir, &ground_truth),
+        Command::RustdocOverlay {
+            workspace_root,
+            orientation_dir,
+            package,
+        } => rustdoc_overlay(&workspace_root, &orientation_dir, package.as_deref()),
     }
 }
 

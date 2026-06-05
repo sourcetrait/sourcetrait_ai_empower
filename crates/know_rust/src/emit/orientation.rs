@@ -1,0 +1,774 @@
+use crate::*;
+
+/// What: render the orientation.md content for non-container workspaces
+/// as a single string. Composes provenance + how-shaped + S1 crate /
+/// region map + S2 core vocabulary + S3 seam spine + S4 dataflow
+/// narrative + S5 six significance sub-sections + tier guidance +
+/// authoring guide + S6 unresolved guardrails + S7 authoring guide +
+/// histogram appendix.
+///
+/// Why: emit.py's `emit_orientation()` (lines 1246-1700). The
+/// read-first map artifact the agent loads to author against the
+/// workspace. Mechanical skeleton + clearly marked [AGENT] slots the
+/// agent fills by reading source at the cited spans.
+///
+/// Where: dispatched by `crate::emit::run::emit` when
+/// `workspace_shape.shape != container`; the container-shaped path
+/// uses `crate::emit::container_routing::render_container_routing`
+/// instead.
+pub fn render_orientation(
+    workspace_root: &Path,
+    out_dir: &Path,
+    fp: &serde_json::Value,
+    facts: &serde_json::Value,
+    calibration: &Calibration,
+) -> String {
+    let sel = fp.get("selection").cloned().unwrap_or(serde_json::Value::Null);
+    let vocab = core_vocabulary(fp, facts);
+    let cands = candidate_instances(fp, facts, calibration);
+    let seams = detected_seams(fp, facts);
+
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("# Orientation".to_string());
+    lines.push(String::new());
+    lines.push(
+        "Read-first. This is the map; the source is the territory and `reference.md` is the".to_string(),
+    );
+    lines.push(
+        "exhaustive index. Map-first ordering: skeleton (crate map, core vocabulary, seams,".to_string(),
+    );
+    lines.push(
+        "flow) then the worked slice (the authoring template), then guardrails, then the".to_string(),
+    );
+    lines.push(
+        "authoring guide. Every claim is a span you can open. Sections marked **[AGENT]** are".to_string(),
+    );
+    lines.push("filled by reading source at the cited spans - never from guesswork.".to_string());
+    lines.push(String::new());
+    lines.push("```".to_string());
+    lines.push(provenance(workspace_root, out_dir, fp));
+    lines.push("```".to_string());
+    lines.push(String::new());
+
+    // How shaped
+    lines.push("## How this artifact was shaped".to_string());
+    lines.push(String::new());
+    let mode = sel.get("mode").and_then(|v| v.as_str()).unwrap_or("?");
+    let histogram_mode = sel.get("histogram_mode").and_then(|v| v.as_str()).unwrap_or("?");
+    let top_share = sel
+        .get("top_share")
+        .map(format_value_python)
+        .unwrap_or_else(|| "?".to_string());
+    lines.push(format!(
+        "- mode: **{}** (histogram alone: {}, top_share={})",
+        mode, histogram_mode, top_share
+    ));
+    let shape_info = fp
+        .get("workspace_shape")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let shape_label = shape_info.get("shape").and_then(|v| v.as_str()).map(String::from);
+    if let Some(label) = &shape_label {
+        if label != "container" {
+            let reasoning = shape_info.get("reasoning").and_then(|v| v.as_str()).unwrap_or("");
+            lines.push(format!(
+                "- structural shape: **{}** -- {}",
+                label, reasoning
+            ));
+        }
+    }
+    let use_info = fp
+        .get("workspace_use_classification")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let use_label = use_info
+        .get("workspace")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    if let Some(label) = &use_label {
+        let reasoning = use_info.get("reasoning").and_then(|v| v.as_str()).unwrap_or("");
+        lines.push(format!(
+            "- use classification: **{}** -- {}",
+            label, reasoning
+        ));
+    }
+    if let Some(ru) = sel.get("runner_up").and_then(|v| v.as_str()) {
+        lines.push(format!(
+            "- **UNRESOLVED (method-selection):** runner-up mode `{}` is within the ambiguity \
+             band. Confirm against the histogram below.",
+            ru
+        ));
+    }
+    if let Some(notes) = sel.get("notes").and_then(|v| v.as_array()) {
+        for n in notes {
+            if let Some(s) = n.as_str() {
+                lines.push(format!("- note: {}", s));
+            }
+        }
+    }
+    lines.push(String::new());
+
+    // 1. Crate / region map
+    lines.push("## 1. Crate / region map".to_string());
+    lines.push(String::new());
+    let per_crate = fp
+        .get("per_crate")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let cluster_threshold = calibration.picker.cluster.threshold;
+    let cluster_min_size = calibration.picker.cluster.min_size;
+    let use_clusters_pref = per_crate.len() > cluster_threshold;
+    let crate_names: Vec<String> = per_crate.keys().cloned().collect();
+    let (clusters, others) = if use_clusters_pref {
+        cluster_crates_by_prefix(&crate_names, cluster_min_size)
+    } else {
+        (indexmap::IndexMap::new(), Vec::new())
+    };
+    let use_clusters = use_clusters_pref && !clusters.is_empty();
+
+    let n_components = fp.get("n_components").and_then(|v| v.as_i64()).unwrap_or(0);
+    let workspace_roots_len = fp
+        .get("workspace_roots")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    if n_components > 1 || workspace_roots_len > 1 {
+        lines.push(format!(
+            "**Regional** - {} disjoint component(s), {} workspace root(s). Each component is a \
+             region; the seam-spine (S3) is the join. **[AGENT]** name each region's role and \
+             the named seams connecting it to the others; if two regions share no traced data \
+             path, record that as an UNRESOLVED rather than inventing a link.",
+            n_components, workspace_roots_len
+        ));
+        lines.push(String::new());
+        let components = fp
+            .get("components")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for (idx, comp) in components.iter().enumerate() {
+            let comp_names: Vec<String> = comp
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            lines.push(format!("- region {}: {}", idx + 1, comp_names.join(", ")));
+        }
+    } else {
+        lines.push("Single connected component. Crates and their internal dependencies:".to_string());
+    }
+    lines.push(String::new());
+
+    if use_clusters {
+        lines.push("### 1.1 Crate clusters (by name prefix)".to_string());
+        lines.push(String::new());
+        lines.push(format!(
+            "Workspace has {} crates; the prefix-grouping below surfaces architectural clusters \
+             above the per-crate detail. Threshold for clustering: {} crates (env: \
+             ORIENT_CLUSTER_THRESHOLD). Minimum cluster size: {} (env: ORIENT_CLUSTER_MIN_SIZE). \
+             Snake-case (`name_x`) and kebab-case (`name-x`) prefixes are kept distinct.",
+            per_crate.len(), cluster_threshold, cluster_min_size
+        ));
+        lines.push(String::new());
+        let mut cluster_prefixes: Vec<String> = clusters.keys().cloned().collect();
+        cluster_prefixes.sort();
+        for prefix in &cluster_prefixes {
+            let mut members = clusters.get(prefix).cloned().unwrap_or_default();
+            members.sort();
+            let sep = if prefix.contains('_') { '_' } else { '-' };
+            lines.push(format!(
+                "- **`{}{}*`** ({} crates): {}",
+                prefix, sep, members.len(), members.join(", ")
+            ));
+        }
+        if !others.is_empty() {
+            lines.push(format!(
+                "- **Other** ({} crates): {}",
+                others.len(), others.join(", ")
+            ));
+        }
+        lines.push(String::new());
+        lines.push("### 1.2 Per-crate detail".to_string());
+        lines.push(String::new());
+    }
+    let mut crate_names_sorted: Vec<String> = per_crate.keys().cloned().collect();
+    crate_names_sorted.sort();
+    for name in &crate_names_sorted {
+        let c = match per_crate.get(name) {
+            Some(c) => c,
+            None => continue,
+        };
+        let dir = c.get("dir").and_then(|v| v.as_str()).unwrap_or("?");
+        let sloc = c.get("sloc").and_then(|v| v.as_i64()).unwrap_or(0);
+        let n_impls = c.get("n_impls").and_then(|v| v.as_i64()).unwrap_or(0);
+        let n_types = c.get("n_types").and_then(|v| v.as_i64()).unwrap_or(0);
+        let ideps: Vec<String> = c
+            .get("deps")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|d| d.as_str().map(String::from))
+                    .filter(|d| per_crate.contains_key(d))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let dep_str = if ideps.is_empty() {
+            String::new()
+        } else {
+            format!(" -> depends on: {}", ideps.join(", "))
+        };
+        lines.push(format!(
+            "- **{}** ({}/, {} SLOC, {} impls, {} types){}",
+            name, dir, sloc, n_impls, n_types, dep_str
+        ));
+    }
+    lines.push(String::new());
+    if use_clusters {
+        lines.push(
+            "**[AGENT]** In 2-4 sentences each, describe each crate cluster (S1.1) and the \
+             load-bearing standalone crates from S1.2 / 'Other'. Populate *why* only from \
+             crate-level doc-comments / README; where absent, write `why: unverified`.".to_string(),
+        );
+    } else {
+        lines.push(
+            "**[AGENT]** In 2-4 sentences each (what / why / where), describe the role of the \
+             core crates. Populate *why* only from crate-level doc-comments / README; where \
+             absent, write `why: unverified`.".to_string(),
+        );
+    }
+    lines.push(String::new());
+
+    // 2. Core type vocabulary
+    lines.push("## 2. Core type vocabulary".to_string());
+    lines.push(String::new());
+    let core_str = vocab.core.clone().unwrap_or_else(|| "None".to_string());
+    lines.push(format!(
+        "Most-depended-on crate: **{}** - its public types are the vocabulary other crates \
+         speak in. Items below are ranked by impl-block usage (descending) with \
+         alphabetical-by-name as the tiebreaker (0.0.4 patch 2; was alphabetical at 0.0.3). \
+         Confirm and describe each (what / where load-bearing; why from doc-comments else \
+         unverified):",
+        core_str
+    ));
+    lines.push(String::new());
+    for (t, usage) in vocab.traits.iter().take(40) {
+        let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let usage_str = if *usage > 0 {
+            format!(
+                "  *({} impl{})*",
+                usage, if *usage != 1 { "s" } else { "" }
+            )
+        } else {
+            String::new()
+        };
+        let doc = match t.get("doc").and_then(|v| v.as_str()) {
+            Some(d) if !d.is_empty() => format!(" - doc: {}", truncate_chars(d, 120)),
+            _ => "  *(why: unverified - no doc)*".to_string(),
+        };
+        lines.push(format!(
+            "- trait `{}` - {}{}{}",
+            name, span(t), usage_str, doc
+        ));
+    }
+    for (t, usage) in vocab.types.iter().take(40) {
+        let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let usage_str = if *usage > 0 {
+            format!(
+                "  *({} usage{})*",
+                usage, if *usage != 1 { "s" } else { "" }
+            )
+        } else {
+            String::new()
+        };
+        let doc = match t.get("doc").and_then(|v| v.as_str()) {
+            Some(d) if !d.is_empty() => format!(" - doc: {}", truncate_chars(d, 120)),
+            _ => "  *(why: unverified - no doc)*".to_string(),
+        };
+        lines.push(format!(
+            "- `{} {}` - {}{}{}",
+            kind, name, span(t), usage_str, doc
+        ));
+    }
+    lines.push(String::new());
+
+    // 3. Seam-spine
+    lines.push("## 3. Seam-spine".to_string());
+    lines.push(String::new());
+    lines.push(
+        "Where the workspace stops being one connected thing. These are where architect-".to_string(),
+    );
+    lines.push(
+        "level features add or cross boundaries, and where the static trace stops honestly.".to_string(),
+    );
+    lines.push(String::new());
+    if !seams.is_empty() {
+        for s in &seams {
+            lines.push(format!("- **{}** - {}", s.title, s.description));
+            for site in &s.sites {
+                let path = site.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let file = site.get("file").and_then(|v| v.as_str()).unwrap_or("?");
+                let line = site.get("line").and_then(|v| v.as_i64());
+                let line_str = match line {
+                    Some(l) => l.to_string(),
+                    None => "?".to_string(),
+                };
+                lines.push(format!("    - site: {} ({}:{})", path, file, line_str));
+            }
+        }
+    } else {
+        lines.push(
+            "- No strong seam markers detected. **[AGENT]** confirm by inspecting the dominant \
+             pattern's boundaries; absence of markers is itself worth noting.".to_string(),
+        );
+    }
+    lines.push(String::new());
+    lines.push(
+        "**[AGENT]** For each seam, trace each protagonist pattern's instance (per S5.N) UP TO \
+         the seam and stop. Record the wire / foreign contract location if visible; otherwise \
+         write `UNRESOLVED: <what you looked for>, <what you ran>`. Different protagonists may \
+         interact with the same seam differently (e.g. plugin commands cross the IPC seam; \
+         builtin commands do not).".to_string(),
+    );
+    lines.push(String::new());
+
+    // 4. Data-flow narrative (agent)
+    lines.push("## 4. Data-flow narrative".to_string());
+    lines.push(String::new());
+    lines.push(
+        "**[AGENT]** Trace how the core data type (from S2) moves from entry to result through \
+         the core crates. 1-2 short paragraphs, each sentence anchored to a span from \
+         reference.md. Stop at any seam from S3 with an explicit UNRESOLVED.".to_string(),
+    );
+    lines.push(String::new());
+
+    // 5. Significance sets
+    let top_n_workspace = cands.top_n_workspace;
+    let all_per_crate_top_ns: Vec<usize> = cands
+        .top_n_intra_crate_per_crate
+        .values()
+        .copied()
+        .chain(cands.top_n_inner_per_crate.values().copied())
+        .collect();
+    let per_crate_min = all_per_crate_top_ns
+        .iter()
+        .copied()
+        .min()
+        .unwrap_or(calibration.picker.top_n_floor);
+    let per_crate_max = all_per_crate_top_ns
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(calibration.picker.top_n_floor);
+
+    lines.push("## 5. Significance sets - the authoring templates".to_string());
+    lines.push(String::new());
+    if per_crate_min == per_crate_max && per_crate_min == top_n_workspace {
+        lines.push(format!(
+            "Top {} per set. Each section below preserves its axis.",
+            top_n_workspace
+        ));
+    } else if per_crate_min == per_crate_max {
+        lines.push(format!(
+            "Top {} for workspace-wide sets (architecture / public / inter-crate); top {} per \
+             crate for intra-crate / inner-crate. SLOC-scaled per `max(7, round(7 + 2 * log2(\
+             SLOC / DIVISOR)))`. the_user 2026-06-04: 'i'd rather slightly over-produce than \
+             under produce'.",
+            top_n_workspace, per_crate_min
+        ));
+    } else {
+        lines.push(format!(
+            "Top {} for workspace-wide sets (architecture / public / inter-crate); per-crate \
+             top-N for intra-crate / inner-crate ranges {}..{}, scaled per each crate's SLOC \
+             via `max(7, round(7 + 2 * log2(SLOC / DIVISOR)))`. the_user 2026-06-04: 'i'd \
+             rather slightly over-produce than under produce'.",
+            top_n_workspace, per_crate_min, per_crate_max
+        ));
+    }
+    lines.push(String::new());
+
+    let has_any = !cands.architecture.is_empty()
+        || !cands.public.is_empty()
+        || !cands.inter_crate.is_empty()
+        || !cands.clique.is_empty()
+        || !cands.intra_crate_per_crate.is_empty()
+        || !cands.inner_crate_per_crate.is_empty();
+    if has_any {
+        // 5.1 Architecture
+        lines.push(format!(
+            "### 5.1 Architecture significance ({} significant; workspace-wide cross-crate AND \
+             public-by-example)",
+            cands.architecture.len()
+        ));
+        lines.push(String::new());
+        for entry in sorted_entries_desc(&cands.architecture) {
+            lines.push(format!(
+                "- `{}` - architecture score {} - seed {}",
+                entry.pattern,
+                format_float_2(entry.count),
+                span(&entry.instance)
+            ));
+        }
+        lines.push(String::new());
+        // 5.2 Public
+        lines.push(format!(
+            "### 5.2 Public significance ({} significant; workspace-wide public-by-example only)",
+            cands.public.len()
+        ));
+        lines.push(String::new());
+        for entry in sorted_entries_desc(&cands.public) {
+            lines.push(format!(
+                "- `{}` - public score {} - seed {}",
+                entry.pattern,
+                format_float_2(entry.count),
+                span(&entry.instance)
+            ));
+        }
+        lines.push(String::new());
+        // 5.3 Inter-crate
+        lines.push(format!(
+            "### 5.3 Inter-crate significance ({} significant; workspace-wide cross-crate flow \
+             only)",
+            cands.inter_crate.len()
+        ));
+        lines.push(String::new());
+        for entry in sorted_entries_desc(&cands.inter_crate) {
+            lines.push(format!(
+                "- `{}` - inter_count {} - seed {}",
+                entry.pattern,
+                format_count_int(entry.count),
+                span(&entry.instance)
+            ));
+        }
+        lines.push(String::new());
+        // 5.4 Clique
+        lines.push(format!(
+            "### 5.4 Clique significance ({} elected; workspace-wide STV over per-crate intra \
+             ballots)",
+            cands.clique.len()
+        ));
+        lines.push(String::new());
+        for entry in sorted_entries_desc(&cands.clique) {
+            lines.push(format!(
+                "- `{}` - clique votes {} - seed {}",
+                entry.pattern,
+                format_float_2(entry.count),
+                span(&entry.instance)
+            ));
+        }
+        lines.push(String::new());
+        // 5.5 Intra-crate
+        lines.push(
+            "### 5.5 Intra-crate significance (per crate; patterns this crate uses with origin \
+             in OTHER workspace crates, after dedup vs clique)".to_string(),
+        );
+        lines.push(String::new());
+        let mut intra_crates: Vec<String> = cands.intra_crate_per_crate.keys().cloned().collect();
+        intra_crates.sort();
+        for crate_name in &intra_crates {
+            let entries = match cands.intra_crate_per_crate.get(crate_name) {
+                Some(e) if !e.is_empty() => e,
+                _ => continue,
+            };
+            lines.push(format!(
+                "#### crate `{}` ({} significant)",
+                crate_name, entries.len()
+            ));
+            lines.push(String::new());
+            for entry in sorted_entries_desc(entries) {
+                lines.push(format!(
+                    "- `{}` - {} occurrences - seed {}",
+                    entry.pattern,
+                    format_count_int(entry.count),
+                    span(&entry.instance)
+                ));
+                lines.push(String::new());
+            }
+        }
+        // 5.6 Inner-crate
+        lines.push(
+            "### 5.6 Inner-crate significance (per crate; patterns originating IN and used IN \
+             this crate - the crate's own architecture)".to_string(),
+        );
+        lines.push(String::new());
+        let mut inner_crates: Vec<String> = cands.inner_crate_per_crate.keys().cloned().collect();
+        inner_crates.sort();
+        for crate_name in &inner_crates {
+            let entries = match cands.inner_crate_per_crate.get(crate_name) {
+                Some(e) if !e.is_empty() => e,
+                _ => continue,
+            };
+            lines.push(format!(
+                "#### crate `{}` ({} significant)",
+                crate_name, entries.len()
+            ));
+            lines.push(String::new());
+            for entry in sorted_entries_desc(entries) {
+                lines.push(format!(
+                    "- `{}` - {} occurrences - seed {}",
+                    entry.pattern,
+                    format_count_int(entry.count),
+                    span(&entry.instance)
+                ));
+                lines.push(String::new());
+            }
+        }
+        // Tier guidance
+        lines.push(
+            "**[AGENT]** Coverage tiering per the_user 2026-06-03 / 2026-06-04 directives \
+             (sets ordered by importance):".to_string(),
+        );
+        lines.push(String::new());
+        lines.push(
+            "- **Tier 1 (heaviest coverage)**: the ARCHITECTURE set (5.1, cross-crate AND \
+             public-by-example). Doubly-strong architectural protagonists - they flow across \
+             the workspace AND surface in its examples; allocate the deepest worked-slice \
+             attention to each.".to_string(),
+        );
+        lines.push(
+            "- **Tier 2 (heavy coverage)**: the PUBLIC set (5.2, public-by-example only) and \
+             the INTER-CRATE set (5.3, cross-crate flow only). Single-signal workspace-wide \
+             patterns - still load-bearing.".to_string(),
+        );
+        lines.push(
+            "- **Tier 3 (workspace-internal shared)**: the CLIQUE set (5.4, STV election over \
+             per-crate intra ballots). Patterns elected by broad cross-crate consensus when \
+             each crate gets equal voting power - shared infrastructure the inter-crate top-N \
+             didn't surface.".to_string(),
+        );
+        lines.push(
+            "- **Tier 4 (per-crate coverage)**: INTRA-CRATE (5.5) and INNER-CRATE (5.6) \
+             per-crate sets. Intra-crate shows what each crate USES from elsewhere (after dedup \
+             vs clique); inner-crate shows each crate's own architecture (defined here + used \
+             here). Mention with context for the crate's role.".to_string(),
+        );
+        lines.push(
+            "- **Tier 5 (baseline coverage)**: patterns NOT in any set's top picks. The \
+             reference index (`reference.md`) is the inventory; no per-pattern attention \
+             beyond the listing.".to_string(),
+        );
+        lines.push(String::new());
+        lines.push(
+            "A pattern appearing in multiple sets is a stronger signal - the `categories` field \
+             on each pick surfaces multi-set membership.".to_string(),
+        );
+        lines.push(String::new());
+        if let Some(ul) = &use_label {
+            if let Some(mod_text) = use_tier_modifier(ul) {
+                lines.push(mod_text.to_string());
+                lines.push(String::new());
+            }
+        }
+        lines.push(
+            "**[AGENT] Authoring guidance.** The picker hands you patterns; the framework tells \
+             you HOW to write about them. Four cues:".to_string(),
+        );
+        lines.push(String::new());
+        lines.push(
+            "- **Form vs role.** Each pattern's `kind:name` is its FORM (mechanical, derived \
+             from syntax: trait_impl / derive / type_usage / reg_macro). Its ROLE is semantic \
+             and surfaces from signals - is_pub + inter_ratio + curated_example_count + the \
+             workspace's use classification (above). Most items align (form = role); when they \
+             diverge (a fn whose role is data-modeling like `to_string`; a struct whose role is \
+             functional like a builder), surface BOTH explicitly.".to_string(),
+        );
+        lines.push(
+            "- **Per-category decomposition.** Pick the category first then think through its \
+             data slots: *functional* (operation + parameterized input + state read + \
+             parameterized output + state mutated); *data-modeling* (broad category + \
+             sub-categories + sub-representational ops + transformative ops + intended use); \
+             *labeling* (load-bearing vs considered-but-arbitrary vs broadly insignificant); \
+             *organizing* (means of containment + items maintained + parent context + \
+             structural shape).".to_string(),
+        );
+        lines.push(
+            "- **Pass discipline.** Obvious pass writes from source + doc-comments at the cited \
+             spans. Return pass re-reads for skimmed slots and marks UNRESOLVED rather than \
+             backfilling with speculation. UNRESOLVED is a guardrail applied PER ITEM, not only \
+             per seam (S6).".to_string(),
+        );
+        lines.push(
+            "- **Reduction through inference.** The reader sees `kind:name` + the span - don't \
+             restate what name + form already convey. Spend the prose budget on the \
+             non-inferrable residual: gotchas, edge cases, internal-vs-external state effects, \
+             call-site context, workspace invariants. A summary that says 'Parses an input \
+             string into a Command' tells the reader nothing they didn't already infer; one \
+             that says 'Strict parser; rejects empty strings; does NOT handle quoting (upstream \
+             tokenizer); shared by batch + REPL invocations' is residual.".to_string(),
+        );
+        lines.push(String::new());
+    }
+    lines.push(String::new());
+
+    // 6. UNRESOLVED guardrails
+    lines.push("## 6. UNRESOLVED guardrails".to_string());
+    lines.push(String::new());
+    lines.push(
+        "Do not author *across* these without verifying in source first - a guessed bridge \
+         compiles but is wrong. Seeded from detected boundaries; **[AGENT]** add any trace stop \
+         you hit.".to_string(),
+    );
+    lines.push(String::new());
+    let registration_macros = fp
+        .get("registration_macros")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    if !registration_macros.is_empty() {
+        let defs_idx = macro_defs_index(facts);
+        for (mac, _n) in registration_macros.iter() {
+            let defs = defs_idx.get(mac).cloned().unwrap_or_default();
+            if !defs.is_empty() {
+                let shown: Vec<(String, i64)> = defs.iter().take(5).cloned().collect();
+                let tail = if defs.len() <= 5 {
+                    String::new()
+                } else {
+                    format!(" (+ {} more definition site(s))", defs.len() - 5)
+                };
+                let spans_str: Vec<String> = shown
+                    .iter()
+                    .map(|(f, l)| format!("{}:{}", f, l))
+                    .collect();
+                let spans_joined = spans_str.join(", ");
+                lines.push(format!(
+                    "- **`{}!` registration** - expansion READABLE inline in the workspace at \
+                     {}{}. Call-site arg counts remain unverified without the rustdoc overlay, \
+                     but the `macro_rules!` body is statically followable for each listed \
+                     definition site. Different definition crates may expand differently; \
+                     confirm per call-site crate.",
+                    mac, spans_joined, tail
+                ));
+            } else {
+                lines.push(format!(
+                    "- **`{}!` registration** - expansion not visible to the floor scanner (no \
+                     inline `macro_rules!` definition found in the workspace; may be a \
+                     proc-macro, imported from an external crate, or otherwise out of scope). \
+                     Call-site arg counts are unverified. Confirm generated items in source or \
+                     via the rustdoc overlay before relying on the registry.",
+                    mac
+                ));
+            }
+        }
+    }
+    for s in &seams {
+        lines.push(format!("- **{}** - {}", s.title, s.description));
+    }
+    if registration_macros.is_empty() && seams.is_empty() {
+        lines.push("- None seeded. Record trace stops here as you hit them.".to_string());
+    }
+    lines.push(String::new());
+
+    // 7. Pattern-authoring guides
+    lines.push("## 7. Pattern-authoring guides".to_string());
+    lines.push(String::new());
+    let cls_tag = match &use_label {
+        Some(l) => format!("Workspace classification: **{}**. ", l),
+        None => String::new(),
+    };
+    lines.push(format!(
+        "**[AGENT]** From the trait / type definitions in S2 and the significance sets in S5, \
+         write the minimal checklist to author a NEW instance of one of the Tier 1-3 patterns \
+         (S5.1 architecture, S5.2 public, S5.3 inter-crate, or S5.4 clique). {}Frame the \
+         checklist for the consumership the workspace serves: dev_use workspaces author against \
+         the library's public API; end_with_dev_use workspaces author internal-product features \
+         whose cross-crate flow matters; dev_with_end_use treats the lib as primary; end_use \
+         authors user-facing entry points. Anchor each step to a span. Apply the S5 authoring \
+         guidance per item: form-vs-role + per-category decomposition + pass discipline + \
+         reduction-through-inference.",
+        cls_tag
+    ));
+    lines.push(String::new());
+
+    // Appendix
+    lines.push("## Appendix: full pattern histogram".to_string());
+    lines.push(String::new());
+    let histogram = fp
+        .get("pattern_histogram")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for row in histogram.iter().take(25) {
+        let pattern = row.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+        let count = row.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+        lines.push(format!("- `{}` - {}", pattern, count));
+    }
+    lines.push(String::new());
+
+    lines.join("\n")
+}
+
+/// What: sort an IndexMap of pattern -> EnrichedEntry by descending
+/// count, stable in pre-existing insertion order on count ties.
+/// Returns the entries vector ready for sequential rendering.
+///
+/// Why: emit.py's `sorted(set.keys(), key=lambda p: -set[p]["count"])`
+/// idiom. Python's sorted is stable; ties preserve insertion order
+/// (which is the picker's already-descending output order). Rust's
+/// stable sort gives the same behavior on ties.
+///
+/// Where: used inside the S5 sub-section loops to emit bullets in
+/// canonical order.
+fn sorted_entries_desc(
+    entries: &indexmap::IndexMap<String, EnrichedEntry>,
+) -> Vec<EnrichedEntry> {
+    let mut items: Vec<EnrichedEntry> = entries.values().cloned().collect();
+    items.sort_by(|a, b| {
+        b.count
+            .partial_cmp(&a.count)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    items
+}
+
+/// What: format an f64 like Python's `f"{x:.2f}"` - two decimal places
+/// rounded half-to-even via the format machinery's default.
+///
+/// Why: emit.py renders architecture / public / clique counts with
+/// `:.2f`; matching format keeps canonicalized output byte-equal.
+fn format_float_2(x: f64) -> String {
+    format!("{:.2}", x)
+}
+
+/// What: format an EnrichedEntry's count as an integer when the source
+/// set was usize-based (inter / intra / inner). Python f-string of an
+/// int looks like `{:d}`; here the f64 is rounded down to i64 first.
+fn format_count_int(x: f64) -> String {
+    format!("{}", x as i64)
+}
+
+/// What: format a JSON value the way Python's f"{val}" would for the
+/// `top_share` shown in the how-shaped section.
+fn format_value_python(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Null => "None".to_string(),
+        serde_json::Value::Bool(true) => "True".to_string(),
+        serde_json::Value::Bool(false) => "False".to_string(),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                i.to_string()
+            } else if let Some(u) = n.as_u64() {
+                u.to_string()
+            } else if let Some(f) = n.as_f64() {
+                if f.is_nan() {
+                    "nan".to_string()
+                } else if f.is_infinite() {
+                    if f > 0.0 { "inf".to_string() } else { "-inf".to_string() }
+                } else if f == f.trunc() && f.abs() < 1e16 {
+                    format!("{}.0", f as i64)
+                } else {
+                    format!("{}", f)
+                }
+            } else {
+                "?".to_string()
+            }
+        }
+        serde_json::Value::String(s) => s.clone(),
+        _ => v.to_string(),
+    }
+}
+
+/// What: truncate a string at `n` characters (Python's `s[:n]`
+/// semantics for str). Counts unicode scalar values, not bytes.
+fn truncate_chars(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}

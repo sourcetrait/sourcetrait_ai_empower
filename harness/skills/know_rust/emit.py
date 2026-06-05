@@ -472,9 +472,16 @@ def _instance_for_kind(kind, name, facts):
         inst = [d for d in facts["derives"] if d.get("trait") == name]
         return (inst[0] if inst else None,
                 [f"{d.get('file','?')}:{d['line']}" for d in inst[:200]])
-    if kind == "reg_macro":
+    if kind in ("reg_macro", "attr_macro"):
+        # 2026-06-05 conversion: attr_macro patterns were previously
+        # dropped because instance_for_kind didn't handle them, even
+        # though pattern_metrics carried them. Align with the Rust
+        # port (which handles both kinds in one branch) so attr_macro:*
+        # entries with inter_count > 0 surface in the inter-crate /
+        # architecture sets.
+        expect_kind = "macro_invocation" if kind == "reg_macro" else "attr_macro"
         inst = [m for m in facts["macros"]
-                if m["kind"] == "macro_invocation" and m["name"] == name]
+                if m["kind"] == expect_kind and m["name"] == name]
         return (inst[0] if inst else None, [sp(m) for m in inst[:200]])
     if kind == "type_usage":
         # 0.0.8 patch 8c: type_usage instances are call-site dicts from
@@ -789,7 +796,11 @@ def _compute_significance_sets(fp: dict, facts: dict,
             inter_scores[pattern] = ic
 
     # Architecture: patterns with both signals.
-    architecture_keys = set(public_scores) & set(inter_scores)
+    # 2026-06-05 conversion: iterate public_scores in insertion order so
+    # tie-break is deterministic across Python runs and aligns with the
+    # Rust port's IndexSet construction over public_scores.keys().
+    architecture_keys_set = set(public_scores) & set(inter_scores)
+    architecture_keys = [p for p in public_scores if p in architecture_keys_set]
     architecture_counts = {
         p: public_scores[p] + inter_scores[p]
         for p in architecture_keys

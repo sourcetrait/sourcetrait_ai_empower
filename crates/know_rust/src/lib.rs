@@ -14,9 +14,16 @@ pub(crate) mod characterize {
 }
 pub(crate) mod cli;
 pub(crate) mod emit {
+    pub(crate) mod cluster;
+    pub(crate) mod container_routing;
+    pub(crate) mod instance;
+    pub(crate) mod orientation;
     pub(crate) mod picker;
     pub(crate) mod reference;
     pub(crate) mod run;
+    pub(crate) mod seams;
+    pub(crate) mod spans;
+    pub(crate) mod use_tier_modifiers;
 }
 pub(crate) mod config {
     pub(crate) mod calibration;
@@ -57,6 +64,15 @@ pub(crate) use crate::{
     characterize::types::*,
     characterize::use_classification::*,
     cli::*,
+    emit::cluster::*,
+    emit::container_routing::*,
+    emit::instance::*,
+    emit::orientation::*,
+    emit::picker::*,
+    emit::reference::*,
+    emit::seams::*,
+    emit::spans::*,
+    emit::use_tier_modifiers::*,
     error::*,
     scan::helpers::*,
     scan::items::filters::*,
@@ -72,6 +88,7 @@ pub(crate) use std::{
     collections::{
         BTreeMap,
         HashMap,
+        HashSet,
     },
     fs,
     io,
@@ -79,6 +96,7 @@ pub(crate) use std::{
         Path,
         PathBuf,
     },
+    process,
 };
 
 pub(crate) use clap::Parser;

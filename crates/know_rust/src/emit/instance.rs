@@ -1,0 +1,540 @@
+use crate::*;
+
+/// What: one enriched picker entry - pattern + per-set score (count or
+/// float) + the seed instance dict. The pattern is the full
+/// `kind:name` string; the orientation composer renders the pattern
+/// verbatim and the instance is the structurally-followable seed.
+///
+/// Why: emit.py's `candidate_instances` enriches each picker set entry
+/// with a seed instance the agent can open; the S5 sub-sections in
+/// orientation.md render bullets shaped `kind:name - <score> - seed
+/// <span>` from this struct.
+///
+/// Where: produced by `crate::emit::instance::candidate_instances`;
+/// consumed by `crate::emit::orientation::render_orientation`.
+#[derive(Debug, Clone)]
+pub struct EnrichedEntry {
+    pub pattern: String,
+    pub count: f64,
+    pub instance: serde_json::Value,
+}
+
+/// What: full output of `candidate_instances` - the six picker sets
+/// (architecture / public / inter_crate / clique workspace-wide +
+/// intra_crate / inner_crate per-crate) enriched with seed instances,
+/// plus the per-crate and workspace-level top-N caps.
+///
+/// Why: emit.py's `candidate_instances` return dict shape, ported to a
+/// typed struct so the orientation composer can render each section
+/// without re-deriving caps or re-enriching entries.
+#[derive(Debug, Clone, Default)]
+pub struct EnrichedSets {
+    pub intra_crate_per_crate:
+        indexmap::IndexMap<String, indexmap::IndexMap<String, EnrichedEntry>>,
+    pub inner_crate_per_crate:
+        indexmap::IndexMap<String, indexmap::IndexMap<String, EnrichedEntry>>,
+    pub inter_crate: indexmap::IndexMap<String, EnrichedEntry>,
+    pub public: indexmap::IndexMap<String, EnrichedEntry>,
+    pub architecture: indexmap::IndexMap<String, EnrichedEntry>,
+    pub clique: indexmap::IndexMap<String, EnrichedEntry>,
+    pub top_n_intra_crate_per_crate: indexmap::IndexMap<String, usize>,
+    pub top_n_inner_per_crate: indexmap::IndexMap<String, usize>,
+    pub top_n_workspace: usize,
+}
+
+/// What: pick a seed instance for a pattern of the given `(kind, name)`
+/// shape, plus up to 200 span strings of all matching facts. Returns
+/// `(None, vec![])` for patterns with no actionable item under that
+/// kind.
+///
+/// Why: emit.py's `_instance_for_kind()` (lines 461-544). Each picker
+/// pattern (e.g. `trait_impl:Component`, `derive:Clone`,
+/// `reg_macro:cfg_attr_test_or_loom`, `method_ref:_::update`,
+/// `pub_type:Frame`, `type_usage_family:outer:Vec`) needs a seed
+/// instance the agent can open. The enriched picker output drops
+/// patterns where this returns `(None, _)`.
+///
+/// Where: called from `candidate_instances` per pattern in each of the
+/// six sets to produce the `EnrichedEntry` instance + all_spans
+/// fields.
+pub fn instance_for_kind(
+    kind: &str,
+    name: &str,
+    facts: &serde_json::Value,
+) -> (Option<serde_json::Value>, Vec<String>) {
+    let empty: Vec<serde_json::Value> = Vec::new();
+    match kind {
+        "trait_impl" => {
+            let arr = facts.get("impls").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let mut inst: Vec<serde_json::Value> = arr
+                .iter()
+                .filter(|i| {
+                    i.get("trait").and_then(|v| v.as_str()) == Some(name)
+                        && !i.get("cfg_gated").and_then(|v| v.as_bool()).unwrap_or(false)
+                })
+                .cloned()
+                .collect();
+            inst.sort_by(|a, b| {
+                let ta = a
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| "None".to_string());
+                let tb = b
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| "None".to_string());
+                ta.cmp(&tb)
+            });
+            let first = inst.first().cloned();
+            let spans: Vec<String> = inst.iter().take(200).map(span).collect();
+            (first, spans)
+        }
+        "derive" => {
+            let arr = facts.get("derives").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let inst: Vec<serde_json::Value> = arr
+                .iter()
+                .filter(|d| d.get("trait").and_then(|v| v.as_str()) == Some(name))
+                .cloned()
+                .collect();
+            let first = inst.first().cloned();
+            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+            (first, spans)
+        }
+        "reg_macro" | "attr_macro" => {
+            let kind_match = if kind == "reg_macro" { "macro_invocation" } else { "attr_macro" };
+            let arr = facts.get("macros").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let inst: Vec<serde_json::Value> = arr
+                .iter()
+                .filter(|m| {
+                    m.get("kind").and_then(|v| v.as_str()) == Some(kind_match)
+                        && m.get("name").and_then(|v| v.as_str()) == Some(name)
+                })
+                .cloned()
+                .collect();
+            let first = inst.first().cloned();
+            let spans: Vec<String> = inst.iter().take(200).map(span).collect();
+            (first, spans)
+        }
+        "type_usage" => {
+            let arr = facts.get("type_usages").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let mut inst: Vec<serde_json::Value> = arr
+                .iter()
+                .filter(|tu| tu.get("name").and_then(|v| v.as_str()) == Some(name))
+                .cloned()
+                .collect();
+            if inst.is_empty() {
+                let ex = facts
+                    .get("example_type_usages")
+                    .and_then(|v| v.as_array())
+                    .unwrap_or(&empty);
+                inst = ex
+                    .iter()
+                    .filter(|tu| tu.get("name").and_then(|v| v.as_str()) == Some(name))
+                    .cloned()
+                    .collect();
+            }
+            let first = inst.first().cloned();
+            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+            (first, spans)
+        }
+        "method_ref" => {
+            let family_inner = match name.split_once("::") {
+                Some((_, inner)) => inner.to_string(),
+                None => name.to_string(),
+            };
+            let arr = facts
+                .get("ast_method_refs")
+                .and_then(|v| v.as_array())
+                .unwrap_or(&empty);
+            let inst: Vec<serde_json::Value> = arr
+                .iter()
+                .filter(|r| {
+                    r.get("inner").and_then(|v| v.as_str()) == Some(family_inner.as_str())
+                })
+                .cloned()
+                .collect();
+            let first = inst.first().cloned();
+            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+            (first, spans)
+        }
+        "pub_type" => {
+            let types_arr = facts.get("types").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let mut inst: Vec<serde_json::Value> = types_arr
+                .iter()
+                .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some(name))
+                .cloned()
+                .collect();
+            if inst.is_empty() {
+                let traits_arr = facts
+                    .get("traits")
+                    .and_then(|v| v.as_array())
+                    .unwrap_or(&empty);
+                inst = traits_arr
+                    .iter()
+                    .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some(name))
+                    .cloned()
+                    .collect();
+            }
+            let first = inst.first().cloned();
+            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+            (first, spans)
+        }
+        "type_usage_family" => {
+            let arr = facts.get("type_usages").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let inst: Vec<serde_json::Value> = if let Some(outer) = name.strip_prefix("outer:") {
+                let mut src: Vec<serde_json::Value> = arr
+                    .iter()
+                    .filter(|tu| {
+                        let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        n.split_once("::").map(|(o, _)| o).unwrap_or(n) == outer
+                    })
+                    .cloned()
+                    .collect();
+                if src.is_empty() {
+                    let ex = facts
+                        .get("example_type_usages")
+                        .and_then(|v| v.as_array())
+                        .unwrap_or(&empty);
+                    src = ex
+                        .iter()
+                        .filter(|tu| {
+                            let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            n.split_once("::").map(|(o, _)| o).unwrap_or(n) == outer
+                        })
+                        .cloned()
+                        .collect();
+                }
+                src
+            } else if let Some(inner) = name.strip_prefix("inner:") {
+                let mut src: Vec<serde_json::Value> = arr
+                    .iter()
+                    .filter(|tu| {
+                        let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        n.rsplit_once("::").map(|(_, i)| i).unwrap_or(n) == inner
+                    })
+                    .cloned()
+                    .collect();
+                if src.is_empty() {
+                    let ex = facts
+                        .get("example_type_usages")
+                        .and_then(|v| v.as_array())
+                        .unwrap_or(&empty);
+                    src = ex
+                        .iter()
+                        .filter(|tu| {
+                            let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            n.rsplit_once("::").map(|(_, i)| i).unwrap_or(n) == inner
+                        })
+                        .cloned()
+                        .collect();
+                }
+                src
+            } else {
+                Vec::new()
+            };
+            let first = inst.first().cloned();
+            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+            (first, spans)
+        }
+        _ => (None, Vec::new()),
+    }
+}
+
+/// What: a `file:line` only span string (no end_line range), the
+/// inline form used in `instance_for_kind` for several kinds where
+/// Python explicitly inlines the format rather than calling `sp()`.
+///
+/// Why: emit.py's `_instance_for_kind` uses inline `f"{f}:{ln}"`
+/// formatting for derive / type_usage / method_ref / pub_type /
+/// type_usage_family span lists; this helper preserves the exact
+/// per-kind formatting so canonicalized output stays byte-equal.
+///
+/// Where: internal helper for `instance_for_kind`.
+fn span_basic(rec: &serde_json::Value) -> String {
+    let file = rec.get("file").and_then(|v| v.as_str()).unwrap_or("?");
+    let line = rec.get("line").and_then(|v| v.as_i64()).unwrap_or(-1);
+    let line_str = if line < 0 {
+        "?".to_string()
+    } else {
+        line.to_string()
+    };
+    format!("{}:{}", file, line_str)
+}
+
+/// What: the core vocabulary picker - most-depended-on in-workspace
+/// crate plus its types and traits ranked by usage (descending) with
+/// alphabetical-by-name tiebreaker. Filters to src/ files only.
+///
+/// Why: emit.py's `core_vocabulary()` (lines 394-458). Heuristic: the
+/// core types live in the most-depended-on crate; the S2 vocabulary
+/// should be the domain language other crates speak in, not a shared
+/// error-helper or utility crate. Usage ranking surfaces load-bearing
+/// types (Value, PipelineData, etc.) that alphabetical sort buries.
+///
+/// Where: called by `crate::emit::orientation::render_orientation` for
+/// the S2 section header pick + the per-type / per-trait bullets.
+pub fn core_vocabulary(
+    fp: &serde_json::Value,
+    facts: &serde_json::Value,
+) -> CoreVocabulary {
+    let per_crate = fp
+        .get("per_crate")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let mut dep_count: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+    for c in per_crate.values() {
+        if let Some(arr) = c.get("deps").and_then(|v| v.as_array()) {
+            for d in arr {
+                if let Some(s) = d.as_str() {
+                    *dep_count.entry(s.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    let in_workspace: indexmap::IndexMap<String, usize> = dep_count
+        .iter()
+        .filter(|(k, _)| per_crate.contains_key(*k))
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+    let pick_pool = if !in_workspace.is_empty() { in_workspace } else { dep_count };
+    let core: Option<String> = if pick_pool.is_empty() {
+        None
+    } else {
+        let mut best: Option<(String, usize)> = None;
+        for (k, v) in &pick_pool {
+            best = Some(match best {
+                None => (k.clone(), *v),
+                Some((_, bv)) if *v > bv => (k.clone(), *v),
+                Some(prev) => prev,
+            });
+        }
+        best.map(|(k, _)| k)
+    };
+
+    let empty: Vec<serde_json::Value> = Vec::new();
+    let types_arr = facts.get("types").and_then(|v| v.as_array()).unwrap_or(&empty);
+    let traits_arr = facts.get("traits").and_then(|v| v.as_array()).unwrap_or(&empty);
+    let core_str = core.clone().unwrap_or_default();
+    let types: Vec<serde_json::Value> = types_arr
+        .iter()
+        .filter(|t| {
+            t.get("crate").and_then(|v| v.as_str()) == Some(core_str.as_str())
+                && is_src_file(t.get("file").and_then(|v| v.as_str()).unwrap_or(""))
+        })
+        .cloned()
+        .collect();
+    let traits: Vec<serde_json::Value> = traits_arr
+        .iter()
+        .filter(|t| {
+            t.get("crate").and_then(|v| v.as_str()) == Some(core_str.as_str())
+                && is_src_file(t.get("file").and_then(|v| v.as_str()).unwrap_or(""))
+        })
+        .cloned()
+        .collect();
+
+    let mut trait_usage: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+    let mut type_usage: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+    let impls_arr = facts.get("impls").and_then(|v| v.as_array()).unwrap_or(&empty);
+    for i in impls_arr {
+        if let Some(tr) = i.get("trait").and_then(|v| v.as_str()) {
+            *trait_usage.entry(tr.to_string()).or_insert(0) += 1;
+        }
+        if let Some(ty) = i.get("type").and_then(|v| v.as_str()) {
+            let bare = ty
+                .split('<')
+                .next()
+                .unwrap_or("")
+                .rsplit("::")
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !bare.is_empty() {
+                *type_usage.entry(bare).or_insert(0) += 1;
+            }
+        }
+    }
+    let type_ident_re = regex::Regex::new(r"\b[A-Z]\w*\b").unwrap();
+    let uses_arr = facts.get("uses").and_then(|v| v.as_array()).unwrap_or(&empty);
+    for u in uses_arr {
+        let path = u.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        if path.is_empty() {
+            continue;
+        }
+        for m in type_ident_re.find_iter(path) {
+            *type_usage.entry(m.as_str().to_string()).or_insert(0) += 1;
+        }
+    }
+
+    let mut traits_with_usage: Vec<(serde_json::Value, usize)> = traits
+        .into_iter()
+        .map(|t| {
+            let n = t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let usage = trait_usage.get(&n).copied().unwrap_or(0);
+            (t, usage)
+        })
+        .collect();
+    traits_with_usage.sort_by(|a, b| {
+        let ua = a.1 as i64;
+        let ub = b.1 as i64;
+        let na = a.0.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let nb = b.0.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        ub.cmp(&ua).then(na.cmp(nb))
+    });
+    let mut types_with_usage: Vec<(serde_json::Value, usize)> = types
+        .into_iter()
+        .map(|t| {
+            let n = t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let usage = type_usage.get(&n).copied().unwrap_or(0);
+            (t, usage)
+        })
+        .collect();
+    types_with_usage.sort_by(|a, b| {
+        let ua = a.1 as i64;
+        let ub = b.1 as i64;
+        let na = a.0.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let nb = b.0.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        ub.cmp(&ua).then(na.cmp(nb))
+    });
+
+    CoreVocabulary {
+        core,
+        types: types_with_usage,
+        traits: traits_with_usage,
+    }
+}
+
+/// What: result of `core_vocabulary` - the picked most-depended-on
+/// crate name (`None` if the workspace has no dependents at all),
+/// plus its types and traits each paired with their usage count for
+/// rendering alongside the entry.
+#[derive(Debug, Clone, Default)]
+pub struct CoreVocabulary {
+    pub core: Option<String>,
+    pub types: Vec<(serde_json::Value, usize)>,
+    pub traits: Vec<(serde_json::Value, usize)>,
+}
+
+/// What: run the six-set significance picker and enrich each picked
+/// pattern with an instance + span list via `instance_for_kind`.
+/// Returns `EnrichedSets` consumed by the orientation composer.
+///
+/// Why: emit.py's `candidate_instances()` (lines 935-1029). Glues the
+/// picker output to the section renderers; patterns whose instance
+/// pick returns `None` are dropped so S5 sections show only
+/// structurally-followable seeds.
+///
+/// Where: called by `crate::emit::orientation::render_orientation`
+/// after `core_vocabulary` and `detected_seams` to produce the S5
+/// material.
+pub fn candidate_instances(
+    fp: &serde_json::Value,
+    facts: &serde_json::Value,
+    calibration: &Calibration,
+) -> EnrichedSets {
+    let histogram = fp
+        .get("pattern_histogram")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if histogram.is_empty() {
+        return EnrichedSets {
+            top_n_workspace: calibration.picker.top_n_floor,
+            ..EnrichedSets::default()
+        };
+    }
+    let workspace_sloc = fp
+        .get("totals")
+        .and_then(|t| t.get("sloc"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let top_n_workspace = compute_sloc_scaled_top_n(workspace_sloc, calibration);
+    let per_crate = fp
+        .get("per_crate")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let mut per_crate_sloc: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+    for (k, v) in per_crate.iter() {
+        let s = v.get("sloc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        per_crate_sloc.insert(k.clone(), s);
+    }
+    let sig = compute_significance_sets(fp, facts, &per_crate_sloc, top_n_workspace, calibration);
+
+    let enrich_workspace = |pattern_map: &indexmap::IndexMap<String, f64>|
+        -> indexmap::IndexMap<String, EnrichedEntry>
+    {
+        let mut out: indexmap::IndexMap<String, EnrichedEntry> = indexmap::IndexMap::new();
+        for (pattern, count) in pattern_map.iter() {
+            let (kind, name) = match pattern.split_once(':') {
+                Some((k, n)) => (k.to_string(), n.to_string()),
+                None => (pattern.clone(), String::new()),
+            };
+            let (inst, _) = instance_for_kind(&kind, &name, facts);
+            if let Some(instance) = inst {
+                out.insert(
+                    pattern.clone(),
+                    EnrichedEntry {
+                        pattern: pattern.clone(),
+                        count: *count,
+                        instance,
+                    },
+                );
+            }
+        }
+        out
+    };
+    let enrich_workspace_int = |pattern_map: &indexmap::IndexMap<String, usize>|
+        -> indexmap::IndexMap<String, EnrichedEntry>
+    {
+        let mut out: indexmap::IndexMap<String, EnrichedEntry> = indexmap::IndexMap::new();
+        for (pattern, count) in pattern_map.iter() {
+            let (kind, name) = match pattern.split_once(':') {
+                Some((k, n)) => (k.to_string(), n.to_string()),
+                None => (pattern.clone(), String::new()),
+            };
+            let (inst, _) = instance_for_kind(&kind, &name, facts);
+            if let Some(instance) = inst {
+                out.insert(
+                    pattern.clone(),
+                    EnrichedEntry {
+                        pattern: pattern.clone(),
+                        count: *count as f64,
+                        instance,
+                    },
+                );
+            }
+        }
+        out
+    };
+
+    let mut intra_crate_per_crate: indexmap::IndexMap<
+        String,
+        indexmap::IndexMap<String, EnrichedEntry>,
+    > = indexmap::IndexMap::new();
+    for (crate_name, s) in sig.significant_intra_crate_per_crate.iter() {
+        intra_crate_per_crate.insert(crate_name.clone(), enrich_workspace_int(s));
+    }
+    let mut inner_crate_per_crate: indexmap::IndexMap<
+        String,
+        indexmap::IndexMap<String, EnrichedEntry>,
+    > = indexmap::IndexMap::new();
+    for (crate_name, s) in sig.significant_inner_crate_per_crate.iter() {
+        inner_crate_per_crate.insert(crate_name.clone(), enrich_workspace_int(s));
+    }
+
+    EnrichedSets {
+        intra_crate_per_crate,
+        inner_crate_per_crate,
+        inter_crate: enrich_workspace_int(&sig.significant_inter_crate),
+        public: enrich_workspace(&sig.significant_public),
+        architecture: enrich_workspace(&sig.significant_architecture),
+        clique: enrich_workspace(&sig.significant_clique),
+        top_n_intra_crate_per_crate: sig.top_n_intra_crate_per_crate,
+        top_n_inner_per_crate: sig.top_n_inner_per_crate,
+        top_n_workspace,
+    }
+}

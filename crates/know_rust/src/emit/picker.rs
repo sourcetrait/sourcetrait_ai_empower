@@ -232,7 +232,6 @@ pub fn compute_significance_sets(
         significant_clique,
         top_n_intra_crate_per_crate,
         top_n_inner_per_crate,
-        top_n_workspace,
     }
 }
 
@@ -463,5 +462,4 @@ pub struct SignificanceSets {
     pub significant_clique: indexmap::IndexMap<String, f64>,
     pub top_n_intra_crate_per_crate: indexmap::IndexMap<String, usize>,
     pub top_n_inner_per_crate: indexmap::IndexMap<String, usize>,
-    pub top_n_workspace: usize,
 }

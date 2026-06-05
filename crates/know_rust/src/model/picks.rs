@@ -51,6 +51,36 @@ pub enum PickGroup {
     Globals,
 }
 
+impl PickGroup {
+    /// What: `true` if items of this group carry one-hop transitive
+    /// context (the carry-having groups: `Traits` / `TraitFunctions`
+    /// / `Structure` / `ImplementationFunctions` / `Derives`),
+    /// `false` if the group is "no carry" (`Utilities` / `Globals`).
+    ///
+    /// Why: encodes the picks-data model's carry partition (per
+    /// `notes/know_rust/picks-data-model.md` "Pick groups" section)
+    /// directly on the type. Lets walker logic at refactor phase R2
+    /// decide whether to surface one-hop carry facts during the
+    /// syn-based scan, and lets the picker validate that a `Carried`
+    /// selector only attaches to a carryable group.
+    ///
+    /// Where: planned consumers are
+    /// `crates/know_rust/src/scan/items/` walker logic and the
+    /// picker integration in `src/emit/picker.rs`. The `const`
+    /// shape lets it be used in const contexts (e.g. compile-time
+    /// validation of carry-group sets) once those consumers land.
+    pub const fn carryable(&self) -> bool {
+        match self {
+            Self::Traits
+            | Self::TraitFunctions
+            | Self::Structure
+            | Self::ImplementationFunctions
+            | Self::Derives => true,
+            Self::Utilities | Self::Globals => false,
+        }
+    }
+}
+
 /// What: the six significance sets the picker partitions patterns
 /// into. Workspace-wide sets (`Architecture`, `Public`, `InterCrate`,
 /// `Clique`) cover cross-crate signals; per-crate sets (`IntraCrate`,

@@ -867,7 +867,7 @@ def scan_crate(root: Path, crate_dir: str):
            "example_type_usages": []}
     sloc = 0
     base = root / crate_dir
-    for rs in base.rglob("*.rs"):
+    for rs in sorted(base.rglob("*.rs")):
         if "target" in rs.parts:
             continue
         rel_parts = rs.relative_to(base).parts

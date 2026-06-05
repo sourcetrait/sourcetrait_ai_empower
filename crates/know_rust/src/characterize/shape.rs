@@ -342,5 +342,5 @@ fn compute_shape_signals(
 }
 
 fn round3(x: f64) -> f64 {
-    (x * 1000.0).round_ties_even() / 1000.0
+    format!("{:.3}", x).parse().unwrap_or(x)
 }

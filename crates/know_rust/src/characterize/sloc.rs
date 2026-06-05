@@ -121,18 +121,27 @@ fn strip_block_comments(s: &str) -> String {
     while i < bytes.len() {
         if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
             let mut j = i + 2;
+            let mut found_close = false;
             while j + 1 < bytes.len() {
                 if bytes[j] == b'*' && bytes[j + 1] == b'/' {
                     j += 2;
+                    found_close = true;
                     break;
                 }
                 j += 1;
             }
-            if j + 1 >= bytes.len() && !(bytes.len() >= 2 && bytes[bytes.len() - 2] == b'*' && bytes[bytes.len() - 1] == b'/') {
+            if !found_close
+                && bytes.len() >= 2
+                && bytes[bytes.len() - 2] == b'*'
+                && bytes[bytes.len() - 1] == b'/'
+            {
                 j = bytes.len();
+                found_close = true;
             }
-            i = j;
-            continue;
+            if found_close {
+                i = j;
+                continue;
+            }
         }
         out.push(bytes[i] as char);
         i += 1;

@@ -254,7 +254,7 @@ pub fn characterize(
         pattern_by_kind: by_kind,
         registration_macros: reg_calls,
         seam_inventory: all_facts.seams.clone(),
-        seam_density_per_kloc: (seam_density * 100.0).round_ties_even() / 100.0,
+        seam_density_per_kloc: format!("{:.2}", seam_density).parse().unwrap_or(seam_density),
         selection,
         pattern_metrics,
         workspace_use_classification,

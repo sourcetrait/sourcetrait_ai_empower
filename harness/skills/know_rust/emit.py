@@ -157,14 +157,11 @@ _EXAMPLE_WEIGHT_FLOOR = config.float_param(
     "ORIENT_EXAMPLE_WEIGHT_FLOOR",
     "picker", "example", "weight_floor", default=1.0)
 
-# 0.0.24: minimum spread (number of crates whose initial intra_crate
-# top-N contains the pattern) for it to qualify as a workspace-wide
-# 'internals' protagonist. the_user 2026-06-04: '>=2'. Lower threshold
-# means more patterns enter the internals pool; the top_n_workspace
-# cap then truncates. 0.0.30: moved to calibration.toml.
-_INTERNALS_SPREAD_THRESHOLD = config.int_param(
-    "ORIENT_INTERNALS_SPREAD_THRESHOLD",
-    "picker", "internals", "spread_threshold", default=2)
+# 2026-06-05: 'internals' set replaced by 'clique' via STV (single
+# transferable vote) over each crate's intra top-N as a ranked ballot.
+# K = top_n_workspace seats, Droop quota. No threshold knob -- the
+# quota arises naturally from the V/K ratio. See _stv_elect_clique
+# below for the algorithm and per-target degeneracy notes.
 
 
 def _compute_public_example_weight(num_example_rs_files: int) -> float:
@@ -547,6 +544,105 @@ def _instance_for_kind(kind, name, facts):
     return (None, [])
 
 
+def _stv_elect_clique(per_crate_ballots,
+                      num_seats,
+                      dedup_keys=None):
+    """Single Transferable Vote (STV) election to elect `num_seats`
+    'clique' patterns from per-crate ranked ballots.
+
+    Each workspace crate is a voter; its ballot is its intra top-N
+    ordered by usage count (highest first). Each ballot starts at
+    weight 1.0. Standard fractional-Droop STV:
+
+    1. Quota Q = V / (K + 1), where V = ballot count, K = num_seats.
+    2. Tally each ballot's current preference (skipping already
+       elected or eliminated candidates).
+    3. Any candidate at-or-above quota is elected. Their surplus
+       (votes - Q) transfers fractionally to next preferences via a
+       weight adjustment on every supporting ballot.
+    4. If no candidate is at quota, eliminate the lowest (alphabetical
+       tie-break) and let supporting ballots flow to next preferences.
+    5. Loop until K seats filled or no eligible preferences remain.
+
+    `dedup_keys` (optional): set of patterns already elected in OTHER
+    workspace-wide sets (architecture / public / inter_crate). These
+    are pre-stripped from each ballot so seats aren't wasted on
+    duplicates.
+
+    Returns dict {pattern: vote_total_at_election}, in election
+    order (Python dict insertion).
+
+    Design (the_user 2026-06-05): replaces the sum-of-counts +
+    spread-threshold 'internals' heuristic so each crate has equal
+    voice (no domination by one heavy-user crate). Degenerate cases
+    (V <= K, quota collapses to ~1) are accepted as honest output -
+    a small workspace has no real clique to discover.
+    """
+    if dedup_keys is None:
+        dedup_keys = set()
+
+    ballots = []
+    for crate, ranked in per_crate_ballots.items():
+        clean = [p for p in ranked if p not in dedup_keys]
+        if clean:
+            ballots.append(clean)
+
+    V = len(ballots)
+    K = num_seats
+    if V == 0 or K == 0:
+        return {}
+
+    Q = V / (K + 1)
+
+    weights = [1.0] * V
+    pointers = [0] * V
+    elected = {}
+    eliminated = set()
+
+    def _current(i):
+        while pointers[i] < len(ballots[i]):
+            p = ballots[i][pointers[i]]
+            if p in elected or p in eliminated:
+                pointers[i] += 1
+            else:
+                return p
+        return None
+
+    while len(elected) < K:
+        tally = defaultdict(float)
+        supporters = defaultdict(list)
+        for i in range(V):
+            if weights[i] <= 0:
+                continue
+            p = _current(i)
+            if p is not None:
+                tally[p] += weights[i]
+                supporters[p].append(i)
+
+        if not tally:
+            break
+
+        over_quota = sorted(
+            ((c, v) for c, v in tally.items() if v >= Q),
+            key=lambda x: (-x[1], x[0]),
+        )
+
+        if over_quota:
+            for c, votes in over_quota:
+                if len(elected) >= K:
+                    break
+                elected[c] = votes
+                surplus = votes - Q
+                transfer_factor = (surplus / votes) if votes > 0 else 0.0
+                for i in supporters[c]:
+                    weights[i] *= transfer_factor
+        else:
+            min_pattern = min(tally.items(), key=lambda x: (x[1], x[0]))[0]
+            eliminated.add(min_pattern)
+
+    return elected
+
+
 def _compute_significance_sets(fp: dict, facts: dict,
                                per_crate_sloc: dict = None,
                                top_n_workspace: int = None):
@@ -786,30 +882,36 @@ def _compute_significance_sets(fp: dict, facts: dict,
     initial_intra_per_crate, _ = _per_crate_picks(
         origin_match=False, dedup_keys=workspace_wide_keys)
 
-    # Internals: patterns appearing in >= _INTERNALS_SPREAD_THRESHOLD
-    # crates' initial intra top-N. Score = sum of per-crate counts.
-    pattern_to_crate_counts = {}
-    for crate, sig in initial_intra_per_crate.items():
-        for p, c in sig.items():
-            pattern_to_crate_counts.setdefault(p, {})[crate] = c
-    internals_candidates = {
-        p: sum(crates.values())
-        for p, crates in pattern_to_crate_counts.items()
-        if len(crates) >= _INTERNALS_SPREAD_THRESHOLD
+    # Clique (2026-06-05, replaces internals): STV election with each
+    # crate's intra top-N as a ranked ballot. Equal voting power per
+    # crate avoids the sum-of-counts pathology where one heavy-user
+    # crate dominates. K = top_n_workspace seats; Droop quota; pre-
+    # deduped against the prior workspace-wide sets.
+    per_crate_ballots = {
+        crate: list(sig.keys())  # already ordered by count (top-N sorted)
+        for crate, sig in initial_intra_per_crate.items()
     }
-    significant_internals = {}
-    if internals_candidates:
-        sorted_internals = sorted(internals_candidates.items(),
-                                  key=lambda x: -x[1])
-        significant_internals = dict(sorted_internals[:top_n_workspace])
+    significant_clique = _stv_elect_clique(
+        per_crate_ballots,
+        num_seats=top_n_workspace,
+        dedup_keys=workspace_wide_keys,
+    )
 
-    # Pass 2: intra_crate dedup vs workspace-wide ∪ internals, walk
-    # deeper to fill freed slots.
-    intra_dedup_keys = workspace_wide_keys | set(significant_internals)
+    # Clique IS workspace-wide -- fold it into workspace_wide_keys so the
+    # downstream per-crate dedup uses one unified set (the_user 2026-06-
+    # 05: 'technically clique is a workspace_wide set').
+    workspace_wide_keys |= set(significant_clique)
+
+    # Pass 2: intra_crate dedup vs full workspace-wide (architecture,
+    # public, inter_crate, clique); walk deeper to fill freed slots.
     significant_intra_crate_per_crate, top_n_intra_crate_per_crate = _per_crate_picks(
-        origin_match=False, dedup_keys=intra_dedup_keys)
+        origin_match=False, dedup_keys=workspace_wide_keys)
 
-    # inner-crate: single-pass dedup vs workspace-wide.
+    # inner-crate: dedup vs full workspace-wide so each pattern appears
+    # in only one section across the orientation (the_user 2026-06-05:
+    # prior design left inner-crate undeduped vs internals, so workspace-
+    # shared patterns defined IN a crate showed up in BOTH 5.4 and 5.6;
+    # now they appear only in 5.4).
     significant_inner_crate_per_crate, top_n_inner_per_crate = _per_crate_picks(
         origin_match=True, dedup_keys=workspace_wide_keys)
 
@@ -823,7 +925,7 @@ def _compute_significance_sets(fp: dict, facts: dict,
         "significant_inter_crate": dict(significant_inter_crate),
         "significant_public": dict(significant_public),
         "significant_architecture": dict(significant_architecture),
-        "significant_internals": dict(significant_internals),
+        "significant_clique": dict(significant_clique),
         "top_n_intra_crate_per_crate": top_n_intra_crate_per_crate,
         "top_n_inner_per_crate": top_n_inner_per_crate,
         "top_n_workspace": top_n_workspace,
@@ -913,14 +1015,14 @@ def candidate_instances(fp: dict, facts: dict):
     enriched_inter_crate = _enrich(sig["significant_inter_crate"])
     enriched_public = _enrich(sig["significant_public"])
     enriched_architecture = _enrich(sig.get("significant_architecture", {}))
-    enriched_internals = _enrich(sig.get("significant_internals", {}))
+    enriched_clique = _enrich(sig.get("significant_clique", {}))
     return {
         "intra_crate_per_crate": enriched_intra_crate_per_crate,
         "inner_crate_per_crate": enriched_inner_crate_per_crate,
         "inter_crate": enriched_inter_crate,
         "public": enriched_public,
         "architecture": enriched_architecture,
-        "internals": enriched_internals,
+        "clique": enriched_clique,
         "top_n_intra_crate_per_crate": sig["top_n_intra_crate_per_crate"],
         "top_n_inner_per_crate": sig["top_n_inner_per_crate"],
         "top_n_workspace": sig["top_n_workspace"],
@@ -1095,10 +1197,10 @@ _USE_TIER_MODIFIERS = {
         "doubly-strong external API surface; the PUBLIC set (5.2) "
         "is the broader public-by-example face; the INTER-CRATE "
         "set (5.3) is the library's internal composition flow; "
-        "the INTERNALS set (5.4) is shared infrastructure used "
-        "across multiple library crates. INNER-CRATE (5.6) per-"
-        "crate shows where each library crate's own architecture "
-        "lives."
+        "the CLIQUE set (5.4) is shared infrastructure broadly "
+        "supported across the library's crates via STV vote. "
+        "INNER-CRATE (5.6) per-crate shows where each library "
+        "crate's own architecture lives."
     ),
     "end_with_dev_use": (
         "Workspace ships an **end-user product** "
@@ -1106,30 +1208,32 @@ _USE_TIER_MODIFIERS = {
         "The INTER-CRATE set (5.3) captures cross-crate flow that "
         "makes the product work; the PUBLIC set (5.2) is the "
         "(often narrower) external face the product offers to "
-        "embedders or extension authors; the INTERNALS set (5.4) "
-        "is the product's shared infrastructure. INTRA-CRATE (5.5) "
-        "within the product's primary crate shows what it consumes "
-        "from the internal libraries (minus internals); INNER-"
-        "CRATE (5.6) shows each library crate's own architecture."
+        "embedders or extension authors; the CLIQUE set (5.4) "
+        "is the product's shared infrastructure by broad-consensus "
+        "election. INTRA-CRATE (5.5) within the product's primary "
+        "crate shows what it consumes from the internal libraries "
+        "(minus clique); INNER-CRATE (5.6) shows each library "
+        "crate's own architecture."
     ),
     "dev_with_end_use": (
         "Workspace's primary deliverable is a **library with an "
         "auxiliary CLI** (dev_with_end_use, gitoxide pattern). "
         "The PUBLIC set (5.2) is the library API; the INTER-CRATE "
         "set (5.3) is the cross-crate flow within the lib; the "
-        "INTERNALS set (5.4) is shared infrastructure across the "
-        "lib's crates. The CLI binary is part of the public face "
-        "but should be treated as a thin wrapper around the lib "
-        "unless its own complexity warrants attention. Note: this "
-        "bucket has no empirical anchor in the current 10-target "
-        "reference set; guidance is speculative until a gitoxide-"
-        "class target probes through (see "
-        "notes/know_rust/next-phase-agent-augmentation.md "
-        "for the related 5th-bucket arbitration hatch debt)."
+        "CLIQUE set (5.4) is shared infrastructure across the "
+        "lib's crates by broad-consensus election. The CLI binary "
+        "is part of the public face but should be treated as a "
+        "thin wrapper around the lib unless its own complexity "
+        "warrants attention. Note: this bucket has no empirical "
+        "anchor in the current 10-target reference set; guidance "
+        "is speculative until a gitoxide-class target probes "
+        "through (see notes/know_rust/next-phase-agent-"
+        "augmentation.md for the related 5th-bucket arbitration "
+        "hatch debt)."
     ),
     "end_use": (
         "Workspace is a pure **end-user product** (end_use). "
-        "Architecture / public / inter-crate / internals sets are "
+        "Architecture / public / inter-crate / clique sets are "
         "the user-facing entry points and the cross-crate flows "
         "that compose the product's behavior. No external library "
         "face to track. Note: this bucket has no empirical anchor "
@@ -1301,16 +1405,19 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
           "through the core crates. 1-2 short paragraphs, each sentence anchored to a span "
           "from reference.md. Stop at any seam from S3 with an explicit UNRESOLVED.", ""]
 
-    # 0.0.22 + 0.0.24: cands is a structured dict with six significance
-    # sets: architecture / public / inter-crate / internals (workspace-
-    # wide) + intra-crate / inner-crate (per-crate, strict origin
-    # split). Render order is by importance per the_user 2026-06-04.
+    # 0.0.22 + 0.0.24 + 2026-06-05 clique: cands is a structured dict
+    # with six significance sets: architecture / public / inter-crate
+    # / clique (workspace-wide) + intra-crate / inner-crate (per-crate,
+    # strict origin split). Render order is by importance per the_user
+    # 2026-06-04. Clique replaces the prior 'internals' (the_user
+    # 2026-06-05): STV election with each crate's intra top-N as a
+    # ranked ballot, K = workspace top-N seats, Droop quota.
     intra_crate_per_crate = cands.get("intra_crate_per_crate", {}) if isinstance(cands, dict) else {}
     inner_per_crate = cands.get("inner_crate_per_crate", {}) if isinstance(cands, dict) else {}
     inter_crate_sig = cands.get("inter_crate", {}) if isinstance(cands, dict) else {}
     public_sig = cands.get("public", {}) if isinstance(cands, dict) else {}
     architecture_sig = cands.get("architecture", {}) if isinstance(cands, dict) else {}
-    internals_sig = cands.get("internals", {}) if isinstance(cands, dict) else {}
+    clique_sig = cands.get("clique", {}) if isinstance(cands, dict) else {}
     top_n_intra_crate_per_crate = (cands.get("top_n_intra_crate_per_crate", {})
                              if isinstance(cands, dict) else {})
     top_n_inner_per_crate = (cands.get("top_n_inner_per_crate", {})
@@ -1345,7 +1452,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  f"slightly over-produce than under produce'.")
     L.append("")
     if (architecture_sig or public_sig or inter_crate_sig
-            or internals_sig or intra_crate_per_crate or inner_per_crate):
+            or clique_sig or intra_crate_per_crate or inner_per_crate):
         # 5.1 Architecture (cross-crate AND public).
         L.append(f"### 5.1 Architecture significance "
                  f"({len(architecture_sig)} significant; "
@@ -1379,25 +1486,27 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
             L.append(f"- `{pattern}` - inter_count {e['count']} - "
                      f"seed {sp(e['instance'])}")
         L.append("")
-        # 5.4 Internals (workspace-wide cross-crate-spread from intra
-        # picks). 0.0.24: patterns appearing in multiple crates' intra
-        # top-N (spread >= _INTERNALS_SPREAD_THRESHOLD); workspace-
-        # internal shared protagonists the inter-crate top-N missed.
-        L.append(f"### 5.4 Internals significance "
-                 f"({len(internals_sig)} significant; "
-                 f"workspace-wide cross-crate spread from intra picks)")
+        # 5.4 Clique (workspace-wide STV election over per-crate intra
+        # ballots). 2026-06-05 replacement for the prior 'internals'
+        # sum-of-counts set: each crate has equal voting power so
+        # the result captures broad cross-crate consensus rather than
+        # one-crate domination. Droop quota; ballot = each crate's
+        # intra top-N ordered by count.
+        L.append(f"### 5.4 Clique significance "
+                 f"({len(clique_sig)} elected; "
+                 f"workspace-wide STV over per-crate intra ballots)")
         L.append("")
-        for pattern in sorted(internals_sig.keys(),
-                              key=lambda p: -internals_sig[p]["count"]):
-            e = internals_sig[pattern]
-            L.append(f"- `{pattern}` - internals score {e['count']} - "
+        for pattern in sorted(clique_sig.keys(),
+                              key=lambda p: -clique_sig[p]["count"]):
+            e = clique_sig[pattern]
+            L.append(f"- `{pattern}` - clique votes {e['count']:.2f} - "
                      f"seed {sp(e['instance'])}")
         L.append("")
         # 5.5 Intra-crate (per crate; this crate's usage of OTHER
-        # workspace crates' patterns, after dedup vs internals).
+        # workspace crates' patterns, after dedup vs clique).
         L.append("### 5.5 Intra-crate significance (per crate; "
                  "patterns this crate uses with origin in OTHER "
-                 "workspace crates, after dedup vs internals)")
+                 "workspace crates, after dedup vs clique)")
         L.append("")
         for crate in sorted(intra_crate_per_crate.keys()):
             entries = intra_crate_per_crate[crate]
@@ -1445,15 +1554,15 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
                  "signal workspace-wide patterns - still load-"
                  "bearing.")
         L.append("- **Tier 3 (workspace-internal shared)**: the "
-                 "INTERNALS set (5.4, cross-crate spread from intra "
-                 "picks). Patterns used heavily across multiple "
-                 "crates from elsewhere in the workspace - shared "
-                 "infrastructure the inter-crate top-N didn't "
-                 "surface.")
+                 "CLIQUE set (5.4, STV election over per-crate intra "
+                 "ballots). Patterns elected by broad cross-crate "
+                 "consensus when each crate gets equal voting power "
+                 "- shared infrastructure the inter-crate top-N "
+                 "didn't surface.")
         L.append("- **Tier 4 (per-crate coverage)**: INTRA-CRATE "
                  "(5.5) and INNER-CRATE (5.6) per-crate sets. "
                  "Intra-crate shows what each crate USES from "
-                 "elsewhere (after dedup vs internals); inner-"
+                 "elsewhere (after dedup vs clique); inner-"
                  "crate shows each crate's own architecture "
                  "(defined here + used here). Mention with context "
                  "for the crate's role.")
@@ -1563,7 +1672,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
 
     # 7. pattern-authoring guides
     L += ["## 7. Pattern-authoring guides", ""]
-    # Tier 1-3 (architecture + public + inter-crate + internals) hold the
+    # Tier 1-3 (architecture + public + inter-crate + clique) hold the
     # patterns most relevant to the workspace's consumership.
     cls_tag = (f"Workspace classification: **{use_label}**. "
                if use_label else "")
@@ -1571,7 +1680,7 @@ def emit_orientation(root: Path, fp: dict, facts: dict, out: Path):
              "S2 and the significance sets in S5, write the "
              "minimal checklist to author a NEW instance of one "
              "of the Tier 1-3 patterns (S5.1 architecture, "
-             "S5.2 public, S5.3 inter-crate, or S5.4 internals). "
+             "S5.2 public, S5.3 inter-crate, or S5.4 clique). "
              + cls_tag +
              "Frame the checklist for the consumership the "
              "workspace serves: dev_use workspaces author against "

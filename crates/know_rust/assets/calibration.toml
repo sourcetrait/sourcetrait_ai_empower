@@ -45,13 +45,6 @@ threshold = 3
 test_weight = 0.3
 bench_weight = 0.3
 
-[picker.internals]
-# Internals workspace-wide set: minimum spread (distinct crates'
-# intra top-N) for a pattern to enter the workspace-wide internals
-# set. Spread captures cross-crate-shared infrastructure that the
-# inter_crate top-N cap missed.
-spread_threshold = 2
-
 [picker.family]
 # method_ref family: minimum distinct workspace-defined outers for a
 # `Type::method` reference family to enter pattern_metrics as a

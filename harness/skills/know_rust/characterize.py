@@ -151,6 +151,11 @@ def find_crates(root: Path):
                 "categories": pkg.get("categories", []) or [],
                 "description": (pkg.get("description") or "").strip(),
             }
+    # 2026-06-05 deterministic-iteration patch (the_user): sort
+    # crates by name so per-crate iteration order is host- and
+    # filesystem-independent. Aligns Python output ordering with the
+    # Rust port's alphabetical sort in characterize/cargo_toml.rs.
+    crates = dict(sorted(crates.items()))
     return crates, sorted(set(workspace_roots))
 
 
@@ -1200,7 +1205,13 @@ def _compute_pattern_metrics(all_facts: dict, ast_facts: dict = None,
         "attr_macro": all_facts.get("macros", []),
     }
 
-    seen_patterns = set()
+    # 2026-06-05 deterministic-iteration patch (the_user): replace
+    # set with insertion-order list+dedup so pattern_metrics dict
+    # insertion order is reproducible across Python runs (sets are
+    # hash-randomized via PYTHONHASHSEED). Aligns Python output
+    # ordering with the Rust port's IndexMap+IndexSet iteration.
+    _seen_set = set()
+    seen_patterns = []
     for kind, source in sources_by_kind.items():
         for fact in source:
             if kind == "trait_impl":
@@ -1227,7 +1238,10 @@ def _compute_pattern_metrics(all_facts: dict, ast_facts: dict = None,
             else:
                 continue
             pattern = f"{kind}:{inner}"
-            seen_patterns.add((kind, inner, pattern))
+            key = (kind, inner, pattern)
+            if key not in _seen_set:
+                _seen_set.add(key)
+                seen_patterns.append(key)
     # 0.0.10 patch 10e: ALSO surface patterns that exist only in
     # example_type_usages (mpsc::channel + broadcast::channel + ...).
     # These appear nowhere in src but heavily in tests/examples; the
@@ -1236,7 +1250,10 @@ def _compute_pattern_metrics(all_facts: dict, ast_facts: dict = None,
     for tu in all_facts.get("example_type_usages", []):
         inner = tu.get("name")
         if inner:
-            seen_patterns.add(("type_usage", inner, f"type_usage:{inner}"))
+            key = ("type_usage", inner, f"type_usage:{inner}")
+            if key not in _seen_set:
+                _seen_set.add(key)
+                seen_patterns.append(key)
 
     # 0.0.10 patch 10e + 0.0.11 patch 11e + 0.0.12 patch 12d:
     # example_type_usages indexed by (file, name) with weighted

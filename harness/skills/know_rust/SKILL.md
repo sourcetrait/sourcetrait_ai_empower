@@ -31,7 +31,7 @@ as a worked slice, and let that slice be the template for authoring the next ins
 
 This skill is deliberately split between deterministic tooling and your judgment:
 
-- **The Python tooling does the fabrication-proof work** - counting, span extraction, the
+- **The `know_rust` binary does the fabrication-proof work** - counting, span extraction, the
   crate graph, disjoint-component detection, the pattern histogram, seam detection, mode
   selection. These are facts; the tool cannot make them up, and you should not second-guess
   them without opening source.
@@ -47,7 +47,7 @@ yours to fill. Everything else is already grounded.
 ### Step 1 - Characterize (writes the fingerprint first)
 
 ```
-python3 scripts/characterize.py <repo_root> <repo_root>/.orientation
+know_rust characterize <repo_root> <repo_root>/.orientation
 ```
 
 This walks the workspace, scans every `.rs` file, builds the crate dependency graph, and
@@ -71,14 +71,15 @@ Open `fingerprint.json`. Look at:
   If it reports a runner-up mode, hold both in mind when you trace.
 - **`seam_inventory`** and **`registration_macros`** - the boundaries the static scan found.
 
-If a threshold looks wrong for this repo, re-run Step 1 with an override
-(e.g. `ORIENT_DOMINANCE_SHARE=0.55 python3 scripts/characterize.py ...`). The thresholds are
-declared defaults, not validated constants - see the `thresholds` block in the fingerprint.
+If a threshold looks wrong for this repo, re-run Step 1 with a custom calibration TOML
+(e.g. `know_rust -c <path/to/custom.toml> characterize ...`); the embedded default is
+`crates/know_rust/assets/calibration.toml`. The thresholds are declared defaults, not
+validated constants - see the `thresholds` block in the fingerprint.
 
 ### Step 3 - Emit the skeleton
 
 ```
-python3 scripts/emit.py <repo_root> <repo_root>/.orientation
+know_rust emit <repo_root> <repo_root>/.orientation
 ```
 
 This writes `reference.md` (complete) and `orientation.md` (skeleton with `[AGENT]` slots,
@@ -122,7 +123,7 @@ post-macro-expansion ground truth (real macro-generated item counts, re-export t
 floor/rustdoc disagreements that confirm seams):
 
 ```
-python3 scripts/rustdoc_overlay.py <repo_root> <repo_root>/.orientation [package]
+know_rust rustdoc-overlay <repo_root> <repo_root>/.orientation [package]
 ```
 
 If no nightly cargo is available it writes a `status: absent` banner and the floor-only

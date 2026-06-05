@@ -75,6 +75,7 @@ pub fn characterize(
         seams: indexmap::IndexMap::new(),
         ast_type_refs: Vec::new(),
         ast_method_refs: Vec::new(),
+        carries: BTreeMap::new(),
     };
     let mut per_crate: indexmap::IndexMap<String, PerCrateFingerprint> = indexmap::IndexMap::new();
     let mut free_fns_by_crate: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
@@ -119,6 +120,18 @@ pub fn characterize(
     }
     for (k, v) in &item_facts.seams {
         *all_facts.seams.entry(k.clone()).or_default() += v;
+    }
+    // R2: propagate carries from the items walker to the workspace
+    // facts. The per-crate split is not applied here because carry
+    // keys are already pattern-scoped (group:name) and the picked
+    // item's crate is recoverable via the picker's existing
+    // pattern_metrics::defining_crate lookup.
+    for (pat, entries) in &item_facts.carries {
+        all_facts
+            .carries
+            .entry(pat.clone())
+            .or_default()
+            .extend(entries.iter().cloned());
     }
 
     for ent in &usage_facts.ast_fn_sig_usages {

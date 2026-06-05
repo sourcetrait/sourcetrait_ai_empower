@@ -31,6 +31,21 @@ pub struct ItemFacts {
     pub example_type_usages: Vec<TypeUsageEntry>,
     pub seams: BTreeMap<String, usize>,
     pub doc_count: usize,
+    /// What: per-picked-pattern carry map. Key is the `Pattern::Display`
+    /// form (`<group_wire>:<name>` e.g. `structure:Component`); value is
+    /// the list of one-hop dependent names the reader needs to make
+    /// sense of the pick.
+    ///
+    /// Why: refactor phase R2 (per
+    /// `notes/know_rust/tasks/picks-data-model-refactor.md`). Carry is
+    /// extracted at scan time so downstream consumers see a typed
+    /// transitive context layer alongside the existing facts.
+    ///
+    /// Where: aggregated from per-file
+    /// `FileLevelFacts::carries` at `scan_workspace` exit; consumed by
+    /// the future picker + emit phases (R3 + R5).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub carries: BTreeMap<String, Vec<CarryEntry>>,
 }
 
 /// What: per-file accumulator the walker fills before contributing into
@@ -58,6 +73,23 @@ pub struct FileLevelFacts {
     pub example_type_usages: Vec<TypeUsageEntry>,
     pub seams: HashMap<SeamKind, usize>,
     pub doc_count: usize,
+    pub carries: HashMap<String, Vec<CarryEntry>>,
+}
+
+/// What: one carry entry - a dependent name the walker surfaced as
+/// one-hop transitive context for a Picked item. Currently records
+/// just the name; future R3 enrichment may add `group: PickGroup`
+/// when the walker can disambiguate.
+///
+/// Why: refactor phase R2 - the carry concept from
+/// `notes/know_rust/picks-data-model.md`. Each picked item's
+/// reader-context comes from a list of these.
+///
+/// Where: held inside `FileLevelFacts::carries` and `ItemFacts::carries`
+/// keyed by the picked pattern's `Pattern::Display` form.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CarryEntry {
+    pub name: String,
 }
 
 /// What: one impl block seen at item position (`impl X { ... }` or

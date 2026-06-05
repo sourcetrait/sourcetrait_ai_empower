@@ -270,4 +270,18 @@ pub struct WorkspaceFacts {
     pub seams: indexmap::IndexMap<String, usize>,
     pub ast_type_refs: Vec<serde_json::Value>,
     pub ast_method_refs: Vec<serde_json::Value>,
+    /// What: per-picked-pattern carry map propagated from
+    /// `ItemFacts::carries`. Key is the `Pattern::Display` form
+    /// (`<group_wire>:<name>`); value is the list of one-hop dependent
+    /// names the reader needs to make sense of the picked item.
+    ///
+    /// Why: refactor phase R2 (per
+    /// `notes/know_rust/tasks/picks-data-model-refactor.md`). Surfaces
+    /// the carry signal at workspace level so downstream picker + emit
+    /// phases (R3 + R5) can consume the typed transitive context.
+    ///
+    /// Where: populated in `crate::characterize::run::characterize`
+    /// from `item_facts.carries` after the per-crate scan loop.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub carries: BTreeMap<String, Vec<CarryEntry>>,
 }

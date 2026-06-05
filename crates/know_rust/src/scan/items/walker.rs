@@ -20,6 +20,7 @@ pub(crate) struct FileWalker {
     brace_depth: usize,
     in_inner_attr_context: bool,
     current_trait_vis: Option<String>,
+    current_impl_type_name: Option<String>,
     facts: FileLevelFacts,
 }
 
@@ -32,7 +33,32 @@ impl FileWalker {
             brace_depth: 0,
             in_inner_attr_context: false,
             current_trait_vis: None,
+            current_impl_type_name: None,
             facts: FileLevelFacts::default(),
+        }
+    }
+
+    /// What: record one carry name under a pattern key. The pattern
+    /// key is the picked item's `Pattern::Display` form (e.g.
+    /// `structure:Component`, `implementation_functions:World::new`).
+    ///
+    /// Why: refactor phase R2 - aggregates per-item carry into the
+    /// per-file accumulator. Workspace.rs merges this into the
+    /// workspace-level `ItemFacts::carries` map at scan_workspace exit.
+    fn record_carry(&mut self, pattern_key: String, name: String) {
+        self.facts
+            .carries
+            .entry(pattern_key)
+            .or_default()
+            .push(CarryEntry { name });
+    }
+
+    /// What: record many carry names from a `syn::Type` under one
+    /// pattern key. Convenience wrapper around `record_carry` for the
+    /// common struct-field / fn-signature extraction shape.
+    fn record_carry_from_type(&mut self, pattern_key: &str, ty: &syn::Type) {
+        for name in type_carry_names(ty) {
+            self.record_carry(pattern_key.to_string(), name);
         }
     }
 
@@ -79,6 +105,11 @@ impl FileWalker {
                     if cleaned == "Serialize" || cleaned == "Deserialize" {
                         self.bump_seam(SeamKind::SerdeSerialize, 1);
                     }
+                    // R2 carry extraction: derive carries the derived
+                    // trait so the reader has impl-shape context.
+                    // Pattern key shape: derives:<trait>.
+                    let pat = format!("derives:{}", cleaned);
+                    self.record_carry(pat, cleaned.clone());
                     self.facts.derives.push(DeriveEntry {
                         file: self.file.clone(),
                         trait_name: cleaned,
@@ -356,7 +387,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         self.facts.impls.push(ImplEntry {
             file: self.file.clone(),
             trait_name,
-            type_name: Some(type_name),
+            type_name: Some(type_name.clone()),
             line,
             end_line,
             cfg_gated,
@@ -370,9 +401,15 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             self.visit_path(path);
         }
         self.visit_type(&i.self_ty);
+        // R2 carry extraction: track the impl-target type so each
+        // impl method visit can key its carry under
+        // `implementation_functions:<type>::<method>`.
+        let saved_impl = self.current_impl_type_name.take();
+        self.current_impl_type_name = Some(type_name);
         for item in &i.items {
             self.visit_impl_item(item);
         }
+        self.current_impl_type_name = saved_impl;
     }
 
     fn visit_item_trait(&mut self, t: &'ast syn::ItemTrait) {
@@ -408,16 +445,32 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         let Some((cfg_gated, _, _)) = self.process_item_attrs(&s.attrs) else {
             return;
         };
+        let struct_name = s.ident.to_string();
         self.facts.types.push(TypeEntry {
             file: self.file.clone(),
             kind: TypeEntryKind::Struct,
-            name: s.ident.to_string(),
+            name: struct_name.clone(),
             line: s.ident.span().start().line,
             cfg_gated,
             doc: extract_doc(&s.attrs),
             visibility: visibility_string(&s.vis),
         });
         syn::visit::visit_generics(self, &s.generics);
+        // R2 carry extraction: field types -> carry under structure:<name>
+        let pat = format!("structure:{}", struct_name);
+        match &s.fields {
+            syn::Fields::Named(named) => {
+                for f in &named.named {
+                    self.record_carry_from_type(&pat, &f.ty);
+                }
+            }
+            syn::Fields::Unnamed(unnamed) => {
+                for f in &unnamed.unnamed {
+                    self.record_carry_from_type(&pat, &f.ty);
+                }
+            }
+            syn::Fields::Unit => {}
+        }
         self.process_fields_attrs(&s.fields);
     }
 
@@ -425,18 +478,34 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         let Some((cfg_gated, _, _)) = self.process_item_attrs(&e.attrs) else {
             return;
         };
+        let enum_name = e.ident.to_string();
         self.facts.types.push(TypeEntry {
             file: self.file.clone(),
             kind: TypeEntryKind::Enum,
-            name: e.ident.to_string(),
+            name: enum_name.clone(),
             line: e.ident.span().start().line,
             cfg_gated,
             doc: extract_doc(&e.attrs),
             visibility: visibility_string(&e.vis),
         });
         syn::visit::visit_generics(self, &e.generics);
+        // R2 carry extraction: variant payload types -> carry under structure:<name>
+        let pat = format!("structure:{}", enum_name);
         for v in &e.variants {
             self.process_item_attrs(&v.attrs);
+            match &v.fields {
+                syn::Fields::Named(named) => {
+                    for f in &named.named {
+                        self.record_carry_from_type(&pat, &f.ty);
+                    }
+                }
+                syn::Fields::Unnamed(unnamed) => {
+                    for f in &unnamed.unnamed {
+                        self.record_carry_from_type(&pat, &f.ty);
+                    }
+                }
+                syn::Fields::Unit => {}
+            }
             self.process_fields_attrs(&v.fields);
             if let Some((_, expr)) = &v.discriminant {
                 // Quirk preserved from the python rustscan: enum
@@ -709,6 +778,25 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             doc: extract_doc(&f.attrs),
             visibility: visibility_string(&f.vis),
         });
+        // R2 carry extraction: when inside an impl block, record carry
+        // for this method's parameter types + return type under
+        // `implementation_functions:<impl_type>::<method>`. The
+        // current_impl_type_name was set by visit_item_impl.
+        if let Some(impl_type) = self.current_impl_type_name.clone() {
+            let pat = format!(
+                "implementation_functions:{}::{}",
+                impl_type,
+                f.sig.ident
+            );
+            for input in &f.sig.inputs {
+                if let syn::FnArg::Typed(pt) = input {
+                    self.record_carry_from_type(&pat, &pt.ty);
+                }
+            }
+            if let syn::ReturnType::Type(_, ty) = &f.sig.output {
+                self.record_carry_from_type(&pat, ty);
+            }
+        }
         if f.sig.unsafety.is_some() {
             self.bump_seam(SeamKind::Unsafe, 1);
         }

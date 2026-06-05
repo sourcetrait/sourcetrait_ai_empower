@@ -116,4 +116,11 @@ fn merge_file_facts(
     for (kind, n) in file_facts.seams {
         *aggregate_seams.entry(kind).or_default() += n;
     }
+    // R2 carry extraction: merge per-file carries into the workspace-
+    // level BTreeMap keyed by `Pattern::Display` form. Multiple files
+    // contributing to the same pattern (e.g. impl blocks for the same
+    // struct in different modules) append their carry lists.
+    for (pat, entries) in file_facts.carries {
+        facts.carries.entry(pat).or_default().extend(entries);
+    }
 }

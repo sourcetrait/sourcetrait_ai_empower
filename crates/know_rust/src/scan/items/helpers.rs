@@ -1,3 +1,46 @@
+/// What: extract one-hop carry names from a `syn::Type`. Walks every
+/// `TypePath` in the type subtree (handles generics, references,
+/// tuples, arrays, etc.) and collects the last-segment ident of each.
+/// Filters to identifiers starting with an uppercase letter so
+/// primitives (`u8`, `bool`, etc.) and lifetime parameters are
+/// excluded.
+///
+/// Why: refactor phase R2 (per
+/// `notes/know_rust/tasks/picks-data-model-refactor.md`). The carry
+/// concept needs a syntactic extraction that doesn't require
+/// semantic resolution; pulling type-path leaf idents from each
+/// referenced type gives a stable, walker-only signal that the
+/// reader can grep against the existing per-crate facts.
+///
+/// Where: called by walker visit methods on struct fields, enum
+/// variants, impl-method signatures, and trait supertypes when
+/// recording carry under the parent's pattern key.
+pub(crate) fn type_carry_names(ty: &syn::Type) -> Vec<String> {
+    use syn::visit::Visit;
+    struct CarryCollector {
+        names: Vec<String>,
+    }
+    impl<'ast> Visit<'ast> for CarryCollector {
+        fn visit_type_path(&mut self, tp: &'ast syn::TypePath) {
+            if let Some(last) = tp.path.segments.last() {
+                let name = last.ident.to_string();
+                if name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+                {
+                    self.names.push(name);
+                }
+            }
+            syn::visit::visit_type_path(self, tp);
+        }
+    }
+    let mut c = CarryCollector { names: Vec::new() };
+    c.visit_type(ty);
+    c.names
+}
+
 /// What: format an attribute's path as a `::`-joined string (the same
 /// shape rustdoc and the AttrEntry wire schema use).
 ///

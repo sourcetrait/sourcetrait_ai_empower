@@ -22,6 +22,7 @@ pub fn render_orientation(
     fp: &serde_json::Value,
     facts: &serde_json::Value,
     calibration: &Calibration,
+    templates: &Templates,
 ) -> String {
     let sel = fp.get("selection").cloned().unwrap_or(serde_json::Value::Null);
     let vocab = core_vocabulary(fp, facts);
@@ -29,25 +30,13 @@ pub fn render_orientation(
     let seams = detected_seams(fp, facts);
 
     let mut lines: Vec<String> = Vec::new();
-    lines.push("# Orientation".to_string());
-    lines.push(String::new());
-    lines.push(
-        "Read-first. This is the map; the source is the territory and `reference.md` is the".to_string(),
-    );
-    lines.push(
-        "exhaustive index. Map-first ordering: skeleton (crate map, core vocabulary, seams,".to_string(),
-    );
-    lines.push(
-        "flow) then the worked slice (the authoring template), then guardrails, then the".to_string(),
-    );
-    lines.push(
-        "authoring guide. Every claim is a span you can open. Sections marked **[AGENT]** are".to_string(),
-    );
-    lines.push("filled by reading source at the cited spans - never from guesswork.".to_string());
-    lines.push(String::new());
-    lines.push("```".to_string());
-    lines.push(provenance(workspace_root, out_dir, fp));
-    lines.push("```".to_string());
+    let header_ctx = OrientationHeaderContext {
+        provenance: provenance(workspace_root, out_dir, fp),
+    };
+    let header_text = templates
+        .render_prompt("orientation_header", &header_ctx)
+        .expect("bundled orientation_header.liquid is well-formed");
+    lines.push(header_text.trim_end_matches('\n').to_string());
     lines.push(String::new());
 
     // How shaped
@@ -333,13 +322,10 @@ pub fn render_orientation(
     lines.push(String::new());
 
     // 4. Data-flow narrative (agent)
-    lines.push("## 4. Data-flow narrative".to_string());
-    lines.push(String::new());
-    lines.push(
-        "**[AGENT]** Trace how the core data type (from S2) moves from entry to result through \
-         the core crates. 1-2 short paragraphs, each sentence anchored to a span from \
-         reference.md. Stop at any seam from S3 with an explicit UNRESOLVED.".to_string(),
-    );
+    let s4_text = templates
+        .render_prompt("orientation_s4_dataflow", &EmptyContext {})
+        .expect("bundled orientation_s4_dataflow.liquid is well-formed");
+    lines.push(s4_text.trim_end_matches('\n').to_string());
     lines.push(String::new());
 
     // 5. Significance sets
@@ -514,88 +500,31 @@ pub fn render_orientation(
             }
         }
         // Tier guidance
-        lines.push(
-            "**[AGENT]** Coverage tiering per the_user 2026-06-03 / 2026-06-04 directives \
-             (sets ordered by importance):".to_string(),
-        );
-        lines.push(String::new());
-        lines.push(
-            "- **Tier 1 (heaviest coverage)**: the ARCHITECTURE set (5.1, cross-crate AND \
-             public-by-example). Doubly-strong architectural protagonists - they flow across \
-             the workspace AND surface in its examples; allocate the deepest worked-slice \
-             attention to each.".to_string(),
-        );
-        lines.push(
-            "- **Tier 2 (heavy coverage)**: the PUBLIC set (5.2, public-by-example only) and \
-             the INTER-CRATE set (5.3, cross-crate flow only). Single-signal workspace-wide \
-             patterns - still load-bearing.".to_string(),
-        );
-        lines.push(
-            "- **Tier 3 (workspace-internal shared)**: the CLIQUE set (5.4, STV election over \
-             per-crate intra ballots). Patterns elected by broad cross-crate consensus when \
-             each crate gets equal voting power - shared infrastructure the inter-crate top-N \
-             didn't surface.".to_string(),
-        );
-        lines.push(
-            "- **Tier 4 (per-crate coverage)**: INTRA-CRATE (5.5) and INNER-CRATE (5.6) \
-             per-crate sets. Intra-crate shows what each crate USES from elsewhere (after dedup \
-             vs clique); inner-crate shows each crate's own architecture (defined here + used \
-             here). Mention with context for the crate's role.".to_string(),
-        );
-        lines.push(
-            "- **Tier 5 (baseline coverage)**: patterns NOT in any set's top picks. The \
-             reference index (`reference.md`) is the inventory; no per-pattern attention \
-             beyond the listing.".to_string(),
-        );
-        lines.push(String::new());
-        lines.push(
-            "A pattern appearing in multiple sets is a stronger signal - the `categories` field \
-             on each pick surfaces multi-set membership.".to_string(),
-        );
+        let tier_text = templates
+            .render_prompt("orientation_s5_tier_guidance", &EmptyContext {})
+            .expect("bundled orientation_s5_tier_guidance.liquid is well-formed");
+        lines.push(tier_text.trim_end_matches('\n').to_string());
         lines.push(String::new());
         if let Some(ul) = &use_label {
-            if let Some(mod_text) = use_tier_modifier(ul) {
-                lines.push(mod_text.to_string());
+            let modifier_name = match ul.as_str() {
+                "dev_use" => Some("orientation_s5_use_tier_dev_use"),
+                "end_with_dev_use" => Some("orientation_s5_use_tier_end_with_dev_use"),
+                "dev_with_end_use" => Some("orientation_s5_use_tier_dev_with_end_use"),
+                "end_use" => Some("orientation_s5_use_tier_end_use"),
+                _ => None,
+            };
+            if let Some(name) = modifier_name {
+                let mod_text = templates
+                    .render_prompt(name, &EmptyContext {})
+                    .expect("bundled use_tier_modifier liquid is well-formed");
+                lines.push(mod_text.trim_end_matches('\n').to_string());
                 lines.push(String::new());
             }
         }
-        lines.push(
-            "**[AGENT] Authoring guidance.** The picker hands you patterns; the framework tells \
-             you HOW to write about them. Four cues:".to_string(),
-        );
-        lines.push(String::new());
-        lines.push(
-            "- **Form vs role.** Each pattern's `kind:name` is its FORM (mechanical, derived \
-             from syntax: trait_impl / derive / type_usage / reg_macro). Its ROLE is semantic \
-             and surfaces from signals - is_pub + inter_ratio + curated_example_count + the \
-             workspace's use classification (above). Most items align (form = role); when they \
-             diverge (a fn whose role is data-modeling like `to_string`; a struct whose role is \
-             functional like a builder), surface BOTH explicitly.".to_string(),
-        );
-        lines.push(
-            "- **Per-category decomposition.** Pick the category first then think through its \
-             data slots: *functional* (operation + parameterized input + state read + \
-             parameterized output + state mutated); *data-modeling* (broad category + \
-             sub-categories + sub-representational ops + transformative ops + intended use); \
-             *labeling* (load-bearing vs considered-but-arbitrary vs broadly insignificant); \
-             *organizing* (means of containment + items maintained + parent context + \
-             structural shape).".to_string(),
-        );
-        lines.push(
-            "- **Pass discipline.** Obvious pass writes from source + doc-comments at the cited \
-             spans. Return pass re-reads for skimmed slots and marks UNRESOLVED rather than \
-             backfilling with speculation. UNRESOLVED is a guardrail applied PER ITEM, not only \
-             per seam (S6).".to_string(),
-        );
-        lines.push(
-            "- **Reduction through inference.** The reader sees `kind:name` + the span - don't \
-             restate what name + form already convey. Spend the prose budget on the \
-             non-inferrable residual: gotchas, edge cases, internal-vs-external state effects, \
-             call-site context, workspace invariants. A summary that says 'Parses an input \
-             string into a Command' tells the reader nothing they didn't already infer; one \
-             that says 'Strict parser; rejects empty strings; does NOT handle quoting (upstream \
-             tokenizer); shared by batch + REPL invocations' is residual.".to_string(),
-        );
+        let auth_text = templates
+            .render_prompt("orientation_s5_authoring_guidance", &EmptyContext {})
+            .expect("bundled orientation_s5_authoring_guidance.liquid is well-formed");
+        lines.push(auth_text.trim_end_matches('\n').to_string());
         lines.push(String::new());
     }
     lines.push(String::new());
@@ -659,24 +588,17 @@ pub fn render_orientation(
     lines.push(String::new());
 
     // 7. Pattern-authoring guides
-    lines.push("## 7. Pattern-authoring guides".to_string());
-    lines.push(String::new());
     let cls_tag = match &use_label {
         Some(l) => format!("Workspace classification: **{}**. ", l),
         None => String::new(),
     };
-    lines.push(format!(
-        "**[AGENT]** From the trait / type definitions in S2 and the significance sets in S5, \
-         write the minimal checklist to author a NEW instance of one of the Tier 1-3 patterns \
-         (S5.1 architecture, S5.2 public, S5.3 inter-crate, or S5.4 clique). {}Frame the \
-         checklist for the consumership the workspace serves: dev_use workspaces author against \
-         the library's public API; end_with_dev_use workspaces author internal-product features \
-         whose cross-crate flow matters; dev_with_end_use treats the lib as primary; end_use \
-         authors user-facing entry points. Anchor each step to a span. Apply the S5 authoring \
-         guidance per item: form-vs-role + per-category decomposition + pass discipline + \
-         reduction-through-inference.",
-        cls_tag
-    ));
+    let s7_ctx = OrientationS7Context {
+        classification_tag: cls_tag,
+    };
+    let s7_text = templates
+        .render_prompt("orientation_s7_authoring", &s7_ctx)
+        .expect("bundled orientation_s7_authoring.liquid is well-formed");
+    lines.push(s7_text.trim_end_matches('\n').to_string());
     lines.push(String::new());
 
     // Appendix

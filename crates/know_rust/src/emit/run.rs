@@ -20,7 +20,7 @@ pub fn emit(
     workspace_root: &Path,
     out_dir: &Path,
     calibration: &Calibration,
-    _templates: &Templates,
+    templates: &Templates,
 ) -> std::result::Result<(), Error> {
     let fp_path = out_dir.join("fingerprint.json");
     let facts_path = out_dir.join("facts.json");
@@ -46,9 +46,9 @@ pub fn emit(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let orientation_text = if shape == "container" {
-        render_container_routing(workspace_root, out_dir, &fp)
+        render_container_routing(workspace_root, out_dir, &fp, templates)
     } else {
-        render_orientation(workspace_root, out_dir, &fp, &facts, calibration)
+        render_orientation(workspace_root, out_dir, &fp, &facts, calibration, templates)
     };
     fs::write(&orientation_path, &orientation_text).map_err(|source| Error::Write {
         path: orientation_path,

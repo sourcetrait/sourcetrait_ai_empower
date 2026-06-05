@@ -20,6 +20,7 @@ pub fn render_container_routing(
     workspace_root: &Path,
     out_dir: &Path,
     fp: &serde_json::Value,
+    templates: &Templates,
 ) -> String {
     let shape = fp
         .get("workspace_shape")
@@ -31,18 +32,13 @@ pub fn render_container_routing(
         .unwrap_or(serde_json::Value::Null);
 
     let mut lines: Vec<String> = Vec::new();
-    lines.push("# Orientation: Container Workspace".to_string());
-    lines.push(String::new());
-    lines.push(
-        "The structural signals indicate this workspace is a container - a sub-topic aggregator \
-         with no single architectural pattern. Each member is a separate topical library; \
-         running the picker across the workspace as a whole would produce confidently-wrong \
-         output. This artifact routes you to the per-member orientations instead.".to_string(),
-    );
-    lines.push(String::new());
-    lines.push("```".to_string());
-    lines.push(provenance(workspace_root, out_dir, fp));
-    lines.push("```".to_string());
+    let intro_ctx = ContainerIntroContext {
+        provenance: provenance(workspace_root, out_dir, fp),
+    };
+    let intro_text = templates
+        .render_prompt("container_intro", &intro_ctx)
+        .expect("bundled container_intro.liquid is well-formed");
+    lines.push(intro_text.trim_end_matches('\n').to_string());
     lines.push(String::new());
 
     lines.push("## How this artifact was shaped".to_string());
@@ -122,13 +118,10 @@ pub fn render_container_routing(
         ));
     }
     lines.push(String::new());
-    lines.push(
-        "**[AGENT]** Pick the member whose architectural pattern you want to trace, then run \
-         know_rust against that member's directory. Open the corresponding orientation.md for \
-         the per-topic worked slices and authoring guides. The container workspace itself has \
-         no unifying architectural pattern to trace; do not author across member boundaries \
-         without first reading each member's individual orientation.".to_string(),
-    );
+    let agent_text = templates
+        .render_prompt("container_agent", &EmptyContext {})
+        .expect("bundled container_agent.liquid is well-formed");
+    lines.push(agent_text.trim_end_matches('\n').to_string());
     lines.push(String::new());
 
     lines.push("## Appendix: full pattern histogram".to_string());

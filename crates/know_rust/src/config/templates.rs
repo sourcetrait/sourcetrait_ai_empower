@@ -151,8 +151,43 @@ impl Templates {
 /// Where: called from `Templates::load_prompt` when no user override
 /// is configured or when the override directory lacks the requested
 /// file.
-fn default_prompt(_name: &str) -> Option<&'static str> {
-    None
+fn default_prompt(name: &str) -> Option<&'static str> {
+    match name {
+        "orientation_header" => Some(include_str!(
+            "../../assets/prompts/orientation_header.liquid"
+        )),
+        "orientation_s4_dataflow" => Some(include_str!(
+            "../../assets/prompts/orientation_s4_dataflow.liquid"
+        )),
+        "orientation_s5_tier_guidance" => Some(include_str!(
+            "../../assets/prompts/orientation_s5_tier_guidance.liquid"
+        )),
+        "orientation_s5_authoring_guidance" => Some(include_str!(
+            "../../assets/prompts/orientation_s5_authoring_guidance.liquid"
+        )),
+        "orientation_s7_authoring" => Some(include_str!(
+            "../../assets/prompts/orientation_s7_authoring.liquid"
+        )),
+        "orientation_s5_use_tier_dev_use" => Some(include_str!(
+            "../../assets/prompts/orientation_s5_use_tier_dev_use.liquid"
+        )),
+        "orientation_s5_use_tier_end_with_dev_use" => Some(include_str!(
+            "../../assets/prompts/orientation_s5_use_tier_end_with_dev_use.liquid"
+        )),
+        "orientation_s5_use_tier_dev_with_end_use" => Some(include_str!(
+            "../../assets/prompts/orientation_s5_use_tier_dev_with_end_use.liquid"
+        )),
+        "orientation_s5_use_tier_end_use" => Some(include_str!(
+            "../../assets/prompts/orientation_s5_use_tier_end_use.liquid"
+        )),
+        "container_intro" => Some(include_str!(
+            "../../assets/prompts/container_intro.liquid"
+        )),
+        "container_agent" => Some(include_str!(
+            "../../assets/prompts/container_agent.liquid"
+        )),
+        _ => None,
+    }
 }
 
 /// What: registry of embedded non-prompt template defaults. Same

@@ -24,6 +24,10 @@ pub fn run() -> std::result::Result<(), Error> {
             workspace_root,
             out_dir,
         } => emit(&workspace_root, &out_dir, &calibration, &templates),
+        Command::MeasureOverlap {
+            baseline_dir,
+            ground_truth,
+        } => measure_overlap(&baseline_dir, &ground_truth),
     }
 }
 

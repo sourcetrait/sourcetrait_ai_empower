@@ -31,6 +31,12 @@ pub(crate) mod config {
     pub(crate) mod templates;
 }
 pub(crate) mod error;
+pub(crate) mod measure_overlap {
+    pub(crate) mod parse;
+    pub(crate) mod run;
+    pub(crate) mod score;
+    pub(crate) mod types;
+}
 pub(crate) mod run;
 pub(crate) mod scan {
     pub(crate) mod helpers;
@@ -74,6 +80,9 @@ pub(crate) use crate::{
     emit::seams::*,
     emit::spans::*,
     error::*,
+    measure_overlap::parse::*,
+    measure_overlap::score::*,
+    measure_overlap::types::*,
     scan::helpers::*,
     scan::items::filters::*,
     scan::items::helpers::*,
@@ -109,6 +118,7 @@ pub(crate) use syn::{
 pub use crate::run::run;
 pub use crate::characterize::run::*;
 pub use crate::emit::run::*;
+pub use crate::measure_overlap::run::*;
 pub use crate::config::calibration::*;
 pub use crate::config::loader::*;
 pub use crate::config::templates::*;

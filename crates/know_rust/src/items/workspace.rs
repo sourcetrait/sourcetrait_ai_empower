@@ -96,8 +96,10 @@ fn collect_rs_files(workspace_root: &Path) -> Vec<(PathBuf, String)> {
 }
 
 fn is_target_dir(p: &Path) -> bool {
-    p.components()
-        .any(|c| c.as_os_str().to_str() == Some("target"))
+    p.components().any(|c| {
+        let name = c.as_os_str().to_str();
+        name == Some("target") || name == Some(".git")
+    })
 }
 
 /// Drain a per-file accumulator into the workspace-level `ItemsFacts`

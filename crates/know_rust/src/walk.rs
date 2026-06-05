@@ -31,6 +31,10 @@ pub(crate) fn walk_workspace(root: &Path) -> Result<Facts> {
             Ok(r) => r.to_string_lossy().to_string(),
             Err(_) => continue,
         };
+        let parts: Vec<&str> = rel.split('/').collect();
+        if parts.iter().any(|s| *s == "tests" || *s == "benches") {
+            continue;
+        }
         let src = match fs::read_to_string(p) {
             Ok(s) => s,
             Err(_) => continue,
@@ -53,6 +57,7 @@ pub(crate) fn walk_workspace(root: &Path) -> Result<Facts> {
 
 fn is_target_dir(p: &Path) -> bool {
     p.components().any(|c| {
-        c.as_os_str().to_str() == Some("target")
+        let name = c.as_os_str().to_str();
+        name == Some("target") || name == Some(".git")
     })
 }

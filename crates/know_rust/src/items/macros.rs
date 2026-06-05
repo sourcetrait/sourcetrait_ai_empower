@@ -181,10 +181,78 @@ pub(crate) fn scan_macro_body_tokens(
     is_example: bool,
     tokens: &proc_macro2::TokenStream,
     brace_depth: usize,
+    emit_attrs: bool,
 ) {
     let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
     let mut i = 0;
     while i < trees.len() {
+        if emit_attrs {
+            if let proc_macro2::TokenTree::Punct(p) = &trees[i] {
+                if p.as_char() == '#' {
+                    let mut bracket_idx = i + 1;
+                    if let Some(proc_macro2::TokenTree::Punct(p2)) = trees.get(bracket_idx) {
+                        if p2.as_char() == '!' {
+                            bracket_idx += 1;
+                        }
+                    }
+                    if let Some(proc_macro2::TokenTree::Group(g)) = trees.get(bracket_idx) {
+                        if g.delimiter() == proc_macro2::Delimiter::Bracket {
+                            let inner: Vec<proc_macro2::TokenTree> =
+                                g.stream().clone().into_iter().collect();
+                            let mut path_segs: Vec<String> = Vec::new();
+                            let mut j = 0;
+                            while j < inner.len() {
+                                if let proc_macro2::TokenTree::Ident(id) = &inner[j] {
+                                    path_segs.push(id.to_string());
+                                    if let (
+                                        Some(proc_macro2::TokenTree::Punct(c1)),
+                                        Some(proc_macro2::TokenTree::Punct(c2)),
+                                    ) = (inner.get(j + 1), inner.get(j + 2))
+                                    {
+                                        if c1.as_char() == ':' && c2.as_char() == ':' {
+                                            j += 3;
+                                            continue;
+                                        }
+                                    }
+                                    break;
+                                } else {
+                                    break;
+                                }
+                            }
+                            if !path_segs.is_empty() {
+                                let name = path_segs.last().cloned().unwrap_or_default();
+                                let path_str = path_segs.join("::");
+                                if !is_inert_attr(&name)
+                                    && !is_noise_attr(&path_str, &name)
+                                    && !is_noise_macro(&name)
+                                {
+                                    facts.macros.push(MacroEntry {
+                                        file: file.to_string(),
+                                        kind: MacroEntryKind::AttrMacro,
+                                        name,
+                                        line: p.span().start().line,
+                                        expansion_unverified: true,
+                                        args_count: None,
+                                        arg_idents: None,
+                                        brace_depth: Some(brace_depth),
+                                    });
+                                }
+                            }
+                            scan_macro_body_tokens(
+                                facts,
+                                file,
+                                is_example,
+                                &g.stream(),
+                                brace_depth,
+                                emit_attrs,
+                            );
+                            i = bracket_idx + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
         match &trees[i] {
             proc_macro2::TokenTree::Ident(ident) => {
                 let name = ident.to_string();
@@ -301,9 +369,83 @@ pub(crate) fn scan_macro_body_tokens(
                 }
             }
             proc_macro2::TokenTree::Group(g) => {
-                scan_macro_body_tokens(facts, file, is_example, &g.stream(), brace_depth);
+                scan_macro_body_tokens(facts, file, is_example, &g.stream(), brace_depth, emit_attrs);
             }
             _ => {}
+        }
+        i += 1;
+    }
+}
+
+/// What: walk an attribute's argument tokens for inner macro
+/// invocations (e.g., `document_features!()` inside `#[cfg_attr(..., doc = ...)]`).
+/// Emits MacroEntry::MacroInvocation for each `IDENT(::IDENT)*!(...)` pattern.
+///
+/// Why: attribute arguments may contain real macro invocations whose
+/// expansion lands in the surrounding compile-time context (e.g., the
+/// doc = ... value in cfg_attr expands to actual doc lines). py
+/// captures these via its token walker; mine missed them because
+/// record_attribute_explicit only processed the attribute itself.
+///
+/// Where: called from `record_attribute_explicit` for each item-level
+/// attribute, after the AttrEntry / AttrMacro emission.
+pub(crate) fn scan_attr_meta_for_macros(
+    facts: &mut FileLevelFacts,
+    file: &str,
+    tokens: &proc_macro2::TokenStream,
+    brace_depth: usize,
+) {
+    let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
+    let mut i = 0;
+    while i < trees.len() {
+        if let proc_macro2::TokenTree::Ident(ident) = &trees[i] {
+            let mut path_segs: Vec<String> = vec![ident.to_string()];
+            let mut j = i + 1;
+            while j + 1 < trees.len() {
+                let c1 = match &trees[j] {
+                    proc_macro2::TokenTree::Punct(p) => p,
+                    _ => break,
+                };
+                let c2 = match trees.get(j + 1) {
+                    Some(proc_macro2::TokenTree::Punct(p)) => p,
+                    _ => break,
+                };
+                if c1.as_char() != ':' || c2.as_char() != ':' {
+                    break;
+                }
+                let id = match trees.get(j + 2) {
+                    Some(proc_macro2::TokenTree::Ident(id)) => id,
+                    _ => break,
+                };
+                path_segs.push(id.to_string());
+                j += 3;
+            }
+            if j < trees.len() {
+                if let proc_macro2::TokenTree::Punct(p) = &trees[j] {
+                    if p.as_char() == '!' {
+                        if let Some(proc_macro2::TokenTree::Group(_)) = trees.get(j + 1) {
+                            let name = path_segs.last().cloned().unwrap_or_default();
+                            if !is_noise_macro(&name) {
+                                facts.macros.push(MacroEntry {
+                                    file: file.to_string(),
+                                    kind: MacroEntryKind::MacroInvocation,
+                                    name,
+                                    line: ident.span().start().line,
+                                    expansion_unverified: true,
+                                    args_count: None,
+                                    arg_idents: None,
+                                    brace_depth: Some(brace_depth),
+                                });
+                            }
+                            i = j + 2;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        if let proc_macro2::TokenTree::Group(g) = &trees[i] {
+            scan_attr_meta_for_macros(facts, file, &g.stream(), brace_depth);
         }
         i += 1;
     }

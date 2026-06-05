@@ -745,17 +745,3 @@ fn type_string(ty: &syn::Type) -> String {
     String::new()
 }
 
-fn visibility_string(vis: &syn::Visibility) -> String {
-    match vis {
-        syn::Visibility::Public(_) => "pub".to_string(),
-        syn::Visibility::Restricted(r) => {
-            let path = r.path.segments
-                .iter()
-                .map(|s| s.ident.to_string())
-                .collect::<Vec<_>>()
-                .join("::");
-            format!("pub({})", path)
-        }
-        syn::Visibility::Inherited => String::new(),
-    }
-}

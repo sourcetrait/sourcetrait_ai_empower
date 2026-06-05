@@ -91,15 +91,13 @@ pub(crate) fn is_inert_attr(base: &str) -> bool {
     INERT_ATTRS.contains(&base)
 }
 
-/// True when the path lives under `examples/`, `tests/`, or `benches/`
-/// at any depth - the heuristic for routing emitted `type_usages` into
+/// True when the path lives under `examples/` at any depth - the
+/// heuristic for routing emitted `type_usages` into
 /// `example_type_usages` rather than the architectural-src bucket.
+/// tests/ and benches/ are NOT example files; they are excluded from
+/// the workspace walk entirely upstream in `collect_rs_files` and in
+/// `walk::walk_workspace`.
 pub(crate) fn is_example_file(rel_path: &str) -> bool {
     let p = rel_path.replace('\\', "/");
-    p.contains("/examples/")
-        || p.starts_with("examples/")
-        || p.contains("/tests/")
-        || p.starts_with("tests/")
-        || p.contains("/benches/")
-        || p.starts_with("benches/")
+    p.contains("/examples/") || p.starts_with("examples/")
 }

@@ -99,6 +99,14 @@ impl FileWalker {
                 brace_depth: None,
             });
         }
+        if let syn::Meta::List(list) = &attr.meta {
+            scan_attr_meta_for_macros(
+                &mut self.facts,
+                &self.file,
+                &list.tokens,
+                self.brace_depth,
+            );
+        }
     }
 
     /// Process an item's attrs list, extracting cfg-gating + the
@@ -207,11 +215,13 @@ impl FileWalker {
             syn::Fields::Named(named) => {
                 for f in &named.named {
                     self.process_item_attrs(&f.attrs);
+                    self.visit_type(&f.ty);
                 }
             }
             syn::Fields::Unnamed(unnamed) => {
                 for f in &unnamed.unnamed {
                     self.process_item_attrs(&f.attrs);
+                    self.visit_type(&f.ty);
                 }
             }
             syn::Fields::Unit => {}
@@ -227,6 +237,7 @@ impl FileWalker {
                     return;
                 }
                 self.brace_depth += 1;
+                syn::visit::visit_signature(self, &f.sig);
                 self.facts.fns.push(FnEntry {
                     file: self.file.clone(),
                     name: f.sig.ident.to_string(),
@@ -256,18 +267,73 @@ impl FileWalker {
                     doc: String::new(),
                     visibility: trait_vis.to_string(),
                 });
+                for bound in &ty.bounds {
+                    syn::visit::visit_type_param_bound(self, bound);
+                }
+                if let Some((_, default_ty)) = &ty.default {
+                    self.visit_type(default_ty);
+                }
             }
             syn::TraitItem::Const(c) => {
                 if self.process_item_attrs(&c.attrs).is_none() {
                     return;
                 }
+                self.visit_type(&c.ty);
                 if let Some((_, expr)) = &c.default {
                     self.brace_depth += 1;
                     self.visit_expr(expr);
                     self.brace_depth -= 1;
                 }
             }
-            _ => {}
+            syn::TraitItem::Macro(im) => {
+                if self.process_item_attrs(&im.attrs).is_none() {
+                    return;
+                }
+                let name_segs: Vec<String> = im
+                    .mac
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect();
+                let name = name_segs.last().cloned().unwrap_or_default();
+                let line = im
+                    .mac
+                    .path
+                    .segments
+                    .last()
+                    .map(|s| s.ident.span().start().line)
+                    .unwrap_or(0);
+                if !is_noise_macro(&name) {
+                    let arg_idents = extract_macro_arg_idents(&im.mac.tokens);
+                    let args_count = count_top_commas_plus_one(&im.mac.tokens);
+                    self.facts.macros.push(MacroEntry {
+                        file: self.file.clone(),
+                        kind: MacroEntryKind::MacroInvocation,
+                        name,
+                        line,
+                        expansion_unverified: true,
+                        args_count: Some(args_count),
+                        arg_idents: Some(arg_idents.into_iter().take(64).collect()),
+                        brace_depth: Some(self.brace_depth),
+                    });
+                }
+                scan_macro_body_tokens(
+                    &mut self.facts,
+                    &self.file,
+                    self.is_example,
+                    &im.mac.tokens,
+                    self.brace_depth,
+                    true,
+                );
+            }
+            other => {
+                eprintln!(
+                    "[know_rust] unhandled syn::TraitItem variant in {} (variant: {:?})",
+                    self.file,
+                    std::mem::discriminant(other),
+                );
+            }
         }
     }
 }
@@ -296,6 +362,11 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         if i.unsafety.is_some() {
             self.bump_seam(SeamKind::Unsafe, 1);
         }
+        syn::visit::visit_generics(self, &i.generics);
+        if let Some((_, path, _)) = &i.trait_ {
+            self.visit_path(path);
+        }
+        self.visit_type(&i.self_ty);
         for item in &i.items {
             self.visit_impl_item(item);
         }
@@ -316,6 +387,10 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         });
         if t.unsafety.is_some() {
             self.bump_seam(SeamKind::Unsafe, 1);
+        }
+        syn::visit::visit_generics(self, &t.generics);
+        for bound in &t.supertraits {
+            syn::visit::visit_type_param_bound(self, bound);
         }
         let saved = self.current_trait_vis.take();
         self.current_trait_vis = Some(visibility_string(&t.vis));
@@ -339,6 +414,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             doc: extract_doc(&s.attrs),
             visibility: visibility_string(&s.vis),
         });
+        syn::visit::visit_generics(self, &s.generics);
         self.process_fields_attrs(&s.fields);
     }
 
@@ -355,6 +431,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             doc: extract_doc(&e.attrs),
             visibility: visibility_string(&e.vis),
         });
+        syn::visit::visit_generics(self, &e.generics);
         for v in &e.variants {
             self.process_item_attrs(&v.attrs);
             self.process_fields_attrs(&v.fields);
@@ -383,8 +460,10 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             doc: extract_doc(&u.attrs),
             visibility: visibility_string(&u.vis),
         });
+        syn::visit::visit_generics(self, &u.generics);
         for f in &u.fields.named {
             self.process_item_attrs(&f.attrs);
+            self.visit_type(&f.ty);
         }
     }
 
@@ -401,12 +480,15 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             doc: String::new(),
             visibility: visibility_string(&ta.vis),
         });
+        syn::visit::visit_generics(self, &ta.generics);
+        self.visit_type(&ta.ty);
     }
 
     fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
         if self.process_item_attrs(&f.attrs).is_none() {
             return;
         }
+        syn::visit::visit_signature(self, &f.sig);
         self.facts.fns.push(FnEntry {
             file: self.file.clone(),
             name: f.sig.ident.to_string(),
@@ -452,6 +534,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             .map(|s| s.ident.to_string())
             .collect();
         let path_name = name_segs.join("::");
+        let last_name = name_segs.last().cloned().unwrap_or_default();
         let is_macro_rules = path_name == "macro_rules" || mc.ident.is_some();
         if is_macro_rules {
             if let Some(ident) = &mc.ident {
@@ -473,11 +556,11 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
                 .unwrap_or(0);
             let arg_idents = extract_macro_arg_idents(&mc.mac.tokens);
             let args_count = count_top_commas_plus_one(&mc.mac.tokens);
-            if !is_noise_macro(&path_name) {
+            if !is_noise_macro(&last_name) {
                 self.facts.macros.push(MacroEntry {
                     file: self.file.clone(),
                     kind: MacroEntryKind::MacroInvocation,
-                    name: path_name,
+                    name: last_name,
                     line,
                     expansion_unverified: true,
                     args_count: Some(args_count),
@@ -492,6 +575,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             self.is_example,
             &mc.mac.tokens,
             self.brace_depth,
+            !is_macro_rules,
         );
     }
 
@@ -514,16 +598,46 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         let _ = self.process_item_attrs(&fm.attrs);
         self.bump_seam(SeamKind::Extern, 1);
         for it in &fm.items {
-            if let syn::ForeignItem::Fn(ff) = it {
-                let _ = self.process_item_attrs(&ff.attrs);
-                self.facts.fns.push(FnEntry {
-                    file: self.file.clone(),
-                    name: ff.sig.ident.to_string(),
-                    line: ff.sig.ident.span().start().line,
-                    brace_depth: self.brace_depth,
-                    doc: extract_doc(&ff.attrs),
-                    visibility: visibility_string(&ff.vis),
-                });
+            match it {
+                syn::ForeignItem::Fn(ff) => {
+                    let _ = self.process_item_attrs(&ff.attrs);
+                    syn::visit::visit_signature(self, &ff.sig);
+                    self.facts.fns.push(FnEntry {
+                        file: self.file.clone(),
+                        name: ff.sig.ident.to_string(),
+                        line: ff.sig.ident.span().start().line,
+                        brace_depth: self.brace_depth,
+                        doc: extract_doc(&ff.attrs),
+                        visibility: visibility_string(&ff.vis),
+                    });
+                }
+                syn::ForeignItem::Static(s) => {
+                    let _ = self.process_item_attrs(&s.attrs);
+                    self.visit_type(&s.ty);
+                }
+                syn::ForeignItem::Type(t) => {
+                    let _ = self.process_item_attrs(&t.attrs);
+                    self.facts.types.push(TypeEntry {
+                        file: self.file.clone(),
+                        kind: TypeEntryKind::Type,
+                        name: t.ident.to_string(),
+                        line: t.ident.span().start().line,
+                        cfg_gated: false,
+                        doc: extract_doc(&t.attrs),
+                        visibility: visibility_string(&t.vis),
+                    });
+                }
+                syn::ForeignItem::Macro(m) => {
+                    let _ = self.process_item_attrs(&m.attrs);
+                    syn::visit::visit_macro(self, &m.mac);
+                }
+                other => {
+                    eprintln!(
+                        "[know_rust] unhandled syn::ForeignItem variant in {} (variant: {:?})",
+                        self.file,
+                        std::mem::discriminant(other),
+                    );
+                }
             }
         }
     }
@@ -532,6 +646,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         if self.process_item_attrs(&c.attrs).is_none() {
             return;
         }
+        self.visit_type(&c.ty);
         self.visit_expr(&c.expr);
     }
 
@@ -539,6 +654,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         if self.process_item_attrs(&s.attrs).is_none() {
             return;
         }
+        self.visit_type(&s.ty);
         self.visit_expr(&s.expr);
     }
 
@@ -550,6 +666,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         // FnEntry at brace_depth+1 AND iterate body stmts at the same
         // brace_depth+1 (no further increment via visit_block).
         self.brace_depth += 1;
+        syn::visit::visit_signature(self, &f.sig);
         self.facts.fns.push(FnEntry {
             file: self.file.clone(),
             name: f.sig.ident.to_string(),
@@ -569,6 +686,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         if self.process_item_attrs(&ty.attrs).is_none() {
             return;
         }
+        self.visit_type(&ty.ty);
         self.facts.types.push(TypeEntry {
             file: self.file.clone(),
             kind: TypeEntryKind::Type,
@@ -584,15 +702,117 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         if self.process_item_attrs(&c.attrs).is_none() {
             return;
         }
+        self.visit_type(&c.ty);
         self.brace_depth += 1;
         self.visit_expr(&c.expr);
         self.brace_depth -= 1;
+    }
+
+    fn visit_impl_item_macro(&mut self, im: &'ast syn::ImplItemMacro) {
+        if self.process_item_attrs(&im.attrs).is_none() {
+            return;
+        }
+        let name_segs: Vec<String> = im
+            .mac
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        let name = name_segs.last().cloned().unwrap_or_default();
+        let line = im
+            .mac
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.span().start().line)
+            .unwrap_or(0);
+        if !is_noise_macro(&name) {
+            let arg_idents = extract_macro_arg_idents(&im.mac.tokens);
+            let args_count = count_top_commas_plus_one(&im.mac.tokens);
+            self.facts.macros.push(MacroEntry {
+                file: self.file.clone(),
+                kind: MacroEntryKind::MacroInvocation,
+                name,
+                line,
+                expansion_unverified: true,
+                args_count: Some(args_count),
+                arg_idents: Some(arg_idents.into_iter().take(64).collect()),
+                brace_depth: Some(self.brace_depth),
+            });
+        }
+        scan_macro_body_tokens(
+            &mut self.facts,
+            &self.file,
+            self.is_example,
+            &im.mac.tokens,
+            self.brace_depth,
+            true,
+        );
+    }
+
+    fn visit_type_macro(&mut self, tm: &'ast syn::TypeMacro) {
+        let name_segs: Vec<String> = tm
+            .mac
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        let name = name_segs.last().cloned().unwrap_or_default();
+        let line = tm
+            .mac
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.span().start().line)
+            .unwrap_or(0);
+        if !is_noise_macro(&name) {
+            let arg_idents = extract_macro_arg_idents(&tm.mac.tokens);
+            let args_count = count_top_commas_plus_one(&tm.mac.tokens);
+            self.facts.macros.push(MacroEntry {
+                file: self.file.clone(),
+                kind: MacroEntryKind::MacroInvocation,
+                name,
+                line,
+                expansion_unverified: true,
+                args_count: Some(args_count),
+                arg_idents: Some(arg_idents.into_iter().take(64).collect()),
+                brace_depth: Some(self.brace_depth),
+            });
+        }
+        scan_macro_body_tokens(
+            &mut self.facts,
+            &self.file,
+            self.is_example,
+            &tm.mac.tokens,
+            self.brace_depth,
+            true,
+        );
     }
 
     fn visit_block(&mut self, b: &'ast syn::Block) {
         self.brace_depth += 1;
         self.walk_block_stmts(b);
         self.brace_depth -= 1;
+    }
+
+    fn visit_fn_arg(&mut self, arg: &'ast syn::FnArg) {
+        match arg {
+            syn::FnArg::Typed(pt) => {
+                for attr in &pt.attrs {
+                    self.record_attribute_explicit(attr);
+                }
+                self.visit_pat(&pt.pat);
+                self.visit_type(&pt.ty);
+            }
+            syn::FnArg::Receiver(r) => {
+                for attr in &r.attrs {
+                    self.record_attribute_explicit(attr);
+                }
+                self.visit_type(&r.ty);
+            }
+        }
     }
 
     fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
@@ -613,10 +833,14 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         for a in &mc.args {
             self.visit_expr(a);
         }
+        if let Some(tf) = &mc.turbofish {
+            syn::visit::visit_angle_bracketed_generic_arguments(self, tf);
+        }
     }
 
     fn visit_expr_path(&mut self, p: &'ast syn::ExprPath) {
         self.scan_path_for_seams(&p.path);
+        syn::visit::visit_path(self, &p.path);
     }
 
     fn visit_expr_unsafe(&mut self, u: &'ast syn::ExprUnsafe) {
@@ -660,6 +884,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             self.is_example,
             &m.mac.tokens,
             self.brace_depth,
+            true,
         );
     }
 
@@ -699,6 +924,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             self.is_example,
             &sm.mac.tokens,
             self.brace_depth,
+            true,
         );
     }
 

@@ -13,13 +13,17 @@ use crate::*;
 pub fn run() -> std::result::Result<(), Error> {
     let cli = Cli::parse();
     let calibration = load_calibration(cli.calibration_path.as_deref())?;
-    let _templates = Templates::new(cli.templates_path.clone());
+    let templates = Templates::new(cli.templates_path.clone());
     match cli.command {
         Command::Scan { scan } => dispatch_scan(scan),
         Command::Characterize {
             workspace_root,
             out_dir,
         } => characterize(&workspace_root, &out_dir, &calibration),
+        Command::Emit {
+            workspace_root,
+            out_dir,
+        } => emit(&workspace_root, &out_dir, &calibration, &templates),
     }
 }
 

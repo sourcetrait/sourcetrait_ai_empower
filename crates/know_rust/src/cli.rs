@@ -56,6 +56,16 @@ pub(crate) enum Command {
         /// here.
         out_dir: PathBuf,
     },
+    /// Emit orientation.md + reference.md from a characterize output
+    /// directory. Reads fingerprint.json + facts.json; renders the
+    /// agent-facing artifact via liquid templates.
+    Emit {
+        /// Workspace root the characterize output was produced from.
+        workspace_root: PathBuf,
+        /// Directory containing fingerprint.json + facts.json (also
+        /// where orientation.md + reference.md are written).
+        out_dir: PathBuf,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]

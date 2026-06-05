@@ -13,6 +13,9 @@ pub(crate) mod characterize {
     pub(crate) mod use_classification;
 }
 pub(crate) mod cli;
+pub(crate) mod emit {
+    pub(crate) mod run;
+}
 pub(crate) mod config {
     pub(crate) mod calibration;
     pub(crate) mod loader;
@@ -85,6 +88,7 @@ pub(crate) use syn::{
 
 pub use crate::run::run;
 pub use crate::characterize::run::*;
+pub use crate::emit::run::*;
 pub use crate::config::calibration::*;
 pub use crate::config::loader::*;
 pub use crate::config::templates::*;

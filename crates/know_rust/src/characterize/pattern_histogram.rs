@@ -75,6 +75,6 @@ pub fn pattern_histogram(
     }
 
     let mut ranked: Vec<(String, usize)> = patterns.into_iter().collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    ranked.sort_by(|a, b| b.1.cmp(&a.1));
     (ranked, by_kind, reg_macro_calls)
 }

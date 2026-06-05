@@ -121,5 +121,6 @@ pub fn find_crates(
         );
     }
 
+    crates.sort_keys();
     (crates, workspace_roots.into_iter().collect())
 }

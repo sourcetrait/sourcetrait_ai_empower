@@ -439,9 +439,16 @@ fn build_type_lookup(
             cands.into_iter().next()
         } else {
             let counts = impl_target_count.get(&name);
-            cands.into_iter().max_by_key(|c| {
-                counts.and_then(|m| m.get(c)).copied().unwrap_or(0)
-            })
+            let mut best: Option<String> = None;
+            let mut best_count: usize = 0;
+            for c in cands.into_iter() {
+                let cnt = counts.and_then(|m| m.get(&c)).copied().unwrap_or(0);
+                if best.is_none() || cnt > best_count {
+                    best = Some(c);
+                    best_count = cnt;
+                }
+            }
+            best
         };
         if let Some(canonical) = canonical {
             let vis = visibilities

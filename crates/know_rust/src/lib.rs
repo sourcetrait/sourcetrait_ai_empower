@@ -31,6 +31,9 @@ pub(crate) mod config {
     pub(crate) mod templates;
 }
 pub(crate) mod error;
+pub(crate) mod model {
+    pub(crate) mod picks;
+}
 pub(crate) mod measure_overlap {
     pub(crate) mod parse;
     pub(crate) mod run;
@@ -87,6 +90,7 @@ pub(crate) use crate::{
     measure_overlap::parse::*,
     measure_overlap::score::*,
     measure_overlap::types::*,
+    model::picks::*,
     rustdoc_overlay::types::*,
     scan::helpers::*,
     scan::items::filters::*,

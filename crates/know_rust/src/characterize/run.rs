@@ -79,8 +79,12 @@ pub fn characterize(
     let mut per_crate: indexmap::IndexMap<String, PerCrateFingerprint> = indexmap::IndexMap::new();
     let mut free_fns_by_crate: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
 
+    let crate_dirs: indexmap::IndexMap<String, String> = crates
+        .iter()
+        .map(|(k, v)| (k.clone(), v.dir.clone()))
+        .collect();
     for (name, info) in &crates {
-        let cf = scan_crate(workspace_root, &info.dir, &items_by_file);
+        let cf = scan_crate(workspace_root, name, &info.dir, &crate_dirs, &items_by_file);
         per_crate.insert(
             name.clone(),
             PerCrateFingerprint {
@@ -117,10 +121,6 @@ pub fn characterize(
         *all_facts.seams.entry(k.clone()).or_default() += v;
     }
 
-    let crate_dirs: indexmap::IndexMap<String, String> = crates
-        .iter()
-        .map(|(k, v)| (k.clone(), v.dir.clone()))
-        .collect();
     for ent in &usage_facts.ast_fn_sig_usages {
         if ent.ident.is_empty() {
             continue;

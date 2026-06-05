@@ -16,7 +16,9 @@ use crate::*;
 /// per crate in find_crates iteration order.
 pub fn scan_crate(
     root: &Path,
+    crate_name: &str,
     crate_dir: &str,
+    crate_dirs: &indexmap::IndexMap<String, String>,
     items_by_file: &std::collections::HashMap<String, ItemFile>,
 ) -> CrateAggregate {
     let mut agg = CrateAggregate::default();
@@ -48,17 +50,22 @@ pub fn scan_crate(
             continue;
         }
 
+        let rel = match path.strip_prefix(root) {
+            Ok(r) => r.to_string_lossy().to_string(),
+            Err(_) => continue,
+        };
+
+        let owning = resolve_crate_for_file(&rel, crate_dirs);
+        if owning != crate_name {
+            continue;
+        }
+
         let src = match fs::read_to_string(&path) {
             Ok(s) => s,
             Err(_) => continue,
         };
         let src = strip_cfg_test(&src);
         agg.sloc += compute_sloc(&src);
-
-        let rel = match path.strip_prefix(root) {
-            Ok(r) => r.to_string_lossy().to_string(),
-            Err(_) => continue,
-        };
 
         if let Some(f) = items_by_file.get(&rel) {
             for r in &f.impls {

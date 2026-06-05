@@ -252,8 +252,16 @@ fn compute_shape_signals(
     let mut per_crate_top_kind: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for (crate_name, counter) in &per_crate_kinds {
-        if let Some((kind, _)) = counter.iter().max_by_key(|(_, v)| **v) {
-            per_crate_top_kind.insert(crate_name.clone(), kind.clone());
+        let mut best_kind = String::new();
+        let mut best_count: usize = 0;
+        for (kind, v) in counter {
+            if best_kind.is_empty() || *v > best_count {
+                best_kind = kind.clone();
+                best_count = *v;
+            }
+        }
+        if !best_kind.is_empty() {
+            per_crate_top_kind.insert(crate_name.clone(), best_kind);
         }
     }
     let distinct_top_kinds: std::collections::HashSet<String> =
@@ -283,10 +291,17 @@ fn compute_shape_signals(
     let max_dependents = dependent_count.values().max().copied().unwrap_or(0);
     let hub_centrality = max_dependents as f64 / n_crates as f64;
 
-    let central_crate: Option<String> = dependent_count
-        .iter()
-        .max_by_key(|(_, v)| **v)
-        .map(|(k, _)| k.clone());
+    let central_crate: Option<String> = {
+        let mut best: Option<String> = None;
+        let mut best_count: usize = 0;
+        for (k, v) in &dependent_count {
+            if best.is_none() || *v > best_count {
+                best = Some(k.clone());
+                best_count = *v;
+            }
+        }
+        best
+    };
     let central_kind: Option<String> = central_crate
         .as_ref()
         .and_then(|c| per_crate_top_kind.get(c).cloned());

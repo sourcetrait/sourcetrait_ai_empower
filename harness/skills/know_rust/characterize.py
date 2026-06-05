@@ -844,7 +844,7 @@ def _build_items_index(items_data: dict) -> dict:
     return by_file
 
 
-def scan_crate(root: Path, crate_dir: str):
+def scan_crate(root: Path, crate_name: str, crate_dir: str, crate_dirs: dict):
     """Scan all .rs under a crate dir; return aggregated facts + SLOC count.
 
     0.0.34: rustscan.py retired. Item facts come from the pre-loaded
@@ -873,13 +873,16 @@ def scan_crate(root: Path, crate_dir: str):
         rel_parts = rs.relative_to(base).parts
         if any(seg in ("tests", "benches") for seg in rel_parts):
             continue
+        rel = str(rs.relative_to(root))
+        owning = _resolve_crate_for_file(rel, crate_dirs)
+        if owning != crate_name:
+            continue
         try:
             src = rs.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
         src = _strip_cfg_test(src)
         sloc += _compute_sloc(src)
-        rel = str(rs.relative_to(root))
         f = _ITEMS_BY_FILE.get(rel)
         if f is None:
             continue
@@ -1593,8 +1596,9 @@ def main():
                  "seams": Counter()}
     per_crate = {}
     free_fns_by_crate = {}
+    crate_dirs = {n: c.get("dir", "") for n, c in crates.items()}
     for name, info in crates.items():
-        cf = scan_crate(root, info["dir"])
+        cf = scan_crate(root, name, info["dir"], crate_dirs)
         per_crate[name] = {
             "dir": info["dir"], "sloc": cf["sloc"], "deps": info["deps"],
             "n_impls": len(cf["impls"]), "n_types": len(cf["types"]),

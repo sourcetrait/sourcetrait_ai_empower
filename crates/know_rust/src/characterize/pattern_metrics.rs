@@ -281,11 +281,14 @@ pub fn compute_pattern_metrics(
             for m in &members {
                 *counts.entry(m.defining_crate.clone()).or_default() += 1;
             }
-            let defining_crate = counts
-                .iter()
-                .max_by_key(|(_, c)| **c)
-                .map(|(k, _)| k.clone())
-                .unwrap_or_default();
+            let mut defining_crate = String::new();
+            let mut max_count: usize = 0;
+            for (k, v) in &counts {
+                if defining_crate.is_empty() || *v > max_count {
+                    defining_crate = k.clone();
+                    max_count = *v;
+                }
+            }
             let files: Vec<String> = members.iter().map(|m| m.file.clone()).collect();
             let (intra, inter, example_count, curated_count) =
                 count_usages(&files, &defining_crate, &crate_dirs);

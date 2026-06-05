@@ -35,6 +35,14 @@ pub fn compute_significance_sets(
             .unwrap_or(false)
     };
 
+    // R3: per-crate pre-aggregation uses the new picks-data model's
+    // `<group>:<name>` pattern key shape (see
+    // `notes/know_rust/picks-data-model.md`). Mapping:
+    //   impls (trait T)        -> traits:T
+    //   derives (trait T)      -> derives:T
+    //   type_usages (O::i)     -> BRIDGE: structure:O AND
+    //                             implementation_functions:O::i
+    //   macros (reg / attr M)  -> utilities:M
     let mut per_crate_counts: indexmap::IndexMap<String, indexmap::IndexMap<String, usize>> =
         indexmap::IndexMap::new();
     if let Some(arr) = facts.get("impls").and_then(|v| v.as_array()) {
@@ -42,7 +50,7 @@ pub fn compute_significance_sets(
             if let Some(trait_name) = it.get("trait").and_then(|v| v.as_str()) {
                 if !it.get("cfg_gated").and_then(|v| v.as_bool()).unwrap_or(false) {
                     if let Some(c) = it.get("crate").and_then(|v| v.as_str()) {
-                        let p = format!("trait_impl:{}", trait_name);
+                        let p = format!("traits:{}", trait_name);
                         if is_workspace_originated(&p) {
                             *per_crate_counts
                                 .entry(c.to_string())
@@ -61,7 +69,7 @@ pub fn compute_significance_sets(
                 d.get("crate").and_then(|v| v.as_str()),
                 d.get("trait").and_then(|v| v.as_str()),
             ) {
-                let p = format!("derive:{}", nm);
+                let p = format!("derives:{}", nm);
                 if is_workspace_originated(&p) {
                     *per_crate_counts
                         .entry(c.to_string())
@@ -78,13 +86,26 @@ pub fn compute_significance_sets(
                 tu.get("crate").and_then(|v| v.as_str()),
                 tu.get("name").and_then(|v| v.as_str()),
             ) {
-                let p = format!("type_usage:{}", nm);
-                if is_workspace_originated(&p) {
+                // BRIDGE: each O::i type_usage contributes to BOTH
+                // structure:O (the type's architectural footprint) and
+                // implementation_functions:O::i (the per-method usage).
+                let impl_fn = format!("implementation_functions:{}", nm);
+                if is_workspace_originated(&impl_fn) {
                     *per_crate_counts
                         .entry(c.to_string())
                         .or_default()
-                        .entry(p)
+                        .entry(impl_fn)
                         .or_insert(0) += 1;
+                }
+                if let Some(outer) = nm.split_once("::").map(|(o, _)| o) {
+                    let struct_pat = format!("structure:{}", outer);
+                    if is_workspace_originated(&struct_pat) {
+                        *per_crate_counts
+                            .entry(c.to_string())
+                            .or_default()
+                            .entry(struct_pat)
+                            .or_insert(0) += 1;
+                    }
                 }
             }
         }
@@ -95,17 +116,11 @@ pub fn compute_significance_sets(
             let kind = m.get("kind").and_then(|v| v.as_str()).unwrap_or("");
             let nm = m.get("name").and_then(|v| v.as_str());
             if let (Some(c), Some(nm)) = (c, nm) {
-                if kind == "macro_invocation" {
-                    let p = format!("reg_macro:{}", nm);
-                    if is_workspace_originated(&p) {
-                        *per_crate_counts
-                            .entry(c.to_string())
-                            .or_default()
-                            .entry(p)
-                            .or_insert(0) += 1;
-                    }
-                } else if kind == "attr_macro" {
-                    let p = format!("attr_macro:{}", nm);
+                // Both reg_macro and attr_macro map to the utilities
+                // group; the picks-data model unifies macro callsite
+                // shapes under one bucket.
+                if kind == "macro_invocation" || kind == "attr_macro" {
+                    let p = format!("utilities:{}", nm);
                     if is_workspace_originated(&p) {
                         *per_crate_counts
                             .entry(c.to_string())

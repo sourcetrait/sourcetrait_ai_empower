@@ -20,6 +20,7 @@ pub(crate) struct FileWalker {
     brace_depth: usize,
     in_inner_attr_context: bool,
     current_trait_vis: Option<String>,
+    current_trait_name: Option<String>,
     current_impl_type_name: Option<String>,
     facts: FileLevelFacts,
 }
@@ -33,6 +34,7 @@ impl FileWalker {
             brace_depth: 0,
             in_inner_attr_context: false,
             current_trait_vis: None,
+            current_trait_name: None,
             current_impl_type_name: None,
             facts: FileLevelFacts::default(),
         }
@@ -280,6 +282,27 @@ impl FileWalker {
                     doc: extract_doc(&f.attrs),
                     visibility: trait_vis.to_string(),
                 });
+                // R2-expansion: trait method sig carry under
+                // `trait_functions:<trait>::<method>`. Mirrors the
+                // impl-fn carry pattern; bridges the trait's API
+                // surface to the reader's dependent-type set.
+                if let Some(tname) = self.current_trait_name.clone() {
+                    if !tname.is_empty() {
+                        let pat = format!(
+                            "trait_functions:{}::{}",
+                            tname,
+                            f.sig.ident
+                        );
+                        for input in &f.sig.inputs {
+                            if let syn::FnArg::Typed(pt) = input {
+                                self.record_carry_from_type(&pat, &pt.ty);
+                            }
+                        }
+                        if let syn::ReturnType::Type(_, ty) = &f.sig.output {
+                            self.record_carry_from_type(&pat, ty);
+                        }
+                    }
+                }
                 if f.sig.unsafety.is_some() {
                     self.bump_seam(SeamKind::Unsafe, 1);
                 }
@@ -417,9 +440,10 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             return;
         };
         let line = t.ident.span().start().line;
+        let trait_name = t.ident.to_string();
         self.facts.traits.push(TraitEntry {
             file: self.file.clone(),
-            name: t.ident.to_string(),
+            name: trait_name.clone(),
             line,
             cfg_gated,
             doc: extract_doc(&t.attrs),
@@ -429,16 +453,36 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             self.bump_seam(SeamKind::Unsafe, 1);
         }
         syn::visit::visit_generics(self, &t.generics);
+        // R2-expansion: supertype bounds carry under `traits:<trait>`.
+        // The trait's interface includes the constraints it composes
+        // with; readers need them to understand its scope.
+        let trait_pat = format!("traits:{}", trait_name);
         for bound in &t.supertraits {
+            if let syn::TypeParamBound::Trait(tb) = bound {
+                if let Some(seg) = tb.path.segments.last() {
+                    let nm = seg.ident.to_string();
+                    if nm
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                    {
+                        self.record_carry(trait_pat.clone(), nm);
+                    }
+                }
+            }
             syn::visit::visit_type_param_bound(self, bound);
         }
-        let saved = self.current_trait_vis.take();
+        let saved_vis = self.current_trait_vis.take();
+        let saved_name = self.current_trait_name.take();
         self.current_trait_vis = Some(visibility_string(&t.vis));
+        self.current_trait_name = Some(trait_name);
         let trait_vis = visibility_string(&t.vis);
         for item in &t.items {
             self.visit_trait_item_with_vis(item, &trait_vis);
         }
-        self.current_trait_vis = saved;
+        self.current_trait_vis = saved_vis;
+        self.current_trait_name = saved_name;
     }
 
     fn visit_item_struct(&mut self, s: &'ast syn::ItemStruct) {
@@ -778,23 +822,28 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             doc: extract_doc(&f.attrs),
             visibility: visibility_string(&f.vis),
         });
-        // R2 carry extraction: when inside an impl block, record carry
-        // for this method's parameter types + return type under
-        // `implementation_functions:<impl_type>::<method>`. The
-        // current_impl_type_name was set by visit_item_impl.
+        // R2 carry extraction: when inside an impl block with a
+        // resolvable Self-type ident, record carry for this method's
+        // parameter types + return type under
+        // `implementation_functions:<impl_type>::<method>`. Generic
+        // blanket impls like `impl<T> Foo for T` resolve to an empty
+        // type_base_name; skip them to avoid noise keys of the shape
+        // `implementation_functions::<method>` (R2-expansion).
         if let Some(impl_type) = self.current_impl_type_name.clone() {
-            let pat = format!(
-                "implementation_functions:{}::{}",
-                impl_type,
-                f.sig.ident
-            );
-            for input in &f.sig.inputs {
-                if let syn::FnArg::Typed(pt) = input {
-                    self.record_carry_from_type(&pat, &pt.ty);
+            if !impl_type.is_empty() {
+                let pat = format!(
+                    "implementation_functions:{}::{}",
+                    impl_type,
+                    f.sig.ident
+                );
+                for input in &f.sig.inputs {
+                    if let syn::FnArg::Typed(pt) = input {
+                        self.record_carry_from_type(&pat, &pt.ty);
+                    }
                 }
-            }
-            if let syn::ReturnType::Type(_, ty) = &f.sig.output {
-                self.record_carry_from_type(&pat, ty);
+                if let syn::ReturnType::Type(_, ty) = &f.sig.output {
+                    self.record_carry_from_type(&pat, ty);
+                }
             }
         }
         if f.sig.unsafety.is_some() {

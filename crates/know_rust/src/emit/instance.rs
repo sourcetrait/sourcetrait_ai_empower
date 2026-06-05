@@ -42,31 +42,38 @@ pub struct EnrichedSets {
     pub top_n_workspace: usize,
 }
 
-/// What: pick a seed instance for a pattern of the given `(kind, name)`
+/// What: pick a seed instance for a pattern of the given `(group, name)`
 /// shape, plus up to 200 span strings of all matching facts. Returns
 /// `(None, vec![])` for patterns with no actionable item under that
-/// kind.
+/// group.
 ///
-/// Why: emit.py's `_instance_for_kind()` (lines 461-544). Each picker
-/// pattern (e.g. `trait_impl:Component`, `derive:Clone`,
-/// `reg_macro:cfg_attr_test_or_loom`, `method_ref:_::update`,
-/// `pub_type:Frame`, `type_usage_family:outer:Vec`) needs a seed
-/// instance the agent can open. The enriched picker output drops
+/// Why: emit.py's `_instance_for_kind()` ported and migrated to the
+/// picks-data model (R3 per
+/// `notes/know_rust/tasks/picks-data-model-refactor.md`). Each picker
+/// pattern (e.g. `traits:Component`, `derives:Clone`,
+/// `utilities:cfg_attr_test_or_loom`,
+/// `implementation_functions:_::update`,
+/// `implementation_functions:World::new`, `structure:Frame`) needs a
+/// seed instance the agent can open. The enriched picker output drops
 /// patterns where this returns `(None, _)`.
 ///
 /// Where: called from `candidate_instances` per pattern in each of the
 /// six sets to produce the `EnrichedEntry` instance + all_spans
 /// fields.
 pub fn instance_for_kind(
-    kind: &str,
+    group: &str,
     name: &str,
     facts: &serde_json::Value,
 ) -> (Option<serde_json::Value>, Vec<String>) {
     let empty: Vec<serde_json::Value> = Vec::new();
-    match kind {
-        "trait_impl" => {
-            let arr = facts.get("impls").and_then(|v| v.as_array()).unwrap_or(&empty);
-            let mut inst: Vec<serde_json::Value> = arr
+    match group {
+        "traits" => {
+            // Prefer impls of the trait (the impls-side architectural
+            // signal); fall back to the trait def site when no impls
+            // exist (e.g. pub_type:Plugin synthesized via AST refs
+            // without any in-workspace impls).
+            let impls_arr = facts.get("impls").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let mut inst: Vec<serde_json::Value> = impls_arr
                 .iter()
                 .filter(|i| {
                     i.get("trait").and_then(|v| v.as_str()) == Some(name)
@@ -87,11 +94,22 @@ pub fn instance_for_kind(
                     .unwrap_or_else(|| "None".to_string());
                 ta.cmp(&tb)
             });
+            if !inst.is_empty() {
+                let first = inst.first().cloned();
+                let spans: Vec<String> = inst.iter().take(200).map(span).collect();
+                return (first, spans);
+            }
+            let traits_arr = facts.get("traits").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let inst: Vec<serde_json::Value> = traits_arr
+                .iter()
+                .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some(name))
+                .cloned()
+                .collect();
             let first = inst.first().cloned();
-            let spans: Vec<String> = inst.iter().take(200).map(span).collect();
+            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)
         }
-        "derive" => {
+        "derives" => {
             let arr = facts.get("derives").and_then(|v| v.as_array()).unwrap_or(&empty);
             let inst: Vec<serde_json::Value> = arr
                 .iter()
@@ -102,22 +120,81 @@ pub fn instance_for_kind(
             let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)
         }
-        "reg_macro" | "attr_macro" => {
-            let kind_match = if kind == "reg_macro" { "macro_invocation" } else { "attr_macro" };
+        "utilities" => {
+            // Macros: either macro_invocation form or attr_macro form.
+            // The picks-data model unifies both under utilities; the
+            // seed prefers the more-common invocation form.
             let arr = facts.get("macros").and_then(|v| v.as_array()).unwrap_or(&empty);
             let inst: Vec<serde_json::Value> = arr
                 .iter()
-                .filter(|m| {
-                    m.get("kind").and_then(|v| v.as_str()) == Some(kind_match)
-                        && m.get("name").and_then(|v| v.as_str()) == Some(name)
-                })
+                .filter(|m| m.get("name").and_then(|v| v.as_str()) == Some(name))
                 .cloned()
                 .collect();
             let first = inst.first().cloned();
             let spans: Vec<String> = inst.iter().take(200).map(span).collect();
             (first, spans)
         }
-        "type_usage" => {
+        "structure" => {
+            // Prefer the type def (struct / enum / union / type alias);
+            // fall back to a representative type_usage outer-prefix match
+            // when the type def is not in workspace facts.
+            let types_arr = facts.get("types").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let inst: Vec<serde_json::Value> = types_arr
+                .iter()
+                .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some(name))
+                .cloned()
+                .collect();
+            if !inst.is_empty() {
+                let first = inst.first().cloned();
+                let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+                return (first, spans);
+            }
+            let tu_arr = facts.get("type_usages").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let mut inst: Vec<serde_json::Value> = tu_arr
+                .iter()
+                .filter(|tu| {
+                    let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    n.split_once("::").map(|(o, _)| o == name).unwrap_or(false)
+                })
+                .cloned()
+                .collect();
+            if inst.is_empty() {
+                let ex = facts
+                    .get("example_type_usages")
+                    .and_then(|v| v.as_array())
+                    .unwrap_or(&empty);
+                inst = ex
+                    .iter()
+                    .filter(|tu| {
+                        let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        n.split_once("::").map(|(o, _)| o == name).unwrap_or(false)
+                    })
+                    .cloned()
+                    .collect();
+            }
+            let first = inst.first().cloned();
+            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+            (first, spans)
+        }
+        "implementation_functions" => {
+            // Two name shapes:
+            //   "Outer::inner" -> exact type_usage match.
+            //   "_::<inner>"   -> method_ref family lookup (the picker
+            //                     synthesizes this from ast_method_refs).
+            if let Some(inner) = name.strip_prefix("_::") {
+                let arr = facts
+                    .get("ast_method_refs")
+                    .and_then(|v| v.as_array())
+                    .unwrap_or(&empty);
+                let inst: Vec<serde_json::Value> = arr
+                    .iter()
+                    .filter(|r| r.get("inner").and_then(|v| v.as_str()) == Some(inner))
+                    .cloned()
+                    .collect();
+                let first = inst.first().cloned();
+                let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+                return (first, spans);
+            }
             let arr = facts.get("type_usages").and_then(|v| v.as_array()).unwrap_or(&empty);
             let mut inst: Vec<serde_json::Value> = arr
                 .iter()
@@ -139,104 +216,34 @@ pub fn instance_for_kind(
             let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)
         }
-        "method_ref" => {
-            let family_inner = match name.split_once("::") {
-                Some((_, inner)) => inner.to_string(),
-                None => name.to_string(),
-            };
-            let arr = facts
-                .get("ast_method_refs")
-                .and_then(|v| v.as_array())
-                .unwrap_or(&empty);
-            let inst: Vec<serde_json::Value> = arr
-                .iter()
-                .filter(|r| {
-                    r.get("inner").and_then(|v| v.as_str()) == Some(family_inner.as_str())
-                })
-                .cloned()
-                .collect();
-            let first = inst.first().cloned();
-            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
-            (first, spans)
-        }
-        "pub_type" => {
-            let types_arr = facts.get("types").and_then(|v| v.as_array()).unwrap_or(&empty);
-            let mut inst: Vec<serde_json::Value> = types_arr
-                .iter()
-                .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some(name))
-                .cloned()
-                .collect();
-            if inst.is_empty() {
-                let traits_arr = facts
-                    .get("traits")
+        "trait_functions" => {
+            // Mirrors implementation_functions for the family shape;
+            // the disambiguation between trait-method-ref vs impl-method-ref
+            // requires type inference (not available without rustdoc).
+            // For now the family lookup pulls from ast_method_refs.
+            if let Some(inner) = name.strip_prefix("_::") {
+                let arr = facts
+                    .get("ast_method_refs")
                     .and_then(|v| v.as_array())
                     .unwrap_or(&empty);
-                inst = traits_arr
+                let inst: Vec<serde_json::Value> = arr
                     .iter()
-                    .filter(|t| t.get("name").and_then(|v| v.as_str()) == Some(name))
+                    .filter(|r| r.get("inner").and_then(|v| v.as_str()) == Some(inner))
                     .cloned()
                     .collect();
+                let first = inst.first().cloned();
+                let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+                return (first, spans);
             }
-            let first = inst.first().cloned();
-            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
-            (first, spans)
+            // "Trait::method" shape: no direct fact source today. The
+            // walker's trait_functions carry covers the sig types but
+            // not seed call sites; left empty until a future iteration.
+            (None, Vec::new())
         }
-        "type_usage_family" => {
-            let arr = facts.get("type_usages").and_then(|v| v.as_array()).unwrap_or(&empty);
-            let inst: Vec<serde_json::Value> = if let Some(outer) = name.strip_prefix("outer:") {
-                let mut src: Vec<serde_json::Value> = arr
-                    .iter()
-                    .filter(|tu| {
-                        let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        n.split_once("::").map(|(o, _)| o).unwrap_or(n) == outer
-                    })
-                    .cloned()
-                    .collect();
-                if src.is_empty() {
-                    let ex = facts
-                        .get("example_type_usages")
-                        .and_then(|v| v.as_array())
-                        .unwrap_or(&empty);
-                    src = ex
-                        .iter()
-                        .filter(|tu| {
-                            let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            n.split_once("::").map(|(o, _)| o).unwrap_or(n) == outer
-                        })
-                        .cloned()
-                        .collect();
-                }
-                src
-            } else if let Some(inner) = name.strip_prefix("inner:") {
-                let mut src: Vec<serde_json::Value> = arr
-                    .iter()
-                    .filter(|tu| {
-                        let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        n.rsplit_once("::").map(|(_, i)| i).unwrap_or(n) == inner
-                    })
-                    .cloned()
-                    .collect();
-                if src.is_empty() {
-                    let ex = facts
-                        .get("example_type_usages")
-                        .and_then(|v| v.as_array())
-                        .unwrap_or(&empty);
-                    src = ex
-                        .iter()
-                        .filter(|tu| {
-                            let n = tu.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            n.rsplit_once("::").map(|(_, i)| i).unwrap_or(n) == inner
-                        })
-                        .cloned()
-                        .collect();
-                }
-                src
-            } else {
-                Vec::new()
-            };
-            let first = inst.first().cloned();
-            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
-            (first, spans)
+        "globals" => {
+            // No globals (const / static) currently emitted as picker
+            // patterns; placeholder for future iteration.
+            (None, Vec::new())
         }
         _ => (None, Vec::new()),
     }

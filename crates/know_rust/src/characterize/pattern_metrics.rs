@@ -309,7 +309,161 @@ pub fn compute_pattern_metrics(
         }
     }
 
-    metrics
+    translate_to_group_keys(metrics, &type_def_lookup, &trait_def_lookup)
+}
+
+/// What: translate the kind:name pattern_metrics keys to the picks-data
+/// model's group:name shape per the refactor plan
+/// (`notes/know_rust/tasks/picks-data-model-refactor.md`).
+///
+/// Why: phase R3 picker migration. The current emission uses syntactic
+/// kinds; the refactored shape groups patterns by their semantic role
+/// (traits / derives / structure / implementation_functions / utilities)
+/// so the picker + emit phases consume the new model.
+///
+/// Where: called at the tail of `compute_pattern_metrics`. The mapping:
+///
+/// - `trait_impl:T` -> `traits:T` (the trait is the protagonist; impls
+///   signal architectural usage)
+/// - `derive:T` -> `derives:T`
+/// - `reg_macro:M` / `attr_macro:M` -> `utilities:M`
+/// - `pub_type:X` -> `structure:X` (when X is a struct / enum / union /
+///   type alias) or `traits:X` (when X is a trait def), discriminated
+///   via the type_def_lookup vs trait_def_lookup probe.
+/// - `method_ref:_::i` -> `implementation_functions:_::i`
+/// - `type_usage:O::i` -> bridge: emits BOTH
+///   `implementation_functions:O::i` (per-method metric copied verbatim)
+///   AND `structure:O` (aggregated across all `type_usage:O::*` siblings)
+///
+/// Collisions (e.g. `traits:Plugin` reached from both `trait_impl:Plugin`
+/// and `pub_type:Plugin`) sum-merge intra/inter/example counts; the
+/// defining_crate is kept from the first contributor (impls-side, which
+/// is computed first).
+fn translate_to_group_keys(
+    old: indexmap::IndexMap<String, PatternMetric>,
+    type_def_lookup: &indexmap::IndexMap<String, PatternDef>,
+    trait_def_lookup: &indexmap::IndexMap<String, PatternDef>,
+) -> indexmap::IndexMap<String, PatternMetric> {
+    let mut new: indexmap::IndexMap<String, PatternMetric> = indexmap::IndexMap::new();
+    let mut structure_aggregates: indexmap::IndexMap<String, Vec<PatternMetric>> =
+        indexmap::IndexMap::new();
+
+    for (key, metric) in old {
+        let (kind, inner) = match key.split_once(':') {
+            Some((k, n)) => (k.to_string(), n.to_string()),
+            None => continue,
+        };
+        match kind.as_str() {
+            "trait_impl" => {
+                let new_key = format!("traits:{}", inner);
+                merge_metric(&mut new, new_key, metric);
+            }
+            "derive" => {
+                let new_key = format!("derives:{}", inner);
+                merge_metric(&mut new, new_key, metric);
+            }
+            "reg_macro" | "attr_macro" => {
+                let new_key = format!("utilities:{}", inner);
+                merge_metric(&mut new, new_key, metric);
+            }
+            "pub_type" => {
+                let group = if type_def_lookup.contains_key(&inner) {
+                    "structure"
+                } else if trait_def_lookup.contains_key(&inner) {
+                    "traits"
+                } else {
+                    continue;
+                };
+                let new_key = format!("{}:{}", group, inner);
+                merge_metric(&mut new, new_key, metric);
+            }
+            "method_ref" => {
+                // inner shape is `_::method`; preserve verbatim.
+                let new_key = format!("implementation_functions:{}", inner);
+                merge_metric(&mut new, new_key, metric);
+            }
+            "type_usage" => {
+                // Bridge: emit BOTH structure:<outer> (aggregated below)
+                // and implementation_functions:<outer>::<inner>.
+                let outer = inner.split_once("::").map(|(o, _)| o).unwrap_or(&inner);
+                let impl_fn_key = format!("implementation_functions:{}", inner);
+                merge_metric(&mut new, impl_fn_key, metric.clone());
+                structure_aggregates
+                    .entry(outer.to_string())
+                    .or_default()
+                    .push(metric);
+            }
+            _ => {}
+        }
+    }
+
+    // Aggregate structure:<outer> across all type_usage siblings.
+    for (outer, parts) in structure_aggregates {
+        if parts.is_empty() {
+            continue;
+        }
+        let intra: usize = parts.iter().map(|m| m.intra_count).sum();
+        let inter: usize = parts.iter().map(|m| m.inter_count).sum();
+        let total = intra + inter;
+        let ratio = if total > 0 { inter as f64 / total as f64 } else { 0.0 };
+        let example_count: f64 = parts
+            .iter()
+            .map(|m| m.example_count.as_f64().unwrap_or(0.0))
+            .sum();
+        let curated: usize = parts.iter().map(|m| m.curated_example_count).sum();
+        let is_pub = parts.iter().any(|m| m.is_pub);
+        let defining_crate = parts
+            .iter()
+            .find_map(|m| m.defining_crate.clone());
+        let aggregated = PatternMetric {
+            defining_crate,
+            intra_count: intra,
+            inter_count: inter,
+            inter_ratio: round3(ratio),
+            is_pub,
+            example_count: serde_json::Value::from((example_count * 100.0).round() / 100.0),
+            curated_example_count: curated,
+        };
+        let key = format!("structure:{}", outer);
+        merge_metric(&mut new, key, aggregated);
+    }
+
+    new
+}
+
+/// What: insert a PatternMetric under `key`, or sum-merge into an
+/// existing entry when present.
+///
+/// Why: the kind -> group mapping can route multiple kind:name sources
+/// into the same group:name key (e.g. trait_impl:Plugin and
+/// pub_type:Plugin both target traits:Plugin); summing their counts
+/// preserves both signals' contributions to the architectural score.
+fn merge_metric(
+    map: &mut indexmap::IndexMap<String, PatternMetric>,
+    key: String,
+    m: PatternMetric,
+) {
+    if let Some(existing) = map.get_mut(&key) {
+        existing.intra_count += m.intra_count;
+        existing.inter_count += m.inter_count;
+        let total = existing.intra_count + existing.inter_count;
+        existing.inter_ratio = if total > 0 {
+            round3(existing.inter_count as f64 / total as f64)
+        } else {
+            0.0
+        };
+        existing.is_pub |= m.is_pub;
+        let existing_ec = existing.example_count.as_f64().unwrap_or(0.0);
+        let new_ec = m.example_count.as_f64().unwrap_or(0.0);
+        existing.example_count =
+            serde_json::Value::from(((existing_ec + new_ec) * 100.0).round() / 100.0);
+        existing.curated_example_count += m.curated_example_count;
+        if existing.defining_crate.is_none() {
+            existing.defining_crate = m.defining_crate;
+        }
+    } else {
+        map.insert(key, m);
+    }
 }
 
 struct MethodMember {

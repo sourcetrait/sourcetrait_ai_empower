@@ -117,6 +117,77 @@ pub fn characterize(
         *all_facts.seams.entry(k.clone()).or_default() += v;
     }
 
+    let crate_dirs: indexmap::IndexMap<String, String> = crates
+        .iter()
+        .map(|(k, v)| (k.clone(), v.dir.clone()))
+        .collect();
+    for ent in &usage_facts.ast_fn_sig_usages {
+        if ent.ident.is_empty() {
+            continue;
+        }
+        let using_crate = resolve_crate_for_file(&ent.file, &crate_dirs);
+        if using_crate.is_empty() {
+            continue;
+        }
+        all_facts.ast_type_refs.push(serde_json::json!({
+            "name": ent.ident,
+            "file": ent.file,
+            "line": ent.line,
+            "crate": using_crate,
+            "source": "fn_sig_usages",
+        }));
+    }
+    for ent in &usage_facts.ast_field_usages {
+        if ent.ident.is_empty() {
+            continue;
+        }
+        let using_crate = resolve_crate_for_file(&ent.file, &crate_dirs);
+        if using_crate.is_empty() {
+            continue;
+        }
+        all_facts.ast_type_refs.push(serde_json::json!({
+            "name": ent.ident,
+            "file": ent.file,
+            "line": ent.line,
+            "crate": using_crate,
+            "source": "field_usages",
+        }));
+    }
+    for ent in &usage_facts.ast_type_alias_usages {
+        if ent.ident.is_empty() {
+            continue;
+        }
+        let using_crate = resolve_crate_for_file(&ent.file, &crate_dirs);
+        if using_crate.is_empty() {
+            continue;
+        }
+        all_facts.ast_type_refs.push(serde_json::json!({
+            "name": ent.ident,
+            "file": ent.file,
+            "line": ent.line,
+            "crate": using_crate,
+            "source": "type_alias_usages",
+        }));
+    }
+    for ent in &usage_facts.ast_method_ref_usages {
+        if ent.outer.is_empty() || ent.inner.is_empty() {
+            continue;
+        }
+        let using_crate = resolve_crate_for_file(&ent.file, &crate_dirs);
+        if using_crate.is_empty() {
+            continue;
+        }
+        all_facts.ast_method_refs.push(serde_json::json!({
+            "name": format!("{}::{}", ent.outer, ent.inner),
+            "outer": ent.outer,
+            "inner": ent.inner,
+            "file": ent.file,
+            "line": ent.line,
+            "container": ent.container,
+            "crate": using_crate,
+        }));
+    }
+
     let (ranked, by_kind, reg_calls) = pattern_histogram(&all_facts, &free_fns_by_crate);
     let selection = select_mode(&ranked, &workspace_roots, components.len(), calibration);
 

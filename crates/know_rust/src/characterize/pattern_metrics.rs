@@ -157,9 +157,229 @@ pub fn compute_pattern_metrics(
     }
 
     let _ = type_visibility;
-    let _ = ast_usages;
-    let _ = crates;
+
+    if let Some(usages) = ast_usages {
+        let crate_dirs: indexmap::IndexMap<String, String> = crates
+            .iter()
+            .map(|(k, v)| (k.clone(), v.dir.clone()))
+            .collect();
+
+        let mut ast_by_ident: indexmap::IndexMap<String, Vec<String>> = indexmap::IndexMap::new();
+        for e in &usages.ast_fn_sig_usages {
+            if !e.ident.is_empty() {
+                ast_by_ident
+                    .entry(e.ident.clone())
+                    .or_default()
+                    .push(e.file.clone());
+            }
+        }
+        for e in &usages.ast_field_usages {
+            if !e.ident.is_empty() {
+                ast_by_ident
+                    .entry(e.ident.clone())
+                    .or_default()
+                    .push(e.file.clone());
+            }
+        }
+        for e in &usages.ast_type_alias_usages {
+            if !e.ident.is_empty() {
+                ast_by_ident
+                    .entry(e.ident.clone())
+                    .or_default()
+                    .push(e.file.clone());
+            }
+        }
+
+        for (ident, hits) in ast_by_ident {
+            if ident.is_empty() {
+                continue;
+            }
+            let defn = type_def_lookup
+                .get(&ident)
+                .or_else(|| trait_def_lookup.get(&ident));
+            let defn = match defn {
+                Some(d) => d,
+                None => continue,
+            };
+            if !defn.visibility.starts_with("pub") {
+                continue;
+            }
+            let pattern = format!("pub_type:{}", ident);
+            if metrics.contains_key(&pattern) {
+                continue;
+            }
+            let defining_crate = defn.crate_name.clone();
+            let (intra, inter, example_count, curated_count) =
+                count_usages(&hits, &defining_crate, &crate_dirs);
+            let total = intra + inter;
+            let ratio = if total > 0 { inter as f64 / total as f64 } else { 0.0 };
+            metrics.insert(
+                pattern,
+                PatternMetric {
+                    defining_crate: Some(defining_crate),
+                    intra_count: intra,
+                    inter_count: inter,
+                    inter_ratio: round3(ratio),
+                    is_pub: true,
+                    example_count: serde_json::Value::from(example_count as f64),
+                    curated_example_count: curated_count,
+                },
+            );
+        }
+
+        let outer_skip: std::collections::HashSet<&String> = calibration
+            .filters
+            .method_ref_outer_skip
+            .iter()
+            .collect();
+        let inner_skip: std::collections::HashSet<&String> = calibration
+            .filters
+            .method_ref_inner_skip
+            .iter()
+            .collect();
+
+        let mut method_refs_by_inner: indexmap::IndexMap<String, Vec<MethodMember>> =
+            indexmap::IndexMap::new();
+        for ent in &usages.ast_method_ref_usages {
+            if ent.outer.is_empty() || ent.inner.is_empty() {
+                continue;
+            }
+            if outer_skip.contains(&ent.outer) {
+                continue;
+            }
+            if inner_skip.contains(&ent.inner) {
+                continue;
+            }
+            let defn = type_def_lookup
+                .get(&ent.outer)
+                .or_else(|| trait_def_lookup.get(&ent.outer));
+            let defn = match defn {
+                Some(d) => d,
+                None => continue,
+            };
+            method_refs_by_inner
+                .entry(ent.inner.clone())
+                .or_default()
+                .push(MethodMember {
+                    outer: ent.outer.clone(),
+                    defining_crate: defn.crate_name.clone(),
+                    file: ent.file.clone(),
+                });
+        }
+
+        for (inner, members) in method_refs_by_inner {
+            let distinct_outers: indexmap::IndexSet<&String> =
+                members.iter().map(|m| &m.outer).collect();
+            if distinct_outers.len() < calibration.picker.family.method_ref_min_outers {
+                continue;
+            }
+            let pattern = format!("method_ref:_::{}", inner);
+            if metrics.contains_key(&pattern) {
+                continue;
+            }
+            let mut counts: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+            for m in &members {
+                *counts.entry(m.defining_crate.clone()).or_default() += 1;
+            }
+            let defining_crate = counts
+                .iter()
+                .max_by_key(|(_, c)| **c)
+                .map(|(k, _)| k.clone())
+                .unwrap_or_default();
+            let files: Vec<String> = members.iter().map(|m| m.file.clone()).collect();
+            let (intra, inter, example_count, curated_count) =
+                count_usages(&files, &defining_crate, &crate_dirs);
+            let total = intra + inter;
+            let ratio = if total > 0 { inter as f64 / total as f64 } else { 0.0 };
+            metrics.insert(
+                pattern,
+                PatternMetric {
+                    defining_crate: Some(defining_crate),
+                    intra_count: intra,
+                    inter_count: inter,
+                    inter_ratio: round3(ratio),
+                    is_pub: true,
+                    example_count: serde_json::Value::from(example_count as f64),
+                    curated_example_count: curated_count,
+                },
+            );
+        }
+    }
+
     metrics
+}
+
+struct MethodMember {
+    outer: String,
+    defining_crate: String,
+    file: String,
+}
+
+fn count_usages(
+    files: &[String],
+    defining_crate: &str,
+    crate_dirs: &indexmap::IndexMap<String, String>,
+) -> (usize, usize, usize, usize) {
+    let mut intra = 0usize;
+    let mut inter = 0usize;
+    let mut example_files: indexmap::IndexSet<String> = indexmap::IndexSet::new();
+    let mut curated_files: indexmap::IndexSet<String> = indexmap::IndexSet::new();
+    for file_path in files {
+        let using = resolve_crate_for_file(file_path, crate_dirs);
+        if using.is_empty() {
+            continue;
+        }
+        if using == defining_crate {
+            intra += 1;
+        } else {
+            inter += 1;
+        }
+        if file_path.contains("/examples/") || file_path.starts_with("examples/") {
+            example_files.insert(file_path.clone());
+            curated_files.insert(file_path.clone());
+        } else if file_path.contains("/tests/") || file_path.starts_with("tests/") {
+            example_files.insert(file_path.clone());
+        } else if file_path.contains("/benches/") || file_path.starts_with("benches/") {
+            example_files.insert(file_path.clone());
+        }
+    }
+    (intra, inter, example_files.len(), curated_files.len())
+}
+
+/// What: resolve which workspace crate owns a given file path via
+/// longest-prefix match against each crate's directory.
+///
+/// Why: ast usage entries record the workspace-relative file path
+/// where each identifier was seen; mapping back to the using crate
+/// is the join that drives intra/inter counts for synthesized
+/// pub_type + method_ref pattern_metrics entries.
+///
+/// Where: called from `compute_pattern_metrics` for pub_type +
+/// method_ref synthesis, and from `crate::characterize::run::characterize`
+/// for the `ast_type_refs` + `ast_method_refs` facts population.
+pub(crate) fn resolve_crate_for_file(
+    file_path: &str,
+    crate_dirs: &indexmap::IndexMap<String, String>,
+) -> String {
+    let norm = file_path.replace('\\', "/");
+    let mut best = String::new();
+    let mut best_len: i32 = -1;
+    for (name, dir_str) in crate_dirs {
+        let d = dir_str.trim_end_matches('/');
+        if d.is_empty() || d == "." {
+            if best_len < 0 {
+                best = name.clone();
+                best_len = 0;
+            }
+            continue;
+        }
+        let prefix = format!("{}/", d);
+        if norm.starts_with(&prefix) && (prefix.len() as i32) > best_len {
+            best = name.clone();
+            best_len = prefix.len() as i32;
+        }
+    }
+    best
 }
 
 struct PatternDef {

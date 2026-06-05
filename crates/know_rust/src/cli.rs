@@ -20,6 +20,17 @@ use crate::*;
     about = "Rust source scanner for the know_rust orientation pipeline",
 )]
 pub(crate) struct Cli {
+    /// Path to a custom calibration.toml; defaults to the embedded
+    /// calibration shipped with the binary.
+    #[arg(short = 'c', long = "calibration", global = true)]
+    pub(crate) calibration_path: Option<PathBuf>,
+
+    /// Path to a custom templates root containing `prompts/` and
+    /// `templates/` subdirectories; defaults to the embedded
+    /// templates shipped with the binary.
+    #[arg(short = 't', long = "templates", global = true)]
+    pub(crate) templates_path: Option<PathBuf>,
+
     #[command(subcommand)]
     pub(crate) command: Command,
 }

@@ -12,6 +12,8 @@ use crate::*;
 /// point.
 pub fn run() -> std::result::Result<(), Error> {
     let cli = Cli::parse();
+    let _calibration = load_calibration(cli.calibration_path.as_deref())?;
+    let _templates = Templates::new(cli.templates_path.clone());
     match cli.command {
         Command::Scan { scan } => dispatch_scan(scan),
     }

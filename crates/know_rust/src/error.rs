@@ -30,6 +30,21 @@ pub enum Error {
 
     #[snafu(display("serialize failed: {source}"))]
     Serialize { source: serde_json::Error },
+
+    #[snafu(display("toml parse failed for {path:?}: {source}"))]
+    TomlParse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+
+    #[snafu(display("liquid template {name}: {source}"))]
+    Liquid {
+        name: String,
+        source: liquid::Error,
+    },
+
+    #[snafu(display("template not found: {name}"))]
+    TemplateNotFound { name: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

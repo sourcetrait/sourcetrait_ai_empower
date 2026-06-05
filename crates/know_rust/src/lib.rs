@@ -1,4 +1,9 @@
 pub(crate) mod cli;
+pub(crate) mod config {
+    pub(crate) mod calibration;
+    pub(crate) mod loader;
+    pub(crate) mod templates;
+}
 pub(crate) mod error;
 pub(crate) mod run;
 pub(crate) mod scan {
@@ -54,6 +59,9 @@ pub(crate) use syn::{
 };
 
 pub use crate::run::run;
+pub use crate::config::calibration::*;
+pub use crate::config::loader::*;
+pub use crate::config::templates::*;
 pub use crate::scan::items::run::*;
 pub use crate::scan::items::types::*;
 pub use crate::scan::usages::facts::*;

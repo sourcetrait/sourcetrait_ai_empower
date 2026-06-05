@@ -46,6 +46,16 @@ pub(crate) fn scan_workspace(workspace_root: &Path) -> ItemFacts {
         }
     }
     facts.seams = seams_wire;
+    // R2-expansion 2026-06-05: dedup carry by name within each pattern
+    // key. The walker pushes one entry per occurrence; the reader's
+    // reference set is a SET of distinct dependent names. The pick's
+    // own intra/inter counts already carry usage signal, so multi-site
+    // occurrence in carry is redundant. Keeps first-occurrence order
+    // for stable JSON output.
+    for entries in facts.carries.values_mut() {
+        let mut seen: HashSet<String> = HashSet::new();
+        entries.retain(|e| seen.insert(e.name.clone()));
+    }
     facts
 }
 

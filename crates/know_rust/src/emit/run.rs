@@ -32,13 +32,15 @@ pub fn emit(
         path: facts_path.clone(),
         source,
     })?;
-    let _fp: serde_json::Value = serde_json::from_str(&fp_text)
+    let fp: serde_json::Value = serde_json::from_str(&fp_text)
         .map_err(|source| Error::Serialize { source })?;
-    let _facts: serde_json::Value = serde_json::from_str(&facts_text)
+    let facts: serde_json::Value = serde_json::from_str(&facts_text)
         .map_err(|source| Error::Serialize { source })?;
 
     let orientation_path = out_dir.join("orientation.md");
     let reference_path = out_dir.join("reference.md");
+    let reference_text =
+        crate::emit::reference::render_reference(workspace_root, out_dir, &fp, &facts);
     fs::write(
         &orientation_path,
         format!("# Orientation\n\n(phase 3 stub - {} workspace)\n", workspace_root.display()),
@@ -47,11 +49,7 @@ pub fn emit(
         path: orientation_path,
         source,
     })?;
-    fs::write(
-        &reference_path,
-        "# Reference Index\n\n(phase 3 stub)\n",
-    )
-    .map_err(|source| Error::Write {
+    fs::write(&reference_path, reference_text).map_err(|source| Error::Write {
         path: reference_path,
         source,
     })?;

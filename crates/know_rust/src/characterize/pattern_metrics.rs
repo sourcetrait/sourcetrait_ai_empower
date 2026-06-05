@@ -698,5 +698,5 @@ fn curated_example_count(
 }
 
 fn round3(x: f64) -> f64 {
-    (x * 1000.0).round() / 1000.0
+    (x * 1000.0).round_ties_even() / 1000.0
 }

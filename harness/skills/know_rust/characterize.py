@@ -100,62 +100,101 @@ def find_crates(root: Path):
     """Return (crates, workspace_roots). crates: name -> {dir, deps,
     has_bin, has_lib, keywords, categories, description}.
 
-    0.0.13 patch 13d + 13e + 13f + 0.0.15 patch 15a: each crate's
-    record carries the raw bin / lib presence signals. The 4-bucket
-    use-classification (end_use / dev_use / end_with_dev_use /
-    dev_with_end_use) is computed downstream in main() after
-    pattern_metrics is built - the cross-crate is_pub usage signal
-    is load-bearing per the_user 2026-06-03 ('lib.rs / [lib] with
-    significant is_pub may suggest dev_use or dev_with_end_use').
-    Package metadata (keywords, categories, description) is
-    captured for downstream consumption."""
+    2026-06-05 the_user: enumeration via `cargo metadata --no-deps`
+    rather than rglob+manual toml parse. Cargo is the source of
+    truth for workspace structure + iteration order, so the
+    rglob-then-sort approach is replaced by cargo's authoritative
+    package list. Falls back to per-subdir cargo metadata walk for
+    submodule-aggregator repos (cosmic-epoch) that have no root
+    Cargo.toml.
+
+    Each crate's record carries the raw bin / lib presence signals
+    (0.0.13/0.0.15: drives 4-bucket use-classification downstream in
+    main() once pattern_metrics is built). Package metadata
+    (keywords, categories, description) is captured for downstream
+    consumption."""
+    import subprocess
     crates = {}
     workspace_roots = []
-    for cargo in root.rglob("Cargo.toml"):
-        if "target" in cargo.parts:
-            continue
+
+    def _add_packages(meta, sub_root: Path):
+        ws_root_str = meta.get("workspace_root") or str(sub_root)
+        ws_root_path = Path(ws_root_str)
         try:
-            data = tomllib.loads(cargo.read_text(encoding="utf-8", errors="replace"))
-        except Exception:
-            continue
-        if "workspace" in data:
-            workspace_roots.append(str(cargo.parent.relative_to(root)))
-        pkg = data.get("package")
-        if isinstance(pkg, dict) and "name" in pkg:
-            name = pkg["name"]
-            deps = set()
-            for sect in ("dependencies", "dev-dependencies", "build-dependencies"):
-                d = data.get(sect, {})
-                if isinstance(d, dict):
-                    deps.update(d.keys())
-            crate_dir = cargo.parent
-            # 13d: detect bin presence from [[bin]] OR src/main.rs OR
-            # src/bin/ directory existence.
-            has_bin_entry = bool(data.get("bin"))
+            ws_rel = str(ws_root_path.relative_to(root))
+        except ValueError:
+            ws_rel = "."
+        if not ws_rel:
+            ws_rel = "."
+        if ws_rel not in workspace_roots:
+            workspace_roots.append(ws_rel)
+        for pkg in meta.get("packages", []):
+            name = pkg.get("name")
+            if not name:
+                continue
+            manifest_path = Path(pkg.get("manifest_path", ""))
+            crate_dir = manifest_path.parent
+            try:
+                dir_rel = str(crate_dir.relative_to(root))
+            except ValueError:
+                continue
+            if not dir_rel:
+                dir_rel = "."
+            deps_set = set()
+            for d in pkg.get("dependencies", []):
+                nm = d.get("name")
+                if nm:
+                    deps_set.add(nm)
+            targets = pkg.get("targets") or []
+            has_bin_entry = any("bin" in (t.get("kind") or []) for t in targets)
             has_main_rs = (crate_dir / "src" / "main.rs").exists()
             has_bin_dir = (crate_dir / "src" / "bin").is_dir()
             has_bin = has_bin_entry or has_main_rs or has_bin_dir
-            # Lib presence: explicit [lib] table OR src/lib.rs file.
-            # Cargo defaults to a lib if src/lib.rs exists and no
-            # explicit lib config disables it.
-            has_lib_entry = bool(data.get("lib"))
+            has_lib_entry = any(
+                ("lib" in (t.get("kind") or [])) or ("proc-macro" in (t.get("kind") or []))
+                for t in targets
+            )
             has_lib_rs = (crate_dir / "src" / "lib.rs").exists()
             has_lib = has_lib_entry or has_lib_rs
             crates[name] = {
-                "dir": str(cargo.parent.relative_to(root)) or ".",
-                "deps": sorted(deps),
+                "dir": dir_rel,
+                "deps": sorted(deps_set),
                 "has_bin": has_bin,
                 "has_lib": has_lib,
-                # 13f: package metadata for downstream consumption.
-                "keywords": pkg.get("keywords", []) or [],
-                "categories": pkg.get("categories", []) or [],
+                "keywords": pkg.get("keywords") or [],
+                "categories": pkg.get("categories") or [],
                 "description": (pkg.get("description") or "").strip(),
             }
-    # 2026-06-05 deterministic-iteration patch (the_user): sort
-    # crates by name so per-crate iteration order is host- and
-    # filesystem-independent. Aligns Python output ordering with the
-    # Rust port's alphabetical sort in characterize/cargo_toml.rs.
-    crates = dict(sorted(crates.items()))
+
+    def _try_cargo_metadata(working_dir: Path):
+        try:
+            r = subprocess.run(
+                ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+                cwd=str(working_dir),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return json.loads(r.stdout)
+        except (subprocess.CalledProcessError, json.JSONDecodeError):
+            return None
+
+    meta = _try_cargo_metadata(root)
+    if meta is not None:
+        _add_packages(meta, root)
+    else:
+        # Fallback: cosmic-epoch-shape repos with no root Cargo.toml.
+        # Walk one level down, find subdirs containing Cargo.toml,
+        # invoke cargo metadata at each.
+        for sub in sorted(root.iterdir()):
+            if not sub.is_dir():
+                continue
+            if not (sub / "Cargo.toml").is_file():
+                continue
+            sub_meta = _try_cargo_metadata(sub)
+            if sub_meta is not None:
+                _add_packages(sub_meta, sub)
+
     return crates, sorted(set(workspace_roots))
 
 

@@ -1,16 +1,20 @@
 use crate::*;
 
-/// What: walk a workspace root for every `Cargo.toml`, parse each via
-/// the `toml` crate, and return (a) the per-crate metadata map keyed
-/// by package name and (b) the sorted list of workspace-root
-/// directories discovered.
+/// What: enumerate workspace crates via `cargo metadata --no-deps`
+/// (cargo is the authoritative source of workspace structure +
+/// iteration order). Returns (a) the per-crate metadata map in
+/// cargo's package order and (b) the list of workspace-root
+/// directories. Falls back to a per-subdir cargo metadata walk for
+/// submodule-aggregator repos (cosmic-epoch) that have no root
+/// Cargo.toml.
 ///
-/// Why: equivalent to characterize.py's `find_crates`. Captures the
-/// bin / lib presence signals (the_user 2026-06-03), the dependency
-/// graph (for components + use-classification), and the package
-/// metadata downstream emit may surface. The python output uses
-/// insertion order; `IndexMap` preserves the walk order so the
-/// downstream fingerprint matches.
+/// Why: aligns the crate enumeration with cargo's authoritative
+/// view. The_user 2026-06-05: cargo is the canonical source-of-truth
+/// for workspace ordering; rglob/walkdir produces host-dependent
+/// orders that vary between Python and Rust + between filesystems.
+/// cargo metadata's order is portable and matches what cargo itself
+/// resolves to. The fallback path handles the submodule-aggregator
+/// case while staying within the cargo-metadata method.
 ///
 /// Where: called from `crate::characterize::run::characterize` after
 /// resolving the workspace root.
@@ -24,81 +28,150 @@ pub fn find_crates(
     let mut workspace_roots: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
 
-    for entry in walkdir::WalkDir::new(root) {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
+    if let Some(meta) = try_cargo_metadata(root) {
+        add_packages(&mut crates, &mut workspace_roots, root, &meta);
+    } else {
+        let mut subs: Vec<PathBuf> = match fs::read_dir(root) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .filter(|p| p.join("Cargo.toml").is_file())
+                .collect(),
+            Err(_) => Vec::new(),
         };
-        let path = entry.path();
-        if !path.is_file() {
+        subs.sort();
+        for sub in subs {
+            if let Some(meta) = try_cargo_metadata(&sub) {
+                add_packages(&mut crates, &mut workspace_roots, root, &meta);
+            }
+        }
+    }
+
+    (crates, workspace_roots.into_iter().collect())
+}
+
+fn try_cargo_metadata(working_dir: &Path) -> Option<serde_json::Value> {
+    let out = std::process::Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(working_dir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()
+}
+
+fn add_packages(
+    crates: &mut indexmap::IndexMap<String, CrateInfo>,
+    workspace_roots: &mut std::collections::BTreeSet<String>,
+    root: &Path,
+    meta: &serde_json::Value,
+) {
+    let ws_root_str = meta
+        .get("workspace_root")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let ws_root = if ws_root_str.is_empty() {
+        root.to_path_buf()
+    } else {
+        PathBuf::from(ws_root_str)
+    };
+    let ws_rel = match ws_root.strip_prefix(root) {
+        Ok(r) => {
+            let s = r.to_string_lossy().to_string();
+            if s.is_empty() {
+                ".".to_string()
+            } else {
+                s
+            }
+        }
+        Err(_) => ".".to_string(),
+    };
+    workspace_roots.insert(ws_rel);
+
+    let packages = meta
+        .get("packages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for pkg in packages {
+        let name = match pkg.get("name").and_then(|v| v.as_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let manifest_path = pkg
+            .get("manifest_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if manifest_path.is_empty() {
             continue;
         }
-        if path.file_name().and_then(|s| s.to_str()) != Some("Cargo.toml") {
-            continue;
-        }
-        if path.components().any(|c| c.as_os_str() == "target") {
-            continue;
-        }
-        let text = match fs::read_to_string(path) {
-            Ok(s) => s,
+        let crate_dir = PathBuf::from(manifest_path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        let dir_rel = match crate_dir.strip_prefix(root) {
+            Ok(r) => {
+                let s = r.to_string_lossy().to_string();
+                if s.is_empty() {
+                    ".".to_string()
+                } else {
+                    s
+                }
+            }
             Err(_) => continue,
         };
-        let parsed: toml::Value = match toml::from_str(&text) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let cargo_dir = path.parent().unwrap_or(root);
-        let rel_dir = match cargo_dir.strip_prefix(root) {
-            Ok(r) => r.to_string_lossy().to_string(),
-            Err(_) => continue,
-        };
-
-        if parsed.get("workspace").is_some() {
-            workspace_roots.insert(if rel_dir.is_empty() { ".".to_string() } else { rel_dir.clone() });
-        }
-
-        let Some(pkg) = parsed.get("package").and_then(|v| v.as_table()) else {
-            continue;
-        };
-        let Some(name) = pkg.get("name").and_then(|v| v.as_str()) else {
-            continue;
-        };
-
         let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for sect in &["dependencies", "dev-dependencies", "build-dependencies"] {
-            if let Some(d) = parsed.get(*sect).and_then(|v| v.as_table()) {
-                for key in d.keys() {
-                    deps.insert(key.clone());
+        if let Some(deps_arr) = pkg.get("dependencies").and_then(|v| v.as_array()) {
+            for d in deps_arr {
+                if let Some(n) = d.get("name").and_then(|v| v.as_str()) {
+                    deps.insert(n.to_string());
                 }
             }
         }
-
-        let has_bin_entry = parsed.get("bin").map(|v| !v.as_array().map(|a| a.is_empty()).unwrap_or(true)).unwrap_or(false);
-        let has_main_rs = cargo_dir.join("src").join("main.rs").exists();
-        let has_bin_dir = cargo_dir.join("src").join("bin").is_dir();
+        let targets = pkg
+            .get("targets")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let has_bin_entry = targets.iter().any(|t| {
+            t.get("kind")
+                .and_then(|k| k.as_array())
+                .map(|arr| arr.iter().any(|x| x.as_str() == Some("bin")))
+                .unwrap_or(false)
+        });
+        let has_main_rs = crate_dir.join("src").join("main.rs").exists();
+        let has_bin_dir = crate_dir.join("src").join("bin").is_dir();
         let has_bin = has_bin_entry || has_main_rs || has_bin_dir;
-
-        let has_lib_entry = parsed.get("lib").is_some();
-        let has_lib_rs = cargo_dir.join("src").join("lib.rs").exists();
+        let has_lib_entry = targets.iter().any(|t| {
+            t.get("kind")
+                .and_then(|k| k.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .any(|x| x.as_str() == Some("lib") || x.as_str() == Some("proc-macro"))
+                })
+                .unwrap_or(false)
+        });
+        let has_lib_rs = crate_dir.join("src").join("lib.rs").exists();
         let has_lib = has_lib_entry || has_lib_rs;
-
-        let keywords = pkg
+        let keywords: Vec<String> = pkg
             .get("keywords")
             .and_then(|v| v.as_array())
             .map(|a| {
                 a.iter()
                     .filter_map(|x| x.as_str().map(String::from))
-                    .collect::<Vec<_>>()
+                    .collect()
             })
             .unwrap_or_default();
-        let categories = pkg
+        let categories: Vec<String> = pkg
             .get("categories")
             .and_then(|v| v.as_array())
             .map(|a| {
                 a.iter()
                     .filter_map(|x| x.as_str().map(String::from))
-                    .collect::<Vec<_>>()
+                    .collect()
             })
             .unwrap_or_default();
         let description = pkg
@@ -106,11 +179,10 @@ pub fn find_crates(
             .and_then(|v| v.as_str())
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
-
         crates.insert(
-            name.to_string(),
+            name,
             CrateInfo {
-                dir: if rel_dir.is_empty() { ".".to_string() } else { rel_dir },
+                dir: dir_rel,
                 deps: deps.into_iter().collect(),
                 has_bin,
                 has_lib,
@@ -120,7 +192,4 @@ pub fn find_crates(
             },
         );
     }
-
-    crates.sort_keys();
-    (crates, workspace_roots.into_iter().collect())
 }

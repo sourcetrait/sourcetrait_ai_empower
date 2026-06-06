@@ -106,6 +106,32 @@ method_ref_inner_skip = [
 # belong to the example-mining pool, not the picker pool).
 excluded_dir_segments = ["tests", "benches", "examples"]
 
+[picker.classifier]
+# R4a form sub-classifier inputs. The configured-derives list seeds the
+# `classify_derives` fast-path: any derive whose trait name appears in
+# this list classifies as Configured regardless of sibling-derive
+# signals. Default values cover the bevy ecs + serde + clap + sea-orm
+# + thiserror + napi/pyo3 ecosystems; tuning is a single-file edit when
+# a new ecosystem surfaces.
+configured_derives = [
+    # bevy ecs / app
+    "Component", "Resource", "Event", "Bundle", "SystemParam",
+    "States", "ScheduleLabel", "SystemSet", "Asset", "TypePath",
+    "Reflect", "GetTypeRegistration", "FromReflect",
+    # serde + schemas
+    "Serialize", "Deserialize", "JsonSchema", "ToSchema", "OpenApi",
+    # clap
+    "Args", "Parser", "Subcommand", "ValueEnum",
+    # codec / db / openapi
+    "Encode", "Decode", "Iden", "EnumIter", "Type", "TS", "FromRow",
+    # error / display
+    "ThisError", "Error", "Display", "FromStr",
+    # pin-project / async
+    "Pin",
+    # wasm / napi / pyo3
+    "Wasm", "FromPyObject", "IntoPyObject",
+]
+
 [picker.prose_budget]
 # Per-pick prose budget hints (character counts) per (form / sub_form,
 # set). Soft hints to the kp pipeline Stage C drafting subagent; Stage

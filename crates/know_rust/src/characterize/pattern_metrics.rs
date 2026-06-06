@@ -314,7 +314,7 @@ pub fn compute_pattern_metrics(
     }
 
     let grouped = translate_to_group_keys(metrics, &type_def_lookup, &trait_def_lookup);
-    classify_sub_forms(grouped, all_facts)
+    classify_sub_forms(grouped, all_facts, calibration)
 }
 
 /// What: translate the kind:name pattern_metrics keys to the picks-data
@@ -886,6 +886,7 @@ fn round3(x: f64) -> f64 {
 fn classify_sub_forms(
     mut metrics: indexmap::IndexMap<String, PatternMetric>,
     all_facts: &WorkspaceFacts,
+    calibration: &Calibration,
 ) -> indexmap::IndexMap<String, PatternMetric> {
     for (key, metric) in metrics.iter_mut() {
         let (group, name) = match key.split_once(':') {
@@ -894,7 +895,12 @@ fn classify_sub_forms(
         };
         metric.sub_form = match group {
             "structure" => Some(classify_structure(metric)),
-            "derives" => Some(classify_derives(name, &all_facts.derives, &all_facts.fns)),
+            "derives" => Some(classify_derives(
+                name,
+                &all_facts.derives,
+                &all_facts.fns,
+                calibration,
+            )),
             "traits" => Some(classify_traits(name, &all_facts.impls)),
             "utilities" => Some(classify_utilities(name, &all_facts.macros, &all_facts.fns)),
             _ => None,
@@ -949,26 +955,10 @@ fn classify_derives(
     trait_name: &str,
     derives: &[serde_json::Value],
     _fns: &[serde_json::Value],
+    calibration: &Calibration,
 ) -> SubForm {
-    const CONFIGURED_DERIVES: &[&str] = &[
-        // bevy ecs / app
-        "Component", "Resource", "Event", "Bundle", "SystemParam",
-        "States", "ScheduleLabel", "SystemSet", "Asset", "TypePath",
-        "Reflect", "GetTypeRegistration", "FromReflect",
-        // serde + schemas
-        "Serialize", "Deserialize", "JsonSchema", "ToSchema", "OpenApi",
-        // clap
-        "Args", "Parser", "Subcommand", "ValueEnum",
-        // codec / db / openapi
-        "Encode", "Decode", "Iden", "EnumIter", "Type", "TS", "FromRow",
-        // error / display
-        "ThisError", "Error", "Display", "FromStr",
-        // pin-project / async
-        "Pin",
-        // wasm / napi / pyo3
-        "Wasm", "FromPyObject", "IntoPyObject",
-    ];
-    if CONFIGURED_DERIVES.contains(&trait_name) {
+    let configured_list = &calibration.picker.classifier.configured_derives;
+    if configured_list.iter().any(|n| n == trait_name) {
         return SubForm::Configured;
     }
     let snake = to_snake_case(trait_name);
@@ -997,7 +987,7 @@ fn classify_derives(
             if sn == trait_name {
                 continue;
             }
-            if !CONFIGURED_DERIVES.contains(&sn) {
+            if !configured_list.iter().any(|n| n == sn) {
                 continue;
             }
             let sf = sib.get("file").and_then(|v| v.as_str()).unwrap_or("");

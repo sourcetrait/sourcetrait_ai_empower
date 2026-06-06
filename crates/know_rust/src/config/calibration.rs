@@ -47,8 +47,9 @@ pub struct ClassificationConfig {
 
 /// What: emit.py picker calibration: top-N cap formula constants,
 /// example weighting, method_ref family threshold, scoring boost
-/// coefficients, S1 cluster surfacing rule, and the per-pick
-/// prose-budget matrix (R4 refactor).
+/// coefficients, S1 cluster surfacing rule, the per-pick prose-budget
+/// matrix (R4a), and the R4a classifier inputs (configured-derives
+/// allowlist).
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct PickerConfig {
     pub top_n_floor: usize,
@@ -58,7 +59,25 @@ pub struct PickerConfig {
     pub family: PickerFamilyConfig,
     pub score: PickerScoreConfig,
     pub cluster: PickerClusterConfig,
+    pub classifier: ClassifierConfig,
     pub prose_budget: ProseBudgetMatrix,
+}
+
+/// What: R4a form sub-classifier configuration. Currently holds the
+/// configured-derives allowlist that the `classify_derives` helper
+/// in `crate::characterize::pattern_metrics` consults via fast-path
+/// before falling back to the sibling-derive heuristic.
+///
+/// Why: keeps ecosystem-specific tuning out of source code. When a
+/// new ecosystem surfaces a derive that should classify Configured
+/// (the prose-budget matrix's largest row), the_user can extend the
+/// list via calibration.toml without recompile + re-install.
+///
+/// Where: held inside `PickerConfig`; consumed by
+/// `classify_derives` in `pattern_metrics.rs`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ClassifierConfig {
+    pub configured_derives: Vec<String>,
 }
 
 /// What: per-example weighting for the public-set boost. `weight_floor`

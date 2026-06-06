@@ -120,6 +120,23 @@ pub struct PatternMetric {
     pub is_pub: bool,
     pub example_count: serde_json::Value,
     pub curated_example_count: usize,
+    /// What: refactor phase R4 form sub-classification routing this
+    /// pattern into a row of the prose-budget matrix (per
+    /// `notes/know_rust/knowledge_product_authoring.md` cross-axis
+    /// matrix). `None` for groups that have no sub-form discriminator
+    /// (`ImplementationFunctions`, `TraitFunctions`, `Globals`).
+    ///
+    /// Why: the per-pick prose budget hint emitted into orientation.md
+    /// at refactor phase R4 looks up `(PickGroup, SubForm, PickSet)`;
+    /// persisting the sub_form here keeps the picker -> emit pipeline
+    /// stateless about facts the classifier already inspected.
+    ///
+    /// Where: populated by classifier helpers in
+    /// `crate::characterize::pattern_metrics::translate_to_group_keys`;
+    /// consumed at emit time by
+    /// `crate::config::calibration::ProseBudgetMatrix::budget_for`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_form: Option<SubForm>,
 }
 
 /// What: histogram entry in `pattern_histogram`: the `kind:name`

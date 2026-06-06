@@ -105,3 +105,113 @@ method_ref_inner_skip = [
 # type-usage aggregation (those files demonstrate canonical usage and
 # belong to the example-mining pool, not the picker pool).
 excluded_dir_segments = ["tests", "benches", "examples"]
+
+[picker.prose_budget]
+# Per-pick prose budget hints (character counts) per (form / sub_form,
+# set). Soft hints to the kp pipeline Stage C drafting subagent; Stage
+# D reduction naturally produces below these values when content is
+# non-inferrable from the visible context (signature + name + seed).
+#
+# Form sub-classification (which row to look up):
+#   structure: foundational vs incidental (high intra+inter+example
+#     count is foundational; thin structure is incidental)
+#   derives: configured (with sub-attribute use) vs marker (pure
+#     `#[derive(Clone, Debug)]`)
+#   traits: lifecycle (rich method set or significant impl-count)
+#     vs marker (zero methods or marker bound)
+#   utilities: free_fn vs macro
+#   impl_fns / trait_fns / globals: no sub-form
+#
+# Tuned 2026-06-05 from a 5-pick bevy spot test against the picks-data
+# refactor (per notes/know_rust/knowledge_product_authoring.md
+# "Cross-axis matrix"); see that doc for the calibration history and
+# the aggregate-budget triage rule that applies when total kp bundle
+# exceeds 30% of a 1M end-reader context window.
+
+[picker.prose_budget.structure_foundational]
+architecture = 800
+public = 700
+inter_crate = 600
+clique = 600
+intra_crate = 150
+inner_crate = 400
+
+[picker.prose_budget.structure_incidental]
+architecture = 400
+public = 350
+inter_crate = 300
+clique = 300
+intra_crate = 80
+inner_crate = 200
+
+[picker.prose_budget.traits_lifecycle]
+architecture = 1200
+public = 1000
+inter_crate = 1000
+clique = 900
+intra_crate = 300
+inner_crate = 600
+
+[picker.prose_budget.traits_marker]
+architecture = 500
+public = 400
+inter_crate = 350
+clique = 350
+intra_crate = 80
+inner_crate = 250
+
+[picker.prose_budget.derives_configured]
+architecture = 1200
+public = 1100
+inter_crate = 1000
+clique = 900
+intra_crate = 350
+inner_crate = 700
+
+[picker.prose_budget.derives_marker]
+architecture = 100
+public = 100
+inter_crate = 80
+clique = 80
+intra_crate = 40
+inner_crate = 60
+
+[picker.prose_budget.implementation_functions]
+architecture = 300
+public = 250
+inter_crate = 200
+clique = 200
+intra_crate = 80
+inner_crate = 150
+
+[picker.prose_budget.trait_functions]
+architecture = 300
+public = 250
+inter_crate = 200
+clique = 200
+intra_crate = 80
+inner_crate = 150
+
+[picker.prose_budget.utilities_free_fn]
+architecture = 250
+public = 220
+inter_crate = 180
+clique = 180
+intra_crate = 80
+inner_crate = 130
+
+[picker.prose_budget.utilities_macro]
+architecture = 350
+public = 300
+inter_crate = 250
+clique = 250
+intra_crate = 100
+inner_crate = 180
+
+[picker.prose_budget.globals]
+architecture = 100
+public = 90
+inter_crate = 70
+clique = 70
+intra_crate = 40
+inner_crate = 60

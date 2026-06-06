@@ -52,6 +52,109 @@ impl PickSelector {
     }
 }
 
+/// What: the form sub-classification orthogonal to `PickGroup`, used
+/// by the calibration's prose-budget matrix to route per-pick prose
+/// budgets per (group, sub_form, set) cell. Five form discriminators
+/// per the picks-data refactor's R4 phase: `Foundational` /
+/// `Incidental` discriminate `Structure`; `Configured` / `Marker`
+/// discriminate `Derives`; `Lifecycle` / `Marker` discriminate
+/// `Traits`; `FreeFn` / `Macro` discriminate `Utilities`. Items in
+/// `ImplementationFunctions`, `TraitFunctions`, `Globals` carry no
+/// sub-form (the group already captures the relevant axis).
+///
+/// Why: the kp prose-budget matrix tuned 2026-06-05 (per
+/// `notes/know_rust/knowledge_product_authoring.md`) lists 11 rows
+/// across groups + sub-forms because some groups have a meaningful
+/// budget discriminator (a configured derive earns much more prose
+/// budget than a marker derive) and some don't. The `SubForm` enum
+/// encodes that discriminator at the type level so the matrix lookup
+/// is mechanical.
+///
+/// Where: populated by `crate::characterize::pattern_metrics`'s
+/// classifier helpers from `facts.json` signals; persisted in
+/// `PatternMetric::sub_form`; consumed by the calibration's
+/// `ProseBudgetMatrix::budget_for` lookup at emit time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubForm {
+    Foundational,
+    Incidental,
+    Configured,
+    Marker,
+    Lifecycle,
+    FreeFn,
+    Macro,
+}
+
+impl SubForm {
+    /// What: snake_case wire form matching the serde-derived JSON
+    /// representation and the prose-budget matrix toml-section
+    /// suffixes (e.g. `foundational` matches
+    /// `[picker.prose_budget.structure_foundational]`).
+    pub const fn wire(&self) -> &'static str {
+        match self {
+            Self::Foundational => "foundational",
+            Self::Incidental => "incidental",
+            Self::Configured => "configured",
+            Self::Marker => "marker",
+            Self::Lifecycle => "lifecycle",
+            Self::FreeFn => "free_fn",
+            Self::Macro => "macro",
+        }
+    }
+
+    /// What: parse a wire-form sub_form string back to a `SubForm`.
+    /// Returns `None` on an unknown token.
+    ///
+    /// Why: pattern_metrics.json persists sub_form as its wire form;
+    /// emit-time consumers read pattern_metrics as
+    /// `serde_json::Value` (so the field is `Option<&str>`); this
+    /// helper round-trips back to the typed enum for the matrix
+    /// lookup.
+    ///
+    /// Where: called by
+    /// `crate::emit::instance::sub_form_for_pattern` when reading
+    /// each pattern's classified sub_form from the fingerprint.
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "foundational" => Some(Self::Foundational),
+            "incidental" => Some(Self::Incidental),
+            "configured" => Some(Self::Configured),
+            "marker" => Some(Self::Marker),
+            "lifecycle" => Some(Self::Lifecycle),
+            "free_fn" => Some(Self::FreeFn),
+            "macro" => Some(Self::Macro),
+            _ => None,
+        }
+    }
+
+    /// What: `true` if this sub-form is meaningful for `group`,
+    /// `false` if the (group, sub_form) pair is structurally invalid.
+    /// `Foundational` / `Incidental` apply to `Structure`;
+    /// `Configured` to `Derives`; `Marker` to both `Derives` and
+    /// `Traits`; `Lifecycle` to `Traits`; `FreeFn` / `Macro` to
+    /// `Utilities`. Other group + sub_form combinations are invalid.
+    ///
+    /// Why: the classifier should never emit a (group, sub_form) pair
+    /// outside the validity table; the predicate lets debug
+    /// assertions catch classifier bugs before they hit the matrix
+    /// lookup.
+    ///
+    /// Where: planned use is debug assertions in
+    /// `pattern_metrics::translate_to_group_keys` and in
+    /// `ProseBudgetMatrix::budget_for` to fall back to a safe default
+    /// rather than panicking.
+    pub const fn valid_for(&self, group: PickGroup) -> bool {
+        match self {
+            Self::Foundational | Self::Incidental => matches!(group, PickGroup::Structure),
+            Self::Configured => matches!(group, PickGroup::Derives),
+            Self::Marker => matches!(group, PickGroup::Derives | PickGroup::Traits),
+            Self::Lifecycle => matches!(group, PickGroup::Traits),
+            Self::FreeFn | Self::Macro => matches!(group, PickGroup::Utilities),
+        }
+    }
+}
+
 /// What: the seven semantic groups partitioning the item kinds the
 /// picker considers. Carry-having groups (`Traits`, `TraitFunctions`,
 /// `Structure`, `ImplementationFunctions`, `Derives`) surface
@@ -127,6 +230,30 @@ impl PickGroup {
             Self::Derives => "derives",
             Self::Utilities => "utilities",
             Self::Globals => "globals",
+        }
+    }
+
+    /// What: parse a wire-form group prefix back to a `PickGroup`.
+    /// Returns `None` on an unknown prefix.
+    ///
+    /// Why: emit-time consumers (`crate::emit::instance::candidate_instances`,
+    /// `crate::emit::orientation`) receive each pick as a
+    /// `<group_wire>:<name>` string and need the typed group back
+    /// to dispatch matrix lookups + per-group rendering.
+    ///
+    /// Where: called when splitting each pick's string key into
+    /// `(group, name)`; the name remainder feeds the instance
+    /// lookup and the group feeds the prose-budget matrix.
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "traits" => Some(Self::Traits),
+            "trait_functions" => Some(Self::TraitFunctions),
+            "structure" => Some(Self::Structure),
+            "implementation_functions" => Some(Self::ImplementationFunctions),
+            "derives" => Some(Self::Derives),
+            "utilities" => Some(Self::Utilities),
+            "globals" => Some(Self::Globals),
+            _ => None,
         }
     }
 }
@@ -396,6 +523,63 @@ mod tests {
         assert_eq!(p2.to_string(), "implementation_functions:render");
         let p3 = Pattern::new(PickGroup::TraitFunctions, "poll");
         assert_eq!(p3.to_string(), "trait_functions:poll");
+    }
+
+    #[test]
+    fn subform_wire_round_trip() {
+        for sf in [
+            SubForm::Foundational,
+            SubForm::Incidental,
+            SubForm::Configured,
+            SubForm::Marker,
+            SubForm::Lifecycle,
+            SubForm::FreeFn,
+            SubForm::Macro,
+        ] {
+            let json = serde_json::to_string(&sf).expect("serialize");
+            let parsed: SubForm = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(sf, parsed);
+            assert_eq!(json.trim_matches('"'), sf.wire());
+        }
+    }
+
+    #[test]
+    fn subform_valid_for_partition() {
+        assert!(SubForm::Foundational.valid_for(PickGroup::Structure));
+        assert!(SubForm::Incidental.valid_for(PickGroup::Structure));
+        assert!(!SubForm::Foundational.valid_for(PickGroup::Traits));
+        assert!(SubForm::Configured.valid_for(PickGroup::Derives));
+        assert!(!SubForm::Configured.valid_for(PickGroup::Traits));
+        assert!(SubForm::Marker.valid_for(PickGroup::Derives));
+        assert!(SubForm::Marker.valid_for(PickGroup::Traits));
+        assert!(!SubForm::Marker.valid_for(PickGroup::Structure));
+        assert!(SubForm::Lifecycle.valid_for(PickGroup::Traits));
+        assert!(!SubForm::Lifecycle.valid_for(PickGroup::Derives));
+        assert!(SubForm::FreeFn.valid_for(PickGroup::Utilities));
+        assert!(SubForm::Macro.valid_for(PickGroup::Utilities));
+        assert!(!SubForm::FreeFn.valid_for(PickGroup::Structure));
+        for g in [
+            PickGroup::ImplementationFunctions,
+            PickGroup::TraitFunctions,
+            PickGroup::Globals,
+        ] {
+            for sf in [
+                SubForm::Foundational,
+                SubForm::Incidental,
+                SubForm::Configured,
+                SubForm::Marker,
+                SubForm::Lifecycle,
+                SubForm::FreeFn,
+                SubForm::Macro,
+            ] {
+                assert!(
+                    !sf.valid_for(g),
+                    "{:?} should not be valid for {:?}",
+                    sf,
+                    g
+                );
+            }
+        }
     }
 
     #[test]

@@ -1,14 +1,17 @@
 use crate::*;
 
 /// What: one enriched picker entry - pattern + per-set score (count or
-/// float) + the seed instance dict. The pattern is the full
-/// `kind:name` string; the orientation composer renders the pattern
-/// verbatim and the instance is the structurally-followable seed.
+/// float) + the seed instance dict + R4 prose budget hint + classified
+/// sub-form. The pattern is the full `group:name` string; the
+/// orientation composer renders the pattern verbatim and the instance
+/// is the structurally-followable seed.
 ///
 /// Why: emit.py's `candidate_instances` enriches each picker set entry
 /// with a seed instance the agent can open; the S5 sub-sections in
-/// orientation.md render bullets shaped `kind:name - <score> - seed
-/// <span>` from this struct.
+/// orientation.md render bullets shaped `group:name - <score> - seed
+/// <span> - budget N [(sub_form)]` from this struct. R4 adds the
+/// budget hint so the kp pipeline Stage C drafting subagent sees the
+/// per-pick char target inline alongside the pattern + seed.
 ///
 /// Where: produced by `crate::emit::instance::candidate_instances`;
 /// consumed by `crate::emit::orientation::render_orientation`.
@@ -17,6 +20,8 @@ pub struct EnrichedEntry {
     pub pattern: String,
     pub count: f64,
     pub instance: serde_json::Value,
+    pub budget_hint: usize,
+    pub sub_form: Option<SubForm>,
 }
 
 /// What: full output of `candidate_instances` - the six picker sets
@@ -471,48 +476,39 @@ pub fn candidate_instances(
     }
     let sig = compute_significance_sets(fp, facts, &per_crate_sloc, top_n_workspace, calibration);
 
-    let enrich_workspace = |pattern_map: &indexmap::IndexMap<String, f64>|
+    let pattern_metrics = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    let enrich_workspace = |pattern_map: &indexmap::IndexMap<String, f64>, set: PickSet|
         -> indexmap::IndexMap<String, EnrichedEntry>
     {
         let mut out: indexmap::IndexMap<String, EnrichedEntry> = indexmap::IndexMap::new();
         for (pattern, count) in pattern_map.iter() {
-            let (kind, name) = match pattern.split_once(':') {
-                Some((k, n)) => (k.to_string(), n.to_string()),
-                None => (pattern.clone(), String::new()),
-            };
-            let (inst, _) = instance_for_kind(&kind, &name, facts);
-            if let Some(instance) = inst {
-                out.insert(
-                    pattern.clone(),
-                    EnrichedEntry {
-                        pattern: pattern.clone(),
-                        count: *count,
-                        instance,
-                    },
-                );
+            if let Some(entry) =
+                build_enriched_entry(pattern, *count, set, facts, &pattern_metrics, calibration)
+            {
+                out.insert(pattern.clone(), entry);
             }
         }
         out
     };
-    let enrich_workspace_int = |pattern_map: &indexmap::IndexMap<String, usize>|
+    let enrich_workspace_int = |pattern_map: &indexmap::IndexMap<String, usize>, set: PickSet|
         -> indexmap::IndexMap<String, EnrichedEntry>
     {
         let mut out: indexmap::IndexMap<String, EnrichedEntry> = indexmap::IndexMap::new();
         for (pattern, count) in pattern_map.iter() {
-            let (kind, name) = match pattern.split_once(':') {
-                Some((k, n)) => (k.to_string(), n.to_string()),
-                None => (pattern.clone(), String::new()),
-            };
-            let (inst, _) = instance_for_kind(&kind, &name, facts);
-            if let Some(instance) = inst {
-                out.insert(
-                    pattern.clone(),
-                    EnrichedEntry {
-                        pattern: pattern.clone(),
-                        count: *count as f64,
-                        instance,
-                    },
-                );
+            if let Some(entry) = build_enriched_entry(
+                pattern,
+                *count as f64,
+                set,
+                facts,
+                &pattern_metrics,
+                calibration,
+            ) {
+                out.insert(pattern.clone(), entry);
             }
         }
         out
@@ -523,25 +519,71 @@ pub fn candidate_instances(
         indexmap::IndexMap<String, EnrichedEntry>,
     > = indexmap::IndexMap::new();
     for (crate_name, s) in sig.significant_intra_crate_per_crate.iter() {
-        intra_crate_per_crate.insert(crate_name.clone(), enrich_workspace_int(s));
+        intra_crate_per_crate
+            .insert(crate_name.clone(), enrich_workspace_int(s, PickSet::IntraCrate));
     }
     let mut inner_crate_per_crate: indexmap::IndexMap<
         String,
         indexmap::IndexMap<String, EnrichedEntry>,
     > = indexmap::IndexMap::new();
     for (crate_name, s) in sig.significant_inner_crate_per_crate.iter() {
-        inner_crate_per_crate.insert(crate_name.clone(), enrich_workspace_int(s));
+        inner_crate_per_crate
+            .insert(crate_name.clone(), enrich_workspace_int(s, PickSet::InnerCrate));
     }
 
     EnrichedSets {
         intra_crate_per_crate,
         inner_crate_per_crate,
-        inter_crate: enrich_workspace_int(&sig.significant_inter_crate),
-        public: enrich_workspace(&sig.significant_public),
-        architecture: enrich_workspace(&sig.significant_architecture),
-        clique: enrich_workspace(&sig.significant_clique),
+        inter_crate: enrich_workspace_int(&sig.significant_inter_crate, PickSet::InterCrate),
+        public: enrich_workspace(&sig.significant_public, PickSet::Public),
+        architecture: enrich_workspace(&sig.significant_architecture, PickSet::Architecture),
+        clique: enrich_workspace(&sig.significant_clique, PickSet::Clique),
         top_n_intra_crate_per_crate: sig.top_n_intra_crate_per_crate,
         top_n_inner_per_crate: sig.top_n_inner_per_crate,
         top_n_workspace,
     }
+}
+
+/// What: build one `EnrichedEntry` for a pick. Looks up the seed
+/// instance from facts, reads the pre-classified `sub_form` from
+/// `pattern_metrics`, and computes the prose budget hint via the
+/// calibration matrix.
+///
+/// Why: factored out of `candidate_instances` so the enrichment is
+/// reusable across all six sets without duplicating the
+/// instance-lookup + matrix-lookup wiring per closure. Returns
+/// `None` when no seed instance is available (the pick is dropped
+/// from the enriched output).
+///
+/// Where: called by the `enrich_workspace` + `enrich_workspace_int`
+/// closures inside `candidate_instances` for each pattern of each
+/// significance set.
+fn build_enriched_entry(
+    pattern: &str,
+    count: f64,
+    set: PickSet,
+    facts: &serde_json::Value,
+    pattern_metrics: &serde_json::Map<String, serde_json::Value>,
+    calibration: &Calibration,
+) -> Option<EnrichedEntry> {
+    let (group_wire, name) = pattern.split_once(':')?;
+    let (inst, _) = instance_for_kind(group_wire, name, facts);
+    let instance = inst?;
+    let group = PickGroup::from_wire(group_wire);
+    let sub_form = pattern_metrics
+        .get(pattern)
+        .and_then(|m| m.get("sub_form"))
+        .and_then(|v| v.as_str())
+        .and_then(SubForm::from_wire);
+    let budget_hint = match group {
+        Some(g) => calibration.picker.prose_budget.budget_for(g, sub_form, set),
+        None => 0,
+    };
+    Some(EnrichedEntry {
+        pattern: pattern.to_string(),
+        count,
+        instance,
+        budget_hint,
+        sub_form,
+    })
 }

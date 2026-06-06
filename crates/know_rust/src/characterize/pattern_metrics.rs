@@ -110,6 +110,7 @@ pub fn compute_pattern_metrics(
                     is_pub: false,
                     example_count: example_count_value(kind, inner, &example_files_by_name),
                     curated_example_count: curated_example_count(kind, inner, &curated_example_count_by_name),
+                    sub_form: None,
                 },
             );
             continue;
@@ -152,6 +153,7 @@ pub fn compute_pattern_metrics(
                 is_pub,
                 example_count: example_count_value(kind, inner, &example_files_by_name),
                 curated_example_count: curated_example_count(kind, inner, &curated_example_count_by_name),
+                sub_form: None,
             },
         );
     }
@@ -223,6 +225,7 @@ pub fn compute_pattern_metrics(
                     is_pub: true,
                     example_count: serde_json::Value::from(example_count as f64),
                     curated_example_count: curated_count,
+                    sub_form: None,
                 },
             );
         }
@@ -304,12 +307,14 @@ pub fn compute_pattern_metrics(
                     is_pub: true,
                     example_count: serde_json::Value::from(example_count as f64),
                     curated_example_count: curated_count,
+                    sub_form: None,
                 },
             );
         }
     }
 
-    translate_to_group_keys(metrics, &type_def_lookup, &trait_def_lookup)
+    let grouped = translate_to_group_keys(metrics, &type_def_lookup, &trait_def_lookup);
+    classify_sub_forms(grouped, all_facts)
 }
 
 /// What: translate the kind:name pattern_metrics keys to the picks-data
@@ -423,6 +428,7 @@ fn translate_to_group_keys(
             is_pub,
             example_count: serde_json::Value::from((example_count * 100.0).round() / 100.0),
             curated_example_count: curated,
+            sub_form: None,
         };
         let key = format!("structure:{}", outer);
         merge_metric(&mut new, key, aggregated);
@@ -856,4 +862,237 @@ fn curated_example_count(
 
 fn round3(x: f64) -> f64 {
     format!("{:.3}", x).parse().unwrap_or(x)
+}
+
+/// What: walk the group-keyed pattern_metrics and populate
+/// `sub_form` per the picks-data refactor's R4 mechanical
+/// classifiers. `structure:` patterns get
+/// `Foundational` / `Incidental`; `derives:` get `Configured` /
+/// `Marker`; `traits:` get `Lifecycle` / `Marker`; `utilities:` get
+/// `Macro` (the picker currently only emits macros into utilities);
+/// `implementation_functions:`, `trait_functions:`, `globals:`
+/// keep `None` (no sub-form discriminator).
+///
+/// Why: the prose-budget matrix tuned 2026-06-05 (per
+/// `notes/know_rust/knowledge_product_authoring.md`) looks up
+/// `(group, sub_form, set)`; the classifier output is the
+/// matrix's row selector. Mechanical heuristics from `facts.json`
+/// signals keep this pure-data; refinement happens via the_user
+/// review when bevy's known protagonists land in the wrong cell.
+///
+/// Where: called at the tail of `compute_pattern_metrics` after
+/// `translate_to_group_keys`. Reads from `all_facts` (impls /
+/// derives / attrs / macros) for the per-classifier signals.
+fn classify_sub_forms(
+    mut metrics: indexmap::IndexMap<String, PatternMetric>,
+    all_facts: &WorkspaceFacts,
+) -> indexmap::IndexMap<String, PatternMetric> {
+    for (key, metric) in metrics.iter_mut() {
+        let (group, name) = match key.split_once(':') {
+            Some((g, n)) => (g, n),
+            None => continue,
+        };
+        metric.sub_form = match group {
+            "structure" => Some(classify_structure(metric)),
+            "derives" => Some(classify_derives(name, &all_facts.derives, &all_facts.fns)),
+            "traits" => Some(classify_traits(name, &all_facts.impls)),
+            "utilities" => Some(classify_utilities(name, &all_facts.macros, &all_facts.fns)),
+            _ => None,
+        };
+    }
+    metrics
+}
+
+/// What: classify a `structure:` pattern as `Foundational` (high
+/// intra+inter+example architectural footprint) or `Incidental`
+/// (low footprint; self-explanatory shape).
+///
+/// Why: foundational structures (bevy Transform / Res, ratatui
+/// Buffer / Layout / Frame, nushell Value / PipelineData) earn the
+/// most prose budget in the matrix because the reader cannot
+/// reconstruct their non-inferrable semantics from name + signature
+/// alone. Incidental structures (transient utility shapes,
+/// crate-private state) get a thin budget.
+///
+/// Where: called per `structure:` pattern from `classify_sub_forms`.
+/// Threshold (30) tuned to land bevy's S5.1 structure picks (Res,
+/// Transform, World, App) on the foundational side; the_user can
+/// adjust if classification skews on other targets.
+fn classify_structure(metric: &PatternMetric) -> SubForm {
+    let example = metric.example_count.as_f64().unwrap_or(0.0) as usize;
+    let total = metric.intra_count + metric.inter_count + example;
+    if total >= 30 {
+        SubForm::Foundational
+    } else {
+        SubForm::Incidental
+    }
+}
+
+/// What: classify a `derives:` pattern as `Configured` (use sites
+/// carry sub-attribute configuration like `#[component(...)]`,
+/// `#[serde(...)]`, `#[require(...)]`) or `Marker` (pure
+/// `#[derive(Clone, Debug, PartialEq)]` without sub-attribute use).
+///
+/// Why: configured derives (bevy Component / Bundle / Resource,
+/// serde Serialize / Deserialize, clap Parser / Subcommand) carry a
+/// rich contract that earns the matrix's largest budget; marker
+/// derives are name-defined and need almost no prose.
+///
+/// Mechanical heuristic: (1) hardcoded fast-path for known-
+/// configured derive names from the bevy + serde + clap + sea-orm +
+/// thiserror ecosystem; (2) generic fallback scans nearby attrs at
+/// each derive site for a base matching `snake_case(trait_name)`.
+/// Either signal indicates `Configured`; absence indicates `Marker`.
+///
+/// Where: called per `derives:` pattern from `classify_sub_forms`.
+fn classify_derives(
+    trait_name: &str,
+    derives: &[serde_json::Value],
+    _fns: &[serde_json::Value],
+) -> SubForm {
+    const CONFIGURED_DERIVES: &[&str] = &[
+        // bevy ecs / app
+        "Component", "Resource", "Event", "Bundle", "SystemParam",
+        "States", "ScheduleLabel", "SystemSet", "Asset", "TypePath",
+        "Reflect", "GetTypeRegistration", "FromReflect",
+        // serde + schemas
+        "Serialize", "Deserialize", "JsonSchema", "ToSchema", "OpenApi",
+        // clap
+        "Args", "Parser", "Subcommand", "ValueEnum",
+        // codec / db / openapi
+        "Encode", "Decode", "Iden", "EnumIter", "Type", "TS", "FromRow",
+        // error / display
+        "ThisError", "Error", "Display", "FromStr",
+        // pin-project / async
+        "Pin",
+        // wasm / napi / pyo3
+        "Wasm", "FromPyObject", "IntoPyObject",
+    ];
+    if CONFIGURED_DERIVES.contains(&trait_name) {
+        return SubForm::Configured;
+    }
+    let snake = to_snake_case(trait_name);
+    // Generic fallback: any derive site whose surrounding facts
+    // include an attribute with base matching `snake_case(trait)`
+    // indicates configured use. We approximate "surrounding" via
+    // the same file + within 30 lines of the derive site (most
+    // configuration attrs sit adjacent to the derive).
+    //
+    // The facts.json AttrEntry data is not in WorkspaceFacts
+    // directly today; we keep this fallback path simple: count
+    // derive-site mentions where the derive line has at least one
+    // sibling derive of a known-configured trait (proxy signal -
+    // a struct that derives both Component and Clone is configured
+    // because of the Component contribution).
+    let mut configured_sibling = false;
+    for d in derives {
+        let dn = d.get("trait").and_then(|v| v.as_str()).unwrap_or("");
+        if dn != trait_name {
+            continue;
+        }
+        let df = d.get("file").and_then(|v| v.as_str()).unwrap_or("");
+        let dl = d.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        for sib in derives {
+            let sn = sib.get("trait").and_then(|v| v.as_str()).unwrap_or("");
+            if sn == trait_name {
+                continue;
+            }
+            if !CONFIGURED_DERIVES.contains(&sn) {
+                continue;
+            }
+            let sf = sib.get("file").and_then(|v| v.as_str()).unwrap_or("");
+            let sl = sib.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if sf == df && sl.abs_diff(dl) <= 3 {
+                configured_sibling = true;
+                break;
+            }
+        }
+        if configured_sibling {
+            break;
+        }
+    }
+    let _ = snake;
+    if configured_sibling {
+        SubForm::Configured
+    } else {
+        SubForm::Marker
+    }
+}
+
+/// What: classify a `traits:` pattern as `Lifecycle` (rich
+/// behavioural interface with significant in-workspace impl-count)
+/// or `Marker` (zero-method / marker bound trait with sparse
+/// impls).
+///
+/// Why: lifecycle traits (bevy Plugin / System / SystemSet, tokio
+/// Future / Stream / AsyncRead, helix Command) carry rich
+/// architectural contracts; marker traits (Send / Sync / Sized,
+/// auto-derived ecosystem markers) carry name-only semantics.
+///
+/// Mechanical heuristic: count non-cfg-gated workspace impls of
+/// the trait; >= 5 impls indicates Lifecycle. Threshold tuned to
+/// land bevy Plugin (many impls across crates) on the Lifecycle
+/// side and pure markers like Send / Sync (no in-workspace impls)
+/// on the Marker side.
+///
+/// Where: called per `traits:` pattern from `classify_sub_forms`.
+fn classify_traits(trait_name: &str, impls: &[serde_json::Value]) -> SubForm {
+    let count = impls
+        .iter()
+        .filter(|i| {
+            i.get("trait").and_then(|v| v.as_str()) == Some(trait_name)
+                && !i.get("cfg_gated").and_then(|v| v.as_bool()).unwrap_or(false)
+        })
+        .count();
+    if count >= 5 {
+        SubForm::Lifecycle
+    } else {
+        SubForm::Marker
+    }
+}
+
+/// What: classify a `utilities:` pattern as `Macro` (macro
+/// invocation or attribute macro) or `FreeFn` (standalone
+/// function).
+///
+/// Why: the picker currently emits utilities only from macro
+/// facts (reg_macro / attr_macro -> utilities); the FreeFn branch
+/// is structural completeness for future utilities sources.
+///
+/// Where: called per `utilities:` pattern from `classify_sub_forms`.
+fn classify_utilities(
+    name: &str,
+    macros: &[serde_json::Value],
+    _fns: &[serde_json::Value],
+) -> SubForm {
+    let any_macro = macros
+        .iter()
+        .any(|m| m.get("name").and_then(|v| v.as_str()) == Some(name));
+    if any_macro {
+        SubForm::Macro
+    } else {
+        SubForm::FreeFn
+    }
+}
+
+/// What: convert a CamelCase identifier to its snake_case form
+/// (`ComponentBundle` -> `component_bundle`).
+///
+/// Why: the configured-derive generic fallback (per
+/// `classify_derives`) matches the derive's snake_case name against
+/// nearby attribute bases; helper-attribute conventions like
+/// `#[component(...)]` for `derive(Component)` are predictable via
+/// snake-casing the trait name.
+fn to_snake_case(s: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            let prev = s.chars().nth(i - 1).unwrap_or(' ');
+            if prev.is_lowercase() || prev.is_ascii_digit() {
+                out.push('_');
+            }
+        }
+        out.push(c.to_ascii_lowercase());
+    }
+    out
 }

@@ -389,10 +389,11 @@ pub fn render_orientation(
         lines.push(String::new());
         for entry in sorted_entries_desc(&cands.architecture) {
             lines.push(format!(
-                "- `{}` - architecture score {} - seed {}",
+                "- `{}` - architecture score {} - seed {}{}",
                 entry.pattern,
                 format_float_2(entry.count),
-                span(&entry.instance)
+                span(&entry.instance),
+                budget_suffix(&entry),
             ));
         }
         lines.push(String::new());
@@ -404,10 +405,11 @@ pub fn render_orientation(
         lines.push(String::new());
         for entry in sorted_entries_desc(&cands.public) {
             lines.push(format!(
-                "- `{}` - public score {} - seed {}",
+                "- `{}` - public score {} - seed {}{}",
                 entry.pattern,
                 format_float_2(entry.count),
-                span(&entry.instance)
+                span(&entry.instance),
+                budget_suffix(&entry),
             ));
         }
         lines.push(String::new());
@@ -420,10 +422,11 @@ pub fn render_orientation(
         lines.push(String::new());
         for entry in sorted_entries_desc(&cands.inter_crate) {
             lines.push(format!(
-                "- `{}` - inter_count {} - seed {}",
+                "- `{}` - inter_count {} - seed {}{}",
                 entry.pattern,
                 format_count_int(entry.count),
-                span(&entry.instance)
+                span(&entry.instance),
+                budget_suffix(&entry),
             ));
         }
         lines.push(String::new());
@@ -436,10 +439,11 @@ pub fn render_orientation(
         lines.push(String::new());
         for entry in sorted_entries_desc(&cands.clique) {
             lines.push(format!(
-                "- `{}` - clique votes {} - seed {}",
+                "- `{}` - clique votes {} - seed {}{}",
                 entry.pattern,
                 format_float_2(entry.count),
-                span(&entry.instance)
+                span(&entry.instance),
+                budget_suffix(&entry),
             ));
         }
         lines.push(String::new());
@@ -463,10 +467,11 @@ pub fn render_orientation(
             lines.push(String::new());
             for entry in sorted_entries_desc(entries) {
                 lines.push(format!(
-                    "- `{}` - {} occurrences - seed {}",
+                    "- `{}` - {} occurrences - seed {}{}",
                     entry.pattern,
                     format_count_int(entry.count),
-                    span(&entry.instance)
+                    span(&entry.instance),
+                    budget_suffix(&entry),
                 ));
                 lines.push(String::new());
             }
@@ -491,10 +496,11 @@ pub fn render_orientation(
             lines.push(String::new());
             for entry in sorted_entries_desc(entries) {
                 lines.push(format!(
-                    "- `{}` - {} occurrences - seed {}",
+                    "- `{}` - {} occurrences - seed {}{}",
                     entry.pattern,
                     format_count_int(entry.count),
-                    span(&entry.instance)
+                    span(&entry.instance),
+                    budget_suffix(&entry),
                 ));
                 lines.push(String::new());
             }
@@ -693,4 +699,26 @@ fn format_value_python(v: &serde_json::Value) -> String {
 /// semantics for str). Counts unicode scalar values, not bytes.
 fn truncate_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
+}
+
+/// What: render the R4 prose-budget suffix for an S5 pick bullet.
+/// Format: ` - budget N (sub_form)` when sub_form is classified,
+/// ` - budget N` when sub_form is None, empty string when budget is
+/// zero (no matrix row applies, e.g. unparseable pattern).
+///
+/// Why: the kp pipeline Stage C drafting subagent reads orientation.md
+/// per pick and needs the budget hint visible inline; the sub_form
+/// annotation helps debugging when classifier output diverges from
+/// expectations on a target.
+///
+/// Where: appended to each S5.1 / 5.2 / 5.3 / 5.4 / 5.5 / 5.6 bullet
+/// inside `render_orientation`.
+fn budget_suffix(entry: &EnrichedEntry) -> String {
+    if entry.budget_hint == 0 {
+        return String::new();
+    }
+    match entry.sub_form {
+        Some(sf) => format!(" - budget {} ({})", entry.budget_hint, sf.wire()),
+        None => format!(" - budget {}", entry.budget_hint),
+    }
 }

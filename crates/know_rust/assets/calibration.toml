@@ -275,3 +275,52 @@ inter_crate = 70
 clique = 70
 intra_crate = 40
 inner_crate = 60
+
+# R4b cap matrix - per-(PickGroup, PickSet) top-N cap via
+# multiplicative inheritance from the base SLOC-scaled cap formula
+# (`cap = max(floor, round(floor + multiplier * log2(sloc / divisor)))`):
+#
+#   cap[group][set] = max(floor, round(base(sloc) * group_mult[group]
+#                                                 * set_mult[set]))
+#
+# Replaces the single global top-N cap with per-cell tuning.
+# Multiplicative inheritance (13 multipliers: 7 group + 6 set) is
+# preferred over independent grid axes (42 stored cell values) per
+# the_user 2026-06-05 direction in
+# `notes/know_rust/working/05_calibration.md`.
+#
+# Calibration objective per `mem:know-rust-kp-output-token-target`:
+# big-repo low-end target = 200K tokens (~20% of 1M agent context);
+# hard ceiling = 300K (~30%). Bevy at the prior single-cap formula
+# yields ~143K (~14%) - UNDER the floor; matrix has headroom.
+#
+# Tuned weights (2026-06-07 the_user-locked at bevy 221K = 22% on 1M
+# agent context, in the 200-300K target band). Set widening hierarchy:
+#   architecture < public = inter_crate = clique < intra_crate < inner_crate
+# Rationale: intersection-limited sets (architecture especially) carry
+# few patterns natively so wider weights don't add picks; per-crate
+# sets (intra / inner) have many patterns across the workspace's
+# crates, so widening helps more. inner_crate is the widest at 5.0
+# because per-crate own-architecture is the bulkiest signal pool.
+#
+# Group multipliers: traits + structure (architectural backbone) at
+# 1.5; derives at 1.2; functions baseline at 1.0; utilities + globals
+# lifted to 1.5 / 1.2 (the initial 0.8 / 0.5 trim suppressed too much
+# of bevy's contribution under R4a prose budgets).
+
+[picker.cap_matrix.set]
+architecture = 2.5
+public = 3.5
+inter_crate = 3.5
+clique = 3.5
+intra_crate = 4.0
+inner_crate = 5.0
+
+[picker.cap_matrix.group]
+traits = 1.5
+trait_functions = 1.0
+structure = 1.5
+implementation_functions = 1.0
+derives = 1.2
+utilities = 1.5
+globals = 1.2

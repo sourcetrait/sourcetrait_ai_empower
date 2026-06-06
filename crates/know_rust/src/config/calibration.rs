@@ -61,6 +61,7 @@ pub struct PickerConfig {
     pub cluster: PickerClusterConfig,
     pub classifier: ClassifierConfig,
     pub prose_budget: ProseBudgetMatrix,
+    pub cap_matrix: CapMatrix,
 }
 
 /// What: R4a form sub-classifier configuration. Holds the threshold
@@ -291,6 +292,140 @@ impl ProseBudgetMatrix {
     }
 }
 
+/// What: per-set cap multipliers for the R4b cap matrix. Multiplies
+/// the base SLOC-scaled cap to size the picked pool per significance
+/// set (architecture / public / inter_crate / clique / intra_crate /
+/// inner_crate).
+///
+/// Why: replaces the single global top-N cap with per-cell tuning.
+/// Cell weights live in calibration.toml
+/// `[picker.cap_matrix.set]`; the_user adjusts in calibration.toml
+/// without recompile.
+///
+/// Where: held inside `CapMatrix::set`; consumed by `CapMatrix::cap_for`
+/// when applying the matrix to a (group, set, base_cap) triple.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CapMatrixSetMultipliers {
+    pub architecture: f64,
+    pub public: f64,
+    pub inter_crate: f64,
+    pub clique: f64,
+    pub intra_crate: f64,
+    pub inner_crate: f64,
+}
+
+impl CapMatrixSetMultipliers {
+    /// What: return the multiplier for the given pick set.
+    ///
+    /// Where: called by `CapMatrix::cap_for`.
+    pub fn for_set(&self, set: PickSet) -> f64 {
+        match set {
+            PickSet::Architecture => self.architecture,
+            PickSet::Public => self.public,
+            PickSet::InterCrate => self.inter_crate,
+            PickSet::Clique => self.clique,
+            PickSet::IntraCrate => self.intra_crate,
+            PickSet::InnerCrate => self.inner_crate,
+        }
+    }
+}
+
+/// What: per-group cap multipliers for the R4b cap matrix. Multiplies
+/// the base SLOC-scaled cap to size the picked pool per pick group
+/// (traits / trait_functions / structure / implementation_functions /
+/// derives / utilities / globals).
+///
+/// Why: replaces the group-blind single cap with per-group cell
+/// weights. Cell weights live in calibration.toml
+/// `[picker.cap_matrix.group]`; the_user adjusts without recompile.
+///
+/// Where: held inside `CapMatrix::group`; consumed by
+/// `CapMatrix::cap_for`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CapMatrixGroupMultipliers {
+    pub traits: f64,
+    pub trait_functions: f64,
+    pub structure: f64,
+    pub implementation_functions: f64,
+    pub derives: f64,
+    pub utilities: f64,
+    pub globals: f64,
+}
+
+impl CapMatrixGroupMultipliers {
+    /// What: return the multiplier for the given pick group.
+    ///
+    /// Where: called by `CapMatrix::cap_for`.
+    pub fn for_group(&self, group: PickGroup) -> f64 {
+        match group {
+            PickGroup::Traits => self.traits,
+            PickGroup::TraitFunctions => self.trait_functions,
+            PickGroup::Structure => self.structure,
+            PickGroup::ImplementationFunctions => self.implementation_functions,
+            PickGroup::Derives => self.derives,
+            PickGroup::Utilities => self.utilities,
+            PickGroup::Globals => self.globals,
+        }
+    }
+}
+
+/// What: R4b top-N cap matrix - per-(PickGroup, PickSet) cap derived
+/// from a base SLOC-scaled cap via multiplicative inheritance:
+/// `cap[g][s] = max(floor, round(base * group_mult[g] * set_mult[s]))`.
+///
+/// Why: replaces the single global top-N cap formula with cell-
+/// specific tuning. Lets the picker grow public / inter_crate /
+/// clique / inner_crate sets to push big-repo kp output toward the
+/// 200-300K token target per `mem:know-rust-kp-output-token-target`
+/// without lifting the architecture set or smaller workspaces above
+/// their natural cap. Multiplicative inheritance (13 stored
+/// multipliers: 7 group + 6 set) preferred over independent grid
+/// axes (42 stored cell values) per the_user 2026-06-05 direction in
+/// `notes/know_rust/working/05_calibration.md`.
+///
+/// Where: loaded from calibration.toml `[picker.cap_matrix.*]` via
+/// serde; consumed by per-(group, set) cap computation in
+/// `crate::emit::picker::compute_significance_sets` and
+/// `per_crate_picks` (R4b phase 2).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CapMatrix {
+    pub set: CapMatrixSetMultipliers,
+    pub group: CapMatrixGroupMultipliers,
+}
+
+impl CapMatrix {
+    /// What: compute the cap for the given (group, set, base_cap)
+    /// triple. `base_cap` is the existing SLOC-scaled formula's
+    /// output for the appropriate scope (workspace SLOC for
+    /// workspace-wide sets; per-crate SLOC for per-crate sets).
+    /// `floor` is the calibration's minimum cap.
+    ///
+    /// Math:
+    ///   scaled = base_cap * group_mult[group] * set_mult[set]
+    ///   cap    = max(floor, round(scaled))
+    ///
+    /// Why: callers compute the base cap once per scope then apply
+    /// the matrix per (group, set) bucket. The floor enforces a
+    /// minimum sample size even when multipliers shrink the cap
+    /// below the global floor.
+    ///
+    /// Where: called by `crate::emit::picker` per (group, set) when
+    /// applying the cap to a scored pattern list (R4b phase 2).
+    pub fn cap_for(
+        &self,
+        group: PickGroup,
+        set: PickSet,
+        base_cap: usize,
+        floor: usize,
+    ) -> usize {
+        let scaled = (base_cap as f64)
+            * self.group.for_group(group)
+            * self.set.for_set(set);
+        let rounded = scaled.round() as usize;
+        rounded.max(floor)
+    }
+}
+
 const DEFAULT_CALIBRATION_TOML: &str = include_str!("../../assets/calibration.toml");
 
 impl Default for Calibration {
@@ -457,5 +592,140 @@ mod tests {
         assert!(lifecycle >= foundational);
         assert!(foundational > marker_der);
         assert!(foundational > globals);
+    }
+
+    #[test]
+    fn cap_matrix_default_loads_with_tuned_weights() {
+        // Pins the embedded calibration.toml's R4b cap matrix to the
+        // 2026-06-07 the_user-tuned weights so unintended drift in
+        // the toml fails fast. Set widening hierarchy:
+        //   architecture < public = inter_crate = clique < intra_crate < inner_crate
+        // (intersection-limited sets at smaller weights; per-crate
+        // sets lifted higher; inner_crate widest as per-crate own
+        // architecture is the bulkiest signal pool.)
+        // Group multipliers: traits + structure (architectural
+        // backbone) at 1.5; derives at 1.2; functions baseline at
+        // 1.0; utilities + globals lifted to 1.5 / 1.2 (the original
+        // 0.8 / 0.5 trim suppressed too much of bevy's contribution).
+        let cal = Calibration::default();
+        let cm = &cal.picker.cap_matrix;
+        assert_eq!(cm.set.for_set(PickSet::Architecture), 2.5);
+        assert_eq!(cm.set.for_set(PickSet::Public), 3.5);
+        assert_eq!(cm.set.for_set(PickSet::InterCrate), 3.5);
+        assert_eq!(cm.set.for_set(PickSet::Clique), 3.5);
+        assert_eq!(cm.set.for_set(PickSet::IntraCrate), 4.0);
+        assert_eq!(cm.set.for_set(PickSet::InnerCrate), 5.0);
+        assert_eq!(cm.group.for_group(PickGroup::Traits), 1.5);
+        assert_eq!(cm.group.for_group(PickGroup::Structure), 1.5);
+        assert_eq!(cm.group.for_group(PickGroup::Derives), 1.2);
+        assert_eq!(cm.group.for_group(PickGroup::ImplementationFunctions), 1.0);
+        assert_eq!(cm.group.for_group(PickGroup::TraitFunctions), 1.0);
+        assert_eq!(cm.group.for_group(PickGroup::Utilities), 1.5);
+        assert_eq!(cm.group.for_group(PickGroup::Globals), 1.2);
+    }
+
+    #[test]
+    fn cap_matrix_cap_for_multiplicative_math() {
+        // Verifies the matrix arithmetic:
+        //   cap = max(floor, round(base * group_mult * set_mult))
+        let cal = Calibration::default();
+        let cm = &cal.picker.cap_matrix;
+        let floor = cal.picker.top_n_floor;
+
+        // impl_fns (1.0) * Architecture (2.5): base 20 * 2.5 = 50.
+        assert_eq!(
+            cm.cap_for(PickGroup::ImplementationFunctions, PickSet::Architecture, 20, floor),
+            50,
+            "1.0 group * 2.5 set"
+        );
+
+        // Traits (1.5) * Architecture (2.5): 20 * 1.5 * 2.5 = 75.
+        assert_eq!(
+            cm.cap_for(PickGroup::Traits, PickSet::Architecture, 20, floor),
+            75,
+            "1.5 group * 2.5 set"
+        );
+
+        // Structure (1.5) * InterCrate (3.5): 20 * 1.5 * 3.5 = 105.
+        assert_eq!(
+            cm.cap_for(PickGroup::Structure, PickSet::InterCrate, 20, floor),
+            105,
+            "1.5 * 3.5 stacked"
+        );
+
+        // Derives (1.2) * Clique (3.5): 20 * 1.2 * 3.5 = 84.
+        assert_eq!(
+            cm.cap_for(PickGroup::Derives, PickSet::Clique, 20, floor),
+            84,
+            "1.2 * 3.5"
+        );
+
+        // Inner_crate widest (5.0). Globals (1.2) * Inner (5.0):
+        // 20 * 1.2 * 5.0 = 120.
+        assert_eq!(
+            cm.cap_for(PickGroup::Globals, PickSet::InnerCrate, 20, floor),
+            120,
+            "1.2 * 5.0 inner widest"
+        );
+
+        // Floor enforcement: base 2 * impl_fns 1.0 * Architecture 2.5
+        // = 5; floor (7) wins.
+        assert_eq!(
+            cm.cap_for(PickGroup::ImplementationFunctions, PickSet::Architecture, 2, floor),
+            7,
+            "floor enforced when scaled below floor"
+        );
+
+        // Zero base hits floor regardless of multipliers.
+        assert_eq!(
+            cm.cap_for(PickGroup::Traits, PickSet::Architecture, 0, floor),
+            7,
+            "zero base hits floor"
+        );
+    }
+
+    #[test]
+    fn cap_matrix_set_widening_hierarchy() {
+        // Design intent: set widening hierarchy is
+        //   architecture < public = inter_crate = clique < intra_crate < inner_crate
+        // Architecture is the most intersection-limited (public AND
+        // inter), so its weight stays smallest. inner_crate is the
+        // per-crate own-architecture set with the most patterns
+        // available, gets the widest cap. intra_crate (per-crate
+        // consumption) sits between workspace-wide non-arch sets
+        // and inner.
+        let cal = Calibration::default();
+        let cm = &cal.picker.cap_matrix;
+        let floor = cal.picker.top_n_floor;
+        let base = 20;
+
+        for group in [
+            PickGroup::Traits,
+            PickGroup::Structure,
+            PickGroup::Derives,
+            PickGroup::ImplementationFunctions,
+        ] {
+            let arch = cm.cap_for(group, PickSet::Architecture, base, floor);
+            let public = cm.cap_for(group, PickSet::Public, base, floor);
+            let inter = cm.cap_for(group, PickSet::InterCrate, base, floor);
+            let clique = cm.cap_for(group, PickSet::Clique, base, floor);
+            let intra = cm.cap_for(group, PickSet::IntraCrate, base, floor);
+            let inner = cm.cap_for(group, PickSet::InnerCrate, base, floor);
+
+            // arch is the smallest cap (intersection-limited).
+            assert!(public >= arch, "{:?}: public {} < arch {}", group, public, arch);
+            assert!(inter >= arch, "{:?}: inter {} < arch {}", group, inter, arch);
+            assert!(clique >= arch, "{:?}: clique {} < arch {}", group, clique, arch);
+
+            // Workspace-wide non-arch sets share the same weight (3.5x).
+            assert_eq!(public, inter, "{:?}: public {} != inter {}", group, public, inter);
+            assert_eq!(inter, clique, "{:?}: inter {} != clique {}", group, inter, clique);
+
+            // intra_crate widens above the workspace-wide non-arch sets.
+            assert!(intra >= public, "{:?}: intra {} < public {}", group, intra, public);
+
+            // inner_crate is the widest (per-crate own architecture).
+            assert!(inner >= intra, "{:?}: inner {} < intra {}", group, inner, intra);
+        }
     }
 }

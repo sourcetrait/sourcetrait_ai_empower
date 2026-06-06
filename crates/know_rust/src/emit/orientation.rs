@@ -27,6 +27,13 @@ pub fn render_orientation(
     let sel = fp.get("selection").cloned().unwrap_or(serde_json::Value::Null);
     let vocab = core_vocabulary(fp, facts);
     let cands = candidate_instances(fp, facts, calibration);
+    let forecast_chars = cands.total_budget_chars();
+    let forecast_tokens = forecast_chars / 4;
+    eprintln!(
+        "[emit] kp forecast: {}K tokens ({}K chars; sum of budget_hints across surviving picks per R4b cap matrix)",
+        forecast_tokens / 1000,
+        forecast_chars / 1000,
+    );
     let seams = detected_seams(fp, facts);
 
     let mut lines: Vec<String> = Vec::new();
@@ -349,28 +356,24 @@ pub fn render_orientation(
 
     lines.push("## 5. Significance sets - the authoring templates".to_string());
     lines.push(String::new());
-    if per_crate_min == per_crate_max && per_crate_min == top_n_workspace {
-        lines.push(format!(
-            "Top {} per set. Each section below preserves its axis.",
-            top_n_workspace
-        ));
-    } else if per_crate_min == per_crate_max {
-        lines.push(format!(
-            "Top {} for workspace-wide sets (architecture / public / inter-crate); top {} per \
-             crate for intra-crate / inner-crate. SLOC-scaled per `max(7, round(7 + 2 * log2(\
-             SLOC / DIVISOR)))`. the_user 2026-06-04: 'i'd rather slightly over-produce than \
-             under produce'.",
-            top_n_workspace, per_crate_min
-        ));
+    let per_crate_summary = if per_crate_min == per_crate_max {
+        format!("per-crate base cap {}", per_crate_min)
     } else {
-        lines.push(format!(
-            "Top {} for workspace-wide sets (architecture / public / inter-crate); per-crate \
-             top-N for intra-crate / inner-crate ranges {}..{}, scaled per each crate's SLOC \
-             via `max(7, round(7 + 2 * log2(SLOC / DIVISOR)))`. the_user 2026-06-04: 'i'd \
-             rather slightly over-produce than under produce'.",
-            top_n_workspace, per_crate_min, per_crate_max
-        ));
-    }
+        format!("per-crate base cap range {}..{}", per_crate_min, per_crate_max)
+    };
+    lines.push(format!(
+        "R4b cap matrix applied per (PickGroup, PickSet). Workspace-wide base cap {}; {}. \
+         SLOC-scaled base via `max({}, round({} + {} * log2(SLOC / {})))` (the_user \
+         2026-06-04: 'i'd rather slightly over-produce than under produce'); per-group cell \
+         weights in `[picker.cap_matrix.*]`. Each section's '(N significant)' count reflects \
+         the post-matrix cap.",
+        top_n_workspace,
+        per_crate_summary,
+        calibration.picker.top_n_floor,
+        calibration.picker.top_n_floor,
+        calibration.picker.sloc_multiplier,
+        calibration.picker.sloc_divisor,
+    ));
     lines.push(String::new());
 
     let has_any = !cands.architecture.is_empty()

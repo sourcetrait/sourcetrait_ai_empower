@@ -47,6 +47,50 @@ pub struct EnrichedSets {
     pub top_n_workspace: usize,
 }
 
+impl EnrichedSets {
+    /// What: sum every surviving pick's `budget_hint` chars across
+    /// the six sets. Pre-flight forecast for the assembled kp
+    /// bundle's character count - divide by ~4 chars/token to get
+    /// the token forecast.
+    ///
+    /// Why: R4b pre-flight forecast per
+    /// `mem:know-rust-kp-output-token-target` - sum the prose_budget
+    /// matrix outputs across surviving picks (post-R4b-cap-matrix)
+    /// BEFORE running Stage A->D. Drives the matrix calibration
+    /// sweep loop without needing to run the full subagent pipeline.
+    ///
+    /// Where: called from `crate::emit::orientation::render_orientation`
+    /// after `candidate_instances` returns; the result is emitted as
+    /// an `[emit] kp forecast` log line during every `know_rust emit`
+    /// run.
+    pub fn total_budget_chars(&self) -> usize {
+        let mut total: usize = 0;
+        for e in self.architecture.values() {
+            total += e.budget_hint;
+        }
+        for e in self.public.values() {
+            total += e.budget_hint;
+        }
+        for e in self.inter_crate.values() {
+            total += e.budget_hint;
+        }
+        for e in self.clique.values() {
+            total += e.budget_hint;
+        }
+        for set in self.intra_crate_per_crate.values() {
+            for e in set.values() {
+                total += e.budget_hint;
+            }
+        }
+        for set in self.inner_crate_per_crate.values() {
+            for e in set.values() {
+                total += e.budget_hint;
+            }
+        }
+        total
+    }
+}
+
 /// What: pick a seed instance for a pattern of the given `(group, name)`
 /// shape, plus up to 200 span strings of all matching facts. Returns
 /// `(None, vec![])` for patterns with no actionable item under that

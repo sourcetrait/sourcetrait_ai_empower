@@ -183,9 +183,30 @@ pub fn compute_significance_sets(
         .map(|(k, v)| (k.clone(), *v))
         .collect();
 
-    let significant_inter_crate = top_n_by_count(&inter_counts, top_n_workspace);
-    let significant_public = top_n_by_float(&public_counts, top_n_workspace);
-    let significant_architecture = top_n_by_float(&architecture_counts, top_n_workspace);
+    let cap_matrix = &calibration.picker.cap_matrix;
+    let floor = calibration.picker.top_n_floor;
+
+    let significant_inter_crate = bucket_and_cap_by_group(
+        &inter_counts,
+        PickSet::InterCrate,
+        top_n_workspace,
+        cap_matrix,
+        floor,
+    );
+    let significant_public = bucket_and_cap_by_group(
+        &public_counts,
+        PickSet::Public,
+        top_n_workspace,
+        cap_matrix,
+        floor,
+    );
+    let significant_architecture = bucket_and_cap_by_group(
+        &architecture_counts,
+        PickSet::Architecture,
+        top_n_workspace,
+        cap_matrix,
+        floor,
+    );
 
     let mut workspace_wide_keys: indexmap::IndexSet<String> = indexmap::IndexSet::new();
     for k in significant_architecture.keys() {
@@ -203,6 +224,7 @@ pub fn compute_significance_sets(
         &pattern_metrics,
         per_crate_sloc,
         calibration,
+        PickSet::IntraCrate,
         false,
         &workspace_wide_keys,
     )
@@ -211,10 +233,28 @@ pub fn compute_significance_sets(
         .iter()
         .map(|(c, s)| (c.clone(), s.keys().cloned().collect()))
         .collect();
-    let significant_clique = stv_elect_clique(
+    // R4b: clique seats = workspace base * Clique set_mult. Run STV
+    // for this many seats, then post-filter via per-group caps. The
+    // post-filter only trims groups whose elected count exceeds the
+    // group's cap; with current weights, most per-group caps exceed
+    // the STV seat count (e.g. clique_seats=44 at base=29 vs traits
+    // cap=65) so the filter is a defensive ceiling rather than a
+    // routine trim.
+    let clique_seats = {
+        let set_mult = cap_matrix.set.for_set(PickSet::Clique);
+        ((top_n_workspace as f64 * set_mult).round() as usize).max(floor)
+    };
+    let elected_clique = stv_elect_clique(
         &per_crate_ballots,
-        top_n_workspace,
+        clique_seats,
         &workspace_wide_keys,
+    );
+    let significant_clique = bucket_and_cap_by_group(
+        &elected_clique,
+        PickSet::Clique,
+        top_n_workspace,
+        cap_matrix,
+        floor,
     );
 
     for k in significant_clique.keys() {
@@ -226,6 +266,7 @@ pub fn compute_significance_sets(
         &pattern_metrics,
         per_crate_sloc,
         calibration,
+        PickSet::IntraCrate,
         false,
         &workspace_wide_keys,
     );
@@ -234,6 +275,7 @@ pub fn compute_significance_sets(
         &pattern_metrics,
         per_crate_sloc,
         calibration,
+        PickSet::InnerCrate,
         true,
         &workspace_wide_keys,
     );
@@ -255,6 +297,7 @@ fn per_crate_picks(
     pattern_metrics: &serde_json::Map<String, serde_json::Value>,
     per_crate_sloc: &indexmap::IndexMap<String, usize>,
     calibration: &Calibration,
+    set: PickSet,
     origin_match: bool,
     dedup_keys: &indexmap::IndexSet<String>,
 ) -> (
@@ -264,16 +307,18 @@ fn per_crate_picks(
     let mut sig_per_crate: indexmap::IndexMap<String, indexmap::IndexMap<String, usize>> =
         indexmap::IndexMap::new();
     let mut top_n_per_crate: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+    let cap_matrix = &calibration.picker.cap_matrix;
+    let floor = calibration.picker.top_n_floor;
     for (crate_name, counts) in per_crate_counts {
         if counts.is_empty() {
             continue;
         }
-        let top_n = compute_sloc_scaled_top_n(
+        let base_cap = compute_sloc_scaled_top_n(
             per_crate_sloc.get(crate_name).copied().unwrap_or(0),
             calibration,
         );
-        top_n_per_crate.insert(crate_name.clone(), top_n);
-        let mut filtered: Vec<(String, usize)> = Vec::new();
+        top_n_per_crate.insert(crate_name.clone(), base_cap);
+        let mut filtered: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
         for (p, c) in counts {
             if dedup_keys.contains(p) {
                 continue;
@@ -291,16 +336,12 @@ fn per_crate_picks(
             {
                 continue;
             }
-            filtered.push((p.clone(), *c));
+            filtered.insert(p.clone(), *c);
         }
         if filtered.is_empty() {
             continue;
         }
-        filtered.sort_by(|a, b| b.1.cmp(&a.1));
-        let mut sig: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
-        for (p, c) in filtered.into_iter().take(top_n) {
-            sig.insert(p, c);
-        }
+        let sig = bucket_and_cap_by_group(&filtered, set, base_cap, cap_matrix, floor);
         if !sig.is_empty() {
             sig_per_crate.insert(crate_name.clone(), sig);
         }
@@ -308,28 +349,58 @@ fn per_crate_picks(
     (sig_per_crate, top_n_per_crate)
 }
 
-fn top_n_by_count(
-    counts: &indexmap::IndexMap<String, usize>,
-    top_n: usize,
-) -> indexmap::IndexMap<String, usize> {
-    let mut items: Vec<(String, usize)> = counts.iter().map(|(k, v)| (k.clone(), *v)).collect();
-    items.sort_by(|a, b| b.1.cmp(&a.1));
-    let mut out: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
-    for (k, v) in items.into_iter().take(top_n) {
-        out.insert(k, v);
+/// What: bucket the input score map by `PickGroup` (extracted from
+/// each pattern key's `<group_wire>:<name>` prefix) and apply the R4b
+/// cap matrix per (group, set). Returns the union of per-group top-N
+/// entries.
+///
+/// Why: R4b replaces the single global top-N cap with per-(group, set)
+/// cell-specific caps via the cap matrix. Workspace-wide sets
+/// (Architecture / Public / InterCrate) and per-crate sets
+/// (IntraCrate / InnerCrate) consume this helper after computing
+/// their score per pattern. Clique uses it for its post-STV cap.
+///
+/// Patterns whose key prefix is not a recognized `PickGroup` wire
+/// token are dropped (defense in depth; the picker only emits
+/// recognized group keys post-R3 translation).
+///
+/// Where: called from `compute_significance_sets` (workspace-wide
+/// sets + post-STV clique filter) and `per_crate_picks` (per-crate
+/// sets).
+fn bucket_and_cap_by_group<V>(
+    counts: &indexmap::IndexMap<String, V>,
+    set: PickSet,
+    base_cap: usize,
+    matrix: &CapMatrix,
+    floor: usize,
+) -> indexmap::IndexMap<String, V>
+where
+    V: Clone + PartialOrd,
+{
+    let mut by_group: HashMap<PickGroup, Vec<(String, V)>> = HashMap::new();
+    for (k, v) in counts {
+        let group_wire = match k.split_once(':') {
+            Some((g, _)) => g,
+            None => continue,
+        };
+        let group = match PickGroup::from_wire(group_wire) {
+            Some(g) => g,
+            None => continue,
+        };
+        by_group
+            .entry(group)
+            .or_default()
+            .push((k.clone(), v.clone()));
     }
-    out
-}
-
-fn top_n_by_float(
-    counts: &indexmap::IndexMap<String, f64>,
-    top_n: usize,
-) -> indexmap::IndexMap<String, f64> {
-    let mut items: Vec<(String, f64)> = counts.iter().map(|(k, v)| (k.clone(), *v)).collect();
-    items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    let mut out: indexmap::IndexMap<String, f64> = indexmap::IndexMap::new();
-    for (k, v) in items.into_iter().take(top_n) {
-        out.insert(k, v);
+    let mut out: indexmap::IndexMap<String, V> = indexmap::IndexMap::new();
+    for (group, mut items) in by_group {
+        let cap = matrix.cap_for(group, set, base_cap, floor);
+        items.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for (k, v) in items.into_iter().take(cap) {
+            out.insert(k, v);
+        }
     }
     out
 }

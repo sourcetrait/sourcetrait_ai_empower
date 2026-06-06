@@ -238,3 +238,163 @@ impl Default for Calibration {
             .expect("embedded calibration.toml fails to parse - build-time bug")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prose_budget_default_matches_tuned_matrix() {
+        // The shipped assets/calibration.toml encodes the matrix from
+        // notes/know_rust/knowledge_product_authoring.md. This test
+        // pins the architecture-column values per row so any
+        // unintended drift in the toml fails fast.
+        let cal = Calibration::default();
+        let pb = &cal.picker.prose_budget;
+        let arch = PickSet::Architecture;
+        assert_eq!(
+            pb.budget_for(PickGroup::Structure, Some(SubForm::Foundational), arch),
+            800
+        );
+        assert_eq!(
+            pb.budget_for(PickGroup::Structure, Some(SubForm::Incidental), arch),
+            400
+        );
+        assert_eq!(
+            pb.budget_for(PickGroup::Traits, Some(SubForm::Lifecycle), arch),
+            1200
+        );
+        assert_eq!(
+            pb.budget_for(PickGroup::Traits, Some(SubForm::Marker), arch),
+            500
+        );
+        assert_eq!(
+            pb.budget_for(PickGroup::Derives, Some(SubForm::Configured), arch),
+            1200
+        );
+        assert_eq!(
+            pb.budget_for(PickGroup::Derives, Some(SubForm::Marker), arch),
+            100
+        );
+        assert_eq!(
+            pb.budget_for(PickGroup::ImplementationFunctions, None, arch),
+            300
+        );
+        assert_eq!(pb.budget_for(PickGroup::TraitFunctions, None, arch), 300);
+        assert_eq!(
+            pb.budget_for(PickGroup::Utilities, Some(SubForm::FreeFn), arch),
+            250
+        );
+        assert_eq!(
+            pb.budget_for(PickGroup::Utilities, Some(SubForm::Macro), arch),
+            350
+        );
+        assert_eq!(pb.budget_for(PickGroup::Globals, None, arch), 100);
+    }
+
+    #[test]
+    fn prose_budget_set_columns_descend_to_intra() {
+        // For each row that has a sub-form discriminator, verify the
+        // set-column ordering Architecture >= Public >= InterCrate >=
+        // Clique and Architecture >= InnerCrate >= IntraCrate. Loose
+        // monotonicity: some adjacent cells may be equal.
+        let cal = Calibration::default();
+        let pb = &cal.picker.prose_budget;
+        for (g, sf) in [
+            (PickGroup::Structure, Some(SubForm::Foundational)),
+            (PickGroup::Structure, Some(SubForm::Incidental)),
+            (PickGroup::Traits, Some(SubForm::Lifecycle)),
+            (PickGroup::Traits, Some(SubForm::Marker)),
+            (PickGroup::Derives, Some(SubForm::Configured)),
+            (PickGroup::Derives, Some(SubForm::Marker)),
+            (PickGroup::ImplementationFunctions, None),
+            (PickGroup::TraitFunctions, None),
+            (PickGroup::Utilities, Some(SubForm::FreeFn)),
+            (PickGroup::Utilities, Some(SubForm::Macro)),
+            (PickGroup::Globals, None),
+        ] {
+            let arch = pb.budget_for(g, sf, PickSet::Architecture);
+            let public = pb.budget_for(g, sf, PickSet::Public);
+            let inter = pb.budget_for(g, sf, PickSet::InterCrate);
+            let clique = pb.budget_for(g, sf, PickSet::Clique);
+            let intra = pb.budget_for(g, sf, PickSet::IntraCrate);
+            let inner = pb.budget_for(g, sf, PickSet::InnerCrate);
+            assert!(
+                arch >= public,
+                "{:?} {:?}: arch {} < public {}",
+                g, sf, arch, public
+            );
+            assert!(
+                public >= inter,
+                "{:?} {:?}: public {} < inter {}",
+                g, sf, public, inter
+            );
+            assert!(
+                inter >= clique,
+                "{:?} {:?}: inter {} < clique {}",
+                g, sf, inter, clique
+            );
+            assert!(
+                arch >= inner,
+                "{:?} {:?}: arch {} < inner {}",
+                g, sf, arch, inner
+            );
+            assert!(
+                inner >= intra,
+                "{:?} {:?}: inner {} < intra {}",
+                g, sf, inner, intra
+            );
+        }
+    }
+
+    #[test]
+    fn prose_budget_none_falls_back_to_thin_row() {
+        // When a group has a sub-form discriminator but the classifier
+        // returned None (defensive path), the matrix lookup should
+        // resolve to the THINNER row to avoid overspending budget on
+        // an unclassified pick.
+        let cal = Calibration::default();
+        let pb = &cal.picker.prose_budget;
+        let set = PickSet::Architecture;
+        // structure None -> incidental
+        assert_eq!(
+            pb.budget_for(PickGroup::Structure, None, set),
+            pb.budget_for(PickGroup::Structure, Some(SubForm::Incidental), set),
+        );
+        // traits None -> marker
+        assert_eq!(
+            pb.budget_for(PickGroup::Traits, None, set),
+            pb.budget_for(PickGroup::Traits, Some(SubForm::Marker), set),
+        );
+        // derives None -> marker
+        assert_eq!(
+            pb.budget_for(PickGroup::Derives, None, set),
+            pb.budget_for(PickGroup::Derives, Some(SubForm::Marker), set),
+        );
+        // utilities None -> macro (the picker's only utilities source)
+        assert_eq!(
+            pb.budget_for(PickGroup::Utilities, None, set),
+            pb.budget_for(PickGroup::Utilities, Some(SubForm::Macro), set),
+        );
+    }
+
+    #[test]
+    fn prose_budget_configured_derive_richest_at_architecture() {
+        // Sanity: configured derives + lifecycle traits should be the
+        // richest matrix rows at the architecture column. The kp
+        // pipeline's foundational / lifecycle / configured cells are
+        // what the matrix earmarks for the largest budget.
+        let cal = Calibration::default();
+        let pb = &cal.picker.prose_budget;
+        let arch = PickSet::Architecture;
+        let configured = pb.budget_for(PickGroup::Derives, Some(SubForm::Configured), arch);
+        let lifecycle = pb.budget_for(PickGroup::Traits, Some(SubForm::Lifecycle), arch);
+        let foundational = pb.budget_for(PickGroup::Structure, Some(SubForm::Foundational), arch);
+        let marker_der = pb.budget_for(PickGroup::Derives, Some(SubForm::Marker), arch);
+        let globals = pb.budget_for(PickGroup::Globals, None, arch);
+        assert!(configured >= foundational);
+        assert!(lifecycle >= foundational);
+        assert!(foundational > marker_der);
+        assert!(foundational > globals);
+    }
+}

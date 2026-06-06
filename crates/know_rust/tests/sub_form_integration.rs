@@ -1,0 +1,493 @@
+//! Integration tests for R4a form sub-classifiers + prose-budget matrix.
+//!
+//! Synthetic Rust workspaces drive the classifier through characterize +
+//! emit; the resulting fingerprint.json + orientation.md are inspected
+//! to confirm sub_form classification + budget_hint emission. Matrix
+//! lookup unit tests live in src/config/calibration.rs's #[cfg(test)]
+//! module; this file covers the classifier heuristics + the end-to-end
+//! emit-side wiring.
+
+use know_rust::*;
+use std::collections::HashMap;
+use std::path::Path;
+use tempfile::TempDir;
+
+/// What: write `files` into `base`. Each entry's key is a workspace-
+/// relative path; parents are created lazily.
+fn write_tree(base: &Path, files: &HashMap<&str, String>) {
+    for (rel, content) in files {
+        let p = base.join(rel);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).expect("mkdir parent");
+        }
+        std::fs::write(&p, content).expect("write file");
+    }
+}
+
+/// What: run characterize against `root` and return the parsed
+/// fingerprint.json + the out directory containing the rest of the
+/// produced artifacts.
+fn run_characterize(root: &Path) -> (serde_json::Value, std::path::PathBuf) {
+    let out = root.join(".orientation");
+    std::fs::create_dir_all(&out).expect("mkdir orientation");
+    let calibration = Calibration::default();
+    characterize(root, &out, &calibration).expect("characterize succeeds");
+    let fp_text =
+        std::fs::read_to_string(out.join("fingerprint.json")).expect("read fingerprint");
+    let fp: serde_json::Value = serde_json::from_str(&fp_text).expect("parse fingerprint");
+    (fp, out)
+}
+
+/// What: read `pattern_metrics.<key>.sub_form` from a parsed
+/// fingerprint and return the wire token.
+fn sub_form_for(fp: &serde_json::Value, pattern_key: &str) -> Option<String> {
+    fp.get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .and_then(|m| m.get(pattern_key))
+        .and_then(|m| m.get("sub_form"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+#[test]
+fn classify_traits_lifecycle_at_five_impl_threshold() {
+    // The classifier marks a trait Lifecycle when it has >= 5
+    // non-cfg-gated workspace impls. We construct a workspace where
+    // trait `Behavior` has exactly 5 impls and trait `Bare` has 4,
+    // and assert the classifier splits them across the threshold.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let mut game_lib = String::from("use ecs::{Behavior, Bare};\n");
+    for i in 0..5 {
+        game_lib.push_str(&format!(
+            "pub struct A{i};\nimpl Behavior for A{i} {{ fn run(&self) {{}} }}\n"
+        ));
+    }
+    for i in 0..4 {
+        game_lib.push_str(&format!("pub struct B{i};\nimpl Bare for B{i} {{}}\n"));
+    }
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"ecs\",\"game\"]\n"),
+        ),
+        (
+            "ecs/Cargo.toml",
+            String::from(
+                "[package]\nname=\"ecs\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "ecs/src/lib.rs",
+            String::from("pub trait Behavior { fn run(&self); }\npub trait Bare {}\n"),
+        ),
+        (
+            "game/Cargo.toml",
+            String::from(
+                "[package]\nname=\"game\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\necs={path=\"../ecs\"}\n",
+            ),
+        ),
+        ("game/src/lib.rs", game_lib),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (fp, _out) = run_characterize(root);
+    assert_eq!(
+        sub_form_for(&fp, "traits:Behavior").as_deref(),
+        Some("lifecycle"),
+        "trait with 5 impls should classify lifecycle"
+    );
+    assert_eq!(
+        sub_form_for(&fp, "traits:Bare").as_deref(),
+        Some("marker"),
+        "trait with 4 impls should classify marker"
+    );
+}
+
+#[test]
+fn classify_derives_hardcoded_list_marks_configured() {
+    // A derive whose name appears in the hardcoded configured-derive
+    // allowlist (e.g. Component) classifies Configured regardless of
+    // sibling-derive presence.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"ecs\",\"game\"]\n"),
+        ),
+        (
+            "ecs/Cargo.toml",
+            String::from(
+                "[package]\nname=\"ecs\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "ecs/src/lib.rs",
+            String::from("pub trait Component {}\n"),
+        ),
+        (
+            "game/Cargo.toml",
+            String::from(
+                "[package]\nname=\"game\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\necs={path=\"../ecs\"}\n",
+            ),
+        ),
+        (
+            "game/src/lib.rs",
+            String::from("use ecs::Component;\n#[derive(Component)]\npub struct Pos;\n"),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (fp, _out) = run_characterize(root);
+    assert_eq!(
+        sub_form_for(&fp, "derives:Component").as_deref(),
+        Some("configured"),
+        "Component is on the hardcoded configured list"
+    );
+}
+
+#[test]
+fn classify_derives_unrecognized_falls_to_marker() {
+    // A derive not in the hardcoded list AND without a configured
+    // sibling at the same use site classifies Marker.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from("pub trait CustomNoise {}\n"),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from("use lib::CustomNoise;\n#[derive(CustomNoise)]\npub struct A;\n"),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (fp, _out) = run_characterize(root);
+    assert_eq!(
+        sub_form_for(&fp, "derives:CustomNoise").as_deref(),
+        Some("marker"),
+        "non-allowlisted derive without configured sibling -> marker"
+    );
+}
+
+#[test]
+fn classify_derives_sibling_fallback_marks_configured() {
+    // A derive not in the hardcoded list but sitting at a use site
+    // alongside a known-configured derive (Serialize) classifies
+    // Configured via the sibling fallback path.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from("pub trait MyTag {}\npub trait Serialize {}\n"),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use lib::{MyTag, Serialize};\n#[derive(MyTag, Serialize)]\npub struct B;\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (fp, _out) = run_characterize(root);
+    assert_eq!(
+        sub_form_for(&fp, "derives:MyTag").as_deref(),
+        Some("configured"),
+        "non-allowlist derive sharing a use site with Serialize -> configured (sibling fallback)"
+    );
+}
+
+#[test]
+fn classify_structure_foundational_threshold_30() {
+    // The classifier marks a structure Foundational when intra +
+    // inter + example >= 30. We construct a workspace where struct
+    // `Core` is used 30 times (above threshold) and struct `Tiny`
+    // is used once.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let mut app_lib = String::from("use lib::{Core, Tiny};\n");
+    for i in 0..30 {
+        app_lib.push_str(&format!(
+            "pub fn use_core_{i}() {{ let _x = Core::new(); }}\n"
+        ));
+    }
+    app_lib.push_str("pub fn use_tiny() { let _t = Tiny::new(); }\n");
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub struct Core; impl Core { pub fn new() -> Self { Core } }\npub struct Tiny; impl Tiny { pub fn new() -> Self { Tiny } }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        ("app/src/lib.rs", app_lib),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (fp, _out) = run_characterize(root);
+    assert_eq!(
+        sub_form_for(&fp, "structure:Core").as_deref(),
+        Some("foundational"),
+        "Core with 30 usages should classify foundational"
+    );
+    assert_eq!(
+        sub_form_for(&fp, "structure:Tiny").as_deref(),
+        Some("incidental"),
+        "Tiny with 1 usage should classify incidental"
+    );
+}
+
+#[test]
+fn classify_utilities_macro_for_macro_sourced_patterns() {
+    // The picker emits utilities only from macro facts (reg_macro /
+    // attr_macro). Each pattern's sub_form should classify Macro
+    // because the matching MacroEntry surfaces the name.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "#[macro_export]\nmacro_rules! bind_command { ($($t:ty),*) => {}; }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "pub fn boot() { bind_command!(); bind_command!(); bind_command!(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (fp, _out) = run_characterize(root);
+    assert_eq!(
+        sub_form_for(&fp, "utilities:bind_command").as_deref(),
+        Some("macro"),
+        "macro-sourced utilities classify Macro"
+    );
+}
+
+#[test]
+fn orientation_emits_budget_suffix_on_s5_picks() {
+    // End-to-end smoke: a small workspace surfaces at least one S5
+    // pick whose orientation bullet carries the ` - budget N` suffix
+    // emitted by R4a. The exact set the pick lands in varies with
+    // the synthetic shape; the assertion is the suffix-presence
+    // contract.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let mut app_lib = String::from("use lib::{Plug, Comp};\n");
+    for i in 0..7 {
+        app_lib.push_str(&format!(
+            "pub struct P{i};\nimpl Plug for P{i} {{ fn build(&self) {{}} }}\n"
+        ));
+    }
+    for i in 0..30 {
+        app_lib.push_str(&format!(
+            "pub fn use_comp_{i}() {{ let _c = Comp::default(); }}\n"
+        ));
+    }
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub trait Plug { fn build(&self); }\npub struct Comp; impl Comp { pub fn default() -> Self { Comp } }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        ("app/src/lib.rs", app_lib),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (_fp, out) = run_characterize(root);
+    let calibration = Calibration::default();
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    let orient_text =
+        std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
+
+    // Every S5 pick line should carry the budget suffix.
+    let pick_lines: Vec<&str> = orient_text
+        .lines()
+        .filter(|l| {
+            l.starts_with("- `")
+                && (l.contains(" - architecture score ")
+                    || l.contains(" - public score ")
+                    || l.contains(" - inter_count ")
+                    || l.contains(" - clique votes ")
+                    || l.contains(" occurrences "))
+        })
+        .collect();
+    assert!(
+        !pick_lines.is_empty(),
+        "expected at least one S5 pick bullet, got 0; orientation excerpt:\n{}",
+        orient_text.lines().take(60).collect::<Vec<_>>().join("\n")
+    );
+    for line in &pick_lines {
+        assert!(
+            line.contains(" - budget "),
+            "S5 pick bullet missing ' - budget ' suffix: {}",
+            line
+        );
+    }
+}
+
+#[test]
+fn orientation_budget_suffix_carries_sub_form_when_classified() {
+    // When a pick's sub_form is classified, the orientation suffix
+    // should be ` - budget N (sub_form_wire)`. We construct a
+    // workspace where structure Comp lands as foundational and
+    // assert the orientation bullet for it has the foundational
+    // annotation.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let mut app_lib = String::from("use lib::Comp;\n");
+    for i in 0..30 {
+        app_lib.push_str(&format!(
+            "pub fn use_comp_{i}() {{ let _c = Comp::default(); }}\n"
+        ));
+    }
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub struct Comp; impl Comp { pub fn default() -> Self { Comp } }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        ("app/src/lib.rs", app_lib),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (_fp, out) = run_characterize(root);
+    let calibration = Calibration::default();
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    let orient_text =
+        std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
+
+    let comp_line = orient_text
+        .lines()
+        .find(|l| l.starts_with("- `structure:Comp`"));
+    let comp_line = comp_line.expect("structure:Comp bullet expected in S5");
+    assert!(
+        comp_line.contains(" - budget ") && comp_line.contains("(foundational)"),
+        "structure:Comp should carry foundational suffix: {}",
+        comp_line
+    );
+}

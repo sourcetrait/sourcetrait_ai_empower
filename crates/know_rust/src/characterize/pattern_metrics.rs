@@ -90,6 +90,9 @@ pub fn compute_pattern_metrics(
 
     for (kind, inner) in &seen_patterns {
         let pattern = format!("{}:{}", kind, inner);
+        if should_skip_pattern(&pattern, calibration) {
+            continue;
+        }
         let defn = pattern_def(
             kind,
             inner,
@@ -207,6 +210,9 @@ pub fn compute_pattern_metrics(
                 continue;
             }
             let pattern = format!("pub_type:{}", ident);
+            if should_skip_pattern(&pattern, calibration) {
+                continue;
+            }
             if metrics.contains_key(&pattern) {
                 continue;
             }
@@ -277,6 +283,9 @@ pub fn compute_pattern_metrics(
                 continue;
             }
             let pattern = format!("method_ref:_::{}", inner);
+            if should_skip_pattern(&pattern, calibration) {
+                continue;
+            }
             if metrics.contains_key(&pattern) {
                 continue;
             }
@@ -864,6 +873,28 @@ fn round3(x: f64) -> f64 {
     format!("{:.3}", x).parse().unwrap_or(x)
 }
 
+/// What: return `true` when the pattern key (`kind:name` pre-
+/// translation) matches any substring in
+/// `calibration.filters.pattern_skip_substrings`. Drops the
+/// pattern before metric construction.
+///
+/// Why: NF5 - suppresses nushell's `Value::test_*` family + similar
+/// test-helper noise from the picker pool. The substring match
+/// (rather than prefix) catches both outer-anchored shapes like
+/// `type_usage:Value::test_string` and inner-anchored shapes like
+/// `method_ref:_::test_helper`.
+///
+/// Where: called at the three pattern-insertion sites in
+/// `compute_pattern_metrics` (the main seen_patterns loop + the
+/// pub_type synth loop + the method_ref synth loop).
+fn should_skip_pattern(pattern: &str, calibration: &Calibration) -> bool {
+    calibration
+        .filters
+        .pattern_skip_substrings
+        .iter()
+        .any(|sub| pattern.contains(sub.as_str()))
+}
+
 /// What: walk the group-keyed pattern_metrics and populate
 /// `sub_form` per the picks-data refactor's R4 mechanical
 /// classifiers. `structure:` patterns get
@@ -946,10 +977,18 @@ fn classify_structure(metric: &PatternMetric, calibration: &Calibration) -> SubF
 /// derives are name-defined and need almost no prose.
 ///
 /// Mechanical heuristic: (1) hardcoded fast-path for known-
-/// configured derive names from the bevy + serde + clap + sea-orm +
-/// thiserror ecosystem; (2) generic fallback scans nearby attrs at
-/// each derive site for a base matching `snake_case(trait_name)`.
-/// Either signal indicates `Configured`; absence indicates `Marker`.
+/// configured derive names from
+/// `calibration.picker.classifier.configured_derives` (defaults
+/// cover the bevy + serde + clap + sea-orm + thiserror ecosystem).
+/// (2) Sibling-derive proxy fallback: any derive site of
+/// `trait_name` whose enclosing item also carries a known-
+/// configured sibling derive within 3 source lines indicates
+/// configured-by-association (a struct that derives both
+/// `Component` and `Clone` is configured because of the
+/// `Component` contribution). Either signal indicates `Configured`;
+/// absence indicates `Marker`. The 3-line window is the
+/// adjacent-derive heuristic for typical `#[derive(A, B, C)]`
+/// layouts.
 ///
 /// Where: called per `derives:` pattern from `classify_sub_forms`.
 fn classify_derives(
@@ -962,19 +1001,6 @@ fn classify_derives(
     if configured_list.iter().any(|n| n == trait_name) {
         return SubForm::Configured;
     }
-    let snake = to_snake_case(trait_name);
-    // Generic fallback: any derive site whose surrounding facts
-    // include an attribute with base matching `snake_case(trait)`
-    // indicates configured use. We approximate "surrounding" via
-    // the same file + within 30 lines of the derive site (most
-    // configuration attrs sit adjacent to the derive).
-    //
-    // The facts.json AttrEntry data is not in WorkspaceFacts
-    // directly today; we keep this fallback path simple: count
-    // derive-site mentions where the derive line has at least one
-    // sibling derive of a known-configured trait (proxy signal -
-    // a struct that derives both Component and Clone is configured
-    // because of the Component contribution).
     let mut configured_sibling = false;
     for d in derives {
         let dn = d.get("trait").and_then(|v| v.as_str()).unwrap_or("");
@@ -1002,7 +1028,6 @@ fn classify_derives(
             break;
         }
     }
-    let _ = snake;
     if configured_sibling {
         SubForm::Configured
     } else {
@@ -1078,24 +1103,3 @@ fn classify_utilities(
     }
 }
 
-/// What: convert a CamelCase identifier to its snake_case form
-/// (`ComponentBundle` -> `component_bundle`).
-///
-/// Why: the configured-derive generic fallback (per
-/// `classify_derives`) matches the derive's snake_case name against
-/// nearby attribute bases; helper-attribute conventions like
-/// `#[component(...)]` for `derive(Component)` are predictable via
-/// snake-casing the trait name.
-fn to_snake_case(s: &str) -> String {
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            let prev = s.chars().nth(i - 1).unwrap_or(' ');
-            if prev.is_lowercase() || prev.is_ascii_digit() {
-                out.push('_');
-            }
-        }
-        out.push(c.to_ascii_lowercase());
-    }
-    out
-}

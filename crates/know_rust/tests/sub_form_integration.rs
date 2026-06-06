@@ -491,3 +491,75 @@ fn orientation_budget_suffix_carries_sub_form_when_classified() {
         comp_line
     );
 }
+
+#[test]
+fn nf5_test_helper_substring_filter_drops_type_usages() {
+    // NF5 noise filter: a workspace whose lib defines Value with both
+    // a test_string helper and a production int factory, and an app
+    // that calls both, should yield pattern_metrics with the
+    // production pattern but NOT the test_-prefixed one. The default
+    // `["::test_"]` pattern_skip_substrings catches the noise family
+    // at compute_pattern_metrics ingestion; the aggregated
+    // structure:Value carry only sees the production signal.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let lib_src = String::from(
+        "pub struct Value;\n\
+         impl Value {\n\
+             pub fn test_string() -> Self { Value }\n\
+             pub fn int() -> Self { Value }\n\
+         }\n",
+    );
+    let app_src = String::from(
+        "use lib::Value;\n\
+         pub fn run() -> (Value, Value) {\n\
+             (Value::test_string(), Value::int())\n\
+         }\n",
+    );
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        ("lib/src/lib.rs", lib_src),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        ("app/src/lib.rs", app_src),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (fp, _out) = run_characterize(root);
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics object");
+
+    assert!(
+        !pm.contains_key("implementation_functions:Value::test_string"),
+        "implementation_functions:Value::test_string should be dropped by NF5; \
+         found keys with 'test_': {:?}",
+        pm.keys()
+            .filter(|k| k.contains("test_"))
+            .collect::<Vec<_>>(),
+    );
+    assert!(
+        pm.contains_key("implementation_functions:Value::int"),
+        "implementation_functions:Value::int should survive NF5"
+    );
+    assert!(
+        pm.contains_key("structure:Value"),
+        "structure:Value should still aggregate from Value::int"
+    );
+}

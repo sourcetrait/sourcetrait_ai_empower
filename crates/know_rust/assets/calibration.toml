@@ -106,6 +106,15 @@ method_ref_inner_skip = [
 # belong to the example-mining pool, not the picker pool).
 excluded_dir_segments = ["tests", "benches", "examples"]
 
+# Pattern-key substring blacklist (NF5). Any pattern key (kind:name,
+# pre-translation) containing any listed substring is dropped before
+# pattern_metrics computation. Default catches the nushell
+# `Value::test_*` + `Span::test_data` test-helper noise (~3000+
+# entries per the 0.0.34 phase 4 pass B audit) while leaving
+# production methods uninhibited. Add ecosystem-specific shapes
+# (e.g. `::__bench_`, `::__fuzz_`) when a new noise family surfaces.
+pattern_skip_substrings = ["::test_"]
+
 [picker.classifier]
 # R4a form sub-classifier inputs.
 #

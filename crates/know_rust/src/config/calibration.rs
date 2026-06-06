@@ -142,14 +142,42 @@ pub struct PickerClusterConfig {
 
 /// What: filter sets applied at picker / synthesis time. Skip lists
 /// for the method_ref family (outer + inner identifier blacklists),
-/// plus the directory-segment skip set for the architectural
-/// type-usage pool (those directories belong to the example-mining
-/// scope, not the picker pool).
+/// the directory-segment skip set for the architectural type-usage
+/// pool (those directories belong to the example-mining scope, not
+/// the picker pool), and the pattern-key substring skip set that
+/// suppresses noise families like `Value::test_*` from the
+/// pattern_metrics layer (NF5).
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct FiltersConfig {
     pub method_ref_outer_skip: Vec<String>,
     pub method_ref_inner_skip: Vec<String>,
     pub excluded_dir_segments: Vec<String>,
+    /// What: substring blacklist applied against each pattern key
+    /// (`kind:name` pre-translation) at the start of
+    /// `compute_pattern_metrics`. Any pattern whose key contains
+    /// any listed substring is dropped before metric computation +
+    /// downstream `translate_to_group_keys` + classifier runs.
+    ///
+    /// Why: NF5 - nushell's `Value::test_*` family + `Span::test_data`
+    /// dominate the type_usages divergence (~3000+ entries per the
+    /// 0.0.34 phase 4 pass B audit), contaminating the
+    /// `implementation_functions:*::test_*` family + the
+    /// aggregated `structure:Value` carry. The default `::test_`
+    /// substring catches the canonical test-helper shape while
+    /// leaving production methods uninhibited. Externalized via
+    /// calibration.toml so per-workspace tuning (e.g. adding
+    /// `::_test_` or `::__test_` shapes) is a config edit, not a
+    /// recompile.
+    ///
+    /// Where: consumed by
+    /// `crate::characterize::pattern_metrics::compute_pattern_metrics`
+    /// at the seen_patterns iteration head.
+    #[serde(default = "default_pattern_skip_substrings")]
+    pub pattern_skip_substrings: Vec<String>,
+}
+
+fn default_pattern_skip_substrings() -> Vec<String> {
+    vec!["::test_".to_string()]
 }
 
 /// What: per-set prose budget hints (character counts) for one row

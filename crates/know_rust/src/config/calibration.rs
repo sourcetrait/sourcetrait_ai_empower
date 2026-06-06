@@ -63,20 +63,34 @@ pub struct PickerConfig {
     pub prose_budget: ProseBudgetMatrix,
 }
 
-/// What: R4a form sub-classifier configuration. Currently holds the
-/// configured-derives allowlist that the `classify_derives` helper
-/// in `crate::characterize::pattern_metrics` consults via fast-path
-/// before falling back to the sibling-derive heuristic.
+/// What: R4a form sub-classifier configuration. Holds the threshold
+/// values + override lists the structure / traits / derives
+/// classifiers consult instead of hardcoded constants:
 ///
-/// Why: keeps ecosystem-specific tuning out of source code. When a
-/// new ecosystem surfaces a derive that should classify Configured
-/// (the prose-budget matrix's largest row), the_user can extend the
-/// list via calibration.toml without recompile + re-install.
+/// - `foundational_min_total` -> structure foundational vs incidental
+///   split (default 30; intra+inter+example >= threshold means
+///   foundational).
+/// - `lifecycle_impl_threshold` -> traits lifecycle vs marker split
+///   on impl count (default 5).
+/// - `lifecycle_traits` -> override allowlist (default empty); any
+///   listed trait classifies Lifecycle regardless of impl count.
+/// - `configured_derives` -> configured vs marker fast-path
+///   allowlist (default ~35 entries covering bevy + serde + clap +
+///   ecosystem derives).
 ///
-/// Where: held inside `PickerConfig`; consumed by
-/// `classify_derives` in `pattern_metrics.rs`.
+/// Why: keeps ecosystem-specific + workspace-specific tuning out of
+/// source code. When the_user wants to lower the lifecycle threshold
+/// for a small ecosystem, add a trait to the lifecycle override list,
+/// or extend the configured-derives allowlist for a new ecosystem,
+/// the calibration.toml edit is the one-stop knob.
+///
+/// Where: held inside `PickerConfig`; consumed by classifier helpers
+/// in `crate::characterize::pattern_metrics`.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ClassifierConfig {
+    pub foundational_min_total: usize,
+    pub lifecycle_impl_threshold: usize,
+    pub lifecycle_traits: Vec<String>,
     pub configured_derives: Vec<String>,
 }
 

@@ -107,12 +107,37 @@ method_ref_inner_skip = [
 excluded_dir_segments = ["tests", "benches", "examples"]
 
 [picker.classifier]
-# R4a form sub-classifier inputs. The configured-derives list seeds the
-# `classify_derives` fast-path: any derive whose trait name appears in
-# this list classifies as Configured regardless of sibling-derive
-# signals. Default values cover the bevy ecs + serde + clap + sea-orm
-# + thiserror + napi/pyo3 ecosystems; tuning is a single-file edit when
-# a new ecosystem surfaces.
+# R4a form sub-classifier inputs.
+#
+# `foundational_min_total` is the minimum `intra + inter + example` count
+# at which a structure pattern classifies Foundational rather than
+# Incidental. Default 30 was tuned on the bevy spot test: bevy's S5.1
+# structure protagonists (Res / Transform / Commands / App / ResMut /
+# Query / ...) all clear 30 comfortably.
+#
+# `lifecycle_impl_threshold` is the minimum non-cfg-gated workspace
+# impl count at which a trait classifies Lifecycle rather than Marker.
+# Default 5 was tuned on bevy + ratatui: bevy's Plugin / FromWorld /
+# AssetLoader cleared it; ratatui Backend (3 impls) did not. Lower to
+# 3 if you want to capture more lifecycle interfaces at the cost of
+# false-positives on incidentally-implemented traits.
+#
+# `lifecycle_traits` is an optional override allowlist: any trait whose
+# name appears here classifies Lifecycle regardless of impl count.
+# Useful when a trait is conceptually lifecycle/organizing but most
+# of its impls come from derive-macro expansion (invisible to the
+# items walker). Empty by default; the_user adds entries when an edge
+# surfaces.
+#
+# `configured_derives` seeds the `classify_derives` fast-path: any
+# derive whose trait name appears in this list classifies as
+# Configured regardless of sibling-derive signals. Default values
+# cover the bevy ecs + serde + clap + sea-orm + thiserror + napi/pyo3
+# ecosystems; tuning is a single-file edit when a new ecosystem
+# surfaces (sqlx, candle, polars, ...).
+foundational_min_total = 30
+lifecycle_impl_threshold = 5
+lifecycle_traits = []
 configured_derives = [
     # bevy ecs / app
     "Component", "Resource", "Event", "Bundle", "SystemParam",

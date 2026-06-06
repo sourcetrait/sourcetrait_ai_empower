@@ -894,14 +894,14 @@ fn classify_sub_forms(
             None => continue,
         };
         metric.sub_form = match group {
-            "structure" => Some(classify_structure(metric)),
+            "structure" => Some(classify_structure(metric, calibration)),
             "derives" => Some(classify_derives(
                 name,
                 &all_facts.derives,
                 &all_facts.fns,
                 calibration,
             )),
-            "traits" => Some(classify_traits(name, &all_facts.impls)),
+            "traits" => Some(classify_traits(name, &all_facts.impls, calibration)),
             "utilities" => Some(classify_utilities(name, &all_facts.macros, &all_facts.fns)),
             _ => None,
         };
@@ -921,13 +921,14 @@ fn classify_sub_forms(
 /// crate-private state) get a thin budget.
 ///
 /// Where: called per `structure:` pattern from `classify_sub_forms`.
-/// Threshold (30) tuned to land bevy's S5.1 structure picks (Res,
-/// Transform, World, App) on the foundational side; the_user can
-/// adjust if classification skews on other targets.
-fn classify_structure(metric: &PatternMetric) -> SubForm {
+/// Threshold comes from
+/// `calibration.picker.classifier.foundational_min_total` (default 30
+/// tuned on bevy's S5.1 structure picks); the_user can adjust via
+/// calibration.toml without recompile.
+fn classify_structure(metric: &PatternMetric, calibration: &Calibration) -> SubForm {
     let example = metric.example_count.as_f64().unwrap_or(0.0) as usize;
     let total = metric.intra_count + metric.inter_count + example;
-    if total >= 30 {
+    if total >= calibration.picker.classifier.foundational_min_total {
         SubForm::Foundational
     } else {
         SubForm::Incidental
@@ -1010,23 +1011,35 @@ fn classify_derives(
 }
 
 /// What: classify a `traits:` pattern as `Lifecycle` (rich
-/// behavioural interface with significant in-workspace impl-count)
-/// or `Marker` (zero-method / marker bound trait with sparse
-/// impls).
+/// behavioural interface with significant in-workspace impl-count
+/// OR explicit lifecycle-override entry) or `Marker` (zero-method /
+/// marker bound trait with sparse impls).
 ///
 /// Why: lifecycle traits (bevy Plugin / System / SystemSet, tokio
 /// Future / Stream / AsyncRead, helix Command) carry rich
 /// architectural contracts; marker traits (Send / Sync / Sized,
-/// auto-derived ecosystem markers) carry name-only semantics.
+/// auto-derived ecosystem markers) carry name-only semantics. Some
+/// traits read lifecycle-like but their impls come from derive
+/// macros (invisible to the items walker); the override list lets
+/// the_user opt those into Lifecycle without lowering the
+/// threshold across the board.
 ///
-/// Mechanical heuristic: count non-cfg-gated workspace impls of
-/// the trait; >= 5 impls indicates Lifecycle. Threshold tuned to
-/// land bevy Plugin (many impls across crates) on the Lifecycle
-/// side and pure markers like Send / Sync (no in-workspace impls)
-/// on the Marker side.
+/// Mechanical heuristic: (1) any trait whose name appears in
+/// `calibration.picker.classifier.lifecycle_traits` classifies
+/// Lifecycle (override fast-path). (2) Else count non-cfg-gated
+/// workspace impls of the trait; >=
+/// `lifecycle_impl_threshold` (default 5) -> Lifecycle.
 ///
 /// Where: called per `traits:` pattern from `classify_sub_forms`.
-fn classify_traits(trait_name: &str, impls: &[serde_json::Value]) -> SubForm {
+fn classify_traits(
+    trait_name: &str,
+    impls: &[serde_json::Value],
+    calibration: &Calibration,
+) -> SubForm {
+    let lifecycle_list = &calibration.picker.classifier.lifecycle_traits;
+    if lifecycle_list.iter().any(|n| n == trait_name) {
+        return SubForm::Lifecycle;
+    }
     let count = impls
         .iter()
         .filter(|i| {
@@ -1034,7 +1047,7 @@ fn classify_traits(trait_name: &str, impls: &[serde_json::Value]) -> SubForm {
                 && !i.get("cfg_gated").and_then(|v| v.as_bool()).unwrap_or(false)
         })
         .count();
-    if count >= 5 {
+    if count >= calibration.picker.classifier.lifecycle_impl_threshold {
         SubForm::Lifecycle
     } else {
         SubForm::Marker

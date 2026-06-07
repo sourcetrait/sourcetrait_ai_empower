@@ -300,5 +300,5 @@ pub struct WorkspaceFacts {
     /// Where: populated in `crate::characterize::run::characterize`
     /// from `item_facts.carries` after the per-crate scan loop.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub carries: BTreeMap<String, Vec<CarryEntry>>,
+    pub carries: BTreeMap<Pattern, Vec<CarryEntry>>,
 }

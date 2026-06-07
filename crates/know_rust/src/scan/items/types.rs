@@ -45,7 +45,7 @@ pub struct ItemFacts {
     /// `FileLevelFacts::carries` at `scan_workspace` exit; consumed by
     /// the future picker + emit phases (R3 + R5).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub carries: BTreeMap<String, Vec<CarryEntry>>,
+    pub carries: BTreeMap<Pattern, Vec<CarryEntry>>,
 }
 
 /// What: per-file accumulator the walker fills before contributing into
@@ -73,7 +73,7 @@ pub struct FileLevelFacts {
     pub example_type_usages: Vec<TypeUsageEntry>,
     pub seams: HashMap<SeamKind, usize>,
     pub doc_count: usize,
-    pub carries: HashMap<String, Vec<CarryEntry>>,
+    pub carries: HashMap<Pattern, Vec<CarryEntry>>,
 }
 
 /// What: one carry entry - a dependent name the walker surfaced as

@@ -408,44 +408,208 @@ const _PICK_SETS_EXHAUSTIVE: () = {
     }
 };
 
-/// What: a single picks-data pattern - the `(group, name)` pair that
-/// the refactored picker uses as a `pattern_metrics` key. Replaces
-/// the current stringly-typed `kind:name` key form.
+/// What: a single picks-data pattern - a fieldful enum tagging an
+/// architectural pick by its `PickGroup` with the group-shaped
+/// payload. `Traits` / `Structure` / `Derives` / `Utilities` /
+/// `Globals` carry a single name; `ImplementationFunctions` /
+/// `TraitFunctions` carry the `(outer, inner)` pair (e.g. `World::new`,
+/// `_::update`) so the compound key is modeled structurally rather
+/// than re-split from a string.
 ///
-/// Why: typing the key shape lets walker + picker + emit code be
-/// typed end-to-end against `Pattern` rather than passing strings
-/// that have to be parsed at each consumer. The `Display` impl
-/// renders as `<group_wire>:<name>` matching the picks-data-model.md
-/// wire shape, so backward-compatible JSON keys are still produced
-/// during the refactor.
+/// Why: typing the key lets walker + carry + picker code be typed
+/// end-to-end against `Pattern` (match on the variant) rather than
+/// building `format!("group:name")` strings and re-parsing them via
+/// `split_once` at each consumer. Per `mem:developer
+/// {rule:rust_enum_kind_mirror}` the bare discriminant is the Copy
+/// `PickGroup` via [`Pattern::kind`].
 ///
-/// Where: planned consumers are the items walker (one `Pattern`
-/// emitted per pick), the picker's `SignificanceSets` (indexed by
-/// `Pattern`), and the emit composers (orientation.md + reference.md
-/// render `Pattern` via its `Display` impl).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct Pattern {
-    pub group: PickGroup,
-    pub name: String,
+/// Where: keys `ItemFacts::carries` / `WorkspaceFacts::carries`, the
+/// picker's significance sets, and `EnrichedEntry::pattern`. The wire
+/// form (`<group_wire>:<name>`) is unchanged from the prior stringly
+/// keys, so facts.json / orientation.md stay byte-compatible. Custom
+/// serde emits/parses that wire form, so a map keyed by `Pattern`
+/// serializes as `{"structure:Foo": ...}`; `Ord` follows the wire
+/// string so `BTreeMap<Pattern, _>` keeps the prior alphabetical key
+/// order.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Pattern {
+    Traits(String),
+    TraitFunctions { outer: String, inner: String },
+    Structure(String),
+    ImplementationFunctions { outer: String, inner: String },
+    Derives(String),
+    Utilities(String),
+    Globals(String),
 }
 
 impl Pattern {
-    /// What: constructor accepting any string-convertible name.
-    pub fn new(group: PickGroup, name: impl Into<String>) -> Self {
-        Self {
-            group,
-            name: name.into(),
+    /// What: the bare discriminant (the Copy kind-mirror) for this
+    /// pattern, per `{rule:rust_enum_kind_mirror}`. Lets bucketing
+    /// code group by `PickGroup` without the payload.
+    pub fn kind(&self) -> PickGroup {
+        match self {
+            Self::Traits(_) => PickGroup::Traits,
+            Self::TraitFunctions { .. } => PickGroup::TraitFunctions,
+            Self::Structure(_) => PickGroup::Structure,
+            Self::ImplementationFunctions { .. } => PickGroup::ImplementationFunctions,
+            Self::Derives(_) => PickGroup::Derives,
+            Self::Utilities(_) => PickGroup::Utilities,
+            Self::Globals(_) => PickGroup::Globals,
         }
+    }
+
+    /// What: the `<name>` portion of the wire form - the bare name for
+    /// the single-name variants, `<outer>::<inner>` for the compound
+    /// ones.
+    pub fn name(&self) -> String {
+        match self {
+            Self::Traits(n)
+            | Self::Structure(n)
+            | Self::Derives(n)
+            | Self::Utilities(n)
+            | Self::Globals(n) => n.clone(),
+            Self::TraitFunctions { outer, inner }
+            | Self::ImplementationFunctions { outer, inner } => {
+                format!("{}::{}", outer, inner)
+            }
+        }
+    }
+
+    /// What: string-convertible constructors for the single-name and
+    /// compound variants. Keep call sites + tests terse.
+    pub fn traits(name: impl Into<String>) -> Self {
+        Self::Traits(name.into())
+    }
+    pub fn structure(name: impl Into<String>) -> Self {
+        Self::Structure(name.into())
+    }
+    pub fn derives(name: impl Into<String>) -> Self {
+        Self::Derives(name.into())
+    }
+    pub fn utilities(name: impl Into<String>) -> Self {
+        Self::Utilities(name.into())
+    }
+    pub fn globals(name: impl Into<String>) -> Self {
+        Self::Globals(name.into())
+    }
+    pub fn impl_fn(outer: impl Into<String>, inner: impl Into<String>) -> Self {
+        Self::ImplementationFunctions {
+            outer: outer.into(),
+            inner: inner.into(),
+        }
+    }
+    pub fn trait_fn(outer: impl Into<String>, inner: impl Into<String>) -> Self {
+        Self::TraitFunctions {
+            outer: outer.into(),
+            inner: inner.into(),
+        }
+    }
+
+    /// What: build a `Pattern` from a `(PickGroup, name)` pair, where
+    /// `name` is the wire `<name>` portion (split on the first `::`
+    /// for the compound groups; the picker never emits a compound name
+    /// without `::`, so the empty-inner fallback is defensive).
+    pub fn from_group_name(group: PickGroup, name: &str) -> Self {
+        match group {
+            PickGroup::Traits => Self::Traits(name.to_string()),
+            PickGroup::Structure => Self::Structure(name.to_string()),
+            PickGroup::Derives => Self::Derives(name.to_string()),
+            PickGroup::Utilities => Self::Utilities(name.to_string()),
+            PickGroup::Globals => Self::Globals(name.to_string()),
+            PickGroup::ImplementationFunctions => {
+                let (outer, inner) = split_outer_inner(name);
+                Self::ImplementationFunctions { outer, inner }
+            }
+            PickGroup::TraitFunctions => {
+                let (outer, inner) = split_outer_inner(name);
+                Self::TraitFunctions { outer, inner }
+            }
+        }
+    }
+
+    /// What: parse a wire-form `<group_wire>:<name>` string into a
+    /// `Pattern`. `None` on an unknown group prefix or a missing `:`.
+    pub fn from_wire(s: &str) -> Option<Self> {
+        let (group_wire, name) = s.split_once(':')?;
+        let group = PickGroup::from_wire(group_wire)?;
+        Some(Self::from_group_name(group, name))
+    }
+}
+
+/// What: split a compound `<outer>::<inner>` name on the FIRST `::`.
+/// No `::` yields the whole string as `outer` with an empty `inner`
+/// (defensive; not emitted by the picker).
+fn split_outer_inner(name: &str) -> (String, String) {
+    match name.split_once("::") {
+        Some((o, i)) => (o.to_string(), i.to_string()),
+        None => (name.to_string(), String::new()),
     }
 }
 
 impl std::fmt::Display for Pattern {
     /// What: renders as `<group_wire>:<name>` (e.g.
     /// `structure:Component`, `derives:Clone`,
-    /// `implementation_functions:render`). Matches the
-    /// picks-data-model.md wire shape.
+    /// `implementation_functions:World::new`,
+    /// `implementation_functions:_::update`). Byte-compatible with the
+    /// prior stringly key shape.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.group.wire(), self.name)
+        let g = self.kind().wire();
+        match self {
+            Self::Traits(n)
+            | Self::Structure(n)
+            | Self::Derives(n)
+            | Self::Utilities(n)
+            | Self::Globals(n) => write!(f, "{}:{}", g, n),
+            Self::TraitFunctions { outer, inner }
+            | Self::ImplementationFunctions { outer, inner } => {
+                write!(f, "{}:{}::{}", g, outer, inner)
+            }
+        }
+    }
+}
+
+impl PartialOrd for Pattern {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Pattern {
+    /// What: orders by the `Display` wire form so `BTreeMap<Pattern,
+    /// _>` keys serialize in the alphabetical order the prior
+    /// `BTreeMap<String, _>` produced. Consistent with `Eq` because
+    /// `Display` is injective over the pattern space (distinct
+    /// patterns render to distinct wire strings; outer / inner are
+    /// single idents that never contain `::`).
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.to_string().cmp(&other.to_string())
+    }
+}
+
+impl serde::Serialize for Pattern {
+    /// What: serializes as the wire string so a map keyed by `Pattern`
+    /// emits JSON object keys (`{"structure:Foo": ...}`).
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Pattern {
+    /// What: parses the wire string back to a `Pattern` (the JSON
+    /// object-key boundary). Rejects an unknown group prefix.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        struct PatternVisitor;
+        impl<'v> serde::de::Visitor<'v> for PatternVisitor {
+            type Value = Pattern;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a <group_wire>:<name> pattern string")
+            }
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> std::result::Result<Pattern, E> {
+                Pattern::from_wire(s)
+                    .ok_or_else(|| E::custom(format!("invalid pattern wire form: {}", s)))
+            }
+        }
+        d.deserialize_str(PatternVisitor)
     }
 }
 
@@ -517,12 +681,44 @@ mod tests {
 
     #[test]
     fn pattern_display() {
-        let p = Pattern::new(PickGroup::Structure, "Component");
-        assert_eq!(p.to_string(), "structure:Component");
-        let p2 = Pattern::new(PickGroup::ImplementationFunctions, "render");
-        assert_eq!(p2.to_string(), "implementation_functions:render");
-        let p3 = Pattern::new(PickGroup::TraitFunctions, "poll");
-        assert_eq!(p3.to_string(), "trait_functions:poll");
+        assert_eq!(
+            Pattern::structure("Component").to_string(),
+            "structure:Component"
+        );
+        assert_eq!(Pattern::derives("Clone").to_string(), "derives:Clone");
+        assert_eq!(
+            Pattern::impl_fn("World", "new").to_string(),
+            "implementation_functions:World::new"
+        );
+        assert_eq!(
+            Pattern::impl_fn("_", "update").to_string(),
+            "implementation_functions:_::update"
+        );
+        assert_eq!(
+            Pattern::trait_fn("Handler", "handle").to_string(),
+            "trait_functions:Handler::handle"
+        );
+        // kind() is the Copy discriminant mirror.
+        assert_eq!(Pattern::structure("X").kind(), PickGroup::Structure);
+        assert_eq!(
+            Pattern::impl_fn("A", "b").kind(),
+            PickGroup::ImplementationFunctions
+        );
+        // wire round-trip via from_wire.
+        for p in [
+            Pattern::structure("Component"),
+            Pattern::derives("Clone"),
+            Pattern::impl_fn("World", "new"),
+            Pattern::impl_fn("_", "update"),
+            Pattern::trait_fn("Handler", "handle"),
+        ] {
+            assert_eq!(
+                Pattern::from_wire(&p.to_string()),
+                Some(p.clone()),
+                "round-trip {}",
+                p
+            );
+        }
     }
 
     #[test]
@@ -586,12 +782,35 @@ mod tests {
     fn pattern_hashable() {
         use std::collections::HashMap;
         let mut map: HashMap<Pattern, usize> = HashMap::new();
-        map.insert(Pattern::new(PickGroup::Structure, "Component"), 1);
-        map.insert(Pattern::new(PickGroup::Derives, "Clone"), 2);
+        map.insert(Pattern::structure("Component"), 1);
+        map.insert(Pattern::derives("Clone"), 2);
         assert_eq!(map.len(), 2);
-        assert_eq!(
-            map.get(&Pattern::new(PickGroup::Structure, "Component")),
-            Some(&1)
+        assert_eq!(map.get(&Pattern::structure("Component")), Some(&1));
+    }
+
+    #[test]
+    fn pattern_serde_as_map_key() {
+        // Custom serde emits/parses the wire string, so a BTreeMap keyed
+        // by Pattern serializes as a JSON object with string keys and
+        // round-trips back. Locks the facts.json carries wire shape.
+        use std::collections::BTreeMap;
+        let mut m: BTreeMap<Pattern, u32> = BTreeMap::new();
+        m.insert(Pattern::structure("Foo"), 1);
+        m.insert(Pattern::impl_fn("Bar", "new"), 2);
+        m.insert(Pattern::impl_fn("_", "update"), 3);
+        let json = serde_json::to_string(&m).expect("serialize");
+        assert!(json.contains("\"structure:Foo\":1"), "json: {json}");
+        assert!(
+            json.contains("\"implementation_functions:Bar::new\":2"),
+            "json: {json}"
         );
+        assert!(
+            json.contains("\"implementation_functions:_::update\":3"),
+            "json: {json}"
+        );
+        let back: BTreeMap<Pattern, u32> = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.get(&Pattern::structure("Foo")), Some(&1));
+        assert_eq!(back.get(&Pattern::impl_fn("Bar", "new")), Some(&2));
+        assert_eq!(back.get(&Pattern::impl_fn("_", "update")), Some(&3));
     }
 }

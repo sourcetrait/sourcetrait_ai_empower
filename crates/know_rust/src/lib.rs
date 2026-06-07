@@ -90,7 +90,6 @@ pub(crate) use crate::{
     measure_overlap::parse::*,
     measure_overlap::score::*,
     measure_overlap::types::*,
-    model::picks::*,
     rustdoc_overlay::types::*,
     scan::helpers::*,
     scan::items::filters::*,
@@ -136,3 +135,4 @@ pub use crate::scan::items::run::*;
 pub use crate::scan::items::types::*;
 pub use crate::scan::usages::facts::*;
 pub use crate::scan::usages::run::*;
+pub use crate::model::picks::*;

@@ -364,24 +364,22 @@ fn filter_carries_to_workspace(all_facts: &mut WorkspaceFacts) {
         .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
         .collect();
     let name_ok = |n: &str| ws_types.contains(n) || ws_traits.contains(n);
-    let key_ok = |key: &str| -> bool {
-        let (group, name) = match key.split_once(':') {
-            Some(p) => p,
-            None => return false,
-        };
-        match group {
-            "structure" => ws_types.contains(name),
-            "traits" | "derives" => ws_traits.contains(name),
-            "implementation_functions" | "trait_functions" => {
-                let outer = name.split_once("::").map(|(o, _)| o).unwrap_or(name);
-                outer == "_" || ws_types.contains(outer) || ws_traits.contains(outer)
+    let key_ok = |pat: &Pattern| -> bool {
+        match pat {
+            Pattern::Structure(name) => ws_types.contains(name),
+            Pattern::Traits(name) | Pattern::Derives(name) => ws_traits.contains(name),
+            Pattern::ImplementationFunctions { outer, .. }
+            | Pattern::TraitFunctions { outer, .. } => {
+                outer.as_str() == "_"
+                    || ws_types.contains(outer.as_str())
+                    || ws_traits.contains(outer.as_str())
             }
-            _ => false,
+            Pattern::Utilities(_) | Pattern::Globals(_) => false,
         }
     };
-    let mut filtered: BTreeMap<String, Vec<CarryEntry>> = BTreeMap::new();
-    for (key, entries) in &all_facts.carries {
-        if !key_ok(key) {
+    let mut filtered: BTreeMap<Pattern, Vec<CarryEntry>> = BTreeMap::new();
+    for (pat, entries) in &all_facts.carries {
+        if !key_ok(pat) {
             continue;
         }
         let kept: Vec<CarryEntry> = entries
@@ -390,7 +388,7 @@ fn filter_carries_to_workspace(all_facts: &mut WorkspaceFacts) {
             .cloned()
             .collect();
         if !kept.is_empty() {
-            filtered.insert(key.clone(), kept);
+            filtered.insert(pat.clone(), kept);
         }
     }
     all_facts.carries = filtered;

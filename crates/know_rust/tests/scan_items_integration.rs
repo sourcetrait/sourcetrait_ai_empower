@@ -175,7 +175,7 @@ fn carry_struct_field_types() {
     .expect("parse ok");
     let carry = f
         .carries
-        .get("structure:Holder")
+        .get(&Pattern::structure("Holder"))
         .expect("structure:Holder carry list present");
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"String"), "Holder carries String");
@@ -192,7 +192,7 @@ fn carry_enum_variant_payloads() {
     .expect("parse ok");
     let carry = f
         .carries
-        .get("structure:Outcome")
+        .get(&Pattern::structure("Outcome"))
         .expect("structure:Outcome carry list present");
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"String"), "Outcome carries String (Success payload)");
@@ -211,7 +211,7 @@ fn carry_filters_lowercase_primitives() {
     .expect("parse ok");
     let carry = f
         .carries
-        .get("structure:Mixed")
+        .get(&Pattern::structure("Mixed"))
         .expect("structure:Mixed carry list present");
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"String"), "uppercase String kept");
@@ -229,16 +229,16 @@ fn carry_derives_records_trait_name() {
     .expect("parse ok");
     let debug_carry = f
         .carries
-        .get("derives:Debug")
+        .get(&Pattern::derives("Debug"))
         .expect("derives:Debug carry list present");
     let names: Vec<&str> = debug_carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"Debug"), "derives:Debug carries Debug trait name");
     assert!(
-        f.carries.contains_key("derives:Clone"),
+        f.carries.contains_key(&Pattern::derives("Clone")),
         "derives:Clone present"
     );
     assert!(
-        f.carries.contains_key("derives:PartialEq"),
+        f.carries.contains_key(&Pattern::derives("PartialEq")),
         "derives:PartialEq present"
     );
 }
@@ -250,10 +250,10 @@ fn carry_impl_method_param_and_return_types() {
         "pub struct Thing;\nimpl Thing { pub fn build(input: String, dep: Dependency) -> OutputType { OutputType } }",
     )
     .expect("parse ok");
-    let key = "implementation_functions:Thing::build";
+    let key = Pattern::impl_fn("Thing", "build");
     let carry = f
         .carries
-        .get(key)
+        .get(&key)
         .unwrap_or_else(|| panic!("{key} carry list present; got keys: {:?}", f.carries.keys().collect::<Vec<_>>()));
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"String"), "Thing::build carries String");
@@ -270,7 +270,7 @@ fn carry_trait_supertype_bounds() {
     .expect("parse ok");
     let carry = f
         .carries
-        .get("traits:Composite")
+        .get(&Pattern::traits("Composite"))
         .expect("traits:Composite carry list present");
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"Send"), "Composite carries supertype Send");
@@ -284,10 +284,10 @@ fn carry_trait_method_sig_types() {
         "pub trait Handler { fn handle(&self, input: String) -> ResponseType; }",
     )
     .expect("parse ok");
-    let key = "trait_functions:Handler::handle";
+    let key = Pattern::trait_fn("Handler", "handle");
     let carry = f
         .carries
-        .get(key)
+        .get(&key)
         .unwrap_or_else(|| panic!("{key} carry list present; got keys: {:?}", f.carries.keys().collect::<Vec<_>>()));
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"String"), "Handler::handle carries String");
@@ -304,10 +304,10 @@ fn carry_no_carry_for_utilities_globals() {
         "pub fn standalone(x: String) -> usize { 0 }\npub const TOP: usize = 42;\npub static LABEL: &str = \"x\";\nmacro_rules! noisy { () => {}; }",
     )
     .expect("parse ok");
-    let utility_keys: Vec<&String> = f
+    let utility_keys: Vec<&Pattern> = f
         .carries
         .keys()
-        .filter(|k| k.starts_with("utilities:") || k.starts_with("globals:"))
+        .filter(|k| matches!(k.kind(), PickGroup::Utilities | PickGroup::Globals))
         .collect();
     assert!(
         utility_keys.is_empty(),
@@ -351,7 +351,7 @@ fn carry_workspace_dedup_by_name() {
     let facts: ItemFacts = serde_json::from_str(&json).expect("parse ItemFacts");
     let carry = facts
         .carries
-        .get("derives:Component")
+        .get(&Pattern::derives("Component"))
         .expect("derives:Component carry list present");
     let names: std::collections::HashSet<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(
@@ -375,7 +375,7 @@ fn carry_assoc_type_bounds() {
     .expect("parse ok");
     let carry = f
         .carries
-        .get("traits:Container")
+        .get(&Pattern::traits("Container"))
         .expect("traits:Container carry list present");
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"Clone"), "Container carries assoc-type bound Clone");
@@ -396,7 +396,7 @@ fn carry_struct_generic_bounds() {
     .expect("parse ok");
     let carry = f
         .carries
-        .get("structure:Holder")
+        .get(&Pattern::structure("Holder"))
         .expect("structure:Holder carry list present");
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"Render"), "Holder carries inline bound Render");
@@ -414,7 +414,7 @@ fn carry_enum_generic_bounds() {
     .expect("parse ok");
     let carry = f
         .carries
-        .get("structure:Either")
+        .get(&Pattern::structure("Either"))
         .expect("structure:Either carry list present");
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"Display"), "Either carries generic bound Display");
@@ -431,7 +431,7 @@ fn carry_impl_generic_bounds() {
     .expect("parse ok");
     let carry = f
         .carries
-        .get("structure:Foo")
+        .get(&Pattern::structure("Foo"))
         .expect("structure:Foo carry list present");
     let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert!(

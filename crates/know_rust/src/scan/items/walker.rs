@@ -47,10 +47,10 @@ impl FileWalker {
     /// Why: refactor phase R2 - aggregates per-item carry into the
     /// per-file accumulator. Workspace.rs merges this into the
     /// workspace-level `ItemFacts::carries` map at scan_workspace exit.
-    fn record_carry(&mut self, pattern_key: String, name: String) {
+    fn record_carry(&mut self, pattern: Pattern, name: String) {
         self.facts
             .carries
-            .entry(pattern_key)
+            .entry(pattern)
             .or_default()
             .push(CarryEntry { name });
     }
@@ -58,9 +58,9 @@ impl FileWalker {
     /// What: record many carry names from a `syn::Type` under one
     /// pattern key. Convenience wrapper around `record_carry` for the
     /// common struct-field / fn-signature extraction shape.
-    fn record_carry_from_type(&mut self, pattern_key: &str, ty: &syn::Type) {
+    fn record_carry_from_type(&mut self, pattern: &Pattern, ty: &syn::Type) {
         for name in type_carry_names(ty) {
-            self.record_carry(pattern_key.to_string(), name);
+            self.record_carry(pattern.clone(), name);
         }
     }
 
@@ -74,7 +74,7 @@ impl FileWalker {
     /// keeps the four call sites consistent.
     fn record_bound_carry(
         &mut self,
-        pattern_key: &str,
+        pattern: &Pattern,
         bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::token::Plus>,
     ) {
         for bound in bounds {
@@ -82,7 +82,7 @@ impl FileWalker {
                 if let Some(seg) = tb.path.segments.last() {
                     let nm = seg.ident.to_string();
                     if nm.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                        self.record_carry(pattern_key.to_string(), nm);
+                        self.record_carry(pattern.clone(), nm);
                     }
                 }
             }
@@ -96,16 +96,16 @@ impl FileWalker {
     /// `where T: Bar` constrain the item's type parameters; the bound
     /// traits are reader context for the picked item, alongside the
     /// field-type / sig-type carry already recorded for the same key.
-    fn record_generics_carry(&mut self, pattern_key: &str, generics: &syn::Generics) {
+    fn record_generics_carry(&mut self, pattern: &Pattern, generics: &syn::Generics) {
         for param in &generics.params {
             if let syn::GenericParam::Type(tp) = param {
-                self.record_bound_carry(pattern_key, &tp.bounds);
+                self.record_bound_carry(pattern, &tp.bounds);
             }
         }
         if let Some(wc) = &generics.where_clause {
             for pred in &wc.predicates {
                 if let syn::WherePredicate::Type(pt) = pred {
-                    self.record_bound_carry(pattern_key, &pt.bounds);
+                    self.record_bound_carry(pattern, &pt.bounds);
                 }
             }
         }
@@ -157,7 +157,7 @@ impl FileWalker {
                     // R2 carry extraction: derive carries the derived
                     // trait so the reader has impl-shape context.
                     // Pattern key shape: derives:<trait>.
-                    let pat = format!("derives:{}", cleaned);
+                    let pat = Pattern::derives(cleaned.clone());
                     self.record_carry(pat, cleaned.clone());
                     self.facts.derives.push(DeriveEntry {
                         file: self.file.clone(),
@@ -335,11 +335,7 @@ impl FileWalker {
                 // surface to the reader's dependent-type set.
                 if let Some(tname) = self.current_trait_name.clone() {
                     if !tname.is_empty() {
-                        let pat = format!(
-                            "trait_functions:{}::{}",
-                            tname,
-                            f.sig.ident
-                        );
+                        let pat = Pattern::trait_fn(tname.clone(), f.sig.ident.to_string());
                         for input in &f.sig.inputs {
                             if let syn::FnArg::Typed(pt) = input {
                                 self.record_carry_from_type(&pat, &pt.ty);
@@ -378,7 +374,7 @@ impl FileWalker {
                 // trait pick, not a trait_functions:<trait>::X key.
                 if let Some(tname) = self.current_trait_name.clone() {
                     if !tname.is_empty() {
-                        let trait_pat = format!("traits:{}", tname);
+                        let trait_pat = Pattern::traits(tname.clone());
                         self.record_bound_carry(&trait_pat, &ty.bounds);
                     }
                 }
@@ -492,7 +488,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         // and has no cross-workspace knowledge. See
         // notes/know_rust/working/02_picks_data.md.
         if !type_name.is_empty() {
-            let struct_pat = format!("structure:{}", type_name);
+            let struct_pat = Pattern::structure(type_name.clone());
             self.record_generics_carry(&struct_pat, &i.generics);
         }
         // R2 carry extraction: track the impl-target type so each impl
@@ -527,7 +523,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         // R2-expansion: supertype bounds carry under `traits:<trait>`.
         // The trait's interface includes the constraints it composes
         // with; readers need them to understand its scope.
-        let trait_pat = format!("traits:{}", trait_name);
+        let trait_pat = Pattern::traits(trait_name.clone());
         self.record_bound_carry(&trait_pat, &t.supertraits);
         for bound in &t.supertraits {
             syn::visit::visit_type_param_bound(self, bound);
@@ -560,7 +556,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         });
         syn::visit::visit_generics(self, &s.generics);
         // R2 carry extraction: field types -> carry under structure:<name>
-        let pat = format!("structure:{}", struct_name);
+        let pat = Pattern::structure(struct_name.clone());
         match &s.fields {
             syn::Fields::Named(named) => {
                 for f in &named.named {
@@ -596,7 +592,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         });
         syn::visit::visit_generics(self, &e.generics);
         // R2 carry extraction: variant payload types -> carry under structure:<name>
-        let pat = format!("structure:{}", enum_name);
+        let pat = Pattern::structure(enum_name.clone());
         for v in &e.variants {
             self.process_item_attrs(&v.attrs);
             match &v.fields {
@@ -896,11 +892,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         // `implementation_functions::<method>` (R2-expansion).
         if let Some(impl_type) = self.current_impl_type_name.clone() {
             if !impl_type.is_empty() {
-                let pat = format!(
-                    "implementation_functions:{}::{}",
-                    impl_type,
-                    f.sig.ident
-                );
+                let pat = Pattern::impl_fn(impl_type.clone(), f.sig.ident.to_string());
                 for input in &f.sig.inputs {
                     if let syn::FnArg::Typed(pt) = input {
                         self.record_carry_from_type(&pat, &pt.ty);

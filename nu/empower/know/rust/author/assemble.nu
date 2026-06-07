@@ -28,12 +28,15 @@ export def main [args: record<out_dir: string, picks_path: string, orientation_o
 
     for p in $all_picks {
         let dir = ($args.out_dir | path join (slug $p.pattern))
+        # Final kp = stage_d.md when Stage D reduced; else stage_c.md
+        # (Stage B unknown -> Stage D no-op -> the Stage C draft IS final).
         let stage_d = ($dir | path join "stage_d.md")
-        if not ($stage_d | path exists) {
+        let final = (if ($stage_d | path exists) { $stage_d } else { ($dir | path join "stage_c.md") })
+        if not ($final | path exists) {
             $missing = ($missing | append $p.pattern)
             continue
         }
-        let text = (open --raw $stage_d | decode utf-8)
+        let text = (open --raw $final | decode utf-8)
         if not (is_valid_kp $text) {
             $missing = ($missing | append $p.pattern)
             continue

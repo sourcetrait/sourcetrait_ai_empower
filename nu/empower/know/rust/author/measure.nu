@@ -14,9 +14,12 @@ export def main [args: record<out_dir: string, picks_path: string>] {
 
     let entries = ($all_picks | each {|p|
         let dir = ($args.out_dir | path join (slug $p.pattern))
+        # Final kp = stage_d.md when Stage D reduced; else stage_c.md
+        # (Stage B unknown -> Stage D no-op -> the Stage C draft IS final).
         let stage_d = ($dir | path join "stage_d.md")
-        let exists = ($stage_d | path exists)
-        let text = if $exists { (open --raw $stage_d | decode utf-8) } else { "" }
+        let final = (if ($stage_d | path exists) { $stage_d } else { ($dir | path join "stage_c.md") })
+        let exists = ($final | path exists)
+        let text = if $exists { (open --raw $final | decode utf-8) } else { "" }
         let valid = (if $exists { (is_valid_kp $text) } else { false })
         {pattern: $p.pattern, set_label: $p.set_label, group: $p.group, valid: $valid, kp_chars: ($text | str length)}
     })

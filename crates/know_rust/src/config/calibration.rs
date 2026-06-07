@@ -48,8 +48,8 @@ pub struct ClassificationConfig {
 /// What: emit.py picker calibration: top-N cap formula constants,
 /// example weighting, method_ref family threshold, scoring boost
 /// coefficients, S1 cluster surfacing rule, the per-pick prose-budget
-/// matrix (R4a), and the R4a classifier inputs (configured-derives
-/// allowlist).
+/// matrix, and the form sub-classifier thresholds (general-signal
+/// only; no per-subject allowlists).
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct PickerConfig {
     pub top_n_floor: usize,
@@ -64,26 +64,28 @@ pub struct PickerConfig {
     pub cap_matrix: CapMatrix,
 }
 
-/// What: R4a form sub-classifier configuration. Holds the threshold
-/// values + override lists the structure / traits / derives
-/// classifiers consult instead of hardcoded constants:
+/// What: form sub-classifier thresholds the structure + traits
+/// classifiers consult. Each rests on a GENERAL structural signal
+/// (count / ratio derivable from any workspace's AST) - no per-subject
+/// hardcoded name-lists (mechanical-broad, subagent-fine per
+/// `notes/know_rust/working/05_calibration.md`):
 ///
 /// - `foundational_min_total` -> structure foundational vs incidental
 ///   split (default 30; intra+inter+example >= threshold means
 ///   foundational).
 /// - `lifecycle_impl_threshold` -> traits lifecycle vs marker split
-///   on impl count (default 5).
-/// - `lifecycle_traits` -> override allowlist (default empty); any
-///   listed trait classifies Lifecycle regardless of impl count.
-/// - `configured_derives` -> configured vs marker fast-path
-///   allowlist (default ~35 entries covering bevy + serde + clap +
-///   ecosystem derives).
+///   on workspace impl count (default 5).
 ///
-/// Why: keeps ecosystem-specific + workspace-specific tuning out of
-/// source code. When the_user wants to lower the lifecycle threshold
-/// for a small ecosystem, add a trait to the lifecycle override list,
-/// or extend the configured-derives allowlist for a new ecosystem,
-/// the calibration.toml edit is the one-stop knob.
+/// The `Configuring` group (configured-via-attributes derives +
+/// configuring attribute-macros) carries NO mechanical sub-form: the
+/// removed `configured_derives` allowlist was a per-subject cheat that
+/// did not generalize to unseen subjects. The broad group mark is the
+/// whole mechanical signal; the subagent thought-experiment does the
+/// fine subclassification.
+///
+/// Why: keeps the only knobs that ride a general signal in
+/// calibration.toml (lower the lifecycle threshold for a small
+/// ecosystem without recompiling) and keeps cheats out of the source.
 ///
 /// Where: held inside `PickerConfig`; consumed by classifier helpers
 /// in `crate::characterize::pattern_metrics`.
@@ -91,8 +93,6 @@ pub struct PickerConfig {
 pub struct ClassifierConfig {
     pub foundational_min_total: usize,
     pub lifecycle_impl_threshold: usize,
-    pub lifecycle_traits: Vec<String>,
-    pub configured_derives: Vec<String>,
 }
 
 /// What: per-example weighting for the public-set boost. `weight_floor`
@@ -242,8 +242,7 @@ pub struct ProseBudgetMatrix {
     pub structure_incidental: ProseBudgetCell,
     pub traits_lifecycle: ProseBudgetCell,
     pub traits_marker: ProseBudgetCell,
-    pub derives_configured: ProseBudgetCell,
-    pub derives_marker: ProseBudgetCell,
+    pub configuring: ProseBudgetCell,
     pub implementation_functions: ProseBudgetCell,
     pub trait_functions: ProseBudgetCell,
     pub utilities_free_fn: ProseBudgetCell,
@@ -278,9 +277,9 @@ impl ProseBudgetMatrix {
             (PickGroup::Traits, Some(SubForm::Lifecycle)) => &self.traits_lifecycle,
             (PickGroup::Traits, Some(SubForm::Marker)) => &self.traits_marker,
             (PickGroup::Traits, _) => &self.traits_marker,
-            (PickGroup::Derives, Some(SubForm::Configured)) => &self.derives_configured,
-            (PickGroup::Derives, Some(SubForm::Marker)) => &self.derives_marker,
-            (PickGroup::Derives, _) => &self.derives_marker,
+            // Configuring takes one broad budget hint (no mechanical
+            // sub-form); the subagent thought-experiment sets actual depth.
+            (PickGroup::Configuring, _) => &self.configuring,
             (PickGroup::ImplementationFunctions, _) => &self.implementation_functions,
             (PickGroup::TraitFunctions, _) => &self.trait_functions,
             (PickGroup::Utilities, Some(SubForm::FreeFn)) => &self.utilities_free_fn,
@@ -347,7 +346,7 @@ pub struct CapMatrixGroupMultipliers {
     pub trait_functions: f64,
     pub structure: f64,
     pub implementation_functions: f64,
-    pub derives: f64,
+    pub configuring: f64,
     pub utilities: f64,
     pub globals: f64,
 }
@@ -362,7 +361,7 @@ impl CapMatrixGroupMultipliers {
             PickGroup::TraitFunctions => self.trait_functions,
             PickGroup::Structure => self.structure,
             PickGroup::ImplementationFunctions => self.implementation_functions,
-            PickGroup::Derives => self.derives,
+            PickGroup::Configuring => self.configuring,
             PickGroup::Utilities => self.utilities,
             PickGroup::Globals => self.globals,
         }
@@ -465,12 +464,8 @@ mod tests {
             500
         );
         assert_eq!(
-            pb.budget_for(PickGroup::Derives, Some(SubForm::Configured), arch),
+            pb.budget_for(PickGroup::Configuring, None, arch),
             1200
-        );
-        assert_eq!(
-            pb.budget_for(PickGroup::Derives, Some(SubForm::Marker), arch),
-            100
         );
         assert_eq!(
             pb.budget_for(PickGroup::ImplementationFunctions, None, arch),
@@ -501,8 +496,7 @@ mod tests {
             (PickGroup::Structure, Some(SubForm::Incidental)),
             (PickGroup::Traits, Some(SubForm::Lifecycle)),
             (PickGroup::Traits, Some(SubForm::Marker)),
-            (PickGroup::Derives, Some(SubForm::Configured)),
-            (PickGroup::Derives, Some(SubForm::Marker)),
+            (PickGroup::Configuring, None),
             (PickGroup::ImplementationFunctions, None),
             (PickGroup::TraitFunctions, None),
             (PickGroup::Utilities, Some(SubForm::FreeFn)),
@@ -562,11 +556,8 @@ mod tests {
             pb.budget_for(PickGroup::Traits, None, set),
             pb.budget_for(PickGroup::Traits, Some(SubForm::Marker), set),
         );
-        // derives None -> marker
-        assert_eq!(
-            pb.budget_for(PickGroup::Derives, None, set),
-            pb.budget_for(PickGroup::Derives, Some(SubForm::Marker), set),
-        );
+        // configuring has a single row; None is the canonical path.
+        assert_eq!(pb.budget_for(PickGroup::Configuring, None, set), 1200);
         // utilities None -> macro (the picker's only utilities source)
         assert_eq!(
             pb.budget_for(PickGroup::Utilities, None, set),
@@ -575,22 +566,21 @@ mod tests {
     }
 
     #[test]
-    fn prose_budget_configured_derive_richest_at_architecture() {
-        // Sanity: configured derives + lifecycle traits should be the
-        // richest matrix rows at the architecture column. The kp
-        // pipeline's foundational / lifecycle / configured cells are
-        // what the matrix earmarks for the largest budget.
+    fn prose_budget_configuring_richest_at_architecture() {
+        // Sanity: configuring + lifecycle traits should be the richest
+        // matrix rows at the architecture column. The kp pipeline's
+        // foundational / lifecycle / configuring cells are what the
+        // matrix earmarks for the largest budget; globals the thinnest.
         let cal = Calibration::default();
         let pb = &cal.picker.prose_budget;
         let arch = PickSet::Architecture;
-        let configured = pb.budget_for(PickGroup::Derives, Some(SubForm::Configured), arch);
+        let configuring = pb.budget_for(PickGroup::Configuring, None, arch);
         let lifecycle = pb.budget_for(PickGroup::Traits, Some(SubForm::Lifecycle), arch);
         let foundational = pb.budget_for(PickGroup::Structure, Some(SubForm::Foundational), arch);
-        let marker_der = pb.budget_for(PickGroup::Derives, Some(SubForm::Marker), arch);
         let globals = pb.budget_for(PickGroup::Globals, None, arch);
-        assert!(configured >= foundational);
+        assert!(configuring >= foundational);
         assert!(lifecycle >= foundational);
-        assert!(foundational > marker_der);
+        assert!(configuring > globals);
         assert!(foundational > globals);
     }
 
@@ -604,7 +594,7 @@ mod tests {
         // sets lifted higher; inner_crate widest as per-crate own
         // architecture is the bulkiest signal pool.)
         // Group multipliers: traits + structure (architectural
-        // backbone) at 1.5; derives at 1.2; functions baseline at
+        // backbone) at 1.5; configuring at 1.2; functions baseline at
         // 1.0; utilities + globals lifted to 1.5 / 1.2 (the original
         // 0.8 / 0.5 trim suppressed too much of bevy's contribution).
         let cal = Calibration::default();
@@ -617,7 +607,7 @@ mod tests {
         assert_eq!(cm.set.for_set(PickSet::InnerCrate), 5.0);
         assert_eq!(cm.group.for_group(PickGroup::Traits), 1.5);
         assert_eq!(cm.group.for_group(PickGroup::Structure), 1.5);
-        assert_eq!(cm.group.for_group(PickGroup::Derives), 1.2);
+        assert_eq!(cm.group.for_group(PickGroup::Configuring), 1.2);
         assert_eq!(cm.group.for_group(PickGroup::ImplementationFunctions), 1.0);
         assert_eq!(cm.group.for_group(PickGroup::TraitFunctions), 1.0);
         assert_eq!(cm.group.for_group(PickGroup::Utilities), 1.5);
@@ -653,9 +643,9 @@ mod tests {
             "1.5 * 3.5 stacked"
         );
 
-        // Derives (1.2) * Clique (3.5): 20 * 1.2 * 3.5 = 84.
+        // Configuring (1.2) * Clique (3.5): 20 * 1.2 * 3.5 = 84.
         assert_eq!(
-            cm.cap_for(PickGroup::Derives, PickSet::Clique, 20, floor),
+            cm.cap_for(PickGroup::Configuring, PickSet::Clique, 20, floor),
             84,
             "1.2 * 3.5"
         );
@@ -702,7 +692,7 @@ mod tests {
         for group in [
             PickGroup::Traits,
             PickGroup::Structure,
-            PickGroup::Derives,
+            PickGroup::Configuring,
             PickGroup::ImplementationFunctions,
         ] {
             let arch = cm.cap_for(group, PickSet::Architecture, base, floor);

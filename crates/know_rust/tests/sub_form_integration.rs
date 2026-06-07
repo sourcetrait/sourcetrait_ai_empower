@@ -107,10 +107,14 @@ fn classify_traits_lifecycle_at_five_impl_threshold() {
 }
 
 #[test]
-fn classify_derives_hardcoded_list_marks_configured() {
-    // A derive whose name appears in the hardcoded configured-derive
-    // allowlist (e.g. Component) classifies Configured regardless of
-    // sibling-derive presence.
+fn configuring_group_has_no_mechanical_sub_form() {
+    // A workspace-defined derive lands in the `configuring` group (the
+    // broadened/renamed Derives group) with NO mechanical sub_form: the
+    // mechanical layer marks the broad group, the subagent thought-
+    // experiment does the fine subclassification (mechanical-broad,
+    // subagent-fine; the per-subject `configured_derives` allowlist
+    // cheat was removed in the Configuring rename). The former
+    // `derives:Component` key is now `configuring:Component`.
     let tmp = TempDir::new().expect("tempdir");
     let root = tmp.path();
     let files: HashMap<&str, String> = [
@@ -144,101 +148,26 @@ fn classify_derives_hardcoded_list_marks_configured() {
     write_tree(root, &files);
 
     let (fp, _out) = run_characterize(root);
-    assert_eq!(
-        sub_form_for(&fp, "derives:Component").as_deref(),
-        Some("configured"),
-        "Component is on the hardcoded configured list"
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics object");
+    assert!(
+        pm.contains_key("configuring:Component"),
+        "derive lands under configuring:Component; keys with Component: {:?}",
+        pm.keys()
+            .filter(|k| k.contains("Component"))
+            .collect::<Vec<_>>()
     );
-}
-
-#[test]
-fn classify_derives_unrecognized_falls_to_marker() {
-    // A derive not in the hardcoded list AND without a configured
-    // sibling at the same use site classifies Marker.
-    let tmp = TempDir::new().expect("tempdir");
-    let root = tmp.path();
-    let files: HashMap<&str, String> = [
-        (
-            "Cargo.toml",
-            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
-        ),
-        (
-            "lib/Cargo.toml",
-            String::from(
-                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
-            ),
-        ),
-        (
-            "lib/src/lib.rs",
-            String::from("pub trait CustomNoise {}\n"),
-        ),
-        (
-            "app/Cargo.toml",
-            String::from(
-                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
-            ),
-        ),
-        (
-            "app/src/lib.rs",
-            String::from("use lib::CustomNoise;\n#[derive(CustomNoise)]\npub struct A;\n"),
-        ),
-    ]
-    .into_iter()
-    .collect();
-    write_tree(root, &files);
-
-    let (fp, _out) = run_characterize(root);
-    assert_eq!(
-        sub_form_for(&fp, "derives:CustomNoise").as_deref(),
-        Some("marker"),
-        "non-allowlisted derive without configured sibling -> marker"
+    assert!(
+        !pm.contains_key("derives:Component"),
+        "the renamed group must not emit the old derives: key"
     );
-}
-
-#[test]
-fn classify_derives_sibling_fallback_marks_configured() {
-    // A derive not in the hardcoded list but sitting at a use site
-    // alongside a known-configured derive (Serialize) classifies
-    // Configured via the sibling fallback path.
-    let tmp = TempDir::new().expect("tempdir");
-    let root = tmp.path();
-    let files: HashMap<&str, String> = [
-        (
-            "Cargo.toml",
-            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
-        ),
-        (
-            "lib/Cargo.toml",
-            String::from(
-                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
-            ),
-        ),
-        (
-            "lib/src/lib.rs",
-            String::from("pub trait MyTag {}\npub trait Serialize {}\n"),
-        ),
-        (
-            "app/Cargo.toml",
-            String::from(
-                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
-            ),
-        ),
-        (
-            "app/src/lib.rs",
-            String::from(
-                "use lib::{MyTag, Serialize};\n#[derive(MyTag, Serialize)]\npub struct B;\n",
-            ),
-        ),
-    ]
-    .into_iter()
-    .collect();
-    write_tree(root, &files);
-
-    let (fp, _out) = run_characterize(root);
+    // No mechanical sub_form for the configuring group (subagent-fine).
     assert_eq!(
-        sub_form_for(&fp, "derives:MyTag").as_deref(),
-        Some("configured"),
-        "non-allowlist derive sharing a use site with Serialize -> configured (sibling fallback)"
+        sub_form_for(&fp, "configuring:Component"),
+        None,
+        "configuring carries no mechanical sub_form"
     );
 }
 

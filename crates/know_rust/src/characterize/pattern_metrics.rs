@@ -339,8 +339,10 @@ pub fn compute_pattern_metrics(
 ///
 /// - `trait_impl:T` -> `traits:T` (the trait is the protagonist; impls
 ///   signal architectural usage)
-/// - `derive:T` -> `derives:T`
-/// - `reg_macro:M` / `attr_macro:M` -> `utilities:M`
+/// - `derive:T` / `attr_macro:M` -> `configuring:T` (configured-via-
+///   attributes derives + configuring attribute-macros; broadened from
+///   the former derives-only group)
+/// - `reg_macro:M` -> `utilities:M`
 /// - `pub_type:X` -> `structure:X` (when X is a struct / enum / union /
 ///   type alias) or `traits:X` (when X is a trait def), discriminated
 ///   via the type_def_lookup vs trait_def_lookup probe.
@@ -372,11 +374,17 @@ fn translate_to_group_keys(
                 let new_key = format!("traits:{}", inner);
                 merge_metric(&mut new, new_key, metric);
             }
-            "derive" => {
-                let new_key = format!("derives:{}", inner);
+            "derive" | "attr_macro" => {
+                // Configuring: configured-via-attributes derives AND
+                // configuring attribute-macros (`#[tokio::main]` et al.)
+                // both wire a type into a framework via compile-time
+                // codegen. Broadened from the former derives-only group.
+                let new_key = format!("configuring:{}", inner);
                 merge_metric(&mut new, new_key, metric);
             }
-            "reg_macro" | "attr_macro" => {
+            "reg_macro" => {
+                // Invocation-driven registration macros stay utilities
+                // (they are call sites, not attribute-driven integration).
                 let new_key = format!("utilities:{}", inner);
                 merge_metric(&mut new, new_key, metric);
             }
@@ -895,21 +903,23 @@ fn should_skip_pattern(pattern: &str, calibration: &Calibration) -> bool {
         .any(|sub| pattern.contains(sub.as_str()))
 }
 
-/// What: walk the group-keyed pattern_metrics and populate
-/// `sub_form` per the picks-data refactor's R4 mechanical
-/// classifiers. `structure:` patterns get
-/// `Foundational` / `Incidental`; `derives:` get `Configured` /
-/// `Marker`; `traits:` get `Lifecycle` / `Marker`; `utilities:` get
-/// `Macro` (the picker currently only emits macros into utilities);
-/// `implementation_functions:`, `trait_functions:`, `globals:`
-/// keep `None` (no sub-form discriminator).
+/// What: walk the group-keyed pattern_metrics and populate `sub_form`
+/// for the groups a GENERAL structural signal discriminates.
+/// `structure:` patterns get `Foundational` / `Incidental` (by
+/// intra+inter+example count); `traits:` get `Lifecycle` / `Marker`
+/// (by workspace impl-count); `utilities:` get `Macro` (the picker
+/// currently only emits macros into utilities). `configuring:`,
+/// `implementation_functions:`, `trait_functions:`, `globals:` keep
+/// `None` - no general signal backs a mechanical sub-classification
+/// (mechanical-broad, subagent-fine per
+/// `notes/know_rust/working/05_calibration.md`).
 ///
-/// Why: the prose-budget matrix tuned 2026-06-05 (per
-/// `notes/know_rust/knowledge_product_authoring.md`) looks up
-/// `(group, sub_form, set)`; the classifier output is the
-/// matrix's row selector. Mechanical heuristics from `facts.json`
-/// signals keep this pure-data; refinement happens via the_user
-/// review when bevy's known protagonists land in the wrong cell.
+/// Why: the prose-budget matrix looks up `(group, sub_form, set)`; the
+/// classifier output is the matrix's row selector. Only sub-forms a
+/// general signal supports are retained - the removed derive
+/// configured-vs-marker classifier leaned on a per-subject allowlist
+/// (a cheat that does not generalize to unseen subjects), so the
+/// `configuring` group is left to the subagent thought-experiment.
 ///
 /// Where: called at the tail of `compute_pattern_metrics` after
 /// `translate_to_group_keys`. Reads from `all_facts` (impls /
@@ -926,14 +936,11 @@ fn classify_sub_forms(
         };
         metric.sub_form = match group {
             "structure" => Some(classify_structure(metric, calibration)),
-            "derives" => Some(classify_derives(
-                name,
-                &all_facts.derives,
-                &all_facts.fns,
-                calibration,
-            )),
             "traits" => Some(classify_traits(name, &all_facts.impls, calibration)),
             "utilities" => Some(classify_utilities(name, &all_facts.macros, &all_facts.fns)),
+            // `configuring` carries no mechanical sub-form (mechanical-
+            // broad, subagent-fine): the subagent thought-experiment does
+            // the fine subclassification. So do impl/trait fns + globals.
             _ => None,
         };
     }
@@ -966,94 +973,21 @@ fn classify_structure(metric: &PatternMetric, calibration: &Calibration) -> SubF
     }
 }
 
-/// What: classify a `derives:` pattern as `Configured` (use sites
-/// carry sub-attribute configuration like `#[component(...)]`,
-/// `#[serde(...)]`, `#[require(...)]`) or `Marker` (pure
-/// `#[derive(Clone, Debug, PartialEq)]` without sub-attribute use).
-///
-/// Why: configured derives (bevy Component / Bundle / Resource,
-/// serde Serialize / Deserialize, clap Parser / Subcommand) carry a
-/// rich contract that earns the matrix's largest budget; marker
-/// derives are name-defined and need almost no prose.
-///
-/// Mechanical heuristic: (1) hardcoded fast-path for known-
-/// configured derive names from
-/// `calibration.picker.classifier.configured_derives` (defaults
-/// cover the bevy + serde + clap + sea-orm + thiserror ecosystem).
-/// (2) Sibling-derive proxy fallback: any derive site of
-/// `trait_name` whose enclosing item also carries a known-
-/// configured sibling derive within 3 source lines indicates
-/// configured-by-association (a struct that derives both
-/// `Component` and `Clone` is configured because of the
-/// `Component` contribution). Either signal indicates `Configured`;
-/// absence indicates `Marker`. The 3-line window is the
-/// adjacent-derive heuristic for typical `#[derive(A, B, C)]`
-/// layouts.
-///
-/// Where: called per `derives:` pattern from `classify_sub_forms`.
-fn classify_derives(
-    trait_name: &str,
-    derives: &[serde_json::Value],
-    _fns: &[serde_json::Value],
-    calibration: &Calibration,
-) -> SubForm {
-    let configured_list = &calibration.picker.classifier.configured_derives;
-    if configured_list.iter().any(|n| n == trait_name) {
-        return SubForm::Configured;
-    }
-    let mut configured_sibling = false;
-    for d in derives {
-        let dn = d.get("trait").and_then(|v| v.as_str()).unwrap_or("");
-        if dn != trait_name {
-            continue;
-        }
-        let df = d.get("file").and_then(|v| v.as_str()).unwrap_or("");
-        let dl = d.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        for sib in derives {
-            let sn = sib.get("trait").and_then(|v| v.as_str()).unwrap_or("");
-            if sn == trait_name {
-                continue;
-            }
-            if !configured_list.iter().any(|n| n == sn) {
-                continue;
-            }
-            let sf = sib.get("file").and_then(|v| v.as_str()).unwrap_or("");
-            let sl = sib.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            if sf == df && sl.abs_diff(dl) <= 3 {
-                configured_sibling = true;
-                break;
-            }
-        }
-        if configured_sibling {
-            break;
-        }
-    }
-    if configured_sibling {
-        SubForm::Configured
-    } else {
-        SubForm::Marker
-    }
-}
-
 /// What: classify a `traits:` pattern as `Lifecycle` (rich
-/// behavioural interface with significant in-workspace impl-count
-/// OR explicit lifecycle-override entry) or `Marker` (zero-method /
-/// marker bound trait with sparse impls).
+/// behavioural interface with significant in-workspace impl-count) or
+/// `Marker` (zero-method / marker bound trait with sparse impls).
 ///
 /// Why: lifecycle traits (bevy Plugin / System / SystemSet, tokio
 /// Future / Stream / AsyncRead, helix Command) carry rich
 /// architectural contracts; marker traits (Send / Sync / Sized,
-/// auto-derived ecosystem markers) carry name-only semantics. Some
-/// traits read lifecycle-like but their impls come from derive
-/// macros (invisible to the items walker); the override list lets
-/// the_user opt those into Lifecycle without lowering the
-/// threshold across the board.
+/// auto-derived ecosystem markers) carry name-only semantics.
 ///
-/// Mechanical heuristic: (1) any trait whose name appears in
-/// `calibration.picker.classifier.lifecycle_traits` classifies
-/// Lifecycle (override fast-path). (2) Else count non-cfg-gated
-/// workspace impls of the trait; >=
-/// `lifecycle_impl_threshold` (default 5) -> Lifecycle.
+/// Mechanical heuristic (a GENERAL signal - no per-subject name-list):
+/// count non-cfg-gated workspace impls of the trait; >=
+/// `lifecycle_impl_threshold` (default 5) -> Lifecycle, else Marker.
+/// The former `lifecycle_traits` override allowlist was removed as a
+/// cheat (mechanical-broad, subagent-fine per
+/// `notes/know_rust/working/05_calibration.md`).
 ///
 /// Where: called per `traits:` pattern from `classify_sub_forms`.
 fn classify_traits(
@@ -1061,10 +995,6 @@ fn classify_traits(
     impls: &[serde_json::Value],
     calibration: &Calibration,
 ) -> SubForm {
-    let lifecycle_list = &calibration.picker.classifier.lifecycle_traits;
-    if lifecycle_list.iter().any(|n| n == trait_name) {
-        return SubForm::Lifecycle;
-    }
     let count = impls
         .iter()
         .filter(|i| {

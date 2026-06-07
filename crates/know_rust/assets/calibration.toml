@@ -116,55 +116,32 @@ excluded_dir_segments = ["tests", "benches", "examples"]
 pattern_skip_substrings = ["::test_"]
 
 [picker.classifier]
-# R4a form sub-classifier inputs.
+# Form sub-classifier thresholds. Each rides a GENERAL structural
+# signal (a count derivable from any workspace's AST); no per-subject
+# hardcoded name-lists (mechanical-broad, subagent-fine per
+# notes/know_rust/working/05_calibration.md).
 #
-# `foundational_min_total` is the minimum `intra + inter + example` count
-# at which a structure pattern classifies Foundational rather than
-# Incidental. Default 30 was tuned on the bevy spot test: bevy's S5.1
-# structure protagonists (Res / Transform / Commands / App / ResMut /
-# Query / ...) all clear 30 comfortably.
+# `foundational_min_total` is the minimum `intra + inter + example`
+# count at which a structure pattern classifies Foundational rather
+# than Incidental. Default 30 was tuned on the bevy spot test: bevy's
+# S5.1 structure protagonists (Res / Transform / Commands / App /
+# ResMut / Query / ...) all clear 30 comfortably.
 #
 # `lifecycle_impl_threshold` is the minimum non-cfg-gated workspace
 # impl count at which a trait classifies Lifecycle rather than Marker.
 # Default 5 was tuned on bevy + ratatui: bevy's Plugin / FromWorld /
 # AssetLoader cleared it; ratatui Backend (3 impls) did not. Lower to
-# 3 if you want to capture more lifecycle interfaces at the cost of
-# false-positives on incidentally-implemented traits.
+# 3 to capture more lifecycle interfaces at the cost of false-positives
+# on incidentally-implemented traits.
 #
-# `lifecycle_traits` is an optional override allowlist: any trait whose
-# name appears here classifies Lifecycle regardless of impl count.
-# Useful when a trait is conceptually lifecycle/organizing but most
-# of its impls come from derive-macro expansion (invisible to the
-# items walker). Empty by default; the_user adds entries when an edge
-# surfaces.
-#
-# `configured_derives` seeds the `classify_derives` fast-path: any
-# derive whose trait name appears in this list classifies as
-# Configured regardless of sibling-derive signals. Default values
-# cover the bevy ecs + serde + clap + sea-orm + thiserror + napi/pyo3
-# ecosystems; tuning is a single-file edit when a new ecosystem
-# surfaces (sqlx, candle, polars, ...).
+# The Configuring group (configured-via-attributes derives + configuring
+# attribute-macros) carries NO mechanical sub-form: the removed
+# `configured_derives` allowlist + the empty `lifecycle_traits` override
+# were per-subject cheats that did not generalize to unseen subjects.
+# The broad group mark is the whole mechanical signal; the subagent
+# thought-experiment does the fine subclassification.
 foundational_min_total = 30
 lifecycle_impl_threshold = 5
-lifecycle_traits = []
-configured_derives = [
-    # bevy ecs / app
-    "Component", "Resource", "Event", "Bundle", "SystemParam",
-    "States", "ScheduleLabel", "SystemSet", "Asset", "TypePath",
-    "Reflect", "GetTypeRegistration", "FromReflect",
-    # serde + schemas
-    "Serialize", "Deserialize", "JsonSchema", "ToSchema", "OpenApi",
-    # clap
-    "Args", "Parser", "Subcommand", "ValueEnum",
-    # codec / db / openapi
-    "Encode", "Decode", "Iden", "EnumIter", "Type", "TS", "FromRow",
-    # error / display
-    "ThisError", "Error", "Display", "FromStr",
-    # pin-project / async
-    "Pin",
-    # wasm / napi / pyo3
-    "Wasm", "FromPyObject", "IntoPyObject",
-]
 
 [picker.prose_budget]
 # Per-pick prose budget hints (character counts) per (form / sub_form,
@@ -175,12 +152,11 @@ configured_derives = [
 # Form sub-classification (which row to look up):
 #   structure: foundational vs incidental (high intra+inter+example
 #     count is foundational; thin structure is incidental)
-#   derives: configured (with sub-attribute use) vs marker (pure
-#     `#[derive(Clone, Debug)]`)
 #   traits: lifecycle (rich method set or significant impl-count)
 #     vs marker (zero methods or marker bound)
 #   utilities: free_fn vs macro
-#   impl_fns / trait_fns / globals: no sub-form
+#   configuring / impl_fns / trait_fns / globals: no sub-form
+#     (configuring is one broad row; the subagent sets actual depth)
 #
 # Tuned 2026-06-05 from a 5-pick bevy spot test against the picks-data
 # refactor (per notes/know_rust/knowledge_product_authoring.md
@@ -220,21 +196,19 @@ clique = 350
 intra_crate = 80
 inner_crate = 250
 
-[picker.prose_budget.derives_configured]
+# Configuring (configured-via-attributes derives + configuring attr-
+# macros): ONE broad budget hint, no mechanical sub-form. The surviving
+# workspace-originated configuring picks are predominantly the rich
+# configured kind (std/external marker derives are gated out by origin),
+# so the row keeps the rich budget; the subagent sets actual depth and
+# Stage C/D naturally produces less for a thin pick.
+[picker.prose_budget.configuring]
 architecture = 1200
 public = 1100
 inter_crate = 1000
 clique = 900
 intra_crate = 350
 inner_crate = 700
-
-[picker.prose_budget.derives_marker]
-architecture = 100
-public = 100
-inter_crate = 80
-clique = 80
-intra_crate = 40
-inner_crate = 60
 
 [picker.prose_budget.implementation_functions]
 architecture = 300
@@ -304,9 +278,9 @@ inner_crate = 60
 # because per-crate own-architecture is the bulkiest signal pool.
 #
 # Group multipliers: traits + structure (architectural backbone) at
-# 1.5; derives at 1.2; functions baseline at 1.0; utilities + globals
-# lifted to 1.5 / 1.2 (the initial 0.8 / 0.5 trim suppressed too much
-# of bevy's contribution under R4a prose budgets).
+# 1.5; configuring at 1.2; functions baseline at 1.0; utilities +
+# globals lifted to 1.5 / 1.2 (the initial 0.8 / 0.5 trim suppressed
+# too much of bevy's contribution under the prose budgets).
 
 [picker.cap_matrix.set]
 architecture = 2.5
@@ -321,6 +295,6 @@ traits = 1.5
 trait_functions = 1.0
 structure = 1.5
 implementation_functions = 1.0
-derives = 1.2
+configuring = 1.2
 utilities = 1.5
 globals = 1.2

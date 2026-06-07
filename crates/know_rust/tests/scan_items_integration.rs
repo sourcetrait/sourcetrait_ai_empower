@@ -221,7 +221,9 @@ fn carry_filters_lowercase_primitives() {
 }
 
 #[test]
-fn carry_derives_records_trait_name() {
+fn carry_configuring_records_derived_trait_name() {
+    // A configured-via-attributes derive carries the derived trait name
+    // under the configuring:<trait> key (the broadened/renamed group).
     let f = scan_source(
         "t.rs",
         "#[derive(Debug, Clone, PartialEq)]\npub struct Marker;",
@@ -229,17 +231,17 @@ fn carry_derives_records_trait_name() {
     .expect("parse ok");
     let debug_carry = f
         .carries
-        .get(&Pattern::derives("Debug"))
-        .expect("derives:Debug carry list present");
+        .get(&Pattern::configuring("Debug"))
+        .expect("configuring:Debug carry list present");
     let names: Vec<&str> = debug_carry.iter().map(|c| c.name.as_str()).collect();
-    assert!(names.contains(&"Debug"), "derives:Debug carries Debug trait name");
+    assert!(names.contains(&"Debug"), "configuring:Debug carries Debug trait name");
     assert!(
-        f.carries.contains_key(&Pattern::derives("Clone")),
-        "derives:Clone present"
+        f.carries.contains_key(&Pattern::configuring("Clone")),
+        "configuring:Clone present"
     );
     assert!(
-        f.carries.contains_key(&Pattern::derives("PartialEq")),
-        "derives:PartialEq present"
+        f.carries.contains_key(&Pattern::configuring("PartialEq")),
+        "configuring:PartialEq present"
     );
 }
 
@@ -351,13 +353,13 @@ fn carry_workspace_dedup_by_name() {
     let facts: ItemFacts = serde_json::from_str(&json).expect("parse ItemFacts");
     let carry = facts
         .carries
-        .get(&Pattern::derives("Component"))
-        .expect("derives:Component carry list present");
+        .get(&Pattern::configuring("Component"))
+        .expect("configuring:Component carry list present");
     let names: std::collections::HashSet<&str> = carry.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(
         names.len(),
         1,
-        "derives:Component carry should dedup to 1 distinct trait name, got {:?}",
+        "configuring:Component carry should dedup to 1 distinct trait name, got {:?}",
         carry
     );
     assert!(names.contains("Component"));

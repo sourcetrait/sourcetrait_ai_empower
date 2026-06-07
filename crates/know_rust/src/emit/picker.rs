@@ -42,14 +42,15 @@ pub fn compute_significance_sets(
             .unwrap_or(false)
     };
 
-    // R3: per-crate pre-aggregation uses the new picks-data model's
+    // R3: per-crate pre-aggregation uses the picks-data model's
     // `<group>:<name>` pattern key shape (see
-    // `notes/know_rust/picks-data-model.md`). Mapping:
+    // `notes/know_rust/working/02_picks_data.md`). Mapping:
     //   impls (trait T)        -> traits:T
-    //   derives (trait T)      -> derives:T
+    //   derives (trait T)      -> configuring:T
     //   type_usages (O::i)     -> BRIDGE: structure:O AND
     //                             implementation_functions:O::i
-    //   macros (reg / attr M)  -> utilities:M
+    //   macros: attr_macro M   -> configuring:M
+    //           reg_macro M    -> utilities:M
     let mut per_crate_counts: indexmap::IndexMap<String, indexmap::IndexMap<Pattern, usize>> =
         indexmap::IndexMap::new();
     if let Some(arr) = facts.get("impls").and_then(|v| v.as_array()) {
@@ -76,7 +77,7 @@ pub fn compute_significance_sets(
                 d.get("crate").and_then(|v| v.as_str()),
                 d.get("trait").and_then(|v| v.as_str()),
             ) {
-                let p = Pattern::derives(nm);
+                let p = Pattern::configuring(nm);
                 if is_workspace_originated(&p) {
                     *per_crate_counts
                         .entry(c.to_string())
@@ -123,11 +124,16 @@ pub fn compute_significance_sets(
             let kind = m.get("kind").and_then(|v| v.as_str()).unwrap_or("");
             let nm = m.get("name").and_then(|v| v.as_str());
             if let (Some(c), Some(nm)) = (c, nm) {
-                // Both reg_macro and attr_macro map to the utilities
-                // group; the picks-data model unifies macro callsite
-                // shapes under one bucket.
-                if kind == "macro_invocation" || kind == "attr_macro" {
-                    let p = Pattern::utilities(nm);
+                // attr_macro -> configuring (attribute-driven compile-
+                // time integration); reg_macro (macro_invocation) ->
+                // utilities (an invocation call site, not attribute
+                // integration). The picks-data model splits the two.
+                let p = match kind {
+                    "attr_macro" => Some(Pattern::configuring(nm)),
+                    "macro_invocation" => Some(Pattern::utilities(nm)),
+                    _ => None,
+                };
+                if let Some(p) = p {
                     if is_workspace_originated(&p) {
                         *per_crate_counts
                             .entry(c.to_string())

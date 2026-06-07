@@ -54,21 +54,26 @@ impl PickSelector {
 
 /// What: the form sub-classification orthogonal to `PickGroup`, used
 /// by the calibration's prose-budget matrix to route per-pick prose
-/// budgets per (group, sub_form, set) cell. Five form discriminators
-/// per the picks-data refactor's R4 phase: `Foundational` /
-/// `Incidental` discriminate `Structure`; `Configured` / `Marker`
-/// discriminate `Derives`; `Lifecycle` / `Marker` discriminate
-/// `Traits`; `FreeFn` / `Macro` discriminate `Utilities`. Items in
-/// `ImplementationFunctions`, `TraitFunctions`, `Globals` carry no
-/// sub-form (the group already captures the relevant axis).
+/// budgets per (group, sub_form, set) cell. The discriminators rest on
+/// GENERAL structural signals derivable from any workspace's AST:
+/// `Foundational` / `Incidental` discriminate `Structure` (by
+/// intra+inter+example count); `Lifecycle` / `Marker` discriminate
+/// `Traits` (by workspace impl-count); `FreeFn` / `Macro` discriminate
+/// `Utilities`. Items in `Configuring`, `ImplementationFunctions`,
+/// `TraitFunctions`, `Globals` carry no mechanical sub-form. The
+/// `Configuring` group is deliberately UNCLASSIFIED at the mechanical
+/// layer (mechanical-broad, subagent-fine per
+/// `notes/know_rust/working/05_calibration.md`): the broad group mark
+/// is the whole signal a general AST yields; the subagent
+/// thought-experiment does the fine subclassification.
 ///
-/// Why: the kp prose-budget matrix tuned 2026-06-05 (per
-/// `notes/know_rust/knowledge_product_authoring.md`) lists 11 rows
-/// across groups + sub-forms because some groups have a meaningful
-/// budget discriminator (a configured derive earns much more prose
-/// budget than a marker derive) and some don't. The `SubForm` enum
-/// encodes that discriminator at the type level so the matrix lookup
-/// is mechanical.
+/// Why: the kp prose-budget matrix looks up `(group, sub_form, set)`;
+/// the `SubForm` enum encodes the discriminator at the type level so
+/// the matrix lookup is mechanical. Only sub-forms a general signal
+/// supports are retained - a per-subject hardcoded name-list (the
+/// removed `configured_derives` cheat) does not generalize to unseen
+/// subjects, so derive configured-vs-marker was dropped in the
+/// Configuring rename.
 ///
 /// Where: populated by `crate::characterize::pattern_metrics`'s
 /// classifier helpers from `facts.json` signals; persisted in
@@ -79,7 +84,6 @@ impl PickSelector {
 pub enum SubForm {
     Foundational,
     Incidental,
-    Configured,
     Marker,
     Lifecycle,
     FreeFn,
@@ -95,7 +99,6 @@ impl SubForm {
         match self {
             Self::Foundational => "foundational",
             Self::Incidental => "incidental",
-            Self::Configured => "configured",
             Self::Marker => "marker",
             Self::Lifecycle => "lifecycle",
             Self::FreeFn => "free_fn",
@@ -119,7 +122,6 @@ impl SubForm {
         match s {
             "foundational" => Some(Self::Foundational),
             "incidental" => Some(Self::Incidental),
-            "configured" => Some(Self::Configured),
             "marker" => Some(Self::Marker),
             "lifecycle" => Some(Self::Lifecycle),
             "free_fn" => Some(Self::FreeFn),
@@ -130,10 +132,11 @@ impl SubForm {
 
     /// What: `true` if this sub-form is meaningful for `group`,
     /// `false` if the (group, sub_form) pair is structurally invalid.
-    /// `Foundational` / `Incidental` apply to `Structure`;
-    /// `Configured` to `Derives`; `Marker` to both `Derives` and
-    /// `Traits`; `Lifecycle` to `Traits`; `FreeFn` / `Macro` to
-    /// `Utilities`. Other group + sub_form combinations are invalid.
+    /// `Foundational` / `Incidental` apply to `Structure`; `Marker` /
+    /// `Lifecycle` to `Traits`; `FreeFn` / `Macro` to `Utilities`.
+    /// `Configuring`, `ImplementationFunctions`, `TraitFunctions`, and
+    /// `Globals` accept NO sub-form (no general signal backs a
+    /// mechanical sub-classification). Other combinations are invalid.
     ///
     /// Why: the classifier should never emit a (group, sub_form) pair
     /// outside the validity table; the predicate lets debug
@@ -147,9 +150,7 @@ impl SubForm {
     pub const fn valid_for(&self, group: PickGroup) -> bool {
         match self {
             Self::Foundational | Self::Incidental => matches!(group, PickGroup::Structure),
-            Self::Configured => matches!(group, PickGroup::Derives),
-            Self::Marker => matches!(group, PickGroup::Derives | PickGroup::Traits),
-            Self::Lifecycle => matches!(group, PickGroup::Traits),
+            Self::Marker | Self::Lifecycle => matches!(group, PickGroup::Traits),
             Self::FreeFn | Self::Macro => matches!(group, PickGroup::Utilities),
         }
     }
@@ -157,19 +158,21 @@ impl SubForm {
 
 /// What: the seven semantic groups partitioning the item kinds the
 /// picker considers. Carry-having groups (`Traits`, `TraitFunctions`,
-/// `Structure`, `ImplementationFunctions`, `Derives`) surface
+/// `Structure`, `ImplementationFunctions`, `Configuring`) surface
 /// transitive one-hop reader-context items via the picker's `Carried`
 /// selector; no-carry groups (`Utilities`, `Globals`) do not.
 ///
-/// Why: replaces the current picker's syntactic `kind:name` keys
-/// (`trait_impl` / `derive` / `type_usage` / `pub_type` / etc.) with a
-/// semantic taxonomy aligned with how the reader categorizes items.
-/// The `Structure` vs `Traits` split disambiguates the current
-/// `pub_type` conflation.
+/// Why: replaces the picker's syntactic `kind:name` keys (`trait_impl`
+/// / `derive` / `attr_macro` / `type_usage` / `pub_type` / etc.) with
+/// a semantic taxonomy aligned with how the reader categorizes items.
+/// The `Structure` vs `Traits` split disambiguates the `pub_type`
+/// conflation. `Configuring` (the broadened/renamed `Derives` group)
+/// holds declarative compile-time integration - configured-via-
+/// attributes derives AND configuring attribute-macros (`#[tokio::main]`
+/// et al.) - that wires a plain type into a framework via codegen,
+/// which none of the other groups names cleanly.
 ///
-/// Where: typed reference for the picks-data refactor. The
-/// `pattern_metrics` key shape will become `<group>:<name>` once the
-/// refactor's R1 + R3 phases land.
+/// Where: the `pattern_metrics` key shape is `<group>:<name>` post-R3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PickGroup {
@@ -177,7 +180,7 @@ pub enum PickGroup {
     TraitFunctions,
     Structure,
     ImplementationFunctions,
-    Derives,
+    Configuring,
     Utilities,
     Globals,
 }
@@ -206,7 +209,7 @@ impl PickGroup {
             | Self::TraitFunctions
             | Self::Structure
             | Self::ImplementationFunctions
-            | Self::Derives => true,
+            | Self::Configuring => true,
             Self::Utilities | Self::Globals => false,
         }
     }
@@ -227,7 +230,7 @@ impl PickGroup {
             Self::TraitFunctions => "trait_functions",
             Self::Structure => "structure",
             Self::ImplementationFunctions => "implementation_functions",
-            Self::Derives => "derives",
+            Self::Configuring => "configuring",
             Self::Utilities => "utilities",
             Self::Globals => "globals",
         }
@@ -250,7 +253,7 @@ impl PickGroup {
             "trait_functions" => Some(Self::TraitFunctions),
             "structure" => Some(Self::Structure),
             "implementation_functions" => Some(Self::ImplementationFunctions),
-            "derives" => Some(Self::Derives),
+            "configuring" => Some(Self::Configuring),
             "utilities" => Some(Self::Utilities),
             "globals" => Some(Self::Globals),
             _ => None,
@@ -366,7 +369,7 @@ pub const CARRY_GROUPS: [PickGroup; 5] = [
     PickGroup::TraitFunctions,
     PickGroup::Structure,
     PickGroup::ImplementationFunctions,
-    PickGroup::Derives,
+    PickGroup::Configuring,
 ];
 
 /// What: const array of the two no-carry pick groups (`Utilities`,
@@ -410,7 +413,7 @@ const _PICK_SETS_EXHAUSTIVE: () = {
 
 /// What: a single picks-data pattern - a fieldful enum tagging an
 /// architectural pick by its `PickGroup` with the group-shaped
-/// payload. `Traits` / `Structure` / `Derives` / `Utilities` /
+/// payload. `Traits` / `Structure` / `Configuring` / `Utilities` /
 /// `Globals` carry a single name; `ImplementationFunctions` /
 /// `TraitFunctions` carry the `(outer, inner)` pair (e.g. `World::new`,
 /// `_::update`) so the compound key is modeled structurally rather
@@ -437,7 +440,7 @@ pub enum Pattern {
     TraitFunctions { outer: String, inner: String },
     Structure(String),
     ImplementationFunctions { outer: String, inner: String },
-    Derives(String),
+    Configuring(String),
     Utilities(String),
     Globals(String),
 }
@@ -452,7 +455,7 @@ impl Pattern {
             Self::TraitFunctions { .. } => PickGroup::TraitFunctions,
             Self::Structure(_) => PickGroup::Structure,
             Self::ImplementationFunctions { .. } => PickGroup::ImplementationFunctions,
-            Self::Derives(_) => PickGroup::Derives,
+            Self::Configuring(_) => PickGroup::Configuring,
             Self::Utilities(_) => PickGroup::Utilities,
             Self::Globals(_) => PickGroup::Globals,
         }
@@ -465,7 +468,7 @@ impl Pattern {
         match self {
             Self::Traits(n)
             | Self::Structure(n)
-            | Self::Derives(n)
+            | Self::Configuring(n)
             | Self::Utilities(n)
             | Self::Globals(n) => n.clone(),
             Self::TraitFunctions { outer, inner }
@@ -483,8 +486,8 @@ impl Pattern {
     pub fn structure(name: impl Into<String>) -> Self {
         Self::Structure(name.into())
     }
-    pub fn derives(name: impl Into<String>) -> Self {
-        Self::Derives(name.into())
+    pub fn configuring(name: impl Into<String>) -> Self {
+        Self::Configuring(name.into())
     }
     pub fn utilities(name: impl Into<String>) -> Self {
         Self::Utilities(name.into())
@@ -513,7 +516,7 @@ impl Pattern {
         match group {
             PickGroup::Traits => Self::Traits(name.to_string()),
             PickGroup::Structure => Self::Structure(name.to_string()),
-            PickGroup::Derives => Self::Derives(name.to_string()),
+            PickGroup::Configuring => Self::Configuring(name.to_string()),
             PickGroup::Utilities => Self::Utilities(name.to_string()),
             PickGroup::Globals => Self::Globals(name.to_string()),
             PickGroup::ImplementationFunctions => {
@@ -548,7 +551,7 @@ fn split_outer_inner(name: &str) -> (String, String) {
 
 impl std::fmt::Display for Pattern {
     /// What: renders as `<group_wire>:<name>` (e.g.
-    /// `structure:Component`, `derives:Clone`,
+    /// `structure:Component`, `configuring:Component`,
     /// `implementation_functions:World::new`,
     /// `implementation_functions:_::update`). Byte-compatible with the
     /// prior stringly key shape.
@@ -557,7 +560,7 @@ impl std::fmt::Display for Pattern {
         match self {
             Self::Traits(n)
             | Self::Structure(n)
-            | Self::Derives(n)
+            | Self::Configuring(n)
             | Self::Utilities(n)
             | Self::Globals(n) => write!(f, "{}:{}", g, n),
             Self::TraitFunctions { outer, inner }
@@ -685,7 +688,10 @@ mod tests {
             Pattern::structure("Component").to_string(),
             "structure:Component"
         );
-        assert_eq!(Pattern::derives("Clone").to_string(), "derives:Clone");
+        assert_eq!(
+            Pattern::configuring("Component").to_string(),
+            "configuring:Component"
+        );
         assert_eq!(
             Pattern::impl_fn("World", "new").to_string(),
             "implementation_functions:World::new"
@@ -701,13 +707,17 @@ mod tests {
         // kind() is the Copy discriminant mirror.
         assert_eq!(Pattern::structure("X").kind(), PickGroup::Structure);
         assert_eq!(
+            Pattern::configuring("X").kind(),
+            PickGroup::Configuring
+        );
+        assert_eq!(
             Pattern::impl_fn("A", "b").kind(),
             PickGroup::ImplementationFunctions
         );
         // wire round-trip via from_wire.
         for p in [
             Pattern::structure("Component"),
-            Pattern::derives("Clone"),
+            Pattern::configuring("Component"),
             Pattern::impl_fn("World", "new"),
             Pattern::impl_fn("_", "update"),
             Pattern::trait_fn("Handler", "handle"),
@@ -726,7 +736,6 @@ mod tests {
         for sf in [
             SubForm::Foundational,
             SubForm::Incidental,
-            SubForm::Configured,
             SubForm::Marker,
             SubForm::Lifecycle,
             SubForm::FreeFn,
@@ -744,17 +753,17 @@ mod tests {
         assert!(SubForm::Foundational.valid_for(PickGroup::Structure));
         assert!(SubForm::Incidental.valid_for(PickGroup::Structure));
         assert!(!SubForm::Foundational.valid_for(PickGroup::Traits));
-        assert!(SubForm::Configured.valid_for(PickGroup::Derives));
-        assert!(!SubForm::Configured.valid_for(PickGroup::Traits));
-        assert!(SubForm::Marker.valid_for(PickGroup::Derives));
         assert!(SubForm::Marker.valid_for(PickGroup::Traits));
         assert!(!SubForm::Marker.valid_for(PickGroup::Structure));
         assert!(SubForm::Lifecycle.valid_for(PickGroup::Traits));
-        assert!(!SubForm::Lifecycle.valid_for(PickGroup::Derives));
         assert!(SubForm::FreeFn.valid_for(PickGroup::Utilities));
         assert!(SubForm::Macro.valid_for(PickGroup::Utilities));
         assert!(!SubForm::FreeFn.valid_for(PickGroup::Structure));
+        // Configuring carries no mechanical sub-form (mechanical-broad,
+        // subagent-fine per working/05_calibration.md); no SubForm is
+        // valid for it, nor for the function/globals groups.
         for g in [
+            PickGroup::Configuring,
             PickGroup::ImplementationFunctions,
             PickGroup::TraitFunctions,
             PickGroup::Globals,
@@ -762,7 +771,6 @@ mod tests {
             for sf in [
                 SubForm::Foundational,
                 SubForm::Incidental,
-                SubForm::Configured,
                 SubForm::Marker,
                 SubForm::Lifecycle,
                 SubForm::FreeFn,
@@ -783,7 +791,7 @@ mod tests {
         use std::collections::HashMap;
         let mut map: HashMap<Pattern, usize> = HashMap::new();
         map.insert(Pattern::structure("Component"), 1);
-        map.insert(Pattern::derives("Clone"), 2);
+        map.insert(Pattern::configuring("Clone"), 2);
         assert_eq!(map.len(), 2);
         assert_eq!(map.get(&Pattern::structure("Component")), Some(&1));
     }

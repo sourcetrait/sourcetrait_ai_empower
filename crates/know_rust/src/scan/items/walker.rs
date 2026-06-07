@@ -154,10 +154,11 @@ impl FileWalker {
                     if cleaned == "Serialize" || cleaned == "Deserialize" {
                         self.bump_seam(SeamKind::SerdeSerialize, 1);
                     }
-                    // R2 carry extraction: derive carries the derived
-                    // trait so the reader has impl-shape context.
-                    // Pattern key shape: derives:<trait>.
-                    let pat = Pattern::derives(cleaned.clone());
+                    // R2 carry extraction: a configured-via-attributes
+                    // derive carries the derived trait so the reader has
+                    // impl-shape context. Pattern key shape:
+                    // configuring:<trait> (the broadened/renamed group).
+                    let pat = Pattern::configuring(cleaned.clone());
                     self.record_carry(pat, cleaned.clone());
                     self.facts.derives.push(DeriveEntry {
                         file: self.file.clone(),

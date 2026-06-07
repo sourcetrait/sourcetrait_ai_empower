@@ -367,7 +367,11 @@ fn filter_carries_to_workspace(all_facts: &mut WorkspaceFacts) {
     let key_ok = |pat: &Pattern| -> bool {
         match pat {
             Pattern::Structure(name) => ws_types.contains(name),
-            Pattern::Traits(name) | Pattern::Derives(name) => ws_traits.contains(name),
+            // Configuring carry keys are derive-sourced (the walker's
+            // derive site records the derived trait name); gate on the
+            // workspace trait set. Attr-macro configuring patterns have
+            // no carry site, so they never appear here.
+            Pattern::Traits(name) | Pattern::Configuring(name) => ws_traits.contains(name),
             Pattern::ImplementationFunctions { outer, .. }
             | Pattern::TraitFunctions { outer, .. } => {
                 outer.as_str() == "_"

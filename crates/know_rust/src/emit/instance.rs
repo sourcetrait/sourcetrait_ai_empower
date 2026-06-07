@@ -99,7 +99,7 @@ impl EnrichedSets {
 /// Why: emit.py's `_instance_for_kind()` ported and migrated to the
 /// picks-data model (R3 per
 /// `notes/know_rust/tasks/picks-data-model-refactor.md`). Each picker
-/// pattern (e.g. `traits:Component`, `derives:Clone`,
+/// pattern (e.g. `traits:Component`, `configuring:Component`,
 /// `utilities:cfg_attr_test_or_loom`,
 /// `implementation_functions:_::update`,
 /// `implementation_functions:World::new`, `structure:Frame`) needs a
@@ -159,11 +159,32 @@ pub fn instance_for_kind(
             let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)
         }
-        PickGroup::Derives => {
-            let arr = facts.get("derives").and_then(|v| v.as_array()).unwrap_or(&empty);
-            let inst: Vec<serde_json::Value> = arr
+        PickGroup::Configuring => {
+            // Configured-via-attributes integration. Prefer derive
+            // sites; fall back to attribute-macro invocation sites - the
+            // broaden folds attr_macro into configuring, so a workspace-
+            // defined attribute macro (e.g. a proc-macro the workspace
+            // ships) seeds from the macros facts when no derive matches.
+            let derives_arr =
+                facts.get("derives").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let inst: Vec<serde_json::Value> = derives_arr
                 .iter()
                 .filter(|d| d.get("trait").and_then(|v| v.as_str()) == Some(name))
+                .cloned()
+                .collect();
+            if !inst.is_empty() {
+                let first = inst.first().cloned();
+                let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+                return (first, spans);
+            }
+            let macros_arr =
+                facts.get("macros").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let inst: Vec<serde_json::Value> = macros_arr
+                .iter()
+                .filter(|m| {
+                    m.get("name").and_then(|v| v.as_str()) == Some(name)
+                        && m.get("kind").and_then(|v| v.as_str()) == Some("attr_macro")
+                })
                 .cloned()
                 .collect();
             let first = inst.first().cloned();

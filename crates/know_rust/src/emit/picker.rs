@@ -27,9 +27,16 @@ pub fn compute_significance_sets(
         .cloned()
         .unwrap_or_default();
 
-    let is_workspace_originated = |pattern: &str| -> bool {
-        pattern_metrics
-            .get(pattern)
+    // Parse the fingerprint's string-keyed pattern_metrics into the typed
+    // grammar once - the picker's only string-parse boundary; everything
+    // downstream threads `Pattern`.
+    let pm_by_pattern: indexmap::IndexMap<Pattern, &serde_json::Value> = pattern_metrics
+        .iter()
+        .filter_map(|(k, v)| Pattern::from_wire(k).map(|p| (p, v)))
+        .collect();
+    let is_workspace_originated = |pat: &Pattern| -> bool {
+        pm_by_pattern
+            .get(pat)
             .and_then(|m| m.get("defining_crate"))
             .map(|v| !v.is_null())
             .unwrap_or(false)
@@ -43,14 +50,14 @@ pub fn compute_significance_sets(
     //   type_usages (O::i)     -> BRIDGE: structure:O AND
     //                             implementation_functions:O::i
     //   macros (reg / attr M)  -> utilities:M
-    let mut per_crate_counts: indexmap::IndexMap<String, indexmap::IndexMap<String, usize>> =
+    let mut per_crate_counts: indexmap::IndexMap<String, indexmap::IndexMap<Pattern, usize>> =
         indexmap::IndexMap::new();
     if let Some(arr) = facts.get("impls").and_then(|v| v.as_array()) {
         for it in arr {
             if let Some(trait_name) = it.get("trait").and_then(|v| v.as_str()) {
                 if !it.get("cfg_gated").and_then(|v| v.as_bool()).unwrap_or(false) {
                     if let Some(c) = it.get("crate").and_then(|v| v.as_str()) {
-                        let p = format!("traits:{}", trait_name);
+                        let p = Pattern::traits(trait_name);
                         if is_workspace_originated(&p) {
                             *per_crate_counts
                                 .entry(c.to_string())
@@ -69,7 +76,7 @@ pub fn compute_significance_sets(
                 d.get("crate").and_then(|v| v.as_str()),
                 d.get("trait").and_then(|v| v.as_str()),
             ) {
-                let p = format!("derives:{}", nm);
+                let p = Pattern::derives(nm);
                 if is_workspace_originated(&p) {
                     *per_crate_counts
                         .entry(c.to_string())
@@ -89,7 +96,7 @@ pub fn compute_significance_sets(
                 // BRIDGE: each O::i type_usage contributes to BOTH
                 // structure:O (the type's architectural footprint) and
                 // implementation_functions:O::i (the per-method usage).
-                let impl_fn = format!("implementation_functions:{}", nm);
+                let impl_fn = Pattern::from_group_name(PickGroup::ImplementationFunctions, nm);
                 if is_workspace_originated(&impl_fn) {
                     *per_crate_counts
                         .entry(c.to_string())
@@ -98,7 +105,7 @@ pub fn compute_significance_sets(
                         .or_insert(0) += 1;
                 }
                 if let Some(outer) = nm.split_once("::").map(|(o, _)| o) {
-                    let struct_pat = format!("structure:{}", outer);
+                    let struct_pat = Pattern::structure(outer);
                     if is_workspace_originated(&struct_pat) {
                         *per_crate_counts
                             .entry(c.to_string())
@@ -120,7 +127,7 @@ pub fn compute_significance_sets(
                 // group; the picks-data model unifies macro callsite
                 // shapes under one bucket.
                 if kind == "macro_invocation" || kind == "attr_macro" {
-                    let p = format!("utilities:{}", nm);
+                    let p = Pattern::utilities(nm);
                     if is_workspace_originated(&p) {
                         *per_crate_counts
                             .entry(c.to_string())
@@ -141,9 +148,9 @@ pub fn compute_significance_sets(
     let public_example_weight =
         compute_public_example_weight(num_example_rs_files, calibration);
 
-    let mut public_scores: indexmap::IndexMap<String, f64> = indexmap::IndexMap::new();
-    let mut inter_scores: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
-    for (pattern, m) in &pattern_metrics {
+    let mut public_scores: indexmap::IndexMap<Pattern, f64> = indexmap::IndexMap::new();
+    let mut inter_scores: indexmap::IndexMap<Pattern, usize> = indexmap::IndexMap::new();
+    for (pattern, m) in &pm_by_pattern {
         if m.get("defining_crate").map(|v| v.is_null()).unwrap_or(true) {
             continue;
         }
@@ -161,23 +168,23 @@ pub fn compute_significance_sets(
         }
     }
 
-    let architecture_keys: indexmap::IndexSet<String> = public_scores
+    let architecture_keys: indexmap::IndexSet<Pattern> = public_scores
         .keys()
         .filter(|k| inter_scores.contains_key(*k))
         .cloned()
         .collect();
-    let mut architecture_counts: indexmap::IndexMap<String, f64> = indexmap::IndexMap::new();
+    let mut architecture_counts: indexmap::IndexMap<Pattern, f64> = indexmap::IndexMap::new();
     for p in &architecture_keys {
         let total = public_scores.get(p).copied().unwrap_or(0.0)
             + inter_scores.get(p).copied().unwrap_or(0) as f64;
         architecture_counts.insert(p.clone(), total);
     }
-    let inter_counts: indexmap::IndexMap<String, usize> = inter_scores
+    let inter_counts: indexmap::IndexMap<Pattern, usize> = inter_scores
         .iter()
         .filter(|(k, _)| !architecture_keys.contains(*k))
         .map(|(k, v)| (k.clone(), *v))
         .collect();
-    let public_counts: indexmap::IndexMap<String, f64> = public_scores
+    let public_counts: indexmap::IndexMap<Pattern, f64> = public_scores
         .iter()
         .filter(|(k, _)| !architecture_keys.contains(*k))
         .map(|(k, v)| (k.clone(), *v))
@@ -208,7 +215,7 @@ pub fn compute_significance_sets(
         floor,
     );
 
-    let mut workspace_wide_keys: indexmap::IndexSet<String> = indexmap::IndexSet::new();
+    let mut workspace_wide_keys: indexmap::IndexSet<Pattern> = indexmap::IndexSet::new();
     for k in significant_architecture.keys() {
         workspace_wide_keys.insert(k.clone());
     }
@@ -229,7 +236,7 @@ pub fn compute_significance_sets(
         &workspace_wide_keys,
     )
     .0;
-    let per_crate_ballots: indexmap::IndexMap<String, Vec<String>> = initial_intra_per_crate
+    let per_crate_ballots: indexmap::IndexMap<String, Vec<Pattern>> = initial_intra_per_crate
         .iter()
         .map(|(c, s)| (c.clone(), s.keys().cloned().collect()))
         .collect();
@@ -293,18 +300,18 @@ pub fn compute_significance_sets(
 }
 
 fn per_crate_picks(
-    per_crate_counts: &indexmap::IndexMap<String, indexmap::IndexMap<String, usize>>,
+    per_crate_counts: &indexmap::IndexMap<String, indexmap::IndexMap<Pattern, usize>>,
     pattern_metrics: &serde_json::Map<String, serde_json::Value>,
     per_crate_sloc: &indexmap::IndexMap<String, usize>,
     calibration: &Calibration,
     set: PickSet,
     origin_match: bool,
-    dedup_keys: &indexmap::IndexSet<String>,
+    dedup_keys: &indexmap::IndexSet<Pattern>,
 ) -> (
-    indexmap::IndexMap<String, indexmap::IndexMap<String, usize>>,
+    indexmap::IndexMap<String, indexmap::IndexMap<Pattern, usize>>,
     indexmap::IndexMap<String, usize>,
 ) {
-    let mut sig_per_crate: indexmap::IndexMap<String, indexmap::IndexMap<String, usize>> =
+    let mut sig_per_crate: indexmap::IndexMap<String, indexmap::IndexMap<Pattern, usize>> =
         indexmap::IndexMap::new();
     let mut top_n_per_crate: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
     let cap_matrix = &calibration.picker.cap_matrix;
@@ -318,13 +325,13 @@ fn per_crate_picks(
             calibration,
         );
         top_n_per_crate.insert(crate_name.clone(), base_cap);
-        let mut filtered: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+        let mut filtered: indexmap::IndexMap<Pattern, usize> = indexmap::IndexMap::new();
         for (p, c) in counts {
             if dedup_keys.contains(p) {
                 continue;
             }
             let defining = pattern_metrics
-                .get(p)
+                .get(&p.to_string())
                 .and_then(|m| m.get("defining_crate"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
@@ -368,31 +375,23 @@ fn per_crate_picks(
 /// sets + post-STV clique filter) and `per_crate_picks` (per-crate
 /// sets).
 fn bucket_and_cap_by_group<V>(
-    counts: &indexmap::IndexMap<String, V>,
+    counts: &indexmap::IndexMap<Pattern, V>,
     set: PickSet,
     base_cap: usize,
     matrix: &CapMatrix,
     floor: usize,
-) -> indexmap::IndexMap<String, V>
+) -> indexmap::IndexMap<Pattern, V>
 where
     V: Clone + PartialOrd,
 {
-    let mut by_group: HashMap<PickGroup, Vec<(String, V)>> = HashMap::new();
+    let mut by_group: HashMap<PickGroup, Vec<(Pattern, V)>> = HashMap::new();
     for (k, v) in counts {
-        let group_wire = match k.split_once(':') {
-            Some((g, _)) => g,
-            None => continue,
-        };
-        let group = match PickGroup::from_wire(group_wire) {
-            Some(g) => g,
-            None => continue,
-        };
         by_group
-            .entry(group)
+            .entry(k.kind())
             .or_default()
             .push((k.clone(), v.clone()));
     }
-    let mut out: indexmap::IndexMap<String, V> = indexmap::IndexMap::new();
+    let mut out: indexmap::IndexMap<Pattern, V> = indexmap::IndexMap::new();
     for (group, mut items) in by_group {
         let cap = matrix.cap_for(group, set, base_cap, floor);
         items.sort_by(|a, b| {
@@ -439,13 +438,13 @@ pub fn compute_public_example_weight(
 /// quota. Each crate is a voter, ballot is its intra top-N. Returns
 /// dict of {pattern: vote_total} in election order.
 pub fn stv_elect_clique(
-    per_crate_ballots: &indexmap::IndexMap<String, Vec<String>>,
+    per_crate_ballots: &indexmap::IndexMap<String, Vec<Pattern>>,
     num_seats: usize,
-    dedup_keys: &indexmap::IndexSet<String>,
-) -> indexmap::IndexMap<String, f64> {
-    let mut ballots: Vec<Vec<String>> = Vec::new();
+    dedup_keys: &indexmap::IndexSet<Pattern>,
+) -> indexmap::IndexMap<Pattern, f64> {
+    let mut ballots: Vec<Vec<Pattern>> = Vec::new();
     for ranked in per_crate_ballots.values() {
-        let clean: Vec<String> = ranked
+        let clean: Vec<Pattern> = ranked
             .iter()
             .filter(|p| !dedup_keys.contains(*p))
             .cloned()
@@ -462,10 +461,10 @@ pub fn stv_elect_clique(
     let q = v_count as f64 / (k as f64 + 1.0);
     let mut weights: Vec<f64> = vec![1.0; v_count];
     let mut pointers: Vec<usize> = vec![0; v_count];
-    let mut elected: indexmap::IndexMap<String, f64> = indexmap::IndexMap::new();
-    let mut eliminated: indexmap::IndexSet<String> = indexmap::IndexSet::new();
+    let mut elected: indexmap::IndexMap<Pattern, f64> = indexmap::IndexMap::new();
+    let mut eliminated: indexmap::IndexSet<Pattern> = indexmap::IndexSet::new();
 
-    let current = |i: usize, pointers: &mut Vec<usize>, elected: &indexmap::IndexMap<String, f64>, eliminated: &indexmap::IndexSet<String>, ballots: &Vec<Vec<String>>| -> Option<String> {
+    let current = |i: usize, pointers: &mut Vec<usize>, elected: &indexmap::IndexMap<Pattern, f64>, eliminated: &indexmap::IndexSet<Pattern>, ballots: &Vec<Vec<Pattern>>| -> Option<Pattern> {
         while pointers[i] < ballots[i].len() {
             let p = &ballots[i][pointers[i]];
             if elected.contains_key(p) || eliminated.contains(p) {
@@ -478,8 +477,8 @@ pub fn stv_elect_clique(
     };
 
     while elected.len() < k {
-        let mut tally: indexmap::IndexMap<String, f64> = indexmap::IndexMap::new();
-        let mut supporters: indexmap::IndexMap<String, Vec<usize>> = indexmap::IndexMap::new();
+        let mut tally: indexmap::IndexMap<Pattern, f64> = indexmap::IndexMap::new();
+        let mut supporters: indexmap::IndexMap<Pattern, Vec<usize>> = indexmap::IndexMap::new();
         for i in 0..v_count {
             if weights[i] <= 0.0 {
                 continue;
@@ -492,7 +491,7 @@ pub fn stv_elect_clique(
         if tally.is_empty() {
             break;
         }
-        let mut over_quota: Vec<(String, f64)> = tally
+        let mut over_quota: Vec<(Pattern, f64)> = tally
             .iter()
             .filter(|item| *item.1 >= q)
             .map(|(k, v)| (k.clone(), *v))
@@ -517,7 +516,7 @@ pub fn stv_elect_clique(
                 }
             }
         } else {
-            let mut tally_vec: Vec<(String, f64)> = tally
+            let mut tally_vec: Vec<(Pattern, f64)> = tally
                 .iter()
                 .map(|(k, v)| (k.clone(), *v))
                 .collect();
@@ -539,13 +538,13 @@ pub fn stv_elect_clique(
 #[derive(Debug, Clone)]
 pub struct SignificanceSets {
     pub significant_intra_crate_per_crate:
-        indexmap::IndexMap<String, indexmap::IndexMap<String, usize>>,
+        indexmap::IndexMap<String, indexmap::IndexMap<Pattern, usize>>,
     pub significant_inner_crate_per_crate:
-        indexmap::IndexMap<String, indexmap::IndexMap<String, usize>>,
-    pub significant_inter_crate: indexmap::IndexMap<String, usize>,
-    pub significant_public: indexmap::IndexMap<String, f64>,
-    pub significant_architecture: indexmap::IndexMap<String, f64>,
-    pub significant_clique: indexmap::IndexMap<String, f64>,
+        indexmap::IndexMap<String, indexmap::IndexMap<Pattern, usize>>,
+    pub significant_inter_crate: indexmap::IndexMap<Pattern, usize>,
+    pub significant_public: indexmap::IndexMap<Pattern, f64>,
+    pub significant_architecture: indexmap::IndexMap<Pattern, f64>,
+    pub significant_clique: indexmap::IndexMap<Pattern, f64>,
     pub top_n_intra_crate_per_crate: indexmap::IndexMap<String, usize>,
     pub top_n_inner_per_crate: indexmap::IndexMap<String, usize>,
 }

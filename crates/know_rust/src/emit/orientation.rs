@@ -640,7 +640,7 @@ pub fn render_orientation(
 /// Where: used inside the S5 sub-section loops to emit bullets in
 /// canonical order.
 fn sorted_entries_desc(
-    entries: &indexmap::IndexMap<String, EnrichedEntry>,
+    entries: &indexmap::IndexMap<Pattern, EnrichedEntry>,
 ) -> Vec<EnrichedEntry> {
     let mut items: Vec<EnrichedEntry> = entries.values().cloned().collect();
     items.sort_by(|a, b| {

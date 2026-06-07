@@ -17,7 +17,7 @@ use crate::*;
 /// consumed by `crate::emit::orientation::render_orientation`.
 #[derive(Debug, Clone)]
 pub struct EnrichedEntry {
-    pub pattern: String,
+    pub pattern: Pattern,
     pub count: f64,
     pub instance: serde_json::Value,
     pub budget_hint: usize,
@@ -35,13 +35,13 @@ pub struct EnrichedEntry {
 #[derive(Debug, Clone, Default)]
 pub struct EnrichedSets {
     pub intra_crate_per_crate:
-        indexmap::IndexMap<String, indexmap::IndexMap<String, EnrichedEntry>>,
+        indexmap::IndexMap<String, indexmap::IndexMap<Pattern, EnrichedEntry>>,
     pub inner_crate_per_crate:
-        indexmap::IndexMap<String, indexmap::IndexMap<String, EnrichedEntry>>,
-    pub inter_crate: indexmap::IndexMap<String, EnrichedEntry>,
-    pub public: indexmap::IndexMap<String, EnrichedEntry>,
-    pub architecture: indexmap::IndexMap<String, EnrichedEntry>,
-    pub clique: indexmap::IndexMap<String, EnrichedEntry>,
+        indexmap::IndexMap<String, indexmap::IndexMap<Pattern, EnrichedEntry>>,
+    pub inter_crate: indexmap::IndexMap<Pattern, EnrichedEntry>,
+    pub public: indexmap::IndexMap<Pattern, EnrichedEntry>,
+    pub architecture: indexmap::IndexMap<Pattern, EnrichedEntry>,
+    pub clique: indexmap::IndexMap<Pattern, EnrichedEntry>,
     pub top_n_intra_crate_per_crate: indexmap::IndexMap<String, usize>,
     pub top_n_inner_per_crate: indexmap::IndexMap<String, usize>,
     pub top_n_workspace: usize,
@@ -110,13 +110,14 @@ impl EnrichedSets {
 /// six sets to produce the `EnrichedEntry` instance + all_spans
 /// fields.
 pub fn instance_for_kind(
-    group: &str,
-    name: &str,
+    pattern: &Pattern,
     facts: &serde_json::Value,
 ) -> (Option<serde_json::Value>, Vec<String>) {
+    let name_owned = pattern.name();
+    let name = name_owned.as_str();
     let empty: Vec<serde_json::Value> = Vec::new();
-    match group {
-        "traits" => {
+    match pattern.kind() {
+        PickGroup::Traits => {
             // Prefer impls of the trait (the impls-side architectural
             // signal); fall back to the trait def site when no impls
             // exist (e.g. pub_type:Plugin synthesized via AST refs
@@ -158,7 +159,7 @@ pub fn instance_for_kind(
             let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)
         }
-        "derives" => {
+        PickGroup::Derives => {
             let arr = facts.get("derives").and_then(|v| v.as_array()).unwrap_or(&empty);
             let inst: Vec<serde_json::Value> = arr
                 .iter()
@@ -169,7 +170,7 @@ pub fn instance_for_kind(
             let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)
         }
-        "utilities" => {
+        PickGroup::Utilities => {
             // Macros: either macro_invocation form or attr_macro form.
             // The picks-data model unifies both under utilities; the
             // seed prefers the more-common invocation form.
@@ -183,7 +184,7 @@ pub fn instance_for_kind(
             let spans: Vec<String> = inst.iter().take(200).map(span).collect();
             (first, spans)
         }
-        "structure" => {
+        PickGroup::Structure => {
             // Prefer the type def (struct / enum / union / type alias);
             // fall back to a representative type_usage outer-prefix match
             // when the type def is not in workspace facts.
@@ -225,7 +226,7 @@ pub fn instance_for_kind(
             let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)
         }
-        "implementation_functions" => {
+        PickGroup::ImplementationFunctions => {
             // Two name shapes:
             //   "Outer::inner" -> exact type_usage match.
             //   "_::<inner>"   -> method_ref family lookup (the picker
@@ -265,7 +266,7 @@ pub fn instance_for_kind(
             let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)
         }
-        "trait_functions" => {
+        PickGroup::TraitFunctions => {
             // Mirrors implementation_functions for the family shape;
             // the disambiguation between trait-method-ref vs impl-method-ref
             // requires type inference (not available without rustdoc).
@@ -289,12 +290,11 @@ pub fn instance_for_kind(
             // not seed call sites; left empty until a future iteration.
             (None, Vec::new())
         }
-        "globals" => {
+        PickGroup::Globals => {
             // No globals (const / static) currently emitted as picker
             // patterns; placeholder for future iteration.
             (None, Vec::new())
         }
-        _ => (None, Vec::new()),
     }
 }
 
@@ -526,10 +526,10 @@ pub fn candidate_instances(
         .cloned()
         .unwrap_or_default();
 
-    let enrich_workspace = |pattern_map: &indexmap::IndexMap<String, f64>, set: PickSet|
-        -> indexmap::IndexMap<String, EnrichedEntry>
+    let enrich_workspace = |pattern_map: &indexmap::IndexMap<Pattern, f64>, set: PickSet|
+        -> indexmap::IndexMap<Pattern, EnrichedEntry>
     {
-        let mut out: indexmap::IndexMap<String, EnrichedEntry> = indexmap::IndexMap::new();
+        let mut out: indexmap::IndexMap<Pattern, EnrichedEntry> = indexmap::IndexMap::new();
         for (pattern, count) in pattern_map.iter() {
             if let Some(entry) =
                 build_enriched_entry(pattern, *count, set, facts, &pattern_metrics, calibration)
@@ -539,10 +539,10 @@ pub fn candidate_instances(
         }
         out
     };
-    let enrich_workspace_int = |pattern_map: &indexmap::IndexMap<String, usize>, set: PickSet|
-        -> indexmap::IndexMap<String, EnrichedEntry>
+    let enrich_workspace_int = |pattern_map: &indexmap::IndexMap<Pattern, usize>, set: PickSet|
+        -> indexmap::IndexMap<Pattern, EnrichedEntry>
     {
-        let mut out: indexmap::IndexMap<String, EnrichedEntry> = indexmap::IndexMap::new();
+        let mut out: indexmap::IndexMap<Pattern, EnrichedEntry> = indexmap::IndexMap::new();
         for (pattern, count) in pattern_map.iter() {
             if let Some(entry) = build_enriched_entry(
                 pattern,
@@ -560,7 +560,7 @@ pub fn candidate_instances(
 
     let mut intra_crate_per_crate: indexmap::IndexMap<
         String,
-        indexmap::IndexMap<String, EnrichedEntry>,
+        indexmap::IndexMap<Pattern, EnrichedEntry>,
     > = indexmap::IndexMap::new();
     for (crate_name, s) in sig.significant_intra_crate_per_crate.iter() {
         intra_crate_per_crate
@@ -568,7 +568,7 @@ pub fn candidate_instances(
     }
     let mut inner_crate_per_crate: indexmap::IndexMap<
         String,
-        indexmap::IndexMap<String, EnrichedEntry>,
+        indexmap::IndexMap<Pattern, EnrichedEntry>,
     > = indexmap::IndexMap::new();
     for (crate_name, s) in sig.significant_inner_crate_per_crate.iter() {
         inner_crate_per_crate
@@ -603,28 +603,24 @@ pub fn candidate_instances(
 /// closures inside `candidate_instances` for each pattern of each
 /// significance set.
 fn build_enriched_entry(
-    pattern: &str,
+    pattern: &Pattern,
     count: f64,
     set: PickSet,
     facts: &serde_json::Value,
     pattern_metrics: &serde_json::Map<String, serde_json::Value>,
     calibration: &Calibration,
 ) -> Option<EnrichedEntry> {
-    let (group_wire, name) = pattern.split_once(':')?;
-    let (inst, _) = instance_for_kind(group_wire, name, facts);
+    let (inst, _) = instance_for_kind(pattern, facts);
     let instance = inst?;
-    let group = PickGroup::from_wire(group_wire);
+    let group = pattern.kind();
     let sub_form = pattern_metrics
-        .get(pattern)
+        .get(&pattern.to_string())
         .and_then(|m| m.get("sub_form"))
         .and_then(|v| v.as_str())
         .and_then(SubForm::from_wire);
-    let budget_hint = match group {
-        Some(g) => calibration.picker.prose_budget.budget_for(g, sub_form, set),
-        None => 0,
-    };
+    let budget_hint = calibration.picker.prose_budget.budget_for(group, sub_form, set);
     Some(EnrichedEntry {
-        pattern: pattern.to_string(),
+        pattern: pattern.clone(),
         count,
         instance,
         budget_hint,

@@ -134,6 +134,13 @@ pub fn characterize(
             .extend(entries.iter().cloned());
     }
 
+    // Workspace-origin gate on carry: the picks-data design rule is that
+    // all forms of picks (Picked + Carried) exclude types defined outside
+    // the workspace. The items walker records carry structurally and has
+    // no cross-workspace knowledge; here the full workspace type+trait set
+    // exists to enforce origin. See notes/know_rust/working/02_picks_data.md.
+    filter_carries_to_workspace(&mut all_facts);
+
     for ent in &usage_facts.ast_fn_sig_usages {
         if ent.ident.is_empty() {
             continue;
@@ -329,4 +336,62 @@ fn extend_with_crate(
         }
         dst.push(v);
     }
+}
+
+/// What: drop carry keys + carried names that are not workspace-declared,
+/// per the picks-data design rule that all forms of picks (Picked +
+/// Carried) exclude types defined outside the workspace (see
+/// notes/know_rust/working/02_picks_data.md).
+///
+/// Why: the items walker records carry structurally per-file and cannot
+/// tell a workspace type from std / an external crate (`impl Trait for
+/// Vec<T>` yields `structure:Vec`; a field `Vec<Bar>` carries `Vec`).
+/// characterize is where the full workspace type+trait set is known, so
+/// the origin gate lives here rather than as a hardcoded skip-list in the
+/// walker (a list misses externals not on it, e.g. `RangeFrom`).
+///
+/// Where: called from `characterize` after per-crate facts + the
+/// item-walker carries are merged into `all_facts`.
+fn filter_carries_to_workspace(all_facts: &mut WorkspaceFacts) {
+    let ws_types: HashSet<String> = all_facts
+        .types
+        .iter()
+        .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
+        .collect();
+    let ws_traits: HashSet<String> = all_facts
+        .traits
+        .iter()
+        .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
+        .collect();
+    let name_ok = |n: &str| ws_types.contains(n) || ws_traits.contains(n);
+    let key_ok = |key: &str| -> bool {
+        let (group, name) = match key.split_once(':') {
+            Some(p) => p,
+            None => return false,
+        };
+        match group {
+            "structure" => ws_types.contains(name),
+            "traits" | "derives" => ws_traits.contains(name),
+            "implementation_functions" | "trait_functions" => {
+                let outer = name.split_once("::").map(|(o, _)| o).unwrap_or(name);
+                outer == "_" || ws_types.contains(outer) || ws_traits.contains(outer)
+            }
+            _ => false,
+        }
+    };
+    let mut filtered: BTreeMap<String, Vec<CarryEntry>> = BTreeMap::new();
+    for (key, entries) in &all_facts.carries {
+        if !key_ok(key) {
+            continue;
+        }
+        let kept: Vec<CarryEntry> = entries
+            .iter()
+            .filter(|e| name_ok(&e.name))
+            .cloned()
+            .collect();
+        if !kept.is_empty() {
+            filtered.insert(key.clone(), kept);
+        }
+    }
+    all_facts.carries = filtered;
 }

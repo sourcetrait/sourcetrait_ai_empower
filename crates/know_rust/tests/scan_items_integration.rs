@@ -362,3 +362,84 @@ fn carry_workspace_dedup_by_name() {
     );
     assert!(names.contains("Component"));
 }
+
+#[test]
+fn carry_assoc_type_bounds() {
+    // R2-expansion: `type X: Bound;` inside a trait carries the bound
+    // under traits:<trait> (part of the trait's interface contract,
+    // alongside supertype bounds; no assoc-type pick exists).
+    let f = scan_source(
+        "t.rs",
+        "pub trait Container { type Item: Clone + IntoIterator; fn get(&self) -> Self::Item; }",
+    )
+    .expect("parse ok");
+    let carry = f
+        .carries
+        .get("traits:Container")
+        .expect("traits:Container carry list present");
+    let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
+    assert!(names.contains(&"Clone"), "Container carries assoc-type bound Clone");
+    assert!(
+        names.contains(&"IntoIterator"),
+        "Container carries assoc-type bound IntoIterator"
+    );
+}
+
+#[test]
+fn carry_struct_generic_bounds() {
+    // R2-expansion: struct generic-param + where-clause trait bounds
+    // carry under structure:<name>.
+    let f = scan_source(
+        "t.rs",
+        "pub struct Holder<T: Render, U> where U: Encode { pub item: T, pub other: U }",
+    )
+    .expect("parse ok");
+    let carry = f
+        .carries
+        .get("structure:Holder")
+        .expect("structure:Holder carry list present");
+    let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
+    assert!(names.contains(&"Render"), "Holder carries inline bound Render");
+    assert!(names.contains(&"Encode"), "Holder carries where-clause bound Encode");
+}
+
+#[test]
+fn carry_enum_generic_bounds() {
+    // R2-expansion: enum generic-param trait bounds carry under
+    // structure:<name>.
+    let f = scan_source(
+        "t.rs",
+        "pub enum Either<L: Display, R> { Left(L), Right(R) }",
+    )
+    .expect("parse ok");
+    let carry = f
+        .carries
+        .get("structure:Either")
+        .expect("structure:Either carry list present");
+    let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
+    assert!(names.contains(&"Display"), "Either carries generic bound Display");
+}
+
+#[test]
+fn carry_impl_generic_bounds() {
+    // R2-expansion: impl generic-param + where-clause bounds carry under
+    // structure:<impl_target> as reader context for the target type.
+    let f = scan_source(
+        "t.rs",
+        "pub struct Foo<T>(pub T);\nimpl<T: Serialize> Foo<T> where T: Marker { pub fn go(&self) {} }",
+    )
+    .expect("parse ok");
+    let carry = f
+        .carries
+        .get("structure:Foo")
+        .expect("structure:Foo carry list present");
+    let names: Vec<&str> = carry.iter().map(|c| c.name.as_str()).collect();
+    assert!(
+        names.contains(&"Serialize"),
+        "Foo impl carries inline bound Serialize"
+    );
+    assert!(
+        names.contains(&"Marker"),
+        "Foo impl carries where-clause bound Marker"
+    );
+}

@@ -563,3 +563,97 @@ fn nf5_test_helper_substring_filter_drops_type_usages() {
         "structure:Value should still aggregate from Value::int"
     );
 }
+
+#[test]
+fn carry_gated_to_workspace_origin() {
+    // Picks (all forms, including Carried) are workspace-origin only. The
+    // walker records carry structurally; characterize gates it to
+    // workspace-declared types/traits. An impl on a std target (Vec) must
+    // not yield a structure:Vec carry key, and a workspace struct's carry
+    // must drop std names (Vec, String) while keeping workspace names
+    // (Inner, Marker). See notes/know_rust/working/02_picks_data.md.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub trait Marker {}\npub struct Inner;\npub struct Outer<T: Marker> { pub inner: Inner, pub items: Vec<String> }\nimpl<T: Clone> Marker for Vec<T> {}\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use lib::{Marker, Inner, Outer};\npub fn use_them() { let _i = Inner; let _o: Option<Outer<u8>> = None; }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let (_fp, out) = run_characterize(root);
+    let facts: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join("facts.json")).expect("read facts.json"),
+    )
+    .expect("parse facts.json");
+    let carries = facts
+        .get("carries")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    // external impl target -> no carry key
+    assert!(
+        !carries.contains_key("structure:Vec"),
+        "structure:Vec (std impl target) must be gated out; keys: {:?}",
+        carries.keys().collect::<Vec<_>>()
+    );
+
+    // workspace struct keeps workspace carry, drops std names
+    let outer_names: Vec<String> = carries
+        .get("structure:Outer")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| e.get("name").and_then(|v| v.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        outer_names.contains(&"Inner".to_string()),
+        "Outer keeps workspace carry Inner; got {:?}",
+        outer_names
+    );
+    assert!(
+        outer_names.contains(&"Marker".to_string()),
+        "Outer keeps workspace bound Marker; got {:?}",
+        outer_names
+    );
+    assert!(
+        !outer_names.contains(&"Vec".to_string()),
+        "Outer drops std carry Vec; got {:?}",
+        outer_names
+    );
+    assert!(
+        !outer_names.contains(&"String".to_string()),
+        "Outer drops std carry String; got {:?}",
+        outer_names
+    );
+}

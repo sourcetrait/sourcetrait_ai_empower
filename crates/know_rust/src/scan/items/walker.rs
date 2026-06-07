@@ -64,6 +64,53 @@ impl FileWalker {
         }
     }
 
+    /// What: record carry for every uppercase-starting trait bound in a
+    /// `+`-punctuated bound list under `pattern_key`.
+    ///
+    /// Why: R2-expansion - supertype bounds, associated-type bounds, and
+    /// generic-param bounds share one extraction (last path segment of
+    /// each `TypeParamBound::Trait`, keep uppercase-starting idents to
+    /// match `type_carry_names`' primitive/lifetime filter). Centralizing
+    /// keeps the four call sites consistent.
+    fn record_bound_carry(
+        &mut self,
+        pattern_key: &str,
+        bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::token::Plus>,
+    ) {
+        for bound in bounds {
+            if let syn::TypeParamBound::Trait(tb) = bound {
+                if let Some(seg) = tb.path.segments.last() {
+                    let nm = seg.ident.to_string();
+                    if nm.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        self.record_carry(pattern_key.to_string(), nm);
+                    }
+                }
+            }
+        }
+    }
+
+    /// What: record carry for all generic-param bounds + where-clause
+    /// trait bounds on `generics` under `pattern_key`.
+    ///
+    /// Why: R2-expansion - `struct Foo<T: Bar>` / `impl<T: Bar> ...` /
+    /// `where T: Bar` constrain the item's type parameters; the bound
+    /// traits are reader context for the picked item, alongside the
+    /// field-type / sig-type carry already recorded for the same key.
+    fn record_generics_carry(&mut self, pattern_key: &str, generics: &syn::Generics) {
+        for param in &generics.params {
+            if let syn::GenericParam::Type(tp) = param {
+                self.record_bound_carry(pattern_key, &tp.bounds);
+            }
+        }
+        if let Some(wc) = &generics.where_clause {
+            for pred in &wc.predicates {
+                if let syn::WherePredicate::Type(pt) = pred {
+                    self.record_bound_carry(pattern_key, &pt.bounds);
+                }
+            }
+        }
+    }
+
     /// What: parse the syn::File, walk it via Visit, and return the
     /// accumulated per-file facts.
     pub(crate) fn walk_file(mut self, file: &syn::File) -> FileLevelFacts {
@@ -324,6 +371,17 @@ impl FileWalker {
                     doc: String::new(),
                     visibility: trait_vis.to_string(),
                 });
+                // R2-expansion: associated-type bounds (`type X: Bound;`)
+                // carry under traits:<trait> - part of the trait's
+                // interface contract, like its supertype bounds. No
+                // assoc-type pick exists, so the bound attaches to the
+                // trait pick, not a trait_functions:<trait>::X key.
+                if let Some(tname) = self.current_trait_name.clone() {
+                    if !tname.is_empty() {
+                        let trait_pat = format!("traits:{}", tname);
+                        self.record_bound_carry(&trait_pat, &ty.bounds);
+                    }
+                }
                 for bound in &ty.bounds {
                     syn::visit::visit_type_param_bound(self, bound);
                 }
@@ -424,8 +482,21 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             self.visit_path(path);
         }
         self.visit_type(&i.self_ty);
-        // R2 carry extraction: track the impl-target type so each
-        // impl method visit can key its carry under
+        // R2-expansion: impl generic-param + where-clause bounds
+        // (impl<T: Bar> ... for Foo) carry under structure:<impl_target>,
+        // recorded structurally for any non-empty target. Workspace-
+        // origin filtering of carry - the design rule that all forms of
+        // picks (Picked + Carried) exclude types defined outside the
+        // workspace - happens downstream at characterize time, where the
+        // full workspace type+trait set is known; the walker is per-file
+        // and has no cross-workspace knowledge. See
+        // notes/know_rust/working/02_picks_data.md.
+        if !type_name.is_empty() {
+            let struct_pat = format!("structure:{}", type_name);
+            self.record_generics_carry(&struct_pat, &i.generics);
+        }
+        // R2 carry extraction: track the impl-target type so each impl
+        // method visit keys its carry under
         // `implementation_functions:<type>::<method>`.
         let saved_impl = self.current_impl_type_name.take();
         self.current_impl_type_name = Some(type_name);
@@ -457,20 +528,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         // The trait's interface includes the constraints it composes
         // with; readers need them to understand its scope.
         let trait_pat = format!("traits:{}", trait_name);
+        self.record_bound_carry(&trait_pat, &t.supertraits);
         for bound in &t.supertraits {
-            if let syn::TypeParamBound::Trait(tb) = bound {
-                if let Some(seg) = tb.path.segments.last() {
-                    let nm = seg.ident.to_string();
-                    if nm
-                        .chars()
-                        .next()
-                        .map(|c| c.is_uppercase())
-                        .unwrap_or(false)
-                    {
-                        self.record_carry(trait_pat.clone(), nm);
-                    }
-                }
-            }
             syn::visit::visit_type_param_bound(self, bound);
         }
         let saved_vis = self.current_trait_vis.take();
@@ -515,6 +574,9 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             }
             syn::Fields::Unit => {}
         }
+        // R2-expansion: generic-param + where-clause trait bounds
+        // (struct Foo<T: Bar>) carry under structure:<name>.
+        self.record_generics_carry(&pat, &s.generics);
         self.process_fields_attrs(&s.fields);
     }
 
@@ -561,6 +623,9 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
                 self.brace_depth = saved;
             }
         }
+        // R2-expansion: generic-param + where-clause trait bounds
+        // (enum Either<L: Display, R>) carry under structure:<name>.
+        self.record_generics_carry(&pat, &e.generics);
     }
 
     fn visit_item_union(&mut self, u: &'ast syn::ItemUnion) {

@@ -72,18 +72,6 @@ pub(crate) enum Command {
         #[command(subcommand)]
         measure: MeasureCommand,
     },
-    /// Measure picker overlap against a manual ground-truth list.
-    /// Walks each target's orientation.md under `samples_dir`, parses
-    /// the S5.1..5.6 pick lists, and reports per-target overlap +
-    /// aggregate against the JSON ground-truth file.
-    MeasureOverlap {
-        /// Directory containing per-target subdirs, each with an
-        /// orientation.md.
-        samples_dir: PathBuf,
-        /// Path to the manual ground-truth JSON
-        /// (notes/know_rust/manual_ground_truth.json).
-        ground_truth: PathBuf,
-    },
     /// Apply the rustdoc semantic overlay (hard-requires cargo
     /// +nightly per locked decision 4). Invokes
     /// `cargo +nightly rustdoc -p <pkg> --lib -- -Z unstable-options
@@ -120,6 +108,18 @@ pub(crate) enum MeasureCommand {
         /// <target_out_dir>/consumer_trace.json.
         #[arg(long = "out")]
         out: Option<PathBuf>,
+    },
+    /// Measure picker overlap against a manual ground-truth list.
+    /// Walks each target's orientation.md under `samples_dir`, parses
+    /// the S5.1..5.6 pick lists, and reports per-target overlap +
+    /// aggregate against the JSON ground-truth file.
+    Overlap {
+        /// Directory containing per-target subdirs, each with an
+        /// orientation.md.
+        samples_dir: PathBuf,
+        /// Path to the manual ground-truth JSON
+        /// (notes/know_rust/manual_ground_truth.json).
+        ground_truth: PathBuf,
     },
 }
 

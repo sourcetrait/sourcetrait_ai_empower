@@ -84,8 +84,16 @@ pub fn characterize(
         .iter()
         .map(|(k, v)| (k.clone(), v.dir.clone()))
         .collect();
+    let cfg_test_skips = collect_cfg_test_module_skips(workspace_root);
     for (name, info) in &crates {
-        let cf = scan_crate(workspace_root, name, &info.dir, &crate_dirs, &items_by_file);
+        let cf = scan_crate(
+            workspace_root,
+            name,
+            &info.dir,
+            &crate_dirs,
+            &items_by_file,
+            &cfg_test_skips,
+        );
         per_crate.insert(
             name.clone(),
             PerCrateFingerprint {

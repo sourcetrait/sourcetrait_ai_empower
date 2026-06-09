@@ -27,6 +27,26 @@ fn walk_items(
     facts: &mut FileFacts,
 ) {
     for it in items {
+        // Parity with the items walker's process_item_attrs: inline
+        // `#[cfg(test)]` items (incl. whole `mod tests { ... }`
+        // blocks) feed no usage signals. Without this the usages
+        // scanner ingested test-mod fn sigs / fields / method refs.
+        let attrs: Option<&[syn::Attribute]> = match it {
+            syn::Item::Fn(f) => Some(&f.attrs),
+            syn::Item::Impl(i) => Some(&i.attrs),
+            syn::Item::Trait(t) => Some(&t.attrs),
+            syn::Item::Struct(s) => Some(&s.attrs),
+            syn::Item::Enum(e) => Some(&e.attrs),
+            syn::Item::Union(u) => Some(&u.attrs),
+            syn::Item::Type(ta) => Some(&ta.attrs),
+            syn::Item::Mod(m) => Some(&m.attrs),
+            _ => None,
+        };
+        if let Some(a) = attrs {
+            if has_cfg_test_attr(a) {
+                continue;
+            }
+        }
         match it {
             syn::Item::Fn(f) => walk_fn(f, container_path, file, facts),
             syn::Item::Impl(i) => walk_impl(i, container_path, file, facts),

@@ -20,6 +20,7 @@ pub fn scan_crate(
     crate_dir: &str,
     crate_dirs: &indexmap::IndexMap<String, String>,
     items_by_file: &std::collections::HashMap<String, ItemFile>,
+    cfg_test_skips: &[PathBuf],
 ) -> CrateAggregate {
     let mut agg = CrateAggregate::default();
     let base = if crate_dir == "." {
@@ -34,6 +35,7 @@ pub fn scan_crate(
         .filter(|e| e.file_type().is_file())
         .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("rs"))
         .filter(|e| !e.path().components().any(|c| c.as_os_str() == "target"))
+        .filter(|e| !is_cfg_test_module_path(e.path(), cfg_test_skips))
         .map(|e| e.path().to_path_buf())
         .collect();
     rs_files.sort();

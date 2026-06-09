@@ -21,7 +21,8 @@ pub(crate) fn scan_workspace(workspace_root: &Path) -> ItemFacts {
         ..Default::default()
     };
     let mut aggregate_seams: HashMap<SeamKind, usize> = HashMap::new();
-    let rs_files = collect_rs_files(workspace_root);
+    let cfg_test_skips = collect_cfg_test_module_skips(workspace_root);
+    let rs_files = collect_rs_files(workspace_root, &cfg_test_skips);
     for (path, rel) in &rs_files {
         let src = match fs::read_to_string(path) {
             Ok(s) => s,
@@ -61,14 +62,18 @@ pub(crate) fn scan_workspace(workspace_root: &Path) -> ItemFacts {
 
 /// What: collect every `.rs` file under `workspace_root`, sorted by
 /// relative path for determinism. Skips `target/`, `.git/`, `tests/`,
-/// and `benches/` segments anywhere in the path.
+/// and `benches/` segments anywhere in the path, plus the out-of-line
+/// `#[cfg(test)] mod` files / dirs in `cfg_test_skips`.
 ///
 /// Why: the items walker emits per-file facts; collecting the file
 /// list up front keeps the orchestrator simple and lets the walker
 /// loop iterate deterministically.
 ///
 /// Where: called from `scan_workspace`'s top-of-fn file enumeration.
-fn collect_rs_files(workspace_root: &Path) -> Vec<(PathBuf, String)> {
+fn collect_rs_files(
+    workspace_root: &Path,
+    cfg_test_skips: &[PathBuf],
+) -> Vec<(PathBuf, String)> {
     let mut rs_files = Vec::new();
     for entry in walkdir::WalkDir::new(workspace_root)
         .into_iter()
@@ -80,6 +85,9 @@ fn collect_rs_files(workspace_root: &Path) -> Vec<(PathBuf, String)> {
             continue;
         }
         if p.extension().and_then(|s| s.to_str()) != Some("rs") {
+            continue;
+        }
+        if is_cfg_test_module_path(p, cfg_test_skips) {
             continue;
         }
         let rel = match p.strip_prefix(workspace_root) {

@@ -16,6 +16,7 @@ pub(crate) fn walk_workspace(root: &Path) -> Result<UsageFacts> {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         ..Default::default()
     };
+    let cfg_test_skips = collect_cfg_test_module_skips(root);
     for entry in walkdir::WalkDir::new(root)
         .into_iter()
         .filter_entry(|e| !is_skip_dir(e.path()))
@@ -26,6 +27,9 @@ pub(crate) fn walk_workspace(root: &Path) -> Result<UsageFacts> {
             continue;
         }
         if p.extension().and_then(|s| s.to_str()) != Some("rs") {
+            continue;
+        }
+        if is_cfg_test_module_path(p, &cfg_test_skips) {
             continue;
         }
         let rel = match p.strip_prefix(root) {

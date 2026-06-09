@@ -131,8 +131,28 @@ fn resolve_package(
                     .and_then(|v| v.as_object())
                     .cloned()
                     .unwrap_or_default();
+                // Scaffolding crates (example / demo members) must not
+                // steer the package pick: ratatui's ~36 example crates
+                // all depend on the FACADE crate, electing it over
+                // ratatui-core - and a facade's rustdoc index is all
+                // re-exports (0 impls), which produced the 0/0 overlay
+                // outlier. Count dependent votes from substantive
+                // crates only.
+                let scaffolding: std::collections::HashSet<String> = fp
+                    .get("workspace_use_classification")
+                    .and_then(|v| v.get("scaffolding_crates"))
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let mut dep_count: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
-                for c in per_crate.values() {
+                for (voter, c) in per_crate.iter() {
+                    if scaffolding.contains(voter) {
+                        continue;
+                    }
                     if let Some(deps) = c.get("deps").and_then(|v| v.as_array()) {
                         for d in deps {
                             if let Some(s) = d.as_str() {
@@ -290,10 +310,27 @@ fn run_rustdoc_json(
         .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
         .collect();
     candidates.sort();
-    let latest = candidates.last().cloned().ok_or_else(|| Error::Read {
-        path: docdir.clone(),
-        source: io::Error::new(io::ErrorKind::NotFound, "no rustdoc JSON produced"),
-    })?;
+    // Prefer the JSON matching the built package (target/doc keeps
+    // stale JSONs from earlier runs; alphabetically-last is wrong
+    // whenever another crate's doc lingers).
+    let by_name = package.and_then(|p| {
+        let want = format!("{}.json", p.replace('-', "_"));
+        candidates
+            .iter()
+            .find(|c| {
+                c.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n == want)
+                    .unwrap_or(false)
+            })
+            .cloned()
+    });
+    let latest = by_name
+        .or_else(|| candidates.last().cloned())
+        .ok_or_else(|| Error::Read {
+            path: docdir.clone(),
+            source: io::Error::new(io::ErrorKind::NotFound, "no rustdoc JSON produced"),
+        })?;
     let body = fs::read_to_string(&latest).map_err(|source| Error::Read {
         path: latest.clone(),
         source,

@@ -81,6 +81,32 @@ pub fn compute_pattern_metrics(
                 .insert(c.to_string());
         }
     }
+    // crate -> re-exported names (pub use leaves): a workspace FACADE
+    // crate re-exporting another member's item is the same item -
+    // sites importing through the facade (use ratatui::Frame, decl in
+    // ratatui-core) credit the declaring crate. Name-level match,
+    // consistent with the system's attribution granularity.
+    let mut reexports_by_crate: std::collections::HashMap<
+        String,
+        std::collections::HashSet<String>,
+    > = std::collections::HashMap::new();
+    for u in &all_facts.uses {
+        if !u.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let (Some(path), Some(c)) = (
+            u.get("path").and_then(|v| v.as_str()),
+            u.get("crate").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        for (_first, leaf) in parse_flattened_use(path) {
+            reexports_by_crate
+                .entry(c.to_string())
+                .or_default()
+                .insert(leaf);
+        }
+    }
 
     let test_weight = calibration.picker.example.test_weight;
     let bench_weight = calibration.picker.example.bench_weight;
@@ -255,7 +281,7 @@ pub fn compute_pattern_metrics(
                 &local_decl_crates,
                 &local_mod_crates,
             );
-            if !site_credits(&origin, using, &defining_crate) {
+            if !site_credits(&origin, using, &defining_crate, &resolve_target, &reexports_by_crate) {
                 continue;
             }
             let norm = file.replace('\\', "/");
@@ -377,7 +403,7 @@ pub fn compute_pattern_metrics(
                         &local_decl_crates,
                         &local_mod_crates,
                     );
-                    site_credits(&origin, &using, &defining_crate)
+                    site_credits(&origin, &using, &defining_crate, &ident, &reexports_by_crate)
                 })
                 .map(|(f, _)| f.clone())
                 .collect();
@@ -451,7 +477,7 @@ pub fn compute_pattern_metrics(
                 &local_decl_crates,
                 &local_mod_crates,
             );
-            if !site_credits(&origin, &using, &defn.crate_name) {
+            if !site_credits(&origin, &using, &defn.crate_name, &ent.outer, &reexports_by_crate) {
                 continue;
             }
             // Labels routing (R8 slice 3): constant-shaped inners are
@@ -666,13 +692,35 @@ pub fn compute_pattern_metrics(
                 .and_then(|m| m.get(&c))
                 .map(|v| v.starts_with("pub"))
                 .unwrap_or(false);
-            if !vis_ok {
-                continue;
-            }
+            let target = if vis_ok {
+                Some(c.clone())
+            } else if reexports_by_crate
+                .get(&c)
+                .map(|s| s.contains(&ent.name))
+                .unwrap_or(false)
+            {
+                // Facade re-export: the binding crate re-exports the
+                // fn; credit the unique pub workspace declaration.
+                free_fn_decls.get(&ent.name).and_then(|m| {
+                    let pubs: Vec<&String> = m
+                        .iter()
+                        .filter(|(_, v)| v.starts_with("pub"))
+                        .map(|(k, _)| k)
+                        .collect();
+                    if pubs.len() == 1 {
+                        Some(pubs[0].clone())
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+            let Some(target) = target else { continue };
             free_fn_sites
                 .entry(ent.name.clone())
                 .or_default()
-                .entry(c)
+                .entry(target)
                 .or_default()
                 .push(ent.file.clone());
         }
@@ -1178,18 +1226,30 @@ fn resolve_site_origin(
 
 /// What: true when a usage site is creditable toward a pattern whose
 /// declaration lives in `defining_crate`: workspace-resolved to that
-/// crate, self-crate-resolved while using it, or unresolved (the
-/// crate-local-unimported fallback). Std / external / other-workspace
-/// resolutions are not credited.
+/// crate (directly or through a workspace facade crate that
+/// re-exports the name), self-crate-resolved while using it, or
+/// unresolved (the crate-local-unimported fallback). Std / external /
+/// unrelated-workspace resolutions are not credited.
 fn site_credits(
     origin: &IdentOrigin,
     using_crate: &str,
     defining_crate: &str,
+    ident: &str,
+    reexports_by_crate: &std::collections::HashMap<
+        String,
+        std::collections::HashSet<String>,
+    >,
 ) -> bool {
+    let reexported_via = |c: &str| {
+        reexports_by_crate
+            .get(c)
+            .map(|s| s.contains(ident))
+            .unwrap_or(false)
+    };
     match origin {
         IdentOrigin::Std | IdentOrigin::External => false,
-        IdentOrigin::Workspace(c) => c == defining_crate,
-        IdentOrigin::SelfCrate => using_crate == defining_crate,
+        IdentOrigin::Workspace(c) => c == defining_crate || reexported_via(c),
+        IdentOrigin::SelfCrate => using_crate == defining_crate || reexported_via(using_crate),
         IdentOrigin::Unresolved => true,
     }
 }

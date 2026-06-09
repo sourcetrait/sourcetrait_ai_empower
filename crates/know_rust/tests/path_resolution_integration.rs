@@ -259,6 +259,85 @@ fn fully_qualified_paths_resolve_their_root() {
 }
 
 #[test]
+fn facade_reexport_passes_credit_to_the_declaring_crate() {
+    // The ratatui-0.30 shape: a core crate declares the type, a
+    // facade crate `pub use`s it, consumers import from the facade.
+    // The site resolves Workspace(facade) - credit must pass through
+    // the facade's re-export to the declaring crate instead of
+    // dying on the crate mismatch.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"corelib\",\"facade\",\"app\"]\n"),
+        ),
+        (
+            "corelib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"corelib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "corelib/src/lib.rs",
+            String::from("pub struct Frame;\npub fn boot_helper() {}\n"),
+        ),
+        (
+            "facade/Cargo.toml",
+            String::from(
+                "[package]\nname=\"facade\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\ncorelib={path=\"../corelib\"}\n",
+            ),
+        ),
+        (
+            "facade/src/lib.rs",
+            String::from("pub use corelib::Frame;\npub use corelib::boot_helper;\n"),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nfacade={path=\"../facade\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use facade::{Frame, boot_helper};\n\
+                 pub fn draw(_f: &mut Frame) {}\n\
+                 pub fn run() { boot_helper(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let fp = run_characterize(root);
+    let frame = metric(&fp, "structure:Frame").expect("structure:Frame exists");
+    assert_eq!(
+        frame.get("defining_crate").and_then(|v| v.as_str()),
+        Some("corelib"),
+        "attribution stays with the declaring crate"
+    );
+    let inter = frame.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    assert!(
+        inter >= 1,
+        "facade-imported sig usage credits through the re-export (got inter {inter})"
+    );
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics");
+    let helper = pm
+        .get("utilities:boot_helper")
+        .expect("facade-imported free fn credits through the re-export");
+    assert_eq!(
+        helper.get("defining_crate").and_then(|v| v.as_str()),
+        Some("corelib"),
+        "free-fn attribution follows the unique pub declaration"
+    );
+}
+
+#[test]
 fn brace_self_import_binds_the_module_name() {
     // `use std::io::{self, Write}` brings `io` into scope as std's io
     // module; a crate-local `mod io` must not absorb those sites. The

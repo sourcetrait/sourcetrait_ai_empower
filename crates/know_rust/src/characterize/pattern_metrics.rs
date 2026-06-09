@@ -35,6 +35,33 @@ pub fn compute_pattern_metrics(
     let (example_files_by_name, curated_example_count_by_name) =
         compute_example_counts(&all_facts.example_type_usages, test_weight, bench_weight);
 
+    // Item path resolution (the assumed mode of attribution; R8
+    // slice 2, working/02): per-file import maps + the workspace
+    // member set + the full name->declaring-crates map (for prelude
+    // shadowing and same-crate preference).
+    let import_maps = build_import_maps(&all_facts.uses);
+    let workspace_members: std::collections::HashMap<String, String> = crates
+        .keys()
+        .map(|k| (k.replace('-', "_"), k.clone()))
+        .collect();
+    let mut local_decl_crates: std::collections::HashMap<
+        String,
+        std::collections::HashSet<String>,
+    > = std::collections::HashMap::new();
+    for list in [&all_facts.types, &all_facts.traits] {
+        for t in list.iter() {
+            if let (Some(n), Some(c)) = (
+                t.get("name").and_then(|v| v.as_str()),
+                t.get("crate").and_then(|v| v.as_str()),
+            ) {
+                local_decl_crates
+                    .entry(n.to_string())
+                    .or_default()
+                    .insert(c.to_string());
+            }
+        }
+    }
+
     let kinds: &[(&str, &dyn Fn(&serde_json::Value) -> Option<String>)] = &[
         ("trait_impl", &|f: &serde_json::Value| {
             if f.get("cfg_gated").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -137,14 +164,26 @@ pub fn compute_pattern_metrics(
             );
             continue;
         }
-        let defn = defn.unwrap();
+        let (defn, defn_source) = defn.unwrap();
         let defining_crate = defn.crate_name.clone();
         let mut is_pub = defn.visibility.starts_with("pub");
         if !is_pub && defn.macro_exported {
             is_pub = true;
         }
+        // Per-site resolution gate: a fact only credits the pattern
+        // when its identifier resolves to the declaring crate (or is
+        // an unresolved crate-local fallback). Std / external /
+        // other-workspace resolutions were never candidates - this is
+        // the workspace-origin rule holding at usage sites, not a
+        // separate exclusion (working/02).
+        let resolve_target: String = match kind.as_str() {
+            "type_usage" => inner.split("::").next().unwrap_or(inner).to_string(),
+            _ => inner.clone(),
+        };
         let mut intra = 0usize;
         let mut inter = 0usize;
+        let mut gated_example_files: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
         for fact in source {
             if !pattern_match(kind, inner, fact) {
                 continue;
@@ -153,12 +192,46 @@ pub fn compute_pattern_metrics(
                 Some(u) if !u.is_empty() => u,
                 _ => continue,
             };
+            let file = fact.get("file").and_then(|v| v.as_str()).unwrap_or("");
+            let origin = resolve_ident_origin(
+                file,
+                &resolve_target,
+                using,
+                &import_maps,
+                &workspace_members,
+                &local_decl_crates,
+            );
+            if !site_credits(&origin, using, &defining_crate) {
+                continue;
+            }
+            let norm = file.replace('\\', "/");
+            if norm.contains("/examples/") || norm.starts_with("examples/") {
+                gated_example_files.insert(norm);
+            }
             if using == defining_crate {
                 intra += 1;
             } else {
                 inter += 1;
             }
         }
+        // Mod / crate-namespace defn fallbacks with zero credited
+        // usage are resolution artifacts (env::args class), not
+        // picks; type-def-backed patterns may legitimately be
+        // example-only.
+        if kind == "type_usage"
+            && matches!(defn_source, DefSource::Mod | DefSource::CrateName)
+            && intra + inter == 0
+        {
+            continue;
+        }
+        let (example_count_v, curated_v) = if kind == "type_usage" {
+            (example_count_v, curated_v)
+        } else {
+            (
+                serde_json::Value::from(gated_example_files.len() as f64),
+                gated_example_files.len(),
+            )
+        };
         let total = intra + inter;
         let ratio = if total > 0 { inter as f64 / total as f64 } else { 0.0 };
         metrics.insert(
@@ -232,8 +305,30 @@ pub fn compute_pattern_metrics(
                 continue;
             }
             let defining_crate = defn.crate_name.clone();
+            // Resolution gate (R8 slice 2): only sites whose ident
+            // resolves to the declaring crate (or unresolved
+            // crate-local fallback) credit the synthesized pattern.
+            let credited: Vec<String> = hits
+                .iter()
+                .filter(|f| {
+                    let using = resolve_crate_for_file(f, &crate_dirs);
+                    let origin = resolve_ident_origin(
+                        f,
+                        &ident,
+                        &using,
+                        &import_maps,
+                        &workspace_members,
+                        &local_decl_crates,
+                    );
+                    site_credits(&origin, &using, &defining_crate)
+                })
+                .cloned()
+                .collect();
+            if credited.is_empty() {
+                continue;
+            }
             let (intra, inter, example_count, curated_count) =
-                count_usages(&hits, &defining_crate, &crate_dirs);
+                count_usages(&credited, &defining_crate, &crate_dirs);
             let total = intra + inter;
             let ratio = if total > 0 { inter as f64 / total as f64 } else { 0.0 };
             metrics.insert(
@@ -281,6 +376,21 @@ pub fn compute_pattern_metrics(
                 Some(d) => d,
                 None => continue,
             };
+            // Resolution gate (R8 slice 2): a member whose outer
+            // resolves away from the declaring crate is not part of
+            // this workspace family.
+            let using = resolve_crate_for_file(&ent.file, &crate_dirs);
+            let origin = resolve_ident_origin(
+                &ent.file,
+                &ent.outer,
+                &using,
+                &import_maps,
+                &workspace_members,
+                &local_decl_crates,
+            );
+            if !site_credits(&origin, &using, &defn.crate_name) {
+                continue;
+            }
             method_refs_by_inner
                 .entry(ent.inner.clone())
                 .or_default()
@@ -514,6 +624,177 @@ struct MethodMember {
     outer: String,
     defining_crate: String,
     file: String,
+}
+
+/// What: where a usage-site identifier resolves to, per the using
+/// file's imports. `SelfCrate` covers `crate::` / `self::` / `super::`
+/// import paths plus prelude-shadowing local declarations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum IdentOrigin {
+    Std,
+    External,
+    Workspace(String),
+    SelfCrate,
+    Unresolved,
+}
+
+/// What: Rust 2021/2024 prelude names. An identifier with NO import
+/// hit that matches one of these resolves to std per language
+/// semantics (the prelude is an implicit import) - unless the using
+/// crate itself declares the name (shadowing).
+///
+/// Why: this is resolution DATA, not a capture rule - the
+/// workspace-origin rule alone governs capture (working/02). Without
+/// prelude resolution, name-keyed fallback hands every bare `Result`
+/// / `Vec` / `Box` usage to any workspace alias of the same name (R7
+/// topic k: tokio structure:Result topping the architecture set).
+const STD_PRELUDE: &[&str] = &[
+    "Box", "Vec", "String", "ToString", "ToOwned", "Clone", "Copy", "Debug", "Default",
+    "PartialEq", "Eq", "PartialOrd", "Ord", "Hash", "Iterator", "IntoIterator",
+    "DoubleEndedIterator", "ExactSizeIterator", "Extend", "Option", "Some", "None",
+    "Result", "Ok", "Err", "From", "Into", "TryFrom", "TryInto", "AsRef", "AsMut",
+    "Send", "Sync", "Sized", "Unpin", "Drop", "Fn", "FnMut", "FnOnce", "FromIterator",
+];
+
+/// What: per-file leaf-name -> first-path-segment import maps built
+/// from the flattened `use` facts.
+///
+/// Why: item PATH RESOLUTION is the assumed mode of attribution
+/// (working/02): a usage site's identifier resolves through its
+/// file's use-imports to an origin crate. The walker stores uses in
+/// `flatten_use_tree` form (`a::b::{C, d as E, *}`), so this parses
+/// that grammar back into (leaf -> first segment) entries; glob
+/// imports are unresolvable per-ident and ignored.
+///
+/// Where: built once in `compute_pattern_metrics` from
+/// `all_facts.uses`; consulted by `resolve_ident_origin`.
+fn build_import_maps(
+    uses: &[serde_json::Value],
+) -> std::collections::HashMap<String, std::collections::HashMap<String, String>> {
+    let mut by_file: std::collections::HashMap<String, std::collections::HashMap<String, String>> =
+        std::collections::HashMap::new();
+    for u in uses {
+        let file = match u.get("file").and_then(|v| v.as_str()) {
+            Some(f) => f,
+            None => continue,
+        };
+        let path = match u.get("path").and_then(|v| v.as_str()) {
+            Some(p) => p,
+            None => continue,
+        };
+        let entry = by_file.entry(file.to_string()).or_default();
+        for (first, leaf) in parse_flattened_use(path) {
+            entry.entry(leaf).or_insert(first);
+        }
+    }
+    by_file
+}
+
+/// What: expand one flattened use-tree string into (first_segment,
+/// leaf_name) pairs. `a::b::{C, d as E}` -> [(a, C), (a, E)];
+/// `x::Y as Z` -> [(x, Z)]; globs are skipped.
+fn parse_flattened_use(path: &str) -> Vec<(String, String)> {
+    fn leaves(s: &str, out: &mut Vec<String>) {
+        let s = s.trim();
+        if s.is_empty() || s == "*" {
+            return;
+        }
+        if let Some(brace) = s.find('{') {
+            // group: everything before `{` is a shared prefix whose
+            // leaves come from the comma-split inner list.
+            let inner = &s[brace + 1..s.rfind('}').unwrap_or(s.len())];
+            for piece in split_top_commas(inner) {
+                leaves(&piece, out);
+            }
+            return;
+        }
+        if let Some((_, renamed)) = s.rsplit_once(" as ") {
+            out.push(renamed.trim().to_string());
+            return;
+        }
+        let leaf = s.rsplit("::").next().unwrap_or(s).trim();
+        if !leaf.is_empty() && leaf != "*" {
+            out.push(leaf.to_string());
+        }
+    }
+    let trimmed = path.trim();
+    let first = trimmed
+        .split("::")
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_start_matches("r#")
+        .to_string();
+    if first.is_empty() {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    leaves(trimmed, &mut names);
+    names.into_iter().map(|n| (first.clone(), n)).collect()
+}
+
+/// What: resolve `ident` as used in `file` (owned by `using_crate`)
+/// to its origin. Import map first; then prelude (with same-crate
+/// shadow check via `local_decl_crates`); else Unresolved.
+///
+/// Why: makes the workspace-origin rule hold at usage sites - std /
+/// external resolutions were never candidates for capture, so the
+/// callers skip those sites (no separate stdlib rule; working/02).
+///
+/// Where: called from the counting loop + the pub_type / method_ref
+/// synthesis paths in `compute_pattern_metrics`.
+fn resolve_ident_origin(
+    file: &str,
+    ident: &str,
+    using_crate: &str,
+    import_maps: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    workspace_members: &std::collections::HashMap<String, String>,
+    local_decl_crates: &std::collections::HashMap<String, std::collections::HashSet<String>>,
+) -> IdentOrigin {
+    if let Some(map) = import_maps.get(file) {
+        if let Some(first) = map.get(ident) {
+            return match first.as_str() {
+                "std" | "core" | "alloc" => IdentOrigin::Std,
+                "crate" | "self" | "super" => IdentOrigin::SelfCrate,
+                other => {
+                    let norm = other.replace('-', "_");
+                    match workspace_members.get(&norm) {
+                        Some(canonical) => IdentOrigin::Workspace(canonical.clone()),
+                        None => IdentOrigin::External,
+                    }
+                }
+            };
+        }
+    }
+    if STD_PRELUDE.contains(&ident) {
+        let shadowed = local_decl_crates
+            .get(ident)
+            .map(|crates| crates.contains(using_crate))
+            .unwrap_or(false);
+        if !shadowed {
+            return IdentOrigin::Std;
+        }
+        return IdentOrigin::SelfCrate;
+    }
+    IdentOrigin::Unresolved
+}
+
+/// What: true when a usage site is creditable toward a pattern whose
+/// declaration lives in `defining_crate`: workspace-resolved to that
+/// crate, self-crate-resolved while using it, or unresolved (the
+/// crate-local-unimported fallback). Std / external / other-workspace
+/// resolutions are not credited.
+fn site_credits(
+    origin: &IdentOrigin,
+    using_crate: &str,
+    defining_crate: &str,
+) -> bool {
+    match origin {
+        IdentOrigin::Std | IdentOrigin::External => false,
+        IdentOrigin::Workspace(c) => c == defining_crate,
+        IdentOrigin::SelfCrate => using_crate == defining_crate,
+        IdentOrigin::Unresolved => true,
+    }
 }
 
 fn count_usages(
@@ -792,6 +1073,19 @@ fn build_crate_name_lookup(
     lookup
 }
 
+/// What: which lookup chain produced a pattern's defining-crate
+/// attribution. Mod / crate-namespace fallbacks are weaker evidence
+/// than a type / trait / macro declaration and get stricter
+/// zero-credit handling in the counting loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DefSource {
+    TypeDef,
+    TraitDef,
+    MacroDef,
+    Mod,
+    CrateName,
+}
+
 fn pattern_def<'a>(
     kind: &str,
     pattern_inner: &str,
@@ -800,17 +1094,26 @@ fn pattern_def<'a>(
     macro_def_lookup: &'a indexmap::IndexMap<String, PatternDef>,
     mod_def_lookup: &'a indexmap::IndexMap<String, PatternDef>,
     crate_name_lookup: &'a indexmap::IndexMap<String, PatternDef>,
-) -> Option<&'a PatternDef> {
+) -> Option<(&'a PatternDef, DefSource)> {
     match kind {
-        "trait_impl" | "derive" => trait_def_lookup.get(pattern_inner),
+        "trait_impl" | "derive" => trait_def_lookup
+            .get(pattern_inner)
+            .map(|d| (d, DefSource::TraitDef)),
         "type_usage" => {
             let outer = pattern_inner.split("::").next().unwrap_or("");
             type_def_lookup
                 .get(outer)
-                .or_else(|| mod_def_lookup.get(outer))
-                .or_else(|| crate_name_lookup.get(outer))
+                .map(|d| (d, DefSource::TypeDef))
+                .or_else(|| mod_def_lookup.get(outer).map(|d| (d, DefSource::Mod)))
+                .or_else(|| {
+                    crate_name_lookup
+                        .get(outer)
+                        .map(|d| (d, DefSource::CrateName))
+                })
         }
-        "reg_macro" | "attr_macro" => macro_def_lookup.get(pattern_inner),
+        "reg_macro" | "attr_macro" => macro_def_lookup
+            .get(pattern_inner)
+            .map(|d| (d, DefSource::MacroDef)),
         _ => None,
     }
 }

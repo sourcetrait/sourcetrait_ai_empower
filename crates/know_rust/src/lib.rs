@@ -45,6 +45,7 @@ pub(crate) mod measure_overlap {
     pub(crate) mod score;
     pub(crate) mod types;
 }
+pub(crate) mod resolution;
 pub(crate) mod run;
 pub(crate) mod rustdoc_overlay {
     pub(crate) mod run;
@@ -97,6 +98,7 @@ pub(crate) use crate::{
     measure_overlap::parse::*,
     measure_overlap::score::*,
     measure_overlap::types::*,
+    resolution::*,
     rustdoc_overlay::types::*,
     scan::helpers::*,
     scan::items::filters::*,

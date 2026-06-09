@@ -1,0 +1,406 @@
+use crate::*;
+
+/// What: one leaf of a flattened use-tree string. `Named` carries the
+/// in-scope BINDING name plus the imported item's own SOURCE name
+/// (`X as Y` binds Y with source X; `{self}` binds the parent segment;
+/// a plain leaf binds itself). `Glob` marks a `*` import, which is
+/// unresolvable per-ident.
+///
+/// Why: the two prior use-tree grammars each kept half the picture -
+/// pattern_metrics' parser returned bindings only (enough for origin
+/// resolution) while measure_demand's returned (binding, source) pairs
+/// (needed for rename translation back to source names). One leaf
+/// shape carries both so capture and demand parse imports identically.
+///
+/// Where: produced by `parse_use_leaves`; consumed by
+/// `build_import_bindings` / `build_reexport_index` and by
+/// `measure_demand::trace::demand_report`'s import-surface loop.
+pub(crate) enum UseLeaf {
+    Named {
+        binding: String,
+        source: Option<String>,
+    },
+    Glob,
+}
+
+/// What: the parse of one flattened use-tree string - the path's ROOT
+/// segment (first segment, `r#` prefix stripped; empty when the path
+/// is empty) plus the expanded leaves.
+///
+/// Why: every consumer of the use grammar needs the (root, leaves)
+/// pair together: the root decides which crate the bindings resolve
+/// to, the leaves decide which names enter scope.
+///
+/// Where: returned by `parse_use_leaves`.
+pub(crate) struct UseParse {
+    pub(crate) root: String,
+    pub(crate) leaves: Vec<UseLeaf>,
+}
+
+/// What: expand one flattened use-tree string (the
+/// `flatten_use_tree` wire form: `a::b::{C, d as E, *}`) into its
+/// root segment plus `UseLeaf` entries. Handles brace groups
+/// (recursively, with the prefix's last segment as the `self`
+/// parent), `as` renames (`self as X` binds X with the parent as
+/// source), bare `self` (binds the parent segment), and globs. A
+/// bare top-level `self` with no parent yields no leaf.
+///
+/// Why: this grammar is the single source of truth for reading
+/// import surfaces - per-file import maps, facade re-export
+/// indexes, and the consumer-side demand trace all read use facts
+/// through it, so a grammar fix lands everywhere at once.
+///
+/// Where: called by `build_import_bindings` + `build_reexport_index`
+/// here and by `measure_demand::trace::demand_report` for demand
+/// extraction + the crate-wide alias map.
+pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
+    fn leaves(s: &str, parent_last: Option<&str>, out: &mut Vec<UseLeaf>) {
+        let s = s.trim();
+        if s.is_empty() {
+            return;
+        }
+        if s == "*" {
+            out.push(UseLeaf::Glob);
+            return;
+        }
+        if let Some(brace) = s.find('{') {
+            let prefix = s[..brace].trim_end_matches("::").trim();
+            let prefix_last = prefix.rsplit("::").next().filter(|p| !p.is_empty());
+            let inner = &s[brace + 1..s.rfind('}').unwrap_or(s.len())];
+            for piece in split_top_commas(inner) {
+                leaves(&piece, prefix_last.or(parent_last), out);
+            }
+            return;
+        }
+        if let Some((base, renamed)) = s.rsplit_once(" as ") {
+            let binding = renamed.trim().to_string();
+            let base = base.trim();
+            let source = if base == "self" {
+                parent_last.map(String::from)
+            } else {
+                Some(base.rsplit("::").next().unwrap_or(base).to_string())
+            };
+            out.push(UseLeaf::Named { binding, source });
+            return;
+        }
+        if s == "self" {
+            if let Some(p) = parent_last {
+                out.push(UseLeaf::Named {
+                    binding: p.to_string(),
+                    source: Some(p.to_string()),
+                });
+            }
+            return;
+        }
+        let leaf = s.rsplit("::").next().unwrap_or(s).trim();
+        if !leaf.is_empty() {
+            out.push(UseLeaf::Named {
+                binding: leaf.to_string(),
+                source: Some(leaf.to_string()),
+            });
+        }
+    }
+    let trimmed = path.trim();
+    let root = trimmed
+        .split("::")
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_start_matches("r#")
+        .to_string();
+    let mut out = Vec::new();
+    if !root.is_empty() {
+        leaves(trimmed, None, &mut out);
+    }
+    UseParse { root, leaves: out }
+}
+
+/// What: one per-file import binding - the path ROOT the binding
+/// resolves through (raw first segment; crate-name normalization is
+/// the caller's lookup concern) and the imported item's SOURCE name
+/// when the binding is a rename (`None` when binding == source).
+///
+/// Why: origin resolution needs the root; rename translation needs
+/// the source. Carrying both in the shared map shape lets
+/// pattern_metrics and measure_demand consume one import surface.
+///
+/// Where: values of `ImportMaps`; also the value shape of
+/// measure_demand's crate-wide alias map.
+pub(crate) struct ImportBinding {
+    pub(crate) root: String,
+    pub(crate) source: Option<String>,
+}
+
+/// What: per-file import surface - file path -> (binding ->
+/// `ImportBinding`), first-wins per (file, binding).
+pub(crate) type ImportMaps = HashMap<String, HashMap<String, ImportBinding>>;
+
+/// What: build the per-file import maps from (file, use-path) pairs.
+/// Globs are skipped (unresolvable per-ident); the first binding of a
+/// name in a file wins, matching shadow-free Rust import semantics
+/// closely enough for name-level attribution.
+///
+/// Why: item path resolution is the assumed mode of attribution
+/// (working/02): a usage site's identifier resolves through its
+/// file's use-imports to an origin crate. Both the capture side
+/// (pattern_metrics) and the demand side (measure_demand) build this
+/// surface from their own use facts via the same function.
+///
+/// Where: called from `compute_pattern_metrics` over facts.json
+/// `uses` entries and from `measure_demand::trace::demand_report`
+/// over the consumer's typed `UseEntry` list.
+pub(crate) fn build_import_bindings<'a, I>(uses: I) -> ImportMaps
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let mut by_file: ImportMaps = HashMap::new();
+    for (file, path) in uses {
+        let parsed = parse_use_leaves(path);
+        if parsed.root.is_empty() {
+            continue;
+        }
+        let entry = by_file.entry(file.to_string()).or_default();
+        for leaf in &parsed.leaves {
+            if let UseLeaf::Named { binding, source } = leaf {
+                entry
+                    .entry(binding.clone())
+                    .or_insert_with(|| ImportBinding {
+                        root: parsed.root.clone(),
+                        source: source.clone(),
+                    });
+            }
+        }
+    }
+    by_file
+}
+
+/// What: build the crate -> re-exported BINDING names index from
+/// (crate, use-path) pairs of `pub use` facts.
+///
+/// Why: a workspace FACADE crate re-exporting another member's item
+/// is the same item - sites importing through the facade credit the
+/// declaring crate (the ratatui/ratatui-core split). Name-level
+/// match, consistent with the system's attribution granularity; the
+/// re-export exposes the BINDING name (`pub use core::X as Y` exposes
+/// Y).
+///
+/// Where: called from `compute_pattern_metrics` over reexport-flagged
+/// `uses` facts; the index feeds `site_credits` and the free-fn
+/// facade redirect.
+pub(crate) fn build_reexport_index<'a, I>(reexports: I) -> HashMap<String, HashSet<String>>
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let mut by_crate: HashMap<String, HashSet<String>> = HashMap::new();
+    for (krate, path) in reexports {
+        let parsed = parse_use_leaves(path);
+        if parsed.root.is_empty() {
+            continue;
+        }
+        for leaf in &parsed.leaves {
+            if let UseLeaf::Named { binding, .. } = leaf {
+                by_crate
+                    .entry(krate.to_string())
+                    .or_default()
+                    .insert(binding.clone());
+            }
+        }
+    }
+    by_crate
+}
+
+/// What: where a usage-site identifier resolves to, per the using
+/// file's imports. `SelfCrate` covers `crate::` / `self::` / `super::`
+/// import paths plus prelude-shadowing local declarations.
+///
+/// Why: the workspace-origin rule holds at usage sites through this
+/// taxonomy - std / external resolutions were never capture
+/// candidates, and the demand side registers only affirmative
+/// workspace resolutions.
+///
+/// Where: returned by `resolve_ident_origin` / `resolve_site_origin`;
+/// judged by `site_credits` on the capture side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IdentOrigin {
+    Std,
+    External,
+    Workspace(String),
+    SelfCrate,
+    Unresolved,
+}
+
+/// What: Rust 2021/2024 prelude names. An identifier with NO import
+/// hit that matches one of these resolves to std per language
+/// semantics (the prelude is an implicit import) - unless the using
+/// crate itself declares the name (shadowing).
+///
+/// Why: this is resolution DATA, not a capture rule - the
+/// workspace-origin rule alone governs capture (working/02). Without
+/// prelude resolution, name-keyed fallback hands every bare `Result`
+/// / `Vec` / `Box` usage to any workspace alias of the same name (R7
+/// topic k: tokio structure:Result topping the architecture set).
+pub(crate) const STD_PRELUDE: &[&str] = &[
+    "Box", "Vec", "String", "ToString", "ToOwned", "Clone", "Copy", "Debug", "Default",
+    "PartialEq", "Eq", "PartialOrd", "Ord", "Hash", "Iterator", "IntoIterator",
+    "DoubleEndedIterator", "ExactSizeIterator", "Extend", "Option", "Some", "None",
+    "Result", "Ok", "Err", "From", "Into", "TryFrom", "TryInto", "AsRef", "AsMut",
+    "Send", "Sync", "Sized", "Unpin", "Drop", "Fn", "FnMut", "FnOnce", "FromIterator",
+];
+
+/// What: resolve `ident` as used in `file` (owned by `using_crate`)
+/// to its origin. Import map first; then prelude (with same-crate
+/// shadow check via `local_decl_crates`); else Unresolved.
+///
+/// Why: makes the workspace-origin rule hold at usage sites - std /
+/// external resolutions were never candidates for capture, so the
+/// callers skip those sites (no separate stdlib rule; working/02).
+///
+/// Where: called from `compute_pattern_metrics`' counting loop +
+/// synthesis paths and from `resolve_site_origin`'s module-root
+/// branch.
+pub(crate) fn resolve_ident_origin(
+    file: &str,
+    ident: &str,
+    using_crate: &str,
+    import_maps: &ImportMaps,
+    workspace_members: &HashMap<String, String>,
+    local_decl_crates: &HashMap<String, HashSet<String>>,
+) -> IdentOrigin {
+    if let Some(map) = import_maps.get(file) {
+        if let Some(binding) = map.get(ident) {
+            return match binding.root.as_str() {
+                "std" | "core" | "alloc" => IdentOrigin::Std,
+                "crate" | "self" | "super" => IdentOrigin::SelfCrate,
+                other => {
+                    let norm = other.replace('-', "_");
+                    match workspace_members.get(&norm) {
+                        Some(canonical) => IdentOrigin::Workspace(canonical.clone()),
+                        None => IdentOrigin::External,
+                    }
+                }
+            };
+        }
+    }
+    if STD_PRELUDE.contains(&ident) {
+        let shadowed = local_decl_crates
+            .get(ident)
+            .map(|crates| crates.contains(using_crate))
+            .unwrap_or(false);
+        if !shadowed {
+            return IdentOrigin::Std;
+        }
+        return IdentOrigin::SelfCrate;
+    }
+    IdentOrigin::Unresolved
+}
+
+/// What: resolve a usage site that may carry an explicit path
+/// QUALIFIER (the written root of a longer path: `std::env::args` ->
+/// "std"; `git2::Status::INDEX_NEW` -> "git2"; `io::Error` -> "io").
+/// A keyword / member root resolves directly per language semantics;
+/// a module-name root resolves through the file's imports (use
+/// std::io; io::Error -> Std). Without a qualifier, falls back to
+/// `resolve_ident_origin` on the bare ident.
+///
+/// Why: the walkers record the last two path segments; the qualifier
+/// preserves the explicit root that the crate-local Unresolved
+/// fallback was silently absorbing (R7 topics k/l residue:
+/// env::args / io::stdout / structure:Error classes).
+///
+/// Where: called from `compute_pattern_metrics`' counting loop, its
+/// pub_type / method_ref / assoc-const / variant-ref synthesis paths,
+/// and its example-evidence gate.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_site_origin(
+    file: &str,
+    ident: &str,
+    qualifier: Option<&str>,
+    using_crate: &str,
+    import_maps: &ImportMaps,
+    workspace_members: &HashMap<String, String>,
+    local_decl_crates: &HashMap<String, HashSet<String>>,
+    local_mod_crates: &HashMap<String, HashSet<String>>,
+) -> IdentOrigin {
+    if let Some(q) = qualifier {
+        return match q {
+            "std" | "core" | "alloc" => IdentOrigin::Std,
+            "crate" | "self" | "super" => IdentOrigin::SelfCrate,
+            other => {
+                let norm = other.replace('-', "_");
+                if let Some(canonical) = workspace_members.get(&norm) {
+                    IdentOrigin::Workspace(canonical.clone())
+                } else {
+                    // Module-name root: resolve the module ident
+                    // through this file's imports first. An
+                    // unimported root is crate-local only when the
+                    // using crate declares a module of that name;
+                    // otherwise the root is an external crate.
+                    match resolve_ident_origin(
+                        file,
+                        other,
+                        using_crate,
+                        import_maps,
+                        workspace_members,
+                        local_decl_crates,
+                    ) {
+                        IdentOrigin::Unresolved => {
+                            let is_local_mod = local_mod_crates
+                                .get(other)
+                                .map(|crates| crates.contains(using_crate))
+                                .unwrap_or(false);
+                            if is_local_mod {
+                                IdentOrigin::Unresolved
+                            } else {
+                                IdentOrigin::External
+                            }
+                        }
+                        resolved => resolved,
+                    }
+                }
+            }
+        };
+    }
+    resolve_ident_origin(
+        file,
+        ident,
+        using_crate,
+        import_maps,
+        workspace_members,
+        local_decl_crates,
+    )
+}
+
+/// What: true when a usage site is creditable toward a pattern whose
+/// declaration lives in `defining_crate`: workspace-resolved to that
+/// crate (directly or through a workspace facade crate that
+/// re-exports the name), self-crate-resolved while using it, or
+/// unresolved (the crate-local-unimported fallback). Std / external /
+/// unrelated-workspace resolutions are not credited.
+///
+/// Why: this is the capture side's verdict on a resolved origin. The
+/// demand side intentionally judges differently (affirmative
+/// resolution only - Unresolved is NOT demand), so the verdict stays
+/// separate from the shared resolution substrate above.
+///
+/// Where: called from `compute_pattern_metrics`' counting loop and
+/// synthesis paths.
+pub(crate) fn site_credits(
+    origin: &IdentOrigin,
+    using_crate: &str,
+    defining_crate: &str,
+    ident: &str,
+    reexports_by_crate: &HashMap<String, HashSet<String>>,
+) -> bool {
+    let reexported_via = |c: &str| {
+        reexports_by_crate
+            .get(c)
+            .map(|s| s.contains(ident))
+            .unwrap_or(false)
+    };
+    match origin {
+        IdentOrigin::Std | IdentOrigin::External => false,
+        IdentOrigin::Workspace(c) => c == defining_crate || reexported_via(c),
+        IdentOrigin::SelfCrate => using_crate == defining_crate || reexported_via(using_crate),
+        IdentOrigin::Unresolved => true,
+    }
+}

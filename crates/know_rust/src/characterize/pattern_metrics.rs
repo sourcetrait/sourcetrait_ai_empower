@@ -359,6 +359,8 @@ pub fn compute_pattern_metrics(
 
         let mut method_refs_by_inner: indexmap::IndexMap<String, Vec<MethodMember>> =
             indexmap::IndexMap::new();
+        let mut assoc_const_members: indexmap::IndexMap<String, Vec<String>> =
+            indexmap::IndexMap::new();
         for ent in &usages.ast_method_ref_usages {
             if ent.outer.is_empty() || ent.inner.is_empty() {
                 continue;
@@ -391,6 +393,16 @@ pub fn compute_pattern_metrics(
             if !site_credits(&origin, &using, &defn.crate_name) {
                 continue;
             }
+            // Labels routing (R8 slice 3): constant-shaped inners are
+            // associated-constant accesses, not method refs - divert
+            // to globals:<O>::<CONST> synthesis; never family-fodder.
+            if is_constant_shaped(&ent.inner) {
+                assoc_const_members
+                    .entry(format!("{}::{}", ent.outer, ent.inner))
+                    .or_default()
+                    .push(ent.file.clone());
+                continue;
+            }
             method_refs_by_inner
                 .entry(ent.inner.clone())
                 .or_default()
@@ -399,6 +411,39 @@ pub fn compute_pattern_metrics(
                     defining_crate: defn.crate_name.clone(),
                     file: ent.file.clone(),
                 });
+        }
+
+        for (key, files) in assoc_const_members {
+            let outer = key.split("::").next().unwrap_or("");
+            let defn = match type_def_lookup
+                .get(outer)
+                .or_else(|| trait_def_lookup.get(outer))
+            {
+                Some(d) => d,
+                None => continue,
+            };
+            let pattern = format!("assoc_const:{}", key);
+            if should_skip_pattern(&pattern, calibration) || metrics.contains_key(&pattern) {
+                continue;
+            }
+            let defining_crate = defn.crate_name.clone();
+            let (intra, inter, example_count, curated_count) =
+                count_usages(&files, &defining_crate, &crate_dirs);
+            let total = intra + inter;
+            let ratio = if total > 0 { inter as f64 / total as f64 } else { 0.0 };
+            metrics.insert(
+                pattern,
+                PatternMetric {
+                    defining_crate: Some(defining_crate),
+                    intra_count: intra,
+                    inter_count: inter,
+                    inter_ratio: round3(ratio),
+                    is_pub: true,
+                    example_count: serde_json::Value::from(example_count as f64),
+                    curated_example_count: curated_count,
+                    sub_form: None,
+                },
+            );
         }
 
         for (inner, members) in method_refs_by_inner {
@@ -447,7 +492,14 @@ pub fn compute_pattern_metrics(
         }
     }
 
-    let grouped = translate_to_group_keys(metrics, &type_def_lookup, &trait_def_lookup);
+    let enum_names: std::collections::HashSet<String> = all_facts
+        .types
+        .iter()
+        .filter(|t| t.get("kind").and_then(|v| v.as_str()) == Some("enum"))
+        .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
+        .collect();
+    let grouped =
+        translate_to_group_keys(metrics, &type_def_lookup, &trait_def_lookup, &enum_names);
     classify_sub_forms(grouped, all_facts, calibration)
 }
 
@@ -484,6 +536,7 @@ fn translate_to_group_keys(
     old: indexmap::IndexMap<String, PatternMetric>,
     type_def_lookup: &indexmap::IndexMap<String, PatternDef>,
     trait_def_lookup: &indexmap::IndexMap<String, PatternDef>,
+    enum_names: &std::collections::HashSet<String>,
 ) -> indexmap::IndexMap<String, PatternMetric> {
     let mut new: indexmap::IndexMap<String, PatternMetric> = indexmap::IndexMap::new();
     let mut structure_aggregates: indexmap::IndexMap<String, Vec<PatternMetric>> =
@@ -529,16 +582,31 @@ fn translate_to_group_keys(
                 let new_key = format!("implementation_functions:{}", inner);
                 merge_metric(&mut new, new_key, metric);
             }
+            "assoc_const" => {
+                // Labels (R8 slice 3): associated-constant accesses
+                // are globals-group picks.
+                let new_key = format!("globals:{}", inner);
+                merge_metric(&mut new, new_key, metric);
+            }
             "type_usage" => {
                 // Bridge: emit BOTH structure:<outer> (aggregated below)
                 // and implementation_functions:<outer>::<inner>. The
                 // structure side requires the outer to be a workspace
                 // TYPE def - the defining-crate lookup also resolves
                 // mod / crate outers (env::args et al.), and a module
-                // is not a structure pick.
-                let outer = inner.split_once("::").map(|(o, _)| o).unwrap_or(&inner);
-                let impl_fn_key = format!("implementation_functions:{}", inner);
-                merge_metric(&mut new, impl_fn_key, metric.clone());
+                // is not a structure pick. Enum-VARIANT inners collapse
+                // into the structure aggregate only (R8 slice 3):
+                // variants are the enum's surface, not per-variant
+                // implementation_functions picks.
+                let (outer, inner_part) = inner
+                    .split_once("::")
+                    .map(|(o, i)| (o, i))
+                    .unwrap_or((inner.as_str(), ""));
+                let collapses = enum_names.contains(outer) && is_variant_shaped(inner_part);
+                if !collapses {
+                    let impl_fn_key = format!("implementation_functions:{}", inner);
+                    merge_metric(&mut new, impl_fn_key, metric.clone());
+                }
                 if type_def_lookup.contains_key(outer) {
                     structure_aggregates
                         .entry(outer.to_string())
@@ -624,6 +692,25 @@ struct MethodMember {
     outer: String,
     defining_crate: String,
     file: String,
+}
+
+/// What: true for identifiers shaped like associated CONSTANTS - no
+/// lowercase characters (`ZERO`, `Y`, `IDENTITY`, `X1`).
+///
+/// Why: constant accesses are LABELS in the what-why-where taxonomy
+/// (the_user: "those look exactly like labels") and route to the
+/// globals group, not implementation_functions; they also never form
+/// method_ref `_::` families. A general shape signal, not a name
+/// list.
+fn is_constant_shaped(inner: &str) -> bool {
+    !inner.is_empty() && !inner.chars().any(|c| c.is_lowercase())
+}
+
+/// What: true for enum-VARIANT-shaped inners: upper-initial with at
+/// least one lowercase character (`Text`, `Io`, `Rgb`).
+fn is_variant_shaped(inner: &str) -> bool {
+    inner.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+        && inner.chars().any(|c| c.is_lowercase())
 }
 
 /// What: where a usage-site identifier resolves to, per the using

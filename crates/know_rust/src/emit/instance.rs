@@ -312,8 +312,26 @@ pub fn instance_for_kind(
             (None, Vec::new())
         }
         PickGroup::Globals => {
-            // No globals (const / static) currently emitted as picker
-            // patterns; placeholder for future iteration.
+            // Associated-constant labels (R8 slice 3): the
+            // `globals:<Outer>::<CONST>` picks synthesized from the
+            // method-ref stream seed at their access sites.
+            if let Some((outer, cname)) = name.split_once("::") {
+                let arr = facts
+                    .get("ast_method_refs")
+                    .and_then(|v| v.as_array())
+                    .unwrap_or(&empty);
+                let inst: Vec<serde_json::Value> = arr
+                    .iter()
+                    .filter(|r| {
+                        r.get("outer").and_then(|v| v.as_str()) == Some(outer)
+                            && r.get("inner").and_then(|v| v.as_str()) == Some(cname)
+                    })
+                    .cloned()
+                    .collect();
+                let first = inst.first().cloned();
+                let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
+                return (first, spans);
+            }
             (None, Vec::new())
         }
     }

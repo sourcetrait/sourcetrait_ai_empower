@@ -252,16 +252,15 @@ fn compute_shape_signals(
     let mut per_crate_top_kind: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for (crate_name, counter) in &per_crate_kinds {
-        let mut best_kind = String::new();
-        let mut best_count: usize = 0;
-        for (kind, v) in counter {
-            if best_kind.is_empty() || *v > best_count {
-                best_kind = kind.clone();
-                best_count = *v;
-            }
-        }
-        if !best_kind.is_empty() {
-            per_crate_top_kind.insert(crate_name.clone(), best_kind);
+        // Deterministic election (count desc, kind name asc on ties):
+        // HashMap iteration order randomized tied winners between
+        // runs, drifting distinct_top_kinds / dispersion across
+        // identical-input characterize invocations (the sampling
+        // contract requires byte-reproducible output).
+        let mut ranked: Vec<(&String, &usize)> = counter.iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        if let Some((kind, _)) = ranked.first() {
+            per_crate_top_kind.insert(crate_name.clone(), (*kind).clone());
         }
     }
     let distinct_top_kinds: std::collections::HashSet<String> =
@@ -292,15 +291,13 @@ fn compute_shape_signals(
     let hub_centrality = max_dependents as f64 / n_crates as f64;
 
     let central_crate: Option<String> = {
-        let mut best: Option<String> = None;
-        let mut best_count: usize = 0;
-        for (k, v) in &dependent_count {
-            if best.is_none() || *v > best_count {
-                best = Some(k.clone());
-                best_count = *v;
-            }
-        }
-        best
+        // Deterministic election (dependents desc, crate name asc on
+        // ties): bevy_ecs and bevy_reflect tie at 44 dependents, and
+        // the prior HashMap-order pick flipped central_crate between
+        // identical-input runs.
+        let mut ranked: Vec<(&String, &usize)> = dependent_count.iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        ranked.first().map(|(k, _)| (*k).clone())
     };
     let central_kind: Option<String> = central_crate
         .as_ref()

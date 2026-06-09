@@ -232,17 +232,24 @@ pub fn compute_significance_sets(
         workspace_wide_keys.insert(k.clone());
     }
 
-    let initial_intra_per_crate = per_crate_picks(
+    // R8 slice 4 (the_user-confirmed): the STV election sees the FULL
+    // per-crate intra pools - crate-equal voice must not be starved by
+    // workspace-wide widening (R7 topic d emptied clique/intra on five
+    // targets). The elected list renders as-is; duplication with the
+    // workspace-wide sets is a different lens, kept. Workspace-wide
+    // dedup applies to the rendered 5.5 lists only (below).
+    let empty_dedup: indexmap::IndexSet<Pattern> = indexmap::IndexSet::new();
+    let ballots_intra_per_crate = per_crate_picks(
         &per_crate_counts,
         &pattern_metrics,
         per_crate_sloc,
         calibration,
         PickSet::IntraCrate,
         false,
-        &workspace_wide_keys,
+        &empty_dedup,
     )
     .0;
-    let per_crate_ballots: indexmap::IndexMap<String, Vec<Pattern>> = initial_intra_per_crate
+    let per_crate_ballots: indexmap::IndexMap<String, Vec<Pattern>> = ballots_intra_per_crate
         .iter()
         .map(|(c, s)| (c.clone(), s.keys().cloned().collect()))
         .collect();
@@ -260,7 +267,7 @@ pub fn compute_significance_sets(
     let elected_clique = stv_elect_clique(
         &per_crate_ballots,
         clique_seats,
-        &workspace_wide_keys,
+        &empty_dedup,
     );
     let significant_clique = bucket_and_cap_by_group(
         &elected_clique,

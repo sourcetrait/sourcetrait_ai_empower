@@ -440,17 +440,30 @@ where
             .or_default()
             .push((k.clone(), v.clone()));
     }
-    let mut out: indexmap::IndexMap<Pattern, V> = indexmap::IndexMap::new();
+    // Determinism: HashMap iteration order is per-process random, and
+    // an unstable sort lets cap-boundary ties be cut arbitrarily -
+    // which randomized both pick membership at the boundary and the
+    // STV ballot ranking built from this map (clique elections
+    // differed between identical-code runs). Sort with a full
+    // tie-break (score desc, then pattern key) inside each group AND
+    // across the returned map, so output is byte-reproducible per
+    // the sampling contract.
+    let mut capped: Vec<(Pattern, V)> = Vec::new();
     for (group, mut items) in by_group {
         let cap = matrix.cap_for(group, set, base_cap, floor);
         items.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
         });
-        for (k, v) in items.into_iter().take(cap) {
-            out.insert(k, v);
-        }
+        capped.extend(items.into_iter().take(cap));
     }
-    out
+    capped.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    capped.into_iter().collect()
 }
 
 /// What: SLOC-scaled top-N cap formula. cap = max(floor, round(floor +

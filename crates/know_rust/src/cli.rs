@@ -66,6 +66,12 @@ pub(crate) enum Command {
         /// where orientation.md + reference.md are written).
         out_dir: PathBuf,
     },
+    /// Measure picker output quality (supply-side overlap canary +
+    /// demand-side consumer trace).
+    Measure {
+        #[command(subcommand)]
+        measure: MeasureCommand,
+    },
     /// Measure picker overlap against a manual ground-truth list.
     /// Walks each target's orientation.md under `samples_dir`, parses
     /// the S5.1..5.6 pick lists, and reports per-target overlap +
@@ -94,6 +100,26 @@ pub(crate) enum Command {
         /// resolved via cargo metadata + the characterize
         /// fingerprint's most-depended-on in-workspace crate.
         package: Option<String>,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub(crate) enum MeasureCommand {
+    /// Trace a CONSUMER workspace's demand on a target's internals
+    /// and require full coverage by the target's picks + carry (the
+    /// zero-miss bar). Scans the consumer in-process; exits nonzero
+    /// when any demanded name or pair is uncovered.
+    Demand {
+        /// Consumer workspace root to scan.
+        consumer_root: PathBuf,
+        /// Directory containing the target's facts.json +
+        /// fingerprint.json + orientation.md (a probe .orientation/
+        /// dir or a sample's output/<target>/).
+        target_out_dir: PathBuf,
+        /// Output JSON path; defaults to
+        /// <target_out_dir>/consumer_trace.json.
+        #[arg(long = "out")]
+        out: Option<PathBuf>,
     },
 }
 

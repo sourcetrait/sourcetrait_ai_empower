@@ -24,6 +24,7 @@ pub fn run() -> std::result::Result<(), Error> {
             workspace_root,
             out_dir,
         } => emit(&workspace_root, &out_dir, &calibration, &templates),
+        Command::Measure { measure } => dispatch_measure(measure),
         Command::MeasureOverlap {
             samples_dir,
             ground_truth,
@@ -46,5 +47,15 @@ fn dispatch_scan(scan: ScanCommand) -> std::result::Result<(), Error> {
             workspace_root,
             out_dir,
         } => scan_items(&workspace_root, &out_dir),
+    }
+}
+
+fn dispatch_measure(measure: MeasureCommand) -> std::result::Result<(), Error> {
+    match measure {
+        MeasureCommand::Demand {
+            consumer_root,
+            target_out_dir,
+            out,
+        } => measure_demand(&consumer_root, &target_out_dir, out.as_deref()),
     }
 }

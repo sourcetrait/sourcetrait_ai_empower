@@ -34,6 +34,11 @@ pub(crate) mod error;
 pub(crate) mod model {
     pub(crate) mod picks;
 }
+pub(crate) mod measure_demand {
+    pub(crate) mod run;
+    pub(crate) mod trace;
+    pub(crate) mod types;
+}
 pub(crate) mod measure_overlap {
     pub(crate) mod parse;
     pub(crate) mod run;
@@ -87,6 +92,8 @@ pub(crate) use crate::{
     emit::seams::*,
     emit::spans::*,
     error::*,
+    measure_demand::trace::*,
+    measure_demand::types::*,
     measure_overlap::parse::*,
     measure_overlap::score::*,
     measure_overlap::types::*,
@@ -126,6 +133,7 @@ pub(crate) use syn::{
 pub use crate::run::run;
 pub use crate::characterize::run::*;
 pub use crate::emit::run::*;
+pub use crate::measure_demand::run::*;
 pub use crate::measure_overlap::run::*;
 pub use crate::rustdoc_overlay::run::*;
 pub use crate::config::calibration::*;

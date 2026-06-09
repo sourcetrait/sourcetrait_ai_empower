@@ -54,6 +54,9 @@ pub enum Error {
 
     #[snafu(display("unknown rustdoc format_version={version}; aborting per the hard-nightly requirement"))]
     UnknownRustdocFormatVersion { version: String },
+
+    #[snafu(display("demand misses: {names} name(s), {pairs} pair(s) uncovered"))]
+    DemandMisses { names: usize, pairs: usize },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -1,0 +1,191 @@
+//! Integration tests for `know_rust measure demand` (phase-1
+//! conversion of the kr_consumer_trace.py prototype): demand from a
+//! consumer workspace, coverage against the target's picks + carry,
+//! rename translation (same-file binding and crate-wide alias),
+//! pair tiers, and the zero-miss exit gate.
+
+use know_rust::*;
+use std::collections::HashMap;
+use std::path::Path;
+use tempfile::TempDir;
+
+fn write_tree(base: &Path, files: &HashMap<&str, String>) {
+    for (rel, content) in files {
+        let p = base.join(rel);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).expect("mkdir parent");
+        }
+        std::fs::write(&p, content).expect("write file");
+    }
+}
+
+fn build_target(root: &Path) -> std::path::PathBuf {
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub struct Value;\nimpl Value { pub fn new() -> Self { Value } }\n\
+                 pub struct Hidden;\n\
+                 pub fn boot() {}\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use lib::{Value, boot};\n\
+                 pub fn a() { let _ = Value::new(); }\n\
+                 pub fn b() { let _ = Value::new(); }\n\
+                 pub fn c() { boot(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+    let out = root.join(".orientation");
+    std::fs::create_dir_all(&out).expect("mkdir orientation");
+    let calibration = Calibration::default();
+    characterize(root, &out, &calibration).expect("characterize succeeds");
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    out
+}
+
+fn consumer_files(with_hidden: bool) -> HashMap<&'static str, String> {
+    let lib_rs = if with_hidden {
+        "pub(crate) mod inner;\n\
+         use lib::Value as JsonVal;\n\
+         use lib::{Hidden, boot};\n\
+         pub fn run(_h: Hidden) { boot(); let _ = JsonVal::new(); }\n"
+    } else {
+        "pub(crate) mod inner;\n\
+         use lib::Value as JsonVal;\n\
+         use lib::boot;\n\
+         pub fn run() { boot(); let _ = JsonVal::new(); }\n"
+    };
+    [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"consumer\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        ("src/lib.rs", lib_rs.to_string()),
+        (
+            // Cross-file alias: JsonVal is bound in lib.rs; this file
+            // reaches it through an internal module path, so only the
+            // crate-wide rename map can translate it back to Value.
+            "src/inner.rs",
+            String::from("pub fn go() { let _ = api::JsonVal::make(); }\npub mod api {}\n"),
+        ),
+    ]
+    .into_iter()
+    .collect()
+}
+
+#[test]
+fn miss_gates_and_clean_run_passes() {
+    let target_tmp = TempDir::new().expect("target tempdir");
+    let target_out = build_target(target_tmp.path());
+
+    // v1: demands Hidden (declared in the target but never picked or
+    // carried) -> one name miss, nonzero gate.
+    let c1 = TempDir::new().expect("consumer tempdir");
+    write_tree(c1.path(), &consumer_files(true));
+    let err = measure_demand(c1.path(), &target_out, None)
+        .expect_err("uncovered demand must gate");
+    assert_eq!(
+        err.to_string(),
+        "demand misses: 1 name(s), 0 pair(s) uncovered",
+        "expected 1 name miss, 0 pair misses"
+    );
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(target_out.join("consumer_trace.json"))
+            .expect("trace json written even on miss"),
+    )
+    .expect("parse trace json");
+    let miss_names: Vec<&str> = report
+        .pointer("/summary/misses")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(miss_names, vec!["Hidden"], "the miss is Hidden");
+
+    // v2: Hidden dropped -> clean run, exit Ok, rename-translated
+    // demand and pair tiers as designed.
+    let c2 = TempDir::new().expect("consumer2 tempdir");
+    write_tree(c2.path(), &consumer_files(false));
+    let out_path = c2.path().join("trace_out.json");
+    measure_demand(c2.path(), &target_out, Some(&out_path))
+        .expect("clean run passes the gate");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&out_path).expect("read --out json"),
+    )
+    .expect("parse --out json");
+    assert_eq!(
+        report.pointer("/summary/miss_count").and_then(|v| v.as_u64()),
+        Some(0)
+    );
+    assert_eq!(
+        report.pointer("/summary/pair_miss_count").and_then(|v| v.as_u64()),
+        Some(0)
+    );
+    let hit_names: Vec<&str> = report
+        .get("hits")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        hit_names.contains(&"Value"),
+        "JsonVal demand rename-translates to Value; hits: {hit_names:?}"
+    );
+    assert!(
+        hit_names.contains(&"boot"),
+        "bare fn-call demand covered by the utilities pick; hits: {hit_names:?}"
+    );
+    assert!(
+        !hit_names.contains(&"JsonVal"),
+        "the alias name itself is not demand"
+    );
+    // Pair tiers: JsonVal::new -> Value::new is an exact pick;
+    // api::JsonVal::make (cross-file alias) -> Value::make is
+    // name-level (Value covered, no such pick).
+    assert_eq!(
+        report.pointer("/summary/pair_exact").and_then(|v| v.as_u64()),
+        Some(1),
+        "Value::new is the exact pair"
+    );
+    let name_level: Vec<&str> = report
+        .get("pair_name_level")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        name_level.contains(&"Value::make"),
+        "cross-file alias pair lands name-level; got {name_level:?}"
+    );
+}

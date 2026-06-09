@@ -93,6 +93,25 @@ pub fn compute_pattern_metrics(
         if should_skip_pattern(&pattern, calibration) {
             continue;
         }
+        let source = match sources_by_kind.get(kind.as_str()) {
+            Some(s) => *s,
+            None => &[][..],
+        };
+        // Broad-channels fill (the_user 2026-06-09; working/02 "Design
+        // rule: broad channels, mechanically filled"): non-type_usage
+        // kinds derive example evidence from the example-dir file paths
+        // of their own matching facts. type_usage keeps the
+        // example_type_usages partition (its example occurrences are
+        // evidence-only and never enter the usage stream).
+        let ex_files = example_file_count(kind, inner, source);
+        let (example_count_v, curated_v) = if kind == "type_usage" {
+            (
+                example_count_value(kind, inner, &example_files_by_name),
+                curated_example_count(kind, inner, &curated_example_count_by_name),
+            )
+        } else {
+            (serde_json::Value::from(ex_files as f64), ex_files)
+        };
         let defn = pattern_def(
             kind,
             inner,
@@ -111,8 +130,8 @@ pub fn compute_pattern_metrics(
                     inter_count: 0,
                     inter_ratio: 0.0,
                     is_pub: false,
-                    example_count: example_count_value(kind, inner, &example_files_by_name),
-                    curated_example_count: curated_example_count(kind, inner, &curated_example_count_by_name),
+                    example_count: example_count_v,
+                    curated_example_count: curated_v,
                     sub_form: None,
                 },
             );
@@ -126,10 +145,6 @@ pub fn compute_pattern_metrics(
         }
         let mut intra = 0usize;
         let mut inter = 0usize;
-        let source = match sources_by_kind.get(kind.as_str()) {
-            Some(s) => *s,
-            None => &[][..],
-        };
         for fact in source {
             if !pattern_match(kind, inner, fact) {
                 continue;
@@ -154,8 +169,8 @@ pub fn compute_pattern_metrics(
                 inter_count: inter,
                 inter_ratio: round3(ratio),
                 is_pub,
-                example_count: example_count_value(kind, inner, &example_files_by_name),
-                curated_example_count: curated_example_count(kind, inner, &curated_example_count_by_name),
+                example_count: example_count_v,
+                curated_example_count: curated_v,
                 sub_form: None,
             },
         );
@@ -406,14 +421,20 @@ fn translate_to_group_keys(
             }
             "type_usage" => {
                 // Bridge: emit BOTH structure:<outer> (aggregated below)
-                // and implementation_functions:<outer>::<inner>.
+                // and implementation_functions:<outer>::<inner>. The
+                // structure side requires the outer to be a workspace
+                // TYPE def - the defining-crate lookup also resolves
+                // mod / crate outers (env::args et al.), and a module
+                // is not a structure pick.
                 let outer = inner.split_once("::").map(|(o, _)| o).unwrap_or(&inner);
                 let impl_fn_key = format!("implementation_functions:{}", inner);
                 merge_metric(&mut new, impl_fn_key, metric.clone());
-                structure_aggregates
-                    .entry(outer.to_string())
-                    .or_default()
-                    .push(metric);
+                if type_def_lookup.contains_key(outer) {
+                    structure_aggregates
+                        .entry(outer.to_string())
+                        .or_default()
+                        .push(metric);
+                }
             }
             _ => {}
         }
@@ -851,6 +872,41 @@ fn compute_example_counts(
         curated.insert(nm, cats[0].len());
     }
     (weighted, curated)
+}
+
+/// What: count distinct example-dir files among the facts matching a
+/// (kind, inner) pattern. Returns 0 for type_usage, which keeps its
+/// example_type_usages partition as the evidence source.
+///
+/// Why: the broad-channels design rule (the_user 2026-06-09;
+/// notes/know_rust/working/02_picks_data.md "Design rule: broad
+/// channels, mechanically filled"): example evidence is "any pattern
+/// occurrence in a curated example". trait_impl / derive / reg_macro /
+/// attr_macro facts from examples/ files were recorded as plain
+/// occurrences with no evidence credit - a capture gap, not a design
+/// boundary. Weight stays 1x per the 0.0.13k decision; tests/ +
+/// benches/ never reach these streams (excluded from the walk since
+/// 0.0.25), so curated == weighted for these kinds.
+///
+/// Where: called from compute_pattern_metrics' seen_patterns loop for
+/// both the defn-present and defn-absent branches.
+fn example_file_count(kind: &str, inner: &str, source: &[serde_json::Value]) -> usize {
+    if kind == "type_usage" {
+        return 0;
+    }
+    let mut files: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for fact in source {
+        if !pattern_match(kind, inner, fact) {
+            continue;
+        }
+        if let Some(f) = fact.get("file").and_then(|v| v.as_str()) {
+            let norm = f.replace('\\', "/");
+            if norm.contains("/examples/") || norm.starts_with("examples/") {
+                files.insert(norm);
+            }
+        }
+    }
+    files.len()
 }
 
 fn example_count_value(

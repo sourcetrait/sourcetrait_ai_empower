@@ -194,15 +194,31 @@ pub fn instance_for_kind(
         PickGroup::Utilities => {
             // Macros: either macro_invocation form or attr_macro form.
             // The picks-data model unifies both under utilities; the
-            // seed prefers the more-common invocation form.
+            // seed prefers the more-common invocation form. FreeFn
+            // utilities seed from their fn declaration when no macro
+            // matches the name.
             let arr = facts.get("macros").and_then(|v| v.as_array()).unwrap_or(&empty);
             let inst: Vec<serde_json::Value> = arr
                 .iter()
                 .filter(|m| m.get("name").and_then(|v| v.as_str()) == Some(name))
                 .cloned()
                 .collect();
+            if !inst.is_empty() {
+                let first = inst.first().cloned();
+                let spans: Vec<String> = inst.iter().take(200).map(span).collect();
+                return (first, spans);
+            }
+            let fns_arr = facts.get("fns").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let inst: Vec<serde_json::Value> = fns_arr
+                .iter()
+                .filter(|f| {
+                    f.get("name").and_then(|v| v.as_str()) == Some(name)
+                        && f.get("brace_depth").and_then(|v| v.as_u64()) == Some(0)
+                })
+                .cloned()
+                .collect();
             let first = inst.first().cloned();
-            let spans: Vec<String> = inst.iter().take(200).map(span).collect();
+            let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)
         }
         PickGroup::Structure => {

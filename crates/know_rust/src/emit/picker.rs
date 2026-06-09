@@ -203,27 +203,29 @@ pub fn compute_significance_sets(
             + inter_scores.get(p).copied().unwrap_or(0) as f64;
         architecture_counts.insert(p.clone(), total);
     }
-    let inter_counts: indexmap::IndexMap<Pattern, usize> = inter_scores
-        .iter()
-        .filter(|(k, _)| !architecture_keys.contains(*k))
-        .map(|(k, v)| (k.clone(), *v))
-        .collect();
-    let public_counts: indexmap::IndexMap<Pattern, f64> = public_scores
-        .iter()
-        .filter(|(k, _)| !architecture_keys.contains(*k))
-        .map(|(k, v)| (k.clone(), *v))
-        .collect();
 
     let cap_matrix = &calibration.picker.cap_matrix;
     let floor = calibration.picker.top_n_floor;
 
-    let significant_inter_crate = bucket_and_cap_by_group(
-        &inter_counts,
-        PickSet::InterCrate,
+    // R8 slice 7 (the_user): dedup provides UNIQUE data, it never
+    // LOSES data. Subtraction runs against RENDERED (capped) sets in
+    // precedence order 5.1 > 5.2 > 5.3 - a candidate cut by one set's
+    // cap falls to its next qualifying set with that set's own score;
+    // only cap competition may drop a pick. (The prior candidate-level
+    // subtraction made an arch-cap-cut candidate vanish from the whole
+    // workspace-wide tier.)
+    let significant_architecture = bucket_and_cap_by_group(
+        &architecture_counts,
+        PickSet::Architecture,
         top_n_workspace,
         cap_matrix,
         floor,
     );
+    let public_counts: indexmap::IndexMap<Pattern, f64> = public_scores
+        .iter()
+        .filter(|(k, _)| !significant_architecture.contains_key(*k))
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
     let significant_public = bucket_and_cap_by_group(
         &public_counts,
         PickSet::Public,
@@ -231,9 +233,16 @@ pub fn compute_significance_sets(
         cap_matrix,
         floor,
     );
-    let significant_architecture = bucket_and_cap_by_group(
-        &architecture_counts,
-        PickSet::Architecture,
+    let inter_counts: indexmap::IndexMap<Pattern, usize> = inter_scores
+        .iter()
+        .filter(|(k, _)| {
+            !significant_architecture.contains_key(*k) && !significant_public.contains_key(*k)
+        })
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+    let significant_inter_crate = bucket_and_cap_by_group(
+        &inter_counts,
+        PickSet::InterCrate,
         top_n_workspace,
         cap_matrix,
         floor,

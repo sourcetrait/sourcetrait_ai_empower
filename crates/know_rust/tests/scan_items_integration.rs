@@ -78,6 +78,39 @@ impl Command for Real {}
 }
 
 #[test]
+fn macro_body_type_usage_keeps_path_root() {
+    // A fully-qualified path inside a macro body keeps its written
+    // root: writeln!(std::io::stdout(), ..) records name io::stdout
+    // with qualifier "std" so resolution can route the site to std
+    // instead of the crate-local fallback.
+    let f = scan_source(
+        "t.rs",
+        "fn s() { writeln!(std::io::stdout(), \"x\").unwrap(); other!(custom::Thing::make()); }",
+    )
+    .expect("parse ok");
+    let stdout_entry = f
+        .type_usages
+        .iter()
+        .find(|t| t.name == "io::stdout")
+        .expect("io::stdout captured from macro body");
+    assert_eq!(
+        stdout_entry.qualifier.as_deref(),
+        Some("std"),
+        "macro-body path root recovered"
+    );
+    let make_entry = f
+        .type_usages
+        .iter()
+        .find(|t| t.name == "Thing::make")
+        .expect("Thing::make captured from macro body");
+    assert_eq!(
+        make_entry.qualifier.as_deref(),
+        Some("custom"),
+        "non-std macro-body root recovered too"
+    );
+}
+
+#[test]
 fn macro_args_captured() {
     let f = scan_source("t.rs", "fn s() { bind_command!(ws, A, B, C); }").expect("parse ok");
     let m = f

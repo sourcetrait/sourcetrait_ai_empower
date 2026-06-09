@@ -253,6 +253,14 @@ impl FileWalker {
         if TYPE_USAGE_NOISE_TYPES.contains(&outer.as_str()) {
             return;
         }
+        // Fully-qualified path: keep the root segment so resolution
+        // can apply language semantics instead of the crate-local
+        // fallback (std::env::args -> qualifier "std").
+        let qualifier = if segments.len() >= 3 {
+            Some(segments[0].ident.to_string())
+        } else {
+            None
+        };
         let entry = TypeUsageEntry {
             file: self.file.clone(),
             name: format!("{}::{}", outer, inner),
@@ -260,6 +268,7 @@ impl FileWalker {
             line: outer_seg.ident.span().start().line,
             brace_depth: self.brace_depth,
             expansion_unverified: false,
+            qualifier,
         };
         if self.is_example {
             self.facts.example_type_usages.push(entry);

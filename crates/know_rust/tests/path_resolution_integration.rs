@@ -164,6 +164,166 @@ fn std_mod_calls_are_not_picks_but_workspace_mod_fns_are() {
 }
 
 #[test]
+fn fully_qualified_paths_resolve_their_root() {
+    // The walkers record Outer::inner; the qualifier preserves the
+    // written root. std::env::args() must not credit a workspace
+    // `env` mod; lib::env::args() must. Same for qualified types in
+    // fn signatures (std::io::Error vs lib::Error) and for external-
+    // qualified associated constants (ext::Status::INDEX_NEW vs
+    // lib::Status::ACTIVE).
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub mod env { pub fn args() {} }\n\
+                 pub struct Error;\n\
+                 pub struct Status;\nimpl Status { pub const ACTIVE: u8 = 1; }\n\
+                 pub struct Core;\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "pub fn f(_e: std::io::Error) {}\n\
+                 pub fn g(_e: lib::Error) {}\n\
+                 pub fn h(_x: u8) {}\n\
+                 pub fn touch(_c: lib::Core) {}\n\
+                 pub fn run() {\n\
+                     std::env::args();\n\
+                     lib::env::args();\n\
+                     h(ext_crate::Status::INDEX_NEW);\n\
+                     h(lib::Status::ACTIVE);\n\
+                 }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let fp = run_characterize(root);
+
+    // std::env::args dead, lib::env::args credits: exactly one site.
+    let envm = metric(&fp, "implementation_functions:env::args")
+        .expect("env::args pattern exists (one credited site)");
+    let total = envm.get("intra_count").and_then(|v| v.as_u64()).unwrap_or(99)
+        + envm.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(99);
+    assert_eq!(
+        total, 1,
+        "only the lib-qualified call credits env::args; std-qualified resolves to std"
+    );
+
+    // std::io::Error in a sig never credits the workspace Error type;
+    // the lib-qualified sig does.
+    let errm = metric(&fp, "structure:Error").expect("structure:Error exists");
+    let etotal = errm.get("intra_count").and_then(|v| v.as_u64()).unwrap_or(99)
+        + errm.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(99);
+    assert_eq!(
+        etotal, 1,
+        "only the lib-qualified signature credits structure:Error"
+    );
+
+    // External-qualified assoc const never becomes a globals pick;
+    // the workspace-qualified one does.
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics");
+    assert!(
+        !pm.contains_key("globals:Status::INDEX_NEW"),
+        "ext-qualified constant must not credit the workspace Status; globals keys: {:?}",
+        pm.keys().filter(|k| k.starts_with("globals:")).collect::<Vec<_>>()
+    );
+    assert!(
+        pm.contains_key("globals:Status::ACTIVE"),
+        "workspace-qualified constant still routes to globals"
+    );
+}
+
+#[test]
+fn brace_self_import_binds_the_module_name() {
+    // `use std::io::{self, Write}` brings `io` into scope as std's io
+    // module; a crate-local `mod io` must not absorb those sites. The
+    // workspace counterpart (`use lib::util::{self}`) still credits.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from("pub mod util { pub fn helper() {} }\npub struct Core;\n"),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use std::io::{self, Write};\n\
+                 use lib::util::{self};\n\
+                 pub mod io_helpers {}\n\
+                 pub mod io { pub fn unrelated() {} }\n\
+                 pub fn touch(_c: lib::Core, _w: &mut dyn Write) {}\n\
+                 pub fn run() {\n\
+                     let _s = io::stdin();\n\
+                     util::helper();\n\
+                 }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let fp = run_characterize(root);
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics");
+    assert!(
+        !pm.contains_key("implementation_functions:io::stdin"),
+        "brace-self std import resolves io to std; local mod io must not absorb it"
+    );
+    let util = metric(&fp, "implementation_functions:util::helper")
+        .expect("workspace brace-self import keeps the mod-fn pattern");
+    assert_eq!(
+        util.get("defining_crate").and_then(|v| v.as_str()),
+        Some("lib"),
+        "util::helper attributes to lib via the brace-self import"
+    );
+}
+
+#[test]
 fn external_import_does_not_credit_workspace_trait_of_same_name() {
     // Two impls of `Widget`: one file imports the workspace trait,
     // the other imports an external crate's trait of the same name.

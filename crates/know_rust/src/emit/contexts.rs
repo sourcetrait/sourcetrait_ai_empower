@@ -1,5 +1,3 @@
-use crate::*;
-
 /// What: liquid render context for the orientation_header.liquid
 /// prompt. Carries the provenance banner string (commit + rustc +
 /// tool_version + rustdoc_overlay_present) for interpolation at

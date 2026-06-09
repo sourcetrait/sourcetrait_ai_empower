@@ -163,6 +163,7 @@ pub fn characterize(
             "line": ent.line,
             "crate": using_crate,
             "source": "fn_sig_usages",
+            "qualifier": ent.qualifier,
         }));
     }
     for ent in &usage_facts.ast_field_usages {
@@ -179,6 +180,7 @@ pub fn characterize(
             "line": ent.line,
             "crate": using_crate,
             "source": "field_usages",
+            "qualifier": ent.qualifier,
         }));
     }
     for ent in &usage_facts.ast_type_alias_usages {
@@ -195,6 +197,7 @@ pub fn characterize(
             "line": ent.line,
             "crate": using_crate,
             "source": "type_alias_usages",
+            "qualifier": ent.qualifier,
         }));
     }
     for ent in &usage_facts.ast_method_ref_usages {
@@ -213,6 +216,7 @@ pub fn characterize(
             "line": ent.line,
             "container": ent.container,
             "crate": using_crate,
+            "qualifier": ent.qualifier,
         }));
     }
 

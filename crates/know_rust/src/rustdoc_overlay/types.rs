@@ -1,5 +1,3 @@
-use crate::*;
-
 /// What: serde-serializable overlay structure mirroring
 /// rustdoc_overlay.py's `overlay` dict shape. The top-level fields
 /// serialize in declaration order via serde to match Python's dict

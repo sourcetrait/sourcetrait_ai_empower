@@ -305,10 +305,92 @@ fn walk_call(
     file: &str,
     facts: &mut FileFacts,
 ) {
+    if let syn::Expr::Path(p) = &*call.func {
+        record_call_head(&p.path, container_path, file, facts);
+    }
     walk_expr(&call.func, container_path, file, facts);
     for arg in &call.args {
         emit_method_ref_if_path(arg, container_path, file, facts);
         walk_expr(arg, container_path, file, facts);
+    }
+}
+
+/// What: record a function call head (lowercase-initial callee) as an
+/// FnCallUsage, and surface any turbofish type arguments on the path
+/// as CallTurbofish fn-sig idents.
+///
+/// Why: standalone fns had no capture channel (the utilities FreeFn
+/// gap); turbofish-only type usage (eval_block::<WithoutDebug>) was
+/// invisible to every stream. Uppercase heads are tuple-struct /
+/// variant constructors already covered by the items walker.
+///
+/// Where: called from `walk_call` for path-headed calls.
+fn record_call_head(
+    path: &syn::Path,
+    container_path: &str,
+    file: &str,
+    facts: &mut FileFacts,
+) {
+    let segs: Vec<&syn::PathSegment> = path.segments.iter().collect();
+    let last = match segs.last() {
+        Some(s) => *s,
+        None => return,
+    };
+    let name = last.ident.to_string();
+    let line = last.ident.span().start().line;
+    let lower_initial = name
+        .chars()
+        .next()
+        .map(|c| c.is_lowercase() || c == '_')
+        .unwrap_or(false);
+    // An uppercase-initial penultimate segment means an ASSOCIATED
+    // fn (Value::string(..)) - that is the items walker's type_usage
+    // domain, not a free fn.
+    let assoc_fn = segs
+        .len()
+        .checked_sub(2)
+        .and_then(|i| segs.get(i))
+        .map(|s| {
+            s.ident
+                .to_string()
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    if lower_initial && !assoc_fn {
+        let qualifier = if segs.len() >= 2 {
+            Some(segs[0].ident.to_string())
+        } else {
+            None
+        };
+        facts.fn_call_usages.push(FnCallUsage {
+            file: file.to_string(),
+            name: name.clone(),
+            line,
+            qualifier,
+        });
+    }
+    for seg in &segs {
+        if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
+            for a in &ab.args {
+                if let syn::GenericArgument::Type(t) = a {
+                    collect_idents(t, |ident, qualifier| {
+                        facts.fn_sig_usages.push(FnSigUsage {
+                            file: file.to_string(),
+                            fn_name: name.clone(),
+                            container: container_path.to_string(),
+                            ident,
+                            position: FnPosition::CallTurbofish,
+                            line,
+                            fn_visibility: String::new(),
+                            qualifier,
+                        });
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -322,6 +404,28 @@ fn walk_method_call(
     for arg in &mc.args {
         emit_method_ref_if_path(arg, container_path, file, facts);
         walk_expr(arg, container_path, file, facts);
+    }
+    // Method-call turbofish (`iter.collect::<Outer<T>>()`) carries
+    // type arguments the signature walk cannot see.
+    if let Some(ab) = &mc.turbofish {
+        let line = mc.method.span().start().line;
+        let callee = mc.method.to_string();
+        for a in &ab.args {
+            if let syn::GenericArgument::Type(t) = a {
+                collect_idents(t, |ident, qualifier| {
+                    facts.fn_sig_usages.push(FnSigUsage {
+                        file: file.to_string(),
+                        fn_name: callee.clone(),
+                        container: container_path.to_string(),
+                        ident,
+                        position: FnPosition::CallTurbofish,
+                        line,
+                        fn_visibility: String::new(),
+                        qualifier,
+                    });
+                });
+            }
+        }
     }
 }
 
@@ -348,6 +452,13 @@ fn emit_method_ref_if_path(
     if inner.is_empty() || outer.is_empty() {
         return;
     }
+    // Keep the explicit root of longer paths so resolution sees the
+    // language-semantic origin (git2::Status::INDEX_NEW -> "git2").
+    let qualifier = if segs.len() >= 3 {
+        Some(segs[0].clone())
+    } else {
+        None
+    };
     let line = arg.span().start().line;
     facts.method_ref_usages.push(MethodRefUsage {
         file: file.to_string(),
@@ -355,6 +466,7 @@ fn emit_method_ref_if_path(
         outer,
         inner,
         line,
+        qualifier,
     });
 }
 
@@ -369,7 +481,7 @@ fn collect_fn_sig(
     let line = sig.span().start().line;
     for input in &sig.inputs {
         if let syn::FnArg::Typed(pt) = input {
-            collect_idents(&pt.ty, |ident| {
+            collect_idents(&pt.ty, |ident, qualifier| {
                 facts.fn_sig_usages.push(FnSigUsage {
                     file: file.to_string(),
                     fn_name: fn_name.to_string(),
@@ -378,12 +490,13 @@ fn collect_fn_sig(
                     position: FnPosition::Param,
                     line,
                     fn_visibility: fn_vis.to_string(),
+                    qualifier,
                 });
             });
         }
     }
     if let syn::ReturnType::Type(_, ty) = &sig.output {
-        collect_idents(ty, |ident| {
+        collect_idents(ty, |ident, qualifier| {
             facts.fn_sig_usages.push(FnSigUsage {
                 file: file.to_string(),
                 fn_name: fn_name.to_string(),
@@ -392,6 +505,7 @@ fn collect_fn_sig(
                 position: FnPosition::Return,
                 line,
                 fn_visibility: fn_vis.to_string(),
+                qualifier,
             });
         });
     }
@@ -399,7 +513,7 @@ fn collect_fn_sig(
         if let syn::GenericParam::Type(tp) = param {
             for bound in &tp.bounds {
                 if let syn::TypeParamBound::Trait(tb) = bound {
-                    let mut emit = |ident: String| {
+                    let mut emit = |ident: String, qualifier: Option<String>| {
                         facts.fn_sig_usages.push(FnSigUsage {
                             file: file.to_string(),
                             fn_name: fn_name.to_string(),
@@ -408,6 +522,7 @@ fn collect_fn_sig(
                             position: FnPosition::GenericBound,
                             line,
                             fn_visibility: fn_vis.to_string(),
+                            qualifier,
                         });
                     };
                     collect_idents_in_trait_bound(tb, &mut emit);
@@ -438,7 +553,7 @@ fn collect_where_clause(
     for pred in &wc.predicates {
         if let syn::WherePredicate::Type(pt) = pred {
             let line = pt.bounded_ty.span().start().line;
-            collect_idents(&pt.bounded_ty, |ident| {
+            collect_idents(&pt.bounded_ty, |ident, qualifier| {
                 facts.fn_sig_usages.push(FnSigUsage {
                     file: file.to_string(),
                     fn_name: fn_name.to_string(),
@@ -447,11 +562,12 @@ fn collect_where_clause(
                     position: FnPosition::WhereClause,
                     line,
                     fn_visibility: fn_vis.to_string(),
+                    qualifier,
                 });
             });
             for bound in &pt.bounds {
                 if let syn::TypeParamBound::Trait(tb) = bound {
-                    let mut emit = |ident: String| {
+                    let mut emit = |ident: String, qualifier: Option<String>| {
                         facts.fn_sig_usages.push(FnSigUsage {
                             file: file.to_string(),
                             fn_name: fn_name.to_string(),
@@ -460,6 +576,7 @@ fn collect_where_clause(
                             position: FnPosition::WhereClause,
                             line,
                             fn_visibility: fn_vis.to_string(),
+                            qualifier,
                         });
                     };
                     collect_idents_in_trait_bound(tb, &mut emit);
@@ -592,13 +709,14 @@ fn walk_type_alias(
     let qualified = qualify(container_path, &alias_name);
     let alias_vis = visibility_string(&ta.vis);
     let line = ta.span().start().line;
-    collect_idents(&ta.ty, |ident| {
+    collect_idents(&ta.ty, |ident, qualifier| {
         facts.type_alias_usages.push(TypeAliasUsage {
             file: file.to_string(),
             alias_name: qualified.clone(),
             ident,
             line,
             alias_visibility: alias_vis.clone(),
+            qualifier,
         });
     });
 }
@@ -618,7 +736,7 @@ fn emit_field(
         .unwrap_or_default();
     let field_vis = visibility_string(&f.vis);
     let line = f.span().start().line;
-    collect_idents(&f.ty, |ident| {
+    collect_idents(&f.ty, |ident, qualifier| {
         facts.field_usages.push(FieldUsage {
             file: file.to_string(),
             container: container_path.to_string(),
@@ -628,6 +746,7 @@ fn emit_field(
             line,
             container_visibility: container_vis.to_string(),
             field_visibility: field_vis.clone(),
+            qualifier,
         });
     });
 }
@@ -644,7 +763,7 @@ fn emit_field_unnamed(
     let field_vis = visibility_string(&f.vis);
     let line = f.span().start().line;
     let field_name = format!("_{}", index);
-    collect_idents(&f.ty, |ident| {
+    collect_idents(&f.ty, |ident, qualifier| {
         facts.field_usages.push(FieldUsage {
             file: file.to_string(),
             container: container_path.to_string(),
@@ -654,11 +773,33 @@ fn emit_field_unnamed(
             line,
             container_visibility: container_vis.to_string(),
             field_visibility: field_vis.clone(),
+            qualifier,
         });
     });
 }
 
-fn collect_idents<F: FnMut(String)>(
+/// What: the lowercase-initial ROOT segment of a multi-segment path -
+/// the module / crate qualifier (`std::io::Error` -> "std",
+/// `git2::Status` -> "git2"). `None` for single-segment or type-led
+/// (uppercase-initial) paths.
+///
+/// Why: a written qualifier is explicit language semantics; recording
+/// it lets the characterize resolution gate route the site to its
+/// real origin instead of the unresolved crate-local fallback.
+fn path_qualifier(path: &syn::Path) -> Option<String> {
+    if path.segments.len() < 2 {
+        return None;
+    }
+    let first = path.segments.first()?.ident.to_string();
+    let lower_initial = first
+        .chars()
+        .next()
+        .map(|c| c.is_lowercase() || c == '_')
+        .unwrap_or(false);
+    if lower_initial { Some(first) } else { None }
+}
+
+fn collect_idents<F: FnMut(String, Option<String>)>(
     ty: &syn::Type,
     mut emit: F,
 ) {
@@ -667,7 +808,7 @@ fn collect_idents<F: FnMut(String)>(
 
 fn collect_idents_inner(
     ty: &syn::Type,
-    emit: &mut dyn FnMut(String),
+    emit: &mut dyn FnMut(String, Option<String>),
 ) {
     match ty {
         syn::Type::Path(tp) => collect_idents_in_path(tp, emit),
@@ -710,24 +851,29 @@ fn collect_idents_inner(
 
 fn collect_idents_in_path(
     tp: &syn::TypePath,
-    emit: &mut dyn FnMut(String),
+    emit: &mut dyn FnMut(String, Option<String>),
 ) {
+    let qualifier = path_qualifier(&tp.path);
     for seg in &tp.path.segments {
-        collect_idents_in_segment(seg, emit);
+        collect_idents_in_segment(seg, qualifier.as_deref(), emit);
     }
 }
 
 fn collect_idents_in_segment(
     seg: &syn::PathSegment,
-    emit: &mut dyn FnMut(String),
+    qualifier: Option<&str>,
+    emit: &mut dyn FnMut(String, Option<String>),
 ) {
     let name = seg.ident.to_string();
     if !name.is_empty() {
         let first = name.chars().next().unwrap();
         if first.is_uppercase() || first == '_' {
-            emit(name);
+            emit(name, qualifier.map(String::from));
         }
     }
+    // Generic arguments are independent type contexts: each nested
+    // path computes its own qualifier (Vec<git2::Status> gates Status
+    // on "git2", not on the outer path's root).
     if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }) = &seg.arguments {
         for a in args {
             match a {
@@ -741,10 +887,11 @@ fn collect_idents_in_segment(
 
 fn collect_idents_in_trait_bound(
     tb: &syn::TraitBound,
-    emit: &mut dyn FnMut(String),
+    emit: &mut dyn FnMut(String, Option<String>),
 ) {
+    let qualifier = path_qualifier(&tb.path);
     for seg in &tb.path.segments {
-        collect_idents_in_segment(seg, emit);
+        collect_idents_in_segment(seg, qualifier.as_deref(), emit);
     }
 }
 

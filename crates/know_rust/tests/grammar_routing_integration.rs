@@ -107,3 +107,79 @@ fn variants_collapse_constants_label_methods_stay() {
         "constants neither impl-fn picks nor `_::` families"
     );
 }
+
+#[test]
+fn variant_constructor_refs_collapse_not_family() {
+    // Constructor REFERENCES in argument position (map(Value::Text))
+    // across unrelated enums sharing a variant name must not form a
+    // `_::<Variant>` method-ref family; each diverts into its enum's
+    // structure aggregate (variants are the enum's surface).
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub enum Va { Text(u8) }\npub enum Vb { Text(u8) }\npub enum Vc { Text(u8) }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use lib::{Va, Vb, Vc};\n\
+                 pub fn ta(_f: fn(u8) -> Va) {}\n\
+                 pub fn tb(_f: fn(u8) -> Vb) {}\n\
+                 pub fn tc(_f: fn(u8) -> Vc) {}\n\
+                 pub fn run() {\n\
+                     ta(Va::Text);\n\
+                     tb(Vb::Text);\n\
+                     tc(Vc::Text);\n\
+                 }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let fp = run_characterize(root);
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics");
+
+    assert!(
+        !pm.contains_key("implementation_functions:_::Text"),
+        "variant refs across unrelated enums must not form a `_::` family; impl-fn keys: {:?}",
+        pm.keys()
+            .filter(|k| k.starts_with("implementation_functions:_::"))
+            .collect::<Vec<_>>()
+    );
+    for outer in ["Va", "Vb", "Vc"] {
+        assert!(
+            pm.contains_key(&format!("structure:{outer}")),
+            "variant ref credits structure:{outer}; structure keys: {:?}",
+            pm.keys().filter(|k| k.starts_with("structure:")).collect::<Vec<_>>()
+        );
+        assert!(
+            !pm.contains_key(&format!("implementation_functions:{outer}::Text")),
+            "no per-variant impl-fn pick for {outer}::Text"
+        );
+    }
+}

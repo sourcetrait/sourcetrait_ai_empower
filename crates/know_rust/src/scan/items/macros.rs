@@ -588,6 +588,28 @@ fn try_extract_macro_type_usage(
     {
         return None;
     }
+    // Walk backward over `Ident :: ` triples to the path's ROOT so a
+    // fully-qualified path inside a macro body keeps its written
+    // origin (writeln!(std::io::stdout(), ..) -> qualifier "std").
+    let mut root_idx = i;
+    while root_idx >= 3 {
+        let colons = matches!(&trees[root_idx - 1], proc_macro2::TokenTree::Punct(p) if p.as_char() == ':')
+            && matches!(&trees[root_idx - 2], proc_macro2::TokenTree::Punct(p) if p.as_char() == ':');
+        let prev_ident = matches!(&trees[root_idx - 3], proc_macro2::TokenTree::Ident(_));
+        if colons && prev_ident {
+            root_idx -= 3;
+        } else {
+            break;
+        }
+    }
+    let qualifier = if root_idx < i {
+        match &trees[root_idx] {
+            proc_macro2::TokenTree::Ident(id) => Some(id.to_string()),
+            _ => None,
+        }
+    } else {
+        None
+    };
     Some(TypeUsageEntry {
         file: file.to_string(),
         name: format!("{}::{}", outer, inner),
@@ -595,5 +617,6 @@ fn try_extract_macro_type_usage(
         line: outer_id.span().start().line,
         brace_depth,
         expansion_unverified: true,
+        qualifier,
     })
 }

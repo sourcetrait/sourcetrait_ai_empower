@@ -22,6 +22,14 @@ pub struct UsageFacts {
     pub ast_field_usages: Vec<FieldUsage>,
     pub ast_type_alias_usages: Vec<TypeAliasUsage>,
     pub ast_method_ref_usages: Vec<MethodRefUsage>,
+    /// What: function CALL-HEAD usages (bare or qualified call paths
+    /// with a lowercase-initial callee). Fills the utilities FreeFn
+    /// channel: standalone fns are a picks-data group whose capture
+    /// was missing (the consumer-trace test surfaced nushell's
+    /// embedding API - eval_block / parse / create_default_context -
+    /// as invisible to every pick channel).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ast_fn_call_usages: Vec<FnCallUsage>,
 }
 
 /// What: per-file facts produced by `scan_file`. The aggregator
@@ -40,6 +48,33 @@ pub struct FileFacts {
     pub field_usages: Vec<FieldUsage>,
     pub type_alias_usages: Vec<TypeAliasUsage>,
     pub method_ref_usages: Vec<MethodRefUsage>,
+    pub fn_call_usages: Vec<FnCallUsage>,
+}
+
+/// What: one function call-head occurrence. `name` is the callee's
+/// final path segment (lowercase-initial only; uppercase heads are
+/// tuple-struct / variant constructors covered by the items walker's
+/// type_usage channel). `qualifier` is the path ROOT for qualified
+/// calls (`nu_parser::parse(..)` -> name `parse`, qualifier
+/// `nu_parser`); `None` for bare imported / local calls.
+///
+/// Why: standalone fns are the utilities group's FreeFn members in
+/// the picks-data model, but no capture channel fed them - a
+/// consumer demanding `eval_block` or `create_default_context` had
+/// no pick to land on. Bare calls resolve through the file's
+/// imports at characterize time; the per-site resolution gate keeps
+/// std / external callees out, per the workspace-origin rule.
+///
+/// Where: emitted by `walk_call` / `walk_method_call` in
+/// `scan::usages::scan`; consumed by `compute_pattern_metrics`' free
+/// fn synthesis.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct FnCallUsage {
+    pub file: String,
+    pub name: String,
+    pub line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualifier: Option<String>,
 }
 
 /// What: a single type-identifier occurrence inside a function
@@ -62,6 +97,21 @@ pub struct FnSigUsage {
     pub position: FnPosition,
     pub line: usize,
     pub fn_visibility: String,
+    /// What: the type path's lowercase-initial ROOT segment when the
+    /// ident was written module-qualified (`std::io::Error` -> ident
+    /// `Error`, qualifier `std`; `git2::Status` -> qualifier `git2`).
+    /// `None` for unqualified / type-led paths.
+    ///
+    /// Why: path resolution is the assumed attribution mode
+    /// (working/02); without the root, qualified externals fell to the
+    /// unresolved crate-local fallback and credited same-named
+    /// workspace types (structure:Error class).
+    ///
+    /// Where: set by the `collect_idents` family in
+    /// `scan::usages::scan`; consumed by `compute_pattern_metrics`'
+    /// pub_type synthesis gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualifier: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
@@ -71,6 +121,10 @@ pub enum FnPosition {
     Return,
     GenericBound,
     WhereClause,
+    /// Type argument written in a call's turbofish
+    /// (`eval_block::<WithoutDebug>(..)`). Real type usage that the
+    /// signature walk cannot see.
+    CallTurbofish,
 }
 
 /// What: a single type-identifier occurrence inside a struct / enum
@@ -92,6 +146,10 @@ pub struct FieldUsage {
     pub line: usize,
     pub container_visibility: String,
     pub field_visibility: String,
+    /// What: module-qualified root segment for the field type's path,
+    /// same semantics as `FnSigUsage::qualifier`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualifier: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
@@ -118,6 +176,10 @@ pub struct TypeAliasUsage {
     pub ident: String,
     pub line: usize,
     pub alias_visibility: String,
+    /// What: module-qualified root segment for the RHS type's path,
+    /// same semantics as `FnSigUsage::qualifier`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualifier: Option<String>,
 }
 
 /// What: a single method-reference occurrence inside a fn body.
@@ -146,4 +208,17 @@ pub struct MethodRefUsage {
     pub outer: String,
     pub inner: String,
     pub line: usize,
+    /// What: the path's ROOT segment when the reference carried more
+    /// segments than the recorded `outer::inner` pair
+    /// (`git2::Status::INDEX_NEW` -> outer `Status`, qualifier
+    /// `git2`). `None` for bare two-segment refs.
+    ///
+    /// Why: same truncation gap as `TypeUsageEntry::qualifier` - the
+    /// explicit root is language semantics the resolution gate must
+    /// see.
+    ///
+    /// Where: set by `emit_method_ref_if_path`; consumed by
+    /// `compute_pattern_metrics`' method_ref / assoc-const synthesis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualifier: Option<String>,
 }

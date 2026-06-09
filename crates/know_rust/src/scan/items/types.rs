@@ -260,6 +260,23 @@ pub struct TypeUsageEntry {
     pub line: usize,
     pub brace_depth: usize,
     pub expansion_unverified: bool,
+    /// What: the path's ROOT segment when the usage was written with
+    /// more segments than the recorded `Outer::inner` pair (e.g.
+    /// `std::env::args()` records name `env::args`, qualifier `std`).
+    /// `None` for bare two-segment paths.
+    ///
+    /// Why: item path resolution is the assumed mode of attribution
+    /// (working/02). Truncating a fully-qualified path to its last two
+    /// segments discarded the explicit root, so `std::`/external-
+    /// qualified sites fell to the unresolved crate-local fallback and
+    /// credited same-named workspace mods (R7 topic l's env::args
+    /// class). The qualifier lets characterize resolve the root per
+    /// language semantics.
+    ///
+    /// Where: set by `FileWalker::maybe_record_type_usage`; consumed
+    /// by `compute_pattern_metrics`' per-site resolution gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualifier: Option<String>,
 }
 
 /// What: which architectural shape a type usage represents.

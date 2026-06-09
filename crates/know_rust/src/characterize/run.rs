@@ -272,7 +272,7 @@ pub fn characterize(
     };
 
     let mut fp = Fingerprint {
-        tool_version: "0.1.0".to_string(),
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
         repo_root: workspace_root.display().to_string(),
         totals,
         workspace_roots,

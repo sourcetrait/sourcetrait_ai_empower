@@ -3,9 +3,8 @@
 /// consumer-side streams that demanded it (use / reexport / ident /
 /// fn_call / method_ref / type_usage).
 ///
-/// Why: phase-1 conversion of the kr_consumer_trace.py prototype;
-/// the wire shape mirrors the python report's record objects so the
-/// parity check can diff outputs structurally.
+/// Why: the wire shape is held stable across tool revisions so
+/// report generations diff structurally.
 ///
 /// Where: built by `demand_report` in `measure_demand::trace`;
 /// serialized inside `DemandReport`.
@@ -20,9 +19,9 @@ pub struct DemandRecord {
 /// miss records inline), the module-namespace bucket count, pair
 /// totals by coverage tier, and glob imports.
 ///
-/// Why: matches the python summary dict key-for-key (the zero-miss
-/// bar reads `miss_count` + `pair_miss_count`); the misses ride
-/// inside the summary exactly as the prototype emitted them.
+/// Why: the zero-miss bar reads `miss_count` + `pair_miss_count`;
+/// the full miss records ride inside the summary so the gate's
+/// evidence is in one block.
 ///
 /// Where: built by `demand_report`; printed as the stdout scoreboard
 /// and serialized at `DemandReport::summary`.
@@ -45,9 +44,9 @@ pub struct DemandSummary {
 /// records, the module-namespace import records, and the name-level
 /// pair list.
 ///
-/// Why: same top-level shape as the python's full dict ({summary,
-/// hits, mod_namespace, pair_name_level}) so downstream readers and
-/// the parity diff treat both generations identically.
+/// Why: the stable top-level shape ({summary, hits, mod_namespace,
+/// pair_name_level}) lets downstream readers and structural diffs
+/// treat report generations identically.
 ///
 /// Where: returned by `demand_report`; serialized to
 /// `consumer_trace.json` by `measure_demand::run::measure_demand`.

@@ -6,12 +6,15 @@ use crate::*;
 /// union plus carry names; pairs report exact / name-level / miss
 /// tiers.
 ///
-/// Why: phase-1 language conversion of scripts/py/kr_consumer_trace.py
-/// (the prototype behind the zero-miss consumer-trace bar in
-/// working/11). The logic mirrors the python function-for-function -
-/// including its own use-tree parsing and site resolution, which
-/// deliberately DUPLICATE pattern_metrics' machinery; unification is
-/// the phase-2 partner rewrite.
+/// Why: the demand-side quality gate behind the zero-miss
+/// consumer-trace bar (working/11). The consumer's import surface is
+/// read through the shared resolution module - the same grammar and
+/// `ImportBinding` maps the capture side resolves with - and the
+/// rendered-pick coverage comes from measure_overlap's S5 parser, so
+/// the three consumers of those grammars cannot drift apart. Demand
+/// keeps its own credit rule on top of the shared substrate:
+/// affirmative resolution to a target crate only (Unresolved is NOT
+/// demand, unlike the capture side's crate-local fallback).
 ///
 /// Where: called by `measure_demand::run::measure_demand` with the
 /// consumer's in-process scan outputs and the target's loaded
@@ -49,55 +52,60 @@ pub(crate) fn demand_report(
         })
         .unwrap_or_default();
 
-    // Consumer import maps: per-file binding -> (root, source), plus
-    // the crate-wide rename map for consumer-internal re-export
-    // chains (alias declared in one file, used via an internal module
-    // path in another).
+    // Consumer import surface: the per-file binding maps come from
+    // the shared builder (the same one pattern_metrics uses); the
+    // crate-wide rename map - demand's own concept, for consumer-
+    // internal re-export chains (alias declared in one file, used via
+    // an internal module path in another) - is built from the same
+    // parsed leaves, first-seen-wins.
+    let imap: ImportMaps = build_import_bindings(
+        consumer_items
+            .uses
+            .iter()
+            .map(|u| (u.file.as_str(), u.path.as_str())),
+    );
+    let mut alias_global: std::collections::HashMap<String, ImportBinding> =
+        std::collections::HashMap::new();
+
     let mut demand: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
         std::collections::BTreeMap::new();
     let mut pairs: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
         std::collections::BTreeMap::new();
     let mut globs: Vec<String> = Vec::new();
-    let mut imap: std::collections::HashMap<
-        String,
-        std::collections::HashMap<String, (String, Option<String>)>,
-    > = std::collections::HashMap::new();
-    let mut alias_global: std::collections::HashMap<String, (String, Option<String>)> =
-        std::collections::HashMap::new();
 
     for u in &consumer_items.uses {
-        let first = u.path.split("::").next().unwrap_or("").trim().to_string();
-        let mut lv: Vec<(Option<String>, Option<String>)> = Vec::new();
-        demand_leaves(&u.path, None, &mut lv);
-        let fm = imap.entry(u.file.clone()).or_default();
-        for (binding, source) in &lv {
-            if let Some(b) = binding {
-                if b != "*" {
-                    fm.entry(b.clone())
-                        .or_insert_with(|| (demand_norm(&first), source.clone()));
-                    if let Some(s) = source {
-                        if !s.is_empty() && s != b {
-                            alias_global
-                                .entry(b.clone())
-                                .or_insert_with(|| (demand_norm(&first), Some(s.clone())));
-                        }
+        let parsed = parse_use_leaves(&u.path);
+        if parsed.root.is_empty() {
+            continue;
+        }
+        for leaf in &parsed.leaves {
+            if let UseLeaf::Named { binding, source } = leaf {
+                if let Some(s) = source {
+                    if !s.is_empty() && s != binding {
+                        alias_global
+                            .entry(binding.clone())
+                            .or_insert_with(|| ImportBinding {
+                                root: parsed.root.clone(),
+                                source: Some(s.clone()),
+                            });
                     }
                 }
             }
         }
-        if target_crates.contains(&demand_norm(&first)) {
+        if target_crates.contains(&demand_norm(&parsed.root)) {
             let kind = if u.reexport { "reexport" } else { "use" };
-            for (binding, source) in &lv {
-                if binding.as_deref() == Some("*") {
-                    globs.push(u.path.clone());
-                    continue;
-                }
-                let nm = source
-                    .clone()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| binding.clone());
-                if let Some(nm) = nm {
-                    demand.entry(nm).or_default().insert(kind.to_string());
+            for leaf in &parsed.leaves {
+                match leaf {
+                    UseLeaf::Glob => globs.push(u.path.clone()),
+                    UseLeaf::Named { binding, source } => {
+                        // Demand records the SOURCE name; the binding
+                        // is only the consumer's local spelling.
+                        let nm = source
+                            .clone()
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| binding.clone());
+                        demand.entry(nm).or_default().insert(kind.to_string());
+                    }
                 }
             }
         }
@@ -194,45 +202,38 @@ pub(crate) fn demand_report(
         }
     }
 
-    // Coverage: rendered S5 picks (pair keys cover their outer) plus
-    // carry keys and carried names.
-    let pick_line_re = regex::Regex::new(r"^-\s+`([^`]+)`").expect("static regex compiles");
+    // Coverage: rendered S5 picks via the shared parser (pair keys
+    // cover their outer) plus carry keys and carried names. The pick
+    // strings convert to typed Patterns at this boundary - the same
+    // one-string-parse-boundary idiom the picker uses - and the pair
+    // vs name split reads the typed name (a Globals pick like
+    // `globals:Status::ACTIVE` is a real pair).
+    let picks = parse_picks(target_orientation);
     let mut pick_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut pick_pairs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut in_s5 = false;
-    for line in target_orientation.lines() {
-        let ls = line.trim_end();
-        if ls.starts_with("## 5.") {
-            in_s5 = true;
-            continue;
-        }
-        if in_s5 && ls.starts_with("## ") && !ls.starts_with("## 5.") {
-            in_s5 = false;
-        }
-        if !in_s5 {
-            continue;
-        }
-        let Some(cap) = pick_line_re.captures(ls) else {
+    for pick in picks.all() {
+        let Some(pattern) = Pattern::from_wire(&pick) else {
             continue;
         };
-        let pat = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let Some((_, rest)) = pat.split_once(':') else {
-            continue;
-        };
-        if let Some((o, _)) = rest.split_once("::") {
-            pick_pairs.insert(rest.to_string());
-            if o != "_" {
-                pick_names.insert(o.to_string());
+        let name = pattern.name();
+        match name.split_once("::") {
+            Some((outer, _)) => {
+                pick_pairs.insert(name.clone());
+                if outer != "_" {
+                    pick_names.insert(outer.to_string());
+                }
             }
-        } else {
-            pick_names.insert(rest.to_string());
+            None => {
+                pick_names.insert(name);
+            }
         }
     }
     let mut carry_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     if let Some(carries) = target_facts.get("carries").and_then(|v| v.as_object()) {
         for (key, entries) in carries {
-            if let Some((_, rest)) = key.split_once(':') {
-                let outer = rest.split_once("::").map(|(o, _)| o).unwrap_or(rest);
+            if let Some(pattern) = Pattern::from_wire(key) {
+                let name = pattern.name();
+                let outer = name.split_once("::").map(|(o, _)| o).unwrap_or(name.as_str());
                 carry_names.insert(outer.to_string());
             }
             if let Some(arr) = entries.as_array() {
@@ -333,140 +334,51 @@ fn add_decls(
     }
 }
 
-/// What: depth-tracked top-level comma split over a flattened
-/// use-tree string (commas inside (), [], {}, <> do not split).
-///
-/// Why: mirrors the python prototype's split_top; deliberately local
-/// to the phase-1 module rather than reusing
-/// scan::items::helpers::split_top_commas (phase-2 unifies).
-fn demand_split_top(s: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut depth: i32 = 0;
-    let mut cur = String::new();
-    for ch in s.chars() {
-        match ch {
-            '(' | '[' | '{' | '<' => {
-                depth += 1;
-                cur.push(ch);
-            }
-            ')' | ']' | '}' | '>' => {
-                depth = (depth - 1).max(0);
-                cur.push(ch);
-            }
-            ',' if depth == 0 => {
-                if !cur.trim().is_empty() {
-                    out.push(cur.clone());
-                }
-                cur.clear();
-            }
-            _ => cur.push(ch),
-        }
-    }
-    if !cur.trim().is_empty() {
-        out.push(cur);
-    }
-    out
-}
-
-/// What: expand one flattened use-tree string into (binding, source)
-/// pairs - binding is the in-scope name, source is the imported
-/// item's own name (`X as Y` -> (Y, X-leaf); `{self}` binds the
-/// parent segment; `*` marks a glob).
-///
-/// Why: the consumer's import surface drives both the per-file
-/// binding map and demand extraction; mirrors the python prototype's
-/// leaves() including its Option-shaped parent handling.
-fn demand_leaves(
-    s: &str,
-    parent_last: Option<&str>,
-    out: &mut Vec<(Option<String>, Option<String>)>,
-) {
-    let s = s.trim();
-    if s.is_empty() {
-        return;
-    }
-    if s == "*" {
-        out.push((Some("*".to_string()), Some("*".to_string())));
-        return;
-    }
-    if let Some(b) = s.find('{') {
-        let prefix = s[..b].trim_end().trim_end_matches(':');
-        let prefix_last = if prefix.is_empty() {
-            parent_last.map(String::from)
-        } else {
-            Some(prefix.rsplit("::").next().unwrap_or(prefix).to_string())
-        };
-        let close = s.rfind('}');
-        let inner = match close {
-            Some(c) if c > b => &s[b + 1..c],
-            _ => &s[b + 1..],
-        };
-        for piece in demand_split_top(inner) {
-            demand_leaves(&piece, prefix_last.as_deref(), out);
-        }
-        return;
-    }
-    if let Some((src_path, renamed)) = s.rsplit_once(" as ") {
-        let binding = renamed.trim().to_string();
-        let src_path = src_path.trim();
-        if src_path == "self" {
-            out.push((Some(binding), parent_last.map(String::from)));
-            return;
-        }
-        let src_leaf = src_path.rsplit("::").next().unwrap_or(src_path).to_string();
-        out.push((Some(binding), Some(src_leaf)));
-        return;
-    }
-    if s == "self" {
-        out.push((
-            parent_last.map(String::from),
-            parent_last.map(String::from),
-        ));
-        return;
-    }
-    let leaf = s.rsplit("::").next().unwrap_or(s).trim().to_string();
-    out.push((Some(leaf.clone()), Some(leaf)));
-}
-
 /// What: affirmative resolution of a consumer site to a target
 /// crate: an explicit target-crate qualifier, a per-file import
 /// binding to a target crate, or a crate-wide rename whose source is
 /// a target crate. Returns the SOURCE name (rename-translated) or
 /// None - name-keyed declaration matches alone are NOT inclusion.
+///
+/// Why: demand's credit rule is stricter than the capture side's
+/// `site_credits` (which lets the Unresolved crate-local fallback
+/// through; a bare unimported name on the consumer side is the
+/// consumer's own). The rule reads the shared `ImportBinding`
+/// surface so the resolution DATA is identical on both sides; only
+/// the verdict differs.
+///
+/// Where: called per usage-site stream in `demand_report`.
 fn demand_resolved(
     file: &str,
     name: &str,
     qualifier: Option<&str>,
-    imap: &std::collections::HashMap<
-        String,
-        std::collections::HashMap<String, (String, Option<String>)>,
-    >,
-    alias_global: &std::collections::HashMap<String, (String, Option<String>)>,
+    imap: &ImportMaps,
+    alias_global: &std::collections::HashMap<String, ImportBinding>,
     target_crates: &std::collections::BTreeSet<String>,
 ) -> Option<String> {
     if let Some(q) = qualifier {
         if target_crates.contains(&demand_norm(q)) {
-            if let Some((root, src)) = alias_global.get(name) {
-                if target_crates.contains(root) {
-                    return src.clone();
+            if let Some(b) = alias_global.get(name) {
+                if target_crates.contains(&demand_norm(&b.root)) {
+                    return b.source.clone();
                 }
             }
             return Some(name.to_string());
         }
     }
-    if let Some(hit) = imap.get(file).and_then(|m| m.get(name)) {
-        if target_crates.contains(&hit.0) {
+    if let Some(b) = imap.get(file).and_then(|m| m.get(name)) {
+        if target_crates.contains(&demand_norm(&b.root)) {
             return Some(
-                hit.1
+                b.source
                     .clone()
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| name.to_string()),
             );
         }
     }
-    if let Some((root, src)) = alias_global.get(name) {
-        if target_crates.contains(root) {
-            return src.clone();
+    if let Some(b) = alias_global.get(name) {
+        if target_crates.contains(&demand_norm(&b.root)) {
+            return b.source.clone();
         }
     }
     None

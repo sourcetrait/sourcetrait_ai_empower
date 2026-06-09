@@ -11,8 +11,7 @@ use crate::*;
 /// Why: the demand-side sibling of `measure overlap` - an in-house
 /// consumer's actual usage of a target's internals is empirical
 /// demand the pick sets must cover; any miss is a doc gap that would
-/// force the consuming agent into a reference pull. Phase-1
-/// conversion of scripts/py/kr_consumer_trace.py.
+/// force the consuming agent into a reference pull.
 ///
 /// Where: dispatched by `crate::run::run` via the
 /// `MeasureCommand::Demand` arm; called directly from

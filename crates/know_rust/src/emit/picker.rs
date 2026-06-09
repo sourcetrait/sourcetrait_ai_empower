@@ -34,11 +34,25 @@ pub fn compute_significance_sets(
         .iter()
         .filter_map(|(k, v)| Pattern::from_wire(k).map(|p| (p, v)))
         .collect();
+    // R8 slice 5: scaffolding-DEFINED patterns are pick-ineligible
+    // (demo-app types reaching public/arch, R7 topic m). Usage FROM
+    // scaffolding crates still counts - the gate is origin-side only.
+    let scaffolding: HashSet<String> = fp
+        .get("workspace_use_classification")
+        .and_then(|v| v.get("scaffolding_crates"))
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
     let is_workspace_originated = |pat: &Pattern| -> bool {
         pm_by_pattern
             .get(pat)
             .and_then(|m| m.get("defining_crate"))
-            .map(|v| !v.is_null())
+            .and_then(|v| v.as_str())
+            .map(|c| !scaffolding.contains(c))
             .unwrap_or(false)
     };
 
@@ -157,7 +171,11 @@ pub fn compute_significance_sets(
     let mut public_scores: indexmap::IndexMap<Pattern, f64> = indexmap::IndexMap::new();
     let mut inter_scores: indexmap::IndexMap<Pattern, usize> = indexmap::IndexMap::new();
     for (pattern, m) in &pm_by_pattern {
-        if m.get("defining_crate").map(|v| v.is_null()).unwrap_or(true) {
+        let dc = match m.get("defining_crate").and_then(|v| v.as_str()) {
+            Some(c) => c,
+            None => continue,
+        };
+        if scaffolding.contains(dc) {
             continue;
         }
         let ic = m.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;

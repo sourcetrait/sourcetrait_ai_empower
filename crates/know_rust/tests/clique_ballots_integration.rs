@@ -1,6 +1,11 @@
-//! Integration test for R8 slice 4: the STV clique election sees the
-//! full per-crate intra pools. Pre-slice, workspace-wide widening
-//! stripped the ballots and small workspaces rendered "0 elected".
+//! Integration test for R8 slice 4 (corrected): the STV clique
+//! election sees the full per-crate intra pools, but the clique END
+//! RESULT stays deduped against the workspace-wide sets (the_user:
+//! "the answer needs to be yes"). On a workspace whose entire intra
+//! material is workspace-wide-absorbed, the clique legitimately
+//! renders 0 elected - what changed vs the ballot-stripping era is
+//! that the election ranks real pools, so surplus-transfer winners
+//! below absorbed picks survive on larger workspaces.
 
 use know_rust::*;
 use std::collections::HashMap;
@@ -18,10 +23,7 @@ fn write_tree(base: &Path, files: &HashMap<&str, String>) {
 }
 
 #[test]
-fn clique_elects_from_full_pools_even_when_workspace_wide_absorbs() {
-    // The only intra material (traits:Plug, defined in lib, used by
-    // app) is also inter-significant -> pre-slice the ballot was
-    // stripped and clique rendered 0 elected.
+fn clique_result_is_deduped_against_workspace_wide_sets() {
     let tmp = TempDir::new().expect("tempdir");
     let root = tmp.path();
     let mut app_lib = String::from("use lib::Plug;\n");
@@ -66,21 +68,29 @@ fn clique_elects_from_full_pools_even_when_workspace_wide_absorbs() {
 
     let orient =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
-    let clique_header = orient
+
+    // traits:Plug sits in the inter set (workspace-wide).
+    let inter_section: String = orient
         .lines()
-        .find(|l| l.starts_with("### 5.4"))
-        .expect("clique header present");
+        .skip_while(|l| !l.starts_with("### 5.3"))
+        .take_while(|l| !l.starts_with("### 5.4"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        !clique_header.contains("(0 elected"),
-        "clique must elect from full pools; header: {}",
-        clique_header
+        inter_section.contains("`traits:Plug`"),
+        "fixture premise: traits:Plug is workspace-wide"
     );
+
+    // The clique end result must not repeat it (deduped); with the
+    // entire intra pool absorbed, this fixture's clique is empty.
+    let clique_section: String = orient
+        .lines()
+        .skip_while(|l| !l.starts_with("### 5.4"))
+        .take_while(|l| !l.starts_with("### 5.5"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        orient
-            .lines()
-            .skip_while(|l| !l.starts_with("### 5.4"))
-            .take_while(|l| !l.starts_with("### 5.5"))
-            .any(|l| l.contains("`traits:Plug`")),
-        "the absorbed pattern still renders in the clique lens"
+        !clique_section.contains("`traits:Plug`"),
+        "clique end result stays deduped against workspace-wide sets"
     );
 }

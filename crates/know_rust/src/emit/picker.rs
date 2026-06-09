@@ -287,8 +287,17 @@ pub fn compute_significance_sets(
         clique_seats,
         &empty_dedup,
     );
+    // the_user (R8 slice 4 correction): the clique END RESULT stays
+    // deduped against the workspace-wide sets - only the ELECTION
+    // sees full pools. Winners that already sit in arch / public /
+    // inter are dropped from the rendered list; surplus-transfer
+    // winners below them remain.
+    let elected_deduped: indexmap::IndexMap<Pattern, f64> = elected_clique
+        .into_iter()
+        .filter(|(k, _)| !workspace_wide_keys.contains(k))
+        .collect();
     let significant_clique = bucket_and_cap_by_group(
-        &elected_clique,
+        &elected_deduped,
         PickSet::Clique,
         top_n_workspace,
         cap_matrix,

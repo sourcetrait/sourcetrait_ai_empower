@@ -594,7 +594,7 @@ mod tests {
         // sets lifted higher; inner_crate widest as per-crate own
         // architecture is the bulkiest signal pool.)
         // Group multipliers: traits + structure (architectural
-        // backbone) at 1.5; configuring at 1.2; functions baseline at
+        // backbone) at 1.5; configuring at 1.2; functions sample at
         // 1.0; utilities + globals lifted to 1.5 / 1.2 (the original
         // 0.8 / 0.5 trim suppressed too much of bevy's contribution).
         let cal = Calibration::default();

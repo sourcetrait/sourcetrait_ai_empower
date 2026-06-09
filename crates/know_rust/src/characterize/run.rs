@@ -11,7 +11,7 @@ use crate::*;
 /// that calls `scan_workspace` (items) and `walk_workspace` (usages)
 /// directly rather than subprocessing the binary. The subprocess hop
 /// disappears; intermediate `know_rust_items.json` +
-/// `know_rust_usages.json` are still written to preserve baseline
+/// `know_rust_usages.json` are still written to preserve sample
 /// parity for downstream tooling that expects them.
 ///
 /// Where: dispatched by `crate::run::run` via the

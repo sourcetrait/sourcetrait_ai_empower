@@ -67,13 +67,13 @@ pub(crate) enum Command {
         out_dir: PathBuf,
     },
     /// Measure picker overlap against a manual ground-truth list.
-    /// Walks each target's orientation.md under `baseline_dir`, parses
+    /// Walks each target's orientation.md under `samples_dir`, parses
     /// the S5.1..5.6 pick lists, and reports per-target overlap +
     /// aggregate against the JSON ground-truth file.
     MeasureOverlap {
         /// Directory containing per-target subdirs, each with an
         /// orientation.md.
-        baseline_dir: PathBuf,
+        samples_dir: PathBuf,
         /// Path to the manual ground-truth JSON
         /// (notes/know_rust/manual_ground_truth.json).
         ground_truth: PathBuf,

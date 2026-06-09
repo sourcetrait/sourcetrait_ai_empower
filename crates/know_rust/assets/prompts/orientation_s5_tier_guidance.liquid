@@ -4,6 +4,6 @@
 - **Tier 2 (heavy coverage)**: the PUBLIC set (5.2, public-by-example only) and the INTER-CRATE set (5.3, cross-crate flow only). Single-signal workspace-wide patterns - still load-bearing.
 - **Tier 3 (workspace-internal shared)**: the CLIQUE set (5.4, STV election over per-crate intra ballots). Patterns elected by broad cross-crate consensus when each crate gets equal voting power - shared infrastructure the inter-crate top-N didn't surface.
 - **Tier 4 (per-crate coverage)**: INTRA-CRATE (5.5) and INNER-CRATE (5.6) per-crate sets. Intra-crate shows what each crate USES from elsewhere (after dedup vs clique); inner-crate shows each crate's own architecture (defined here + used here). Mention with context for the crate's role.
-- **Tier 5 (baseline coverage)**: patterns NOT in any set's top picks. The reference index (`reference.md`) is the inventory; no per-pattern attention beyond the listing.
+- **Tier 5 (sample coverage)**: patterns NOT in any set's top picks. The reference index (`reference.md`) is the inventory; no per-pattern attention beyond the listing.
 
 A pattern appearing in multiple sets is a stronger signal - the `categories` field on each pick surfaces multi-set membership.

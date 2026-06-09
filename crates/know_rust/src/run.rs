@@ -25,9 +25,9 @@ pub fn run() -> std::result::Result<(), Error> {
             out_dir,
         } => emit(&workspace_root, &out_dir, &calibration, &templates),
         Command::MeasureOverlap {
-            baseline_dir,
+            samples_dir,
             ground_truth,
-        } => measure_overlap(&baseline_dir, &ground_truth),
+        } => measure_overlap(&samples_dir, &ground_truth),
         Command::RustdocOverlay {
             workspace_root,
             orientation_dir,

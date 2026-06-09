@@ -2,7 +2,7 @@ use crate::*;
 
 /// What: orchestrate the `know_rust measure-overlap` subcommand. Read
 /// the manual ground-truth JSON, walk each target's orientation.md
-/// under the baseline directory, compute per-target + aggregate
+/// under the sample directory, compute per-target + aggregate
 /// overlap, and print the human-readable scoreboard to stdout.
 ///
 /// Why: measure_overlap.py's `main()` (lines 156-222). The_user's
@@ -11,15 +11,15 @@ use crate::*;
 /// list per target + aggregate.
 ///
 /// Where: dispatched by `crate::run::run` when the user invokes
-/// `know_rust measure-overlap <baseline_dir> <ground_truth_path>`.
+/// `know_rust measure-overlap <samples_dir> <ground_truth_path>`.
 pub fn measure_overlap(
-    baseline_dir: &Path,
+    samples_dir: &Path,
     ground_truth_path: &Path,
 ) -> std::result::Result<(), Error> {
-    if !baseline_dir.is_dir() {
+    if !samples_dir.is_dir() {
         return Err(Error::Read {
-            path: baseline_dir.to_path_buf(),
-            source: io::Error::new(io::ErrorKind::NotFound, "baseline_dir is not a directory"),
+            path: samples_dir.to_path_buf(),
+            source: io::Error::new(io::ErrorKind::NotFound, "samples_dir is not a directory"),
         });
     }
     if !ground_truth_path.is_file() {
@@ -36,11 +36,11 @@ pub fn measure_overlap(
     let gt_data: GroundTruthFile = serde_json::from_str(&gt_text)
         .map_err(|source| Error::Serialize { source })?;
 
-    let baseline_canon = fs::canonicalize(baseline_dir).unwrap_or_else(|_| baseline_dir.to_path_buf());
+    let samples_canon = fs::canonicalize(samples_dir).unwrap_or_else(|_| samples_dir.to_path_buf());
     let gt_canon = fs::canonicalize(ground_truth_path).unwrap_or_else(|_| ground_truth_path.to_path_buf());
 
     println!("== overlap scoreboard ==");
-    println!("baseline: {}", baseline_canon.display());
+    println!("sample: {}", samples_canon.display());
     println!("ground_truth: {}", gt_canon.display());
     println!();
     println!(
@@ -59,7 +59,7 @@ pub fn measure_overlap(
             Some(t) => t,
             None => continue,
         };
-        let orient_path = baseline_dir.join(tname).join("orientation.md");
+        let orient_path = samples_dir.join(tname).join("orientation.md");
         if !orient_path.is_file() {
             println!("{:<22} {:>40}", tname, "(no orientation.md)");
             continue;

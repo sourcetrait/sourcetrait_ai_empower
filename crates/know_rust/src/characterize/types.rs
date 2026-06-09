@@ -82,7 +82,7 @@ pub struct CrateAggregate {
 /// empty `seams` placeholder matching the python output schema.
 ///
 /// Why: characterize.py emits this exact shape; preserving the field
-/// order + field names is load-bearing for byte-identical baseline
+/// order + field names is load-bearing for byte-identical sample
 /// match.
 ///
 /// Where: emitted by `crate::characterize::run::characterize` into
@@ -210,7 +210,7 @@ pub struct Totals {
 /// What: the `thresholds` block surfaced for auditability: the
 /// declared mode-selection constants the picker used + a note
 /// describing how to override (env vars; replaced by `-c` flag in
-/// the rust port but the field stays for baseline parity).
+/// the rust port but the field stays for sample parity).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Thresholds {
     #[serde(rename = "DOMINANCE_SHARE")]
@@ -232,7 +232,7 @@ pub struct Thresholds {
 /// structural signals + the heavy pattern_metrics + per_crate maps
 /// that downstream emit consumes.
 ///
-/// Why: byte-identical baseline reproduction requires field ordering
+/// Why: byte-identical sample reproduction requires field ordering
 /// match; struct order = serde output order.
 ///
 /// Where: assembled in `crate::characterize::run::characterize`,

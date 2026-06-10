@@ -285,6 +285,17 @@ pub(crate) fn scan_macro_body_tokens(
             proc_macro2::TokenTree::Ident(ident) => {
                 let name = ident.to_string();
                 let line = ident.span().start().line;
+                // Bare `pub` immediately before an item keyword in a
+                // macro INVOCATION's argument tokens: recover the
+                // visibility the token walk otherwise drops (tokio's
+                // cfg_*! { pub mod fs; } top-level mods gated the
+                // whole decl channel). macro_rules! DEFINITION
+                // templates (emit_attrs == false) stay blank - a
+                // template fn is not a declaration until expanded.
+                // pub(crate)/pub(super) forms stay blank either way.
+                let prev_pub = emit_attrs
+                    && i >= 1
+                    && matches!(&trees[i - 1], proc_macro2::TokenTree::Ident(p) if p == "pub");
                 if emit_attrs {
                     let mut path_segs: Vec<String> = vec![name.clone()];
                     let mut k = i + 1;
@@ -403,7 +414,11 @@ pub(crate) fn scan_macro_body_tokens(
                                 line,
                                 brace_depth,
                                 doc: String::new(),
-                                visibility: String::new(),
+                                visibility: if prev_pub {
+                                    "pub".to_string()
+                                } else {
+                                    String::new()
+                                },
                                 module_path: None,
                                 doc_hidden: false,
                             });
@@ -418,7 +433,11 @@ pub(crate) fn scan_macro_body_tokens(
                                 file: file.to_string(),
                                 name: nm,
                                 line,
-                                visibility: String::new(),
+                                visibility: if prev_pub {
+                                    "pub".to_string()
+                                } else {
+                                    String::new()
+                                },
                                 module_path: None,
                                 doc_hidden: false,
                             });

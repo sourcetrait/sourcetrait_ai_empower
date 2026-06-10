@@ -29,6 +29,11 @@ use crate::*;
 pub struct VisBackfill {
     pub traits: HashSet<String>,
     pub types: HashSet<String>,
+    /// The overlay's documented package: the defining-crate fallback
+    /// for entries the floor could not attribute at all (fully
+    /// macro-generated items have no declaration fact; rustdoc
+    /// attests both visibility and the owning package).
+    pub package: Option<String>,
 }
 
 impl VisBackfill {
@@ -205,9 +210,19 @@ pub fn compute_significance_sets(
     let mut public_scores: indexmap::IndexMap<Pattern, f64> = indexmap::IndexMap::new();
     let mut inter_scores: indexmap::IndexMap<Pattern, usize> = indexmap::IndexMap::new();
     for (pattern, m) in &pm_by_pattern {
+        // Defining-crate, with the overlay package as the fallback
+        // for vis-backfilled entries the floor could not attribute
+        // (fully macro-generated declarations leave no fact).
+        let backfilled = vis_backfill.map(|v| v.backfills(pattern)).unwrap_or(false);
         let dc = match m.get("defining_crate").and_then(|v| v.as_str()) {
             Some(c) => c,
-            None => continue,
+            None => match (
+                backfilled,
+                vis_backfill.and_then(|v| v.package.as_deref()),
+            ) {
+                (true, Some(p)) => p,
+                _ => continue,
+            },
         };
         if scaffolding.contains(dc) {
             continue;
@@ -217,8 +232,8 @@ pub fn compute_significance_sets(
             .get("curated_example_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
-        let is_pub = m.get("is_pub").and_then(|v| v.as_bool()).unwrap_or(false)
-            || vis_backfill.map(|v| v.backfills(pattern)).unwrap_or(false);
+        let is_pub =
+            m.get("is_pub").and_then(|v| v.as_bool()).unwrap_or(false) || backfilled;
         if is_pub && curated > 0 {
             public_scores.insert(pattern.clone(), curated as f64 * public_example_weight);
         }

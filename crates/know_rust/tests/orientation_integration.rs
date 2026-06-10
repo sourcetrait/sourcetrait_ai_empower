@@ -218,8 +218,12 @@ fn overlay_vis_backfill_admits_macro_invisible_pub_trait() {
             "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
         ),
         (
+            // Sched is declared NOWHERE the floor can see (the
+            // define_label! class: a name-only invocation expands to
+            // the pub trait) - the pm row carries defining_crate null
+            // AND is_pub false; the overlay backfills both.
             "lib/src/lib.rs",
-            "mklabel!{ trait Sched {} }\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
+            "pub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
         ),
         (
             "lib/examples/demo.rs",
@@ -259,7 +263,7 @@ fn overlay_vis_backfill_admits_macro_invisible_pub_trait() {
 
     std::fs::write(
         out.join("rustdoc_overlay.json"),
-        "{\"status\":\"ok\",\"pub_traits\":[\"Sched\"],\"pub_types\":[]}",
+        "{\"status\":\"ok\",\"package\":\"lib\",\"pub_traits\":[\"Sched\"],\"pub_types\":[]}",
     )
     .expect("write overlay");
     emit(root, &out, &calibration, &templates, None, "author").expect("overlay emit");

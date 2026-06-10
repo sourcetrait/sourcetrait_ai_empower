@@ -33,7 +33,7 @@ pub fn rustdoc_overlay(
 
     let resolved_package = resolve_package(root, requested_package, orientation_dir);
     let rustdoc = run_rustdoc_json(root, resolved_package.as_deref())?;
-    let overlay = reconcile(&facts, &rustdoc)?;
+    let overlay = reconcile(&facts, &rustdoc, resolved_package.as_deref())?;
 
     let overlay_path = orientation_dir.join("rustdoc_overlay.json");
     let overlay_json =
@@ -352,6 +352,7 @@ fn run_rustdoc_json(
 fn reconcile(
     floor_facts: &serde_json::Value,
     rustdoc: &serde_json::Value,
+    package: Option<&str>,
 ) -> std::result::Result<Overlay, Error> {
     let fv = rustdoc
         .get("format_version")
@@ -527,5 +528,6 @@ fn reconcile(
         paths,
         pub_traits: pub_traits.into_iter().collect(),
         pub_types: pub_types.into_iter().collect(),
+        package: package.map(String::from),
     })
 }

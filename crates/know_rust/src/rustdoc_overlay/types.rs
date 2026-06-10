@@ -49,6 +49,19 @@ pub struct Overlay {
     pub pub_traits: Vec<String>,
     #[serde(default)]
     pub pub_types: Vec<String>,
+    /// What: the workspace package this overlay documented (the
+    /// resolved `-p` argument).
+    ///
+    /// Why: vis backfill may need to attribute an entry the floor
+    /// could not attribute at all (no declaration fact exists for a
+    /// fully macro-generated item); rustdoc attests both the
+    /// public visibility AND the owning package.
+    ///
+    /// Where: set by `rustdoc_overlay` from the resolved package;
+    /// consumed by the emit-side `VisBackfill` as the
+    /// defining-crate fallback.
+    #[serde(default)]
+    pub package: Option<String>,
 }
 
 /// What: one macro-generated impl entry - the trait name, a null span

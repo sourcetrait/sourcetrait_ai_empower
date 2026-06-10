@@ -82,6 +82,10 @@ pub fn emit(
                 VisBackfill {
                     traits: take("pub_traits"),
                     types: take("pub_types"),
+                    package: v
+                        .get("package")
+                        .and_then(|p| p.as_str())
+                        .map(String::from),
                 }
             })
     };

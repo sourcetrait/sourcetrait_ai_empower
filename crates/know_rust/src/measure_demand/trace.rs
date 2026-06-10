@@ -22,14 +22,29 @@ use crate::*;
 pub(crate) fn demand_report(
     consumer_items: &ItemFacts,
     consumer_usages: &UsageFacts,
+    consumer_renames: &std::collections::HashMap<String, String>,
     target_facts: &serde_json::Value,
     target_fp: &serde_json::Value,
     target_orientation: &str,
 ) -> DemandReport {
+    // Target vocabulary: package bindings plus lib-rename bindings
+    // (names are bindings; `use cosmic::` must reach package
+    // libcosmic). Absent lib_name fields (pre-identity fingerprints)
+    // degrade to package-only.
     let target_crates: std::collections::BTreeSet<String> = target_fp
         .get("per_crate")
         .and_then(|v| v.as_object())
-        .map(|m| m.keys().map(|k| demand_norm(k)).collect())
+        .map(|m| {
+            m.iter()
+                .flat_map(|(k, v)| {
+                    let mut names = vec![demand_norm(k)];
+                    if let Some(ln) = v.get("lib_name").and_then(|x| x.as_str()) {
+                        names.push(demand_norm(ln));
+                    }
+                    names
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     // Target declaration sets: name -> kinds, plus the module-name
@@ -92,7 +107,7 @@ pub(crate) fn demand_report(
                 }
             }
         }
-        if target_crates.contains(&demand_norm(&parsed.root)) {
+        if root_in_targets(&parsed.root, consumer_renames, &target_crates) {
             let kind = if u.reexport { "reexport" } else { "use" };
             for leaf in &parsed.leaves {
                 match leaf {
@@ -139,6 +154,7 @@ pub(crate) fn demand_report(
             qualifier.as_deref(),
             &imap,
             &alias_global,
+            consumer_renames,
             &target_crates,
         ) {
             demand.entry(src).or_default().insert("ident".to_string());
@@ -151,6 +167,7 @@ pub(crate) fn demand_report(
             e.qualifier.as_deref(),
             &imap,
             &alias_global,
+            consumer_renames,
             &target_crates,
         ) {
             demand.entry(src).or_default().insert("fn_call".to_string());
@@ -163,6 +180,7 @@ pub(crate) fn demand_report(
             e.qualifier.as_deref(),
             &imap,
             &alias_global,
+            consumer_renames,
             &target_crates,
         ) {
             demand
@@ -189,6 +207,7 @@ pub(crate) fn demand_report(
             t.qualifier.as_deref(),
             &imap,
             &alias_global,
+            consumer_renames,
             &target_crates,
         ) {
             demand
@@ -313,6 +332,30 @@ fn demand_norm(s: &str) -> String {
     s.replace('-', "_")
 }
 
+/// What: true when a source ROOT binding reaches a target crate -
+/// directly, or through the consumer's dependency-rename map
+/// (`tk = { package = "tgt-kit" }` makes `tk::` a target root).
+///
+/// Why: names are bindings; the consumer's manifests define which
+/// bindings mean which packages, and the demand side must speak the
+/// same vocabulary the capture side does.
+///
+/// Where: called by the use-import demand loop and `demand_resolved`.
+fn root_in_targets(
+    root: &str,
+    consumer_renames: &std::collections::HashMap<String, String>,
+    target_crates: &std::collections::BTreeSet<String>,
+) -> bool {
+    let n = demand_norm(root);
+    if target_crates.contains(&n) {
+        return true;
+    }
+    consumer_renames
+        .get(&n)
+        .map(|pkg| target_crates.contains(&demand_norm(pkg)))
+        .unwrap_or(false)
+}
+
 /// What: fold one target fact list's `name` fields into the
 /// declaration map under the given kind tag.
 fn add_decls(
@@ -354,12 +397,13 @@ fn demand_resolved(
     qualifier: Option<&str>,
     imap: &ImportMaps,
     alias_global: &std::collections::HashMap<String, ImportBinding>,
+    consumer_renames: &std::collections::HashMap<String, String>,
     target_crates: &std::collections::BTreeSet<String>,
 ) -> Option<String> {
     if let Some(q) = qualifier {
-        if target_crates.contains(&demand_norm(q)) {
+        if root_in_targets(q, consumer_renames, target_crates) {
             if let Some(b) = alias_global.get(name) {
-                if target_crates.contains(&demand_norm(&b.root)) {
+                if root_in_targets(&b.root, consumer_renames, target_crates) {
                     return b.source.clone();
                 }
             }
@@ -367,7 +411,7 @@ fn demand_resolved(
         }
     }
     if let Some(b) = imap.get(file).and_then(|m| m.get(name)) {
-        if target_crates.contains(&demand_norm(&b.root)) {
+        if root_in_targets(&b.root, consumer_renames, target_crates) {
             return Some(
                 b.source
                     .clone()
@@ -377,7 +421,7 @@ fn demand_resolved(
         }
     }
     if let Some(b) = alias_global.get(name) {
-        if target_crates.contains(&demand_norm(&b.root)) {
+        if root_in_targets(&b.root, consumer_renames, target_crates) {
             return b.source.clone();
         }
     }

@@ -23,6 +23,7 @@ pub fn measure_demand(
 ) -> std::result::Result<(), Error> {
     let consumer_items = scan_workspace(consumer_root);
     let consumer_usages = walk_workspace(consumer_root)?;
+    let consumer_renames = consumer_dep_renames(consumer_root);
 
     let facts_path = target_out_dir.join("facts.json");
     let fp_path = target_out_dir.join("fingerprint.json");
@@ -49,6 +50,7 @@ pub fn measure_demand(
     let report = demand_report(
         &consumer_items,
         &consumer_usages,
+        &consumer_renames,
         &target_facts,
         &target_fp,
         &orientation,
@@ -110,4 +112,76 @@ pub fn measure_demand(
         });
     }
     Ok(())
+}
+
+/// What: collect the consumer's dependency renames
+/// (`foo = { package = "bar" }`) from every Cargo.toml under the
+/// consumer root into a binding -> package map (normalized binding
+/// keys, first-wins across manifests in sorted path order).
+///
+/// Why: names are bindings - a consumer that renames the target
+/// dependency writes `use foo::` for package `bar`, and the demand
+/// trace must speak the consumer's own binding vocabulary. The map
+/// is consumer-wide (not per-member) at first-wins granularity,
+/// matching the trace's existing alias-map pragmatics.
+///
+/// Where: called by `measure_demand` before building the report;
+/// threaded into `demand_report`'s root checks.
+fn consumer_dep_renames(consumer_root: &Path) -> HashMap<String, String> {
+    let mut manifests: Vec<PathBuf> = walkdir::WalkDir::new(consumer_root)
+        .into_iter()
+        .filter_entry(|e| !is_skip_dir(e.path()))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.file_name() == "Cargo.toml")
+        .map(|e| e.path().to_path_buf())
+        .collect();
+    manifests.sort();
+    let mut renames: HashMap<String, String> = HashMap::new();
+    for m in manifests {
+        let text = match fs::read_to_string(&m) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let value: toml::Value = match toml::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        collect_dep_renames(&value, &mut renames);
+    }
+    renames
+}
+
+/// What: walk a parsed manifest value and record every
+/// `<binding> = { package = "<pkg>" }` entry found in any table
+/// whose key ends with `dependencies` (covers [dependencies],
+/// dev/build variants, [workspace.dependencies], and
+/// target-conditional tables via recursion).
+///
+/// Why: cargo accepts renames in all dependency table positions; a
+/// structural walk keyed on the table-name suffix stays closed over
+/// the manifest grammar without enumerating every position.
+///
+/// Where: called by `consumer_dep_renames` per manifest.
+fn collect_dep_renames(value: &toml::Value, out: &mut HashMap<String, String>) {
+    let Some(table) = value.as_table() else {
+        return;
+    };
+    for (key, entry) in table {
+        if key.ends_with("dependencies") {
+            if let Some(deps) = entry.as_table() {
+                for (binding, spec) in deps {
+                    if let Some(pkg) = spec
+                        .as_table()
+                        .and_then(|t| t.get("package"))
+                        .and_then(|p| p.as_str())
+                    {
+                        out.entry(binding.replace('-', "_"))
+                            .or_insert_with(|| pkg.to_string());
+                    }
+                }
+            }
+        }
+        collect_dep_renames(entry, out);
+    }
 }

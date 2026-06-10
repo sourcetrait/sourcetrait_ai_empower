@@ -100,6 +100,104 @@ fn consumer_files(with_hidden: bool) -> HashMap<&'static str, String> {
 }
 
 #[test]
+fn demand_resolves_lib_and_dep_renames() {
+    // Target package `tgt-kit` exposes lib name `tkit`; the consumer
+    // imports through the LIB binding in one file and through its own
+    // DEP RENAME (`tk = { package = "tgt-kit" }`) in another. Both
+    // demands must resolve and be covered - the package-name-only
+    // vocabulary registered nothing for either form.
+    let target_tmp = TempDir::new().expect("target tempdir");
+    let troot = target_tmp.path();
+    let tfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"tgt-kit\",\"app\"]\n"),
+        ),
+        (
+            "tgt-kit/Cargo.toml",
+            String::from(
+                "[package]\nname=\"tgt-kit\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[lib]\nname=\"tkit\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "tgt-kit/src/lib.rs",
+            String::from(
+                "pub struct Value;\nimpl Value { pub fn new() -> Self { Value } }\npub fn boot() {}\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\ntgt-kit={path=\"../tgt-kit\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use tkit::{Value, boot};\npub fn a() { let _ = Value::new(); }\npub fn b() { let _ = Value::new(); }\npub fn c() { boot(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(troot, &tfiles);
+    let tout = troot.join(".orientation");
+    std::fs::create_dir_all(&tout).expect("mkdir orientation");
+    let calibration = Calibration::default();
+    characterize(troot, &tout, &calibration).expect("characterize succeeds");
+    let templates = Templates::new(None);
+    emit(troot, &tout, &calibration, &templates).expect("emit succeeds");
+
+    let ctmp = TempDir::new().expect("consumer tempdir");
+    let cfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"consumer\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\ntk={package=\"tgt-kit\", path=\"../t/tgt-kit\"}\n",
+            ),
+        ),
+        (
+            "src/lib.rs",
+            String::from(
+                "pub(crate) mod inner;\nuse tkit::Value;\npub fn a() { let _ = Value::new(); }\n",
+            ),
+        ),
+        (
+            "src/inner.rs",
+            String::from("use tk::boot;\npub fn b() { boot(); }\n"),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(ctmp.path(), &cfiles);
+
+    let out_path = ctmp.path().join("trace_out.json");
+    measure_demand(ctmp.path(), &tout, Some(&out_path))
+        .expect("lib-binding + dep-rename demands are covered");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&out_path).expect("read --out json"),
+    )
+    .expect("parse --out json");
+    let hit_names: Vec<&str> = report
+        .get("hits")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        hit_names.contains(&"Value"),
+        "lib-binding demand resolves; hits: {hit_names:?}"
+    );
+    assert!(
+        hit_names.contains(&"boot"),
+        "dep-rename demand resolves; hits: {hit_names:?}"
+    );
+}
+
+#[test]
 fn miss_gates_and_clean_run_passes() {
     let target_tmp = TempDir::new().expect("target tempdir");
     let target_out = build_target(target_tmp.path());

@@ -229,4 +229,30 @@ fn embedded_units_carry_identity_and_attribution() {
         })
         .unwrap_or(false);
     assert!(ua_thing, "UaThing attributes to unit crate ua, not the host");
+
+    // S1 renders the unit table with provenance: the non-conflation
+    // surface reaches the consuming agent structurally.
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    let orient =
+        std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
+    assert!(
+        orient.contains("Workspace units (identity = provenance"),
+        "units block renders"
+    );
+    assert!(
+        orient.contains("- `.` - host workspace (3 members)"),
+        "host line renders; got:\n{}",
+        orient.lines().filter(|l| l.contains("unit") || l.starts_with("- `")).take(12).collect::<Vec<_>>().join("\n")
+    );
+    assert!(
+        orient.contains(
+            "- `vendored/vws` - vendored submodule https://example.com/fork.git @ ? (2 members scanned)"
+        ),
+        "populated submodule unit line renders (rev unknown outside a git repo)"
+    );
+    assert!(
+        orient.contains("- `vendored/ghost` - in-repo vendored source (not populated; not scanned)"),
+        "unpopulated in-repo unit line renders"
+    );
 }

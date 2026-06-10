@@ -155,6 +155,86 @@ pub fn render_orientation(
     }
     lines.push(String::new());
 
+    // Workspace units: identity = provenance. Rendered whenever the
+    // repo carries more than the host unit so the consuming agent
+    // sees, structurally, that a vendored unit is a DISTINCT IDENTITY
+    // from any same-named project (pop-os/iced is not iced-rs/iced).
+    // Absent on pre-identity fingerprints.
+    let units = fp
+        .get("workspace_units")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    if units.len() > 1 {
+        lines.push(
+            "Workspace units (identity = provenance; a vendored unit is a distinct identity \
+             from any same-named project):"
+                .to_string(),
+        );
+        let mut keys: Vec<String> = units.keys().cloned().collect();
+        keys.sort();
+        if let Some(pos) = keys.iter().position(|k| k == ".") {
+            let host = keys.remove(pos);
+            keys.insert(0, host);
+        }
+        for k in &keys {
+            let u = &units[k];
+            let kind = u
+                .pointer("/provenance/kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let members = u
+                .get("members")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let populated = u
+                .get("populated")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let line = match kind {
+                "host" => format!("- `{}` - host workspace ({} members)", k, members),
+                "submodule" => {
+                    let url = u
+                        .pointer("/provenance/url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
+                    let rev = u
+                        .pointer("/provenance/rev")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
+                    if populated {
+                        format!(
+                            "- `{}` - vendored submodule {} @ {} ({} members scanned)",
+                            k, url, rev, members
+                        )
+                    } else {
+                        format!(
+                            "- `{}` - vendored submodule {} @ {} (source not populated in this \
+                             clone; not scanned)",
+                            k, url, rev
+                        )
+                    }
+                }
+                _ => {
+                    if populated {
+                        format!(
+                            "- `{}` - in-repo vendored source ({} members scanned)",
+                            k, members
+                        )
+                    } else {
+                        format!(
+                            "- `{}` - in-repo vendored source (not populated; not scanned)",
+                            k
+                        )
+                    }
+                }
+            };
+            lines.push(line);
+        }
+        lines.push(String::new());
+    }
+
     if use_clusters {
         lines.push("### 1.1 Crate clusters (by name prefix)".to_string());
         lines.push(String::new());

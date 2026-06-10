@@ -27,7 +27,11 @@ pub fn characterize(
         source,
     })?;
 
-    let (crates, workspace_roots) = find_crates(workspace_root);
+    let WorkspaceDiscovery {
+        crates,
+        workspace_roots,
+        units,
+    } = find_crates(workspace_root);
     if crates.is_empty() {
         eprintln!(
             "[characterize] no Cargo packages found under {}",
@@ -105,6 +109,9 @@ pub fn characterize(
                 n_traits: cf.traits.len(),
                 n_fns: cf.fns.len(),
                 seams: indexmap::IndexMap::new(),
+                version: info.version.clone(),
+                lib_name: info.lib_name.clone(),
+                unit: info.unit.clone(),
             },
         );
         let free_fns_count = cf
@@ -271,11 +278,35 @@ pub fn characterize(
         note: "Declared defaults, not validated constants. Override via ORIENT_* env vars. The full histogram is reported so the choice is auditable.".to_string(),
     };
 
+    let workspace_units: indexmap::IndexMap<String, WorkspaceUnitFingerprint> = units
+        .iter()
+        .map(|(k, u)| {
+            let (url, rev) = match &u.provenance {
+                UnitProvenance::Submodule { url, rev } => (Some(url.clone()), rev.clone()),
+                _ => (None, None),
+            };
+            (
+                k.clone(),
+                WorkspaceUnitFingerprint {
+                    root_dir: u.root_dir.clone(),
+                    provenance: UnitProvenanceWire {
+                        kind: u.provenance.wire_kind().to_string(),
+                        url,
+                        rev,
+                    },
+                    members: u.members.clone(),
+                    populated: u.populated,
+                },
+            )
+        })
+        .collect();
+
     let mut fp = Fingerprint {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         repo_root: workspace_root.display().to_string(),
         totals,
         workspace_roots,
+        workspace_units,
         components,
         n_components: 0,
         pattern_histogram: ranked

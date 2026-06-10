@@ -21,6 +21,46 @@ pub struct CrateInfo {
     pub keywords: Vec<String>,
     pub categories: Vec<String>,
     pub description: String,
+    /// What: the package version string from cargo metadata.
+    ///
+    /// Why: identity = provenance (name, version, source); version is
+    /// the second leg and feeds the fingerprint's per_crate identity
+    /// fields.
+    ///
+    /// Where: set by `find_crates`' metadata ingest; copied into
+    /// `PerCrateFingerprint::version`.
+    pub version: String,
+    /// What: the `[lib]` target name when it differs (beyond hyphen
+    /// normalization) from the package name; `None` when the lib
+    /// binding equals the package binding or no lib target exists.
+    ///
+    /// Why: names are BINDINGS - source roots import the LIB name
+    /// (`use cosmic::` for package `libcosmic`), so the resolution
+    /// vocabulary must carry the alias. Only true renames ride the
+    /// field to keep the wire lean.
+    ///
+    /// Where: set from cargo metadata `targets[].name`; consumed by
+    /// the resolution vocabulary and `PerCrateFingerprint::lib_name`.
+    pub lib_name: Option<String>,
+    /// What: this package's dependency renames as (binding, package)
+    /// pairs - `foo = { package = "bar" }` records ("foo", "bar").
+    ///
+    /// Why: a renamed dependency makes the using crate's source
+    /// refer to `foo::` for package `bar`; the per-consuming-crate
+    /// binding overlay in the resolution vocabulary reads these.
+    ///
+    /// Where: set from cargo metadata `dependencies[].rename`;
+    /// consumed when building the capture-side resolution vocabulary.
+    pub renames: Vec<(String, String)>,
+    /// What: the unit key (repo-relative workspace root, `.` for the
+    /// host) this package belongs to.
+    ///
+    /// Why: per-crate attribution stays tagged by unit so embedded
+    /// workspaces are never conflated with host membership.
+    ///
+    /// Where: set by `find_crates`' ingest per unit; copied into
+    /// `PerCrateFingerprint::unit`.
+    pub unit: String,
 }
 
 /// What: per-file items bucket assembled from `know_rust_items.json`,
@@ -97,6 +137,21 @@ pub struct PerCrateFingerprint {
     pub n_traits: usize,
     pub n_fns: usize,
     pub seams: indexmap::IndexMap<String, usize>,
+    /// What: identity fields appended at the wire tail - package
+    /// version, the `[lib]` rename when one exists, and the owning
+    /// unit key.
+    ///
+    /// Why: identity = provenance, names = bindings; downstream
+    /// consumers (the demand trace's target vocabulary, unit-aware
+    /// rendering) read identity from the fingerprint instead of
+    /// re-deriving it. Appended after the original fields so
+    /// pre-identity sample diffs classify as additive.
+    ///
+    /// Where: populated from `CrateInfo` in `characterize::run`.
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lib_name: Option<String>,
+    pub unit: String,
 }
 
 /// What: per-pattern metrics row in `pattern_metrics`: defining
@@ -237,12 +292,52 @@ pub struct Thresholds {
 ///
 /// Where: assembled in `crate::characterize::run::characterize`,
 /// serialized to `fingerprint.json` via `serde_json::to_string_pretty`.
+/// What: wire form of a unit's provenance - the kind token plus the
+/// submodule URL / rev when known.
+///
+/// Why: the fingerprint carries identity as data, not prose; the
+/// closed kind token (`host` / `submodule` / `in_repo`) plus
+/// optional url/rev is the minimal faithful encoding of
+/// `UnitProvenance`.
+///
+/// Where: held by `WorkspaceUnitFingerprint`; built in
+/// `characterize::run` from the discovery's units.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UnitProvenanceWire {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+}
+
+/// What: one workspace unit in the fingerprint - repo-relative root
+/// dir, provenance, member package names, and whether the unit's
+/// source is populated in this clone (a declared-but-empty
+/// submodule still carries full identity).
+///
+/// Why: embedded workspaces are modeled as identity-bearing units,
+/// never flattened into host membership; serializing them lets the
+/// orientation and downstream tooling render the non-conflation
+/// surface from data.
+///
+/// Where: entries of `Fingerprint::workspace_units`, keyed by the
+/// unit's root dir.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorkspaceUnitFingerprint {
+    pub root_dir: String,
+    pub provenance: UnitProvenanceWire,
+    pub members: Vec<String>,
+    pub populated: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Fingerprint {
     pub tool_version: String,
     pub repo_root: String,
     pub totals: Totals,
     pub workspace_roots: Vec<String>,
+    pub workspace_units: indexmap::IndexMap<String, WorkspaceUnitFingerprint>,
     pub components: Vec<Vec<String>>,
     pub n_components: usize,
     pub pattern_histogram: Vec<PatternHistogramEntry>,

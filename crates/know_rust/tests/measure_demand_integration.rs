@@ -203,6 +203,126 @@ fn demand_resolves_lib_and_dep_renames() {
 }
 
 #[test]
+fn crate_qualified_call_is_served_by_the_pair_pick() {
+    // The tokio::spawn shape: the target declares the fn inside a
+    // macro template (so the free-fn channel sees no pub visibility
+    // and synthesizes NO utilities pick), while target-internal
+    // crate-qualified calls render the pick as the PAIR key
+    // `implementation_functions:lib::helper`. A consumer calling
+    // `lib::helper()` demands the bare name `helper` through root
+    // `lib` - the end-product criterion says the pair pick serves
+    // it (the reading agent finds lib::helper in the bundle), so
+    // the trace must score a hit, not a miss.
+    let tmp = TempDir::new().expect("target tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "macro_rules! decl_api { () => { pub fn helper() {} }; }\ndecl_api!();\npub mod m { pub fn mfn() {} }\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\npub fn seed() -> Core { Core::new() }\npub fn seed2() -> Core { Core::new() }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "pub fn run(_c: lib::Core) { lib::helper(); lib::m::mfn(); }\npub fn run2() { lib::helper(); lib::m::mfn(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+    let out = root.join(".orientation");
+    std::fs::create_dir_all(&out).expect("mkdir orientation");
+    let calibration = Calibration::default();
+    characterize(root, &out, &calibration).expect("characterize succeeds");
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    let orient = std::fs::read_to_string(out.join("orientation.md")).expect("read orientation");
+    assert!(
+        orient.contains("`implementation_functions:lib::helper`"),
+        "fixture premise: the pair pick renders"
+    );
+    assert!(
+        !orient.contains("`utilities:helper`"),
+        "fixture premise: no bare utilities pick covers the name"
+    );
+    assert!(
+        orient.contains("`implementation_functions:m::mfn`"),
+        "fixture premise: the module-fn pair pick renders"
+    );
+
+    let ctmp = TempDir::new().expect("consumer tempdir");
+    let cfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"consumer\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../t/lib\"}\n",
+            ),
+        ),
+        (
+            // helper: crate-qualified call -> served by the
+            // `lib::helper` pair. mfn: module-pathed import (nested
+            // brace piece) + bare call -> the leaf's PARENT segment
+            // serves it through the `m::mfn` pair.
+            "src/lib.rs",
+            String::from(
+                "use lib::{m::mfn, Core};\npub fn go(_c: Core) { lib::helper(); mfn(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(ctmp.path(), &cfiles);
+
+    let out_path = ctmp.path().join("trace_out.json");
+    measure_demand(ctmp.path(), &out, Some(&out_path))
+        .expect("crate-qualified + module-pathed demands are served by pair picks");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&out_path).expect("read --out json"),
+    )
+    .expect("parse --out json");
+    let hit_names: Vec<&str> = report
+        .get("hits")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        hit_names.contains(&"helper"),
+        "helper served via the lib::helper pair pick; hits: {hit_names:?}"
+    );
+    assert!(
+        hit_names.contains(&"mfn"),
+        "mfn served via the m::mfn pair pick (use-path penultimate); hits: {hit_names:?}"
+    );
+    assert_eq!(
+        report.pointer("/summary/miss_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "no name misses"
+    );
+}
+
+#[test]
 fn miss_gates_and_clean_run_passes() {
     let target_tmp = TempDir::new().expect("target tempdir");
     let target_out = build_target(target_tmp.path());

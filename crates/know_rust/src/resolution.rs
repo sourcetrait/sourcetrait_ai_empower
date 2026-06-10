@@ -3,14 +3,20 @@ use crate::*;
 /// What: one leaf of a flattened use-tree string. `Named` carries the
 /// in-scope BINDING name plus the imported item's own SOURCE name
 /// (`X as Y` binds Y with source X; `{self}` binds the parent segment;
-/// a plain leaf binds itself). `Glob` marks a `*` import, which is
-/// unresolvable per-ident.
+/// a plain leaf binds itself) plus the leaf's PARENT segment - the
+/// path segment immediately preceding it (`a::b::c` -> parent `b`;
+/// `a::{b::c, d}` -> c's parent `b`, d's parent `a`). `Glob` marks a
+/// `*` import, which is unresolvable per-ident.
 ///
 /// Why: the two prior use-tree grammars each kept half the picture -
 /// pattern_metrics' parser returned bindings only (enough for origin
 /// resolution) while measure_demand's returned (binding, source) pairs
 /// (needed for rename translation back to source names). One leaf
 /// shape carries both so capture and demand parse imports identically.
+/// The parent rides along for the demand side's module-pair coverage
+/// lookups (`use iced::border::radius;` is served by the rendered
+/// `implementation_functions:border::radius` pick); the capture-side
+/// consumers ignore it.
 ///
 /// Where: produced by `parse_use_leaves`; consumed by
 /// `build_import_bindings` / `build_reexport_index` and by
@@ -19,6 +25,7 @@ pub(crate) enum UseLeaf {
     Named {
         binding: String,
         source: Option<String>,
+        parent: Option<String>,
     },
     Glob,
 }
@@ -75,12 +82,15 @@ pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
         if let Some((base, renamed)) = s.rsplit_once(" as ") {
             let binding = renamed.trim().to_string();
             let base = base.trim();
-            let source = if base == "self" {
-                parent_last.map(String::from)
+            let (source, parent) = if base == "self" {
+                (parent_last.map(String::from), parent_last.map(String::from))
             } else {
-                Some(base.rsplit("::").next().unwrap_or(base).to_string())
+                (
+                    Some(base.rsplit("::").next().unwrap_or(base).to_string()),
+                    piece_parent(base, parent_last),
+                )
             };
-            out.push(UseLeaf::Named { binding, source });
+            out.push(UseLeaf::Named { binding, source, parent });
             return;
         }
         if s == "self" {
@@ -88,6 +98,7 @@ pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
                 out.push(UseLeaf::Named {
                     binding: p.to_string(),
                     source: Some(p.to_string()),
+                    parent: Some(p.to_string()),
                 });
             }
             return;
@@ -106,8 +117,22 @@ pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
             out.push(UseLeaf::Named {
                 binding: leaf.to_string(),
                 source: Some(leaf.to_string()),
+                parent: piece_parent(s, parent_last),
             });
         }
+    }
+    // The segment immediately preceding a piece's leaf: the piece's
+    // own penultimate when it is multi-segment, else the enclosing
+    // prefix's last segment.
+    fn piece_parent(piece: &str, parent_last: Option<&str>) -> Option<String> {
+        let segs: Vec<&str> = piece.split("::").collect();
+        if segs.len() >= 2 {
+            let p = segs[segs.len() - 2].trim().trim_start_matches("r#");
+            if !p.is_empty() {
+                return Some(p.to_string());
+            }
+        }
+        parent_last.map(String::from)
     }
     let trimmed = path.trim();
     // The root is the first segment of the BASE path: a
@@ -177,7 +202,7 @@ where
         }
         let entry = by_file.entry(file.to_string()).or_default();
         for leaf in &parsed.leaves {
-            if let UseLeaf::Named { binding, source } = leaf {
+            if let UseLeaf::Named { binding, source, .. } = leaf {
                 entry
                     .entry(binding.clone())
                     .or_insert_with(|| ImportBinding {

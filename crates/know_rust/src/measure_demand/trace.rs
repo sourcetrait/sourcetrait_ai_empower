@@ -84,6 +84,14 @@ pub(crate) fn demand_report(
 
     let mut demand: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
         std::collections::BTreeMap::new();
+    // Per demanded name: the normalized target ROOT bindings the
+    // demand resolved through. The end-product criterion ("would the
+    // reading agent find it in the bundle") makes `<root>::<name>`
+    // pick pairs serve the name - tokio's macro-wrapped API surfaces
+    // ONLY as `implementation_functions:tokio::spawn`-shaped picks,
+    // and a consumer's `tokio::spawn(...)` demand must match them.
+    let mut demand_roots: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
     let mut pairs: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
         std::collections::BTreeMap::new();
     let mut globs: Vec<String> = Vec::new();
@@ -94,7 +102,7 @@ pub(crate) fn demand_report(
             continue;
         }
         for leaf in &parsed.leaves {
-            if let UseLeaf::Named { binding, source } = leaf {
+            if let UseLeaf::Named { binding, source, .. } = leaf {
                 if let Some(s) = source {
                     if !s.is_empty() && s != binding {
                         alias_global
@@ -112,13 +120,26 @@ pub(crate) fn demand_report(
             for leaf in &parsed.leaves {
                 match leaf {
                     UseLeaf::Glob => globs.push(u.path.clone()),
-                    UseLeaf::Named { binding, source } => {
+                    UseLeaf::Named { binding, source, parent } => {
                         // Demand records the SOURCE name; the binding
-                        // is only the consumer's local spelling.
+                        // is only the consumer's local spelling. The
+                        // leaf's PARENT segment joins the root set:
+                        // module-fn picks are keyed `<module>::<fn>`
+                        // (`use iced::border::radius;` is served by
+                        // `implementation_functions:border::radius`).
                         let nm = source
                             .clone()
                             .filter(|s| !s.is_empty())
                             .unwrap_or_else(|| binding.clone());
+                        for r in root_candidates(&parsed.root, consumer_renames) {
+                            demand_roots.entry(nm.clone()).or_default().insert(r);
+                        }
+                        if let Some(p) = parent {
+                            demand_roots
+                                .entry(nm.clone())
+                                .or_default()
+                                .insert(p.clone());
+                        }
                         demand.entry(nm).or_default().insert(kind.to_string());
                     }
                 }
@@ -148,7 +169,7 @@ pub(crate) fn demand_report(
         )
     {
         let (file, ident, qualifier) = e;
-        if let Some(src) = demand_resolved(
+        if let Some((src, root)) = demand_resolved(
             file,
             ident,
             qualifier.as_deref(),
@@ -157,11 +178,14 @@ pub(crate) fn demand_report(
             consumer_renames,
             &target_crates,
         ) {
+            for r in root_candidates(&root, consumer_renames) {
+                demand_roots.entry(src.clone()).or_default().insert(r);
+            }
             demand.entry(src).or_default().insert("ident".to_string());
         }
     }
     for e in &consumer_usages.ast_fn_call_usages {
-        if let Some(src) = demand_resolved(
+        if let Some((src, root)) = demand_resolved(
             &e.file,
             &e.name,
             e.qualifier.as_deref(),
@@ -170,11 +194,14 @@ pub(crate) fn demand_report(
             consumer_renames,
             &target_crates,
         ) {
+            for r in root_candidates(&root, consumer_renames) {
+                demand_roots.entry(src.clone()).or_default().insert(r);
+            }
             demand.entry(src).or_default().insert("fn_call".to_string());
         }
     }
     for e in &consumer_usages.ast_method_ref_usages {
-        if let Some(src) = demand_resolved(
+        if let Some((src, root)) = demand_resolved(
             &e.file,
             &e.outer,
             e.qualifier.as_deref(),
@@ -183,6 +210,9 @@ pub(crate) fn demand_report(
             consumer_renames,
             &target_crates,
         ) {
+            for r in root_candidates(&root, consumer_renames) {
+                demand_roots.entry(src.clone()).or_default().insert(r);
+            }
             demand
                 .entry(src.clone())
                 .or_default()
@@ -201,7 +231,7 @@ pub(crate) fn demand_report(
         let Some((o, i)) = t.name.split_once("::") else {
             continue;
         };
-        if let Some(src) = demand_resolved(
+        if let Some((src, root)) = demand_resolved(
             &t.file,
             o,
             t.qualifier.as_deref(),
@@ -210,6 +240,9 @@ pub(crate) fn demand_report(
             consumer_renames,
             &target_crates,
         ) {
+            for r in root_candidates(&root, consumer_renames) {
+                demand_roots.entry(src.clone()).or_default().insert(r);
+            }
             demand
                 .entry(src.clone())
                 .or_default()
@@ -282,9 +315,21 @@ pub(crate) fn demand_report(
             kinds,
             srcs: srcs.iter().cloned().collect(),
         };
+        // End-product criterion: a name is served when the bundle
+        // presents it - by its own name in picks/carry, OR as the
+        // inner of a rendered `<root>::<name>` pair pick under a
+        // target root the demand resolved through (tokio::spawn).
+        let root_pair_served = demand_roots
+            .get(nm)
+            .map(|roots| {
+                roots
+                    .iter()
+                    .any(|r| pick_pairs.contains(&format!("{}::{}", r, nm)))
+            })
+            .unwrap_or(false);
         if !decl.contains_key(nm) && mods.contains(nm) {
             mod_ns.push(rec);
-        } else if covered.contains(nm) {
+        } else if covered.contains(nm) || root_pair_served {
             hits.push(rec);
         } else {
             misses.push(rec);
@@ -380,15 +425,19 @@ fn add_decls(
 /// What: affirmative resolution of a consumer site to a target
 /// crate: an explicit target-crate qualifier, a per-file import
 /// binding to a target crate, or a crate-wide rename whose source is
-/// a target crate. Returns the SOURCE name (rename-translated) or
-/// None - name-keyed declaration matches alone are NOT inclusion.
+/// a target crate. Returns the SOURCE name (rename-translated) plus
+/// the ROOT binding the demand resolved through, or None -
+/// name-keyed declaration matches alone are NOT inclusion.
 ///
 /// Why: demand's credit rule is stricter than the capture side's
 /// `site_credits` (which lets the Unresolved crate-local fallback
 /// through; a bare unimported name on the consumer side is the
 /// consumer's own). The rule reads the shared `ImportBinding`
 /// surface so the resolution DATA is identical on both sides; only
-/// the verdict differs.
+/// the verdict differs. The root rides along because the coverage
+/// check needs `<root>::<name>` pair-pick lookups (the end-product
+/// criterion: a `tokio::spawn(...)` demand is served by the
+/// `implementation_functions:tokio::spawn` pick).
 ///
 /// Where: called per usage-site stream in `demand_report`.
 fn demand_resolved(
@@ -399,31 +448,60 @@ fn demand_resolved(
     alias_global: &std::collections::HashMap<String, ImportBinding>,
     consumer_renames: &std::collections::HashMap<String, String>,
     target_crates: &std::collections::BTreeSet<String>,
-) -> Option<String> {
+) -> Option<(String, String)> {
     if let Some(q) = qualifier {
         if root_in_targets(q, consumer_renames, target_crates) {
             if let Some(b) = alias_global.get(name) {
                 if root_in_targets(&b.root, consumer_renames, target_crates) {
-                    return b.source.clone();
+                    return b.source.clone().map(|s| (s, b.root.clone()));
                 }
             }
-            return Some(name.to_string());
+            return Some((name.to_string(), q.to_string()));
         }
     }
     if let Some(b) = imap.get(file).and_then(|m| m.get(name)) {
         if root_in_targets(&b.root, consumer_renames, target_crates) {
-            return Some(
+            return Some((
                 b.source
                     .clone()
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| name.to_string()),
-            );
+                b.root.clone(),
+            ));
         }
     }
     if let Some(b) = alias_global.get(name) {
         if root_in_targets(&b.root, consumer_renames, target_crates) {
-            return b.source.clone();
+            return b.source.clone().map(|s| (s, b.root.clone()));
         }
     }
     None
+}
+
+/// What: the normalized target-binding forms a demand ROOT can match
+/// pick-pair outers under: the root itself plus its dependency-rename
+/// translation when one exists. Rust path segments never contain
+/// hyphens, so normalized forms compare directly against written pick
+/// outers.
+///
+/// Why: the bundle's `<outer>::<name>` pair picks are written in the
+/// TARGET's own source spelling; a consumer demanding through a
+/// renamed binding (`tk = { package = "tokio" }`) must look the pair
+/// up under the package binding too.
+///
+/// Where: called per demand insertion in `demand_report` to populate
+/// the name -> roots map the coverage check consults.
+fn root_candidates(
+    root: &str,
+    consumer_renames: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    let n = demand_norm(root);
+    let mut out = vec![n.clone()];
+    if let Some(pkg) = consumer_renames.get(&n) {
+        let p = demand_norm(pkg);
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    out
 }

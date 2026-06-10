@@ -209,6 +209,101 @@ where
     by_crate
 }
 
+/// What: the bindings -> crate vocabulary: every name a source root
+/// can use for an in-repo crate, reconciled to the canonical package
+/// name. Global bindings are package names plus `[lib]` rename names
+/// of every crate (host and units); on top sits a per-consuming-crate
+/// overlay of dependency renames (`foo = { package = "bar" }` binds
+/// `foo` for that crate only).
+///
+/// Why: names are BINDINGS to identities, never identities (the_user
+/// ruling, 2026-06-10). The prior vocabulary keyed package names
+/// only, so any repo with a renamed lib (`libcosmic` -> `cosmic`) or
+/// a renamed dependency resolved those roots to External and lost
+/// the sites. Hyphen normalization is just lexing, not
+/// reconciliation.
+///
+/// Where: built once per characterize in `compute_pattern_metrics`
+/// from the discovery's `CrateInfo`s; consulted by
+/// `resolve_ident_origin` / `resolve_site_origin` and the free-fn
+/// synthesis qualifier check.
+pub(crate) struct ResolveVocab {
+    members: HashMap<String, String>,
+    renames_by_crate: HashMap<String, HashMap<String, String>>,
+}
+
+impl ResolveVocab {
+    /// What: build the vocabulary from the discovered crates: package
+    /// bindings + lib-rename bindings into the global table
+    /// (first-wins with a stderr note on cross-crate collisions,
+    /// deterministic in cargo's package order), and each crate's
+    /// dependency renames into the per-crate overlay.
+    ///
+    /// Why: one construction point keeps the binding rules uniform
+    /// for every consumer of root resolution.
+    ///
+    /// Where: called from `compute_pattern_metrics`.
+    pub(crate) fn from_crates(crates: &indexmap::IndexMap<String, CrateInfo>) -> Self {
+        let mut members: HashMap<String, String> = HashMap::new();
+        let bind = |binding: &str, canonical: &str, members: &mut HashMap<String, String>| {
+            let key = binding.replace('-', "_");
+            if let Some(existing) = members.get(&key) {
+                if existing != canonical {
+                    eprintln!(
+                        "[resolution] binding collision: `{}` -> `{}` kept, `{}` ignored",
+                        key, existing, canonical
+                    );
+                }
+                return;
+            }
+            members.insert(key, canonical.to_string());
+        };
+        for (pkg, info) in crates {
+            bind(pkg, pkg, &mut members);
+            if let Some(lib) = &info.lib_name {
+                bind(lib, pkg, &mut members);
+            }
+        }
+        let mut renames_by_crate: HashMap<String, HashMap<String, String>> = HashMap::new();
+        for (pkg, info) in crates {
+            for (binding, dep_pkg) in &info.renames {
+                renames_by_crate
+                    .entry(pkg.clone())
+                    .or_default()
+                    .entry(binding.replace('-', "_"))
+                    .or_insert_with(|| dep_pkg.clone());
+            }
+        }
+        Self {
+            members,
+            renames_by_crate,
+        }
+    }
+
+    /// What: resolve a source ROOT binding as seen from
+    /// `using_crate` to the canonical package name - the using
+    /// crate's dependency-rename overlay first, then the global
+    /// package/lib bindings. `None` when the root binds no in-repo
+    /// crate.
+    ///
+    /// Why: dependency renames are per-consuming-crate by cargo
+    /// semantics; the overlay-then-global order mirrors how rustc
+    /// resolves the extern prelude for that crate.
+    ///
+    /// Where: called by `resolve_ident_origin` (import roots),
+    /// `resolve_site_origin` (written qualifiers), and the free-fn
+    /// synthesis.
+    pub(crate) fn resolve_root(&self, using_crate: &str, root: &str) -> Option<&String> {
+        let key = root.replace('-', "_");
+        if let Some(overlay) = self.renames_by_crate.get(using_crate) {
+            if let Some(canonical) = overlay.get(&key) {
+                return Some(canonical);
+            }
+        }
+        self.members.get(&key)
+    }
+}
+
 /// What: where a usage-site identifier resolves to, per the using
 /// file's imports. `SelfCrate` covers `crate::` / `self::` / `super::`
 /// import paths plus prelude-shadowing local declarations.
@@ -263,7 +358,7 @@ pub(crate) fn resolve_ident_origin(
     ident: &str,
     using_crate: &str,
     import_maps: &ImportMaps,
-    workspace_members: &HashMap<String, String>,
+    vocab: &ResolveVocab,
     local_decl_crates: &HashMap<String, HashSet<String>>,
 ) -> IdentOrigin {
     if let Some(map) = import_maps.get(file) {
@@ -271,13 +366,10 @@ pub(crate) fn resolve_ident_origin(
             return match binding.root.as_str() {
                 "std" | "core" | "alloc" => IdentOrigin::Std,
                 "crate" | "self" | "super" => IdentOrigin::SelfCrate,
-                other => {
-                    let norm = other.replace('-', "_");
-                    match workspace_members.get(&norm) {
-                        Some(canonical) => IdentOrigin::Workspace(canonical.clone()),
-                        None => IdentOrigin::External,
-                    }
-                }
+                other => match vocab.resolve_root(using_crate, other) {
+                    Some(canonical) => IdentOrigin::Workspace(canonical.clone()),
+                    None => IdentOrigin::External,
+                },
             };
         }
     }
@@ -317,7 +409,7 @@ pub(crate) fn resolve_site_origin(
     qualifier: Option<&str>,
     using_crate: &str,
     import_maps: &ImportMaps,
-    workspace_members: &HashMap<String, String>,
+    vocab: &ResolveVocab,
     local_decl_crates: &HashMap<String, HashSet<String>>,
     local_mod_crates: &HashMap<String, HashSet<String>>,
 ) -> IdentOrigin {
@@ -326,8 +418,7 @@ pub(crate) fn resolve_site_origin(
             "std" | "core" | "alloc" => IdentOrigin::Std,
             "crate" | "self" | "super" => IdentOrigin::SelfCrate,
             other => {
-                let norm = other.replace('-', "_");
-                if let Some(canonical) = workspace_members.get(&norm) {
+                if let Some(canonical) = vocab.resolve_root(using_crate, other) {
                     IdentOrigin::Workspace(canonical.clone())
                 } else {
                     // Module-name root: resolve the module ident
@@ -340,7 +431,7 @@ pub(crate) fn resolve_site_origin(
                         other,
                         using_crate,
                         import_maps,
-                        workspace_members,
+                        vocab,
                         local_decl_crates,
                     ) {
                         IdentOrigin::Unresolved => {
@@ -365,7 +456,7 @@ pub(crate) fn resolve_site_origin(
         ident,
         using_crate,
         import_maps,
-        workspace_members,
+        vocab,
         local_decl_crates,
     )
 }

@@ -42,10 +42,9 @@ pub fn compute_pattern_metrics(
             u.get("path").and_then(|v| v.as_str())?,
         ))
     }));
-    let workspace_members: std::collections::HashMap<String, String> = crates
-        .keys()
-        .map(|k| (k.replace('-', "_"), k.clone()))
-        .collect();
+    // Bindings -> identity vocabulary: package names + lib renames
+    // globally, dependency renames per consuming crate.
+    let vocab = ResolveVocab::from_crates(crates);
     let mut local_decl_crates: std::collections::HashMap<
         String,
         std::collections::HashSet<String>,
@@ -124,7 +123,7 @@ pub fn compute_pattern_metrics(
                 qualifier,
                 using,
                 &import_maps,
-                &workspace_members,
+                &vocab,
                 &local_decl_crates,
                 &local_mod_crates,
             );
@@ -272,7 +271,7 @@ pub fn compute_pattern_metrics(
                 fact.get("qualifier").and_then(|v| v.as_str()),
                 using,
                 &import_maps,
-                &workspace_members,
+                &vocab,
                 &local_decl_crates,
                 &local_mod_crates,
             );
@@ -394,7 +393,7 @@ pub fn compute_pattern_metrics(
                         q.as_deref(),
                         &using,
                         &import_maps,
-                        &workspace_members,
+                        &vocab,
                         &local_decl_crates,
                         &local_mod_crates,
                     );
@@ -468,7 +467,7 @@ pub fn compute_pattern_metrics(
                 ent.qualifier.as_deref(),
                 &using,
                 &import_maps,
-                &workspace_members,
+                &vocab,
                 &local_decl_crates,
                 &local_mod_crates,
             );
@@ -667,13 +666,13 @@ pub fn compute_pattern_metrics(
                 continue;
             }
             let candidate: Option<String> = match ent.qualifier.as_deref() {
-                Some(q) => workspace_members.get(&q.replace('-', "_")).cloned(),
+                Some(q) => vocab.resolve_root(&using, q).cloned(),
                 None => match resolve_ident_origin(
                     &ent.file,
                     &ent.name,
                     &using,
                     &import_maps,
-                    &workspace_members,
+                    &vocab,
                     &local_decl_crates,
                 ) {
                     IdentOrigin::Workspace(c) => Some(c),

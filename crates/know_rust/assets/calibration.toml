@@ -301,6 +301,37 @@ inner_crate = 60
 site_weight = 1.0
 usage_boost = 0.25
 
+# Documentation-kind profiles. A profile states what KIND of
+# documentation the emit is for and calibrates at that higher level:
+# a per-set cap scale layered over [picker.cap_matrix] (1.0 = base
+# cap unchanged; 0.0 = set OFF - not elected, not rendered). Selected
+# via the global `-p/--profile` flag; `author` is the default and the
+# fallback when a calibration file carries no profile sections.
+#
+# author: the maintainer/author-dev bundle - all six sets; big-repo
+#   aggregate target stays the 200-300K token band (~25% of a 1M
+#   reader context as the center of mass). Neutral scales pending the
+#   CAP-CUT-data retune.
+# consumer: the consumer-dev bundle - the consumer-facing surface
+#   (architecture + widened public + inter-crate); no clique, no
+#   per-crate internals. The consumer-weight term feeds exactly this
+#   audience's public set.
+[profile.author.set_scale]
+architecture = 1.0
+public = 1.0
+inter_crate = 1.0
+clique = 1.0
+intra_crate = 1.0
+inner_crate = 1.0
+
+[profile.consumer.set_scale]
+architecture = 1.0
+public = 1.3
+inter_crate = 1.0
+clique = 0.0
+intra_crate = 0.0
+inner_crate = 0.0
+
 [picker.cap_matrix.set]
 architecture = 2.5
 public = 3.5

@@ -37,6 +37,13 @@ pub(crate) struct Cli {
     #[arg(short = 'w', long = "weights", global = true)]
     pub(crate) weights_path: Option<PathBuf>,
 
+    /// Documentation-kind profile for emit (which audience the
+    /// bundle is for): `author` (default; all six sets) or
+    /// `consumer` (consumer-facing surface; no per-crate internals),
+    /// plus any `[profile.<name>]` declared in calibration.toml.
+    #[arg(short = 'p', long = "profile", global = true, default_value = "author")]
+    pub(crate) profile: String,
+
     #[command(subcommand)]
     pub(crate) command: Command,
 }

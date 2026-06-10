@@ -57,6 +57,11 @@ pub enum Error {
 
     #[snafu(display("demand misses: {names} name(s), {pairs} pair(s) uncovered"))]
     DemandMisses { names: usize, pairs: usize },
+
+    #[snafu(display(
+        "unknown documentation profile `{name}`; declare [profile.{name}] in calibration.toml (the built-in default is `author`)"
+    ))]
+    UnknownProfile { name: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

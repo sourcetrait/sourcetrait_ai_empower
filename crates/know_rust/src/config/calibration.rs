@@ -22,6 +22,111 @@ pub struct Calibration {
     pub classification: ClassificationConfig,
     pub picker: PickerConfig,
     pub filters: FiltersConfig,
+    /// What: named documentation-kind profiles (`[profile.<name>]`
+    /// sections) - each a per-set scale vector layered over the cap
+    /// matrix at emit time.
+    ///
+    /// Why: calibration per AUDIENCE instead of one general guess
+    /// (the_user): a consumer dev wants the consumer-facing surface
+    /// and no inner-crate material; an author dev wants the full
+    /// 20-30%-of-context bundle on big repos. The profile states the
+    /// documentation KIND; the scales calibrate at that higher level.
+    ///
+    /// Where: resolved by `Calibration::resolve_profile` from the
+    /// CLI's global `-p/--profile` flag; consumed by
+    /// `emit::picker::compute_significance_sets`.
+    #[serde(default)]
+    pub profile: indexmap::IndexMap<String, ProfileConfig>,
+}
+
+/// What: one named documentation-kind profile - currently the per-set
+/// scale vector (future fields: aggregate token-target band, prose
+/// scaling).
+///
+/// Why: a profile is a LAYER over the tuned base matrices, not a
+/// third matrix - the 13 cap multipliers stay the single tuned base;
+/// the profile transforms them per audience.
+///
+/// Where: values of `Calibration::profile`; built from
+/// `[profile.<name>.set_scale]` toml sections.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ProfileConfig {
+    pub set_scale: ProfileSetScale,
+}
+
+/// What: per-`PickSet` cap scale for a documentation-kind profile.
+/// `1.0` = the tuned base cap unchanged; `0.0` = the set is OFF (not
+/// elected, not rendered); other values widen/narrow the set's cap.
+///
+/// Why: the per-set vector is the minimal lever that expresses both
+/// named profiles: `author` (all sets, big-repo band) and `consumer`
+/// (consumer-facing surface, no per-crate internals).
+///
+/// Where: applied inside `emit::picker::bucket_and_cap_by_group` on
+/// top of the cap matrix, and to the clique seat count; sets scaled
+/// to zero skip their orientation sections.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ProfileSetScale {
+    pub architecture: f64,
+    pub public: f64,
+    pub inter_crate: f64,
+    pub clique: f64,
+    pub intra_crate: f64,
+    pub inner_crate: f64,
+}
+
+impl ProfileSetScale {
+    /// What: the neutral (all-1.0) scale - the `author` default and
+    /// the fallback when a custom calibration carries no profile
+    /// sections.
+    pub fn neutral() -> Self {
+        Self {
+            architecture: 1.0,
+            public: 1.0,
+            inter_crate: 1.0,
+            clique: 1.0,
+            intra_crate: 1.0,
+            inner_crate: 1.0,
+        }
+    }
+
+    /// What: return the scale for the given pick set.
+    pub fn for_set(&self, set: PickSet) -> f64 {
+        match set {
+            PickSet::Architecture => self.architecture,
+            PickSet::Public => self.public,
+            PickSet::InterCrate => self.inter_crate,
+            PickSet::Clique => self.clique,
+            PickSet::IntraCrate => self.intra_crate,
+            PickSet::InnerCrate => self.inner_crate,
+        }
+    }
+}
+
+impl Calibration {
+    /// What: resolve a profile name to its set-scale vector. `author`
+    /// falls back to the neutral vector when no `[profile.author]`
+    /// section exists (author IS current behavior); any other unknown
+    /// name is an error.
+    ///
+    /// Why: the default profile must work against custom calibration
+    /// files written before profiles existed, while a typo'd profile
+    /// name must surface loudly rather than silently emitting the
+    /// wrong documentation kind.
+    ///
+    /// Where: called by `emit::run::emit` with the CLI's profile
+    /// name.
+    pub fn resolve_profile(&self, name: &str) -> Result<ProfileSetScale> {
+        if let Some(p) = self.profile.get(name) {
+            return Ok(p.set_scale.clone());
+        }
+        if name == "author" {
+            return Ok(ProfileSetScale::neutral());
+        }
+        Err(Error::UnknownProfile {
+            name: name.to_string(),
+        })
+    }
 }
 
 /// What: thresholds driving characterize.py's `select_mode` decision

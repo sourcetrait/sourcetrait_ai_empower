@@ -87,9 +87,9 @@ fn emit_twice_is_byte_identical() {
     characterize(root, &out, &calibration).expect("characterize succeeds");
     let templates = Templates::new(None);
 
-    emit(root, &out, &calibration, &templates, None).expect("first emit succeeds");
+    emit(root, &out, &calibration, &templates, None, "author").expect("first emit succeeds");
     let first = std::fs::read_to_string(out.join("orientation.md")).expect("read first");
-    emit(root, &out, &calibration, &templates, None).expect("second emit succeeds");
+    emit(root, &out, &calibration, &templates, None, "author").expect("second emit succeeds");
     let second = std::fs::read_to_string(out.join("orientation.md")).expect("read second");
 
     assert_eq!(

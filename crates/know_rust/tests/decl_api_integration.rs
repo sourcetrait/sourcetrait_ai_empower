@@ -149,7 +149,7 @@ fn decl_channel_mints_reachable_pairs_with_aliases() {
 
     // Zero-score minted keys stay unrendered until the weight term.
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
     let orient =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
     assert!(
@@ -178,7 +178,7 @@ fn decl_channel_mints_reachable_pairs_with_aliases() {
         },
     );
     let blob = WeightBlob { targets };
-    emit(root, &out, &calibration, &templates, Some(&blob)).expect("weighted emit succeeds");
+    emit(root, &out, &calibration, &templates, Some(&blob), "author").expect("weighted emit succeeds");
     let orient =
         std::fs::read_to_string(out.join("orientation.md")).expect("read weighted orientation");
     let s52: String = orient

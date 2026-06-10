@@ -21,6 +21,7 @@ pub fn compute_significance_sets(
     top_n_workspace: usize,
     calibration: &Calibration,
     weights: Option<&TargetWeights>,
+    profile: &ProfileSetScale,
 ) -> SignificanceSets {
     let pattern_metrics = fp
         .get("pattern_metrics")
@@ -287,6 +288,7 @@ pub fn compute_significance_sets(
         top_n_workspace,
         cap_matrix,
         floor,
+        profile,
     );
     let public_counts: indexmap::IndexMap<Pattern, f64> = public_scores
         .iter()
@@ -299,6 +301,7 @@ pub fn compute_significance_sets(
         top_n_workspace,
         cap_matrix,
         floor,
+        profile,
     );
     let inter_counts: indexmap::IndexMap<Pattern, usize> = inter_scores
         .iter()
@@ -313,6 +316,7 @@ pub fn compute_significance_sets(
         top_n_workspace,
         cap_matrix,
         floor,
+        profile,
     );
 
     let mut workspace_wide_keys: indexmap::IndexSet<Pattern> = indexmap::IndexSet::new();
@@ -332,37 +336,44 @@ pub fn compute_significance_sets(
     // targets). The elected list renders as-is; duplication with the
     // workspace-wide sets is a different lens, kept. Workspace-wide
     // dedup applies to the rendered 5.5 lists only (below).
+    // The ELECTION sees full pools regardless of profile (the R8
+    // crate-equal-voice ruling): ballots build at NEUTRAL scale; the
+    // profile applies to the SEAT count and the rendered sets below.
+    let neutral = ProfileSetScale::neutral();
     let empty_dedup: indexmap::IndexSet<Pattern> = indexmap::IndexSet::new();
-    let ballots_intra_per_crate = per_crate_picks(
-        &per_crate_counts,
-        &pattern_metrics,
-        per_crate_sloc,
-        calibration,
-        PickSet::IntraCrate,
-        false,
-        &empty_dedup,
-    )
-    .0;
-    let per_crate_ballots: indexmap::IndexMap<String, Vec<Pattern>> = ballots_intra_per_crate
-        .iter()
-        .map(|(c, s)| (c.clone(), s.keys().cloned().collect()))
-        .collect();
-    // R4b: clique seats = workspace base * Clique set_mult. Run STV
-    // for this many seats, then post-filter via per-group caps. The
-    // post-filter only trims groups whose elected count exceeds the
-    // group's cap; with current weights, most per-group caps exceed
-    // the STV seat count (e.g. clique_seats=44 at base=29 vs traits
-    // cap=65) so the filter is a defensive ceiling rather than a
-    // routine trim.
-    let clique_seats = {
-        let set_mult = cap_matrix.set.for_set(PickSet::Clique);
-        ((top_n_workspace as f64 * set_mult).round() as usize).max(floor)
+    let clique_scale = profile.for_set(PickSet::Clique);
+    let elected_clique = if clique_scale <= 0.0 {
+        indexmap::IndexMap::new()
+    } else {
+        let ballots_intra_per_crate = per_crate_picks(
+            &per_crate_counts,
+            &pattern_metrics,
+            per_crate_sloc,
+            calibration,
+            PickSet::IntraCrate,
+            false,
+            &empty_dedup,
+            &neutral,
+        )
+        .0;
+        let per_crate_ballots: indexmap::IndexMap<String, Vec<Pattern>> = ballots_intra_per_crate
+            .iter()
+            .map(|(c, s)| (c.clone(), s.keys().cloned().collect()))
+            .collect();
+        // R4b: clique seats = workspace base * Clique set_mult (*
+        // profile scale). Run STV for this many seats, then
+        // post-filter via per-group caps. The post-filter only trims
+        // groups whose elected count exceeds the group's cap; with
+        // current weights, most per-group caps exceed the STV seat
+        // count (e.g. clique_seats=44 at base=29 vs traits cap=65) so
+        // the filter is a defensive ceiling rather than a routine
+        // trim.
+        let clique_seats = {
+            let set_mult = cap_matrix.set.for_set(PickSet::Clique);
+            ((top_n_workspace as f64 * set_mult * clique_scale).round() as usize).max(floor)
+        };
+        stv_elect_clique(&per_crate_ballots, clique_seats, &empty_dedup)
     };
-    let elected_clique = stv_elect_clique(
-        &per_crate_ballots,
-        clique_seats,
-        &empty_dedup,
-    );
     // the_user (R8 slice 4 correction): the clique END RESULT stays
     // deduped against the workspace-wide sets - only the ELECTION
     // sees full pools. Winners that already sit in arch / public /
@@ -378,6 +389,7 @@ pub fn compute_significance_sets(
         top_n_workspace,
         cap_matrix,
         floor,
+        profile,
     );
 
     for k in significant_clique.keys() {
@@ -392,6 +404,7 @@ pub fn compute_significance_sets(
         PickSet::IntraCrate,
         false,
         &workspace_wide_keys,
+        profile,
     );
     let (significant_inner_crate_per_crate, top_n_inner_per_crate) = per_crate_picks(
         &per_crate_counts,
@@ -401,6 +414,7 @@ pub fn compute_significance_sets(
         PickSet::InnerCrate,
         true,
         &workspace_wide_keys,
+        profile,
     );
 
     SignificanceSets {
@@ -423,6 +437,7 @@ fn per_crate_picks(
     set: PickSet,
     origin_match: bool,
     dedup_keys: &indexmap::IndexSet<Pattern>,
+    profile: &ProfileSetScale,
 ) -> (
     indexmap::IndexMap<String, indexmap::IndexMap<Pattern, usize>>,
     indexmap::IndexMap<String, usize>,
@@ -430,6 +445,9 @@ fn per_crate_picks(
     let mut sig_per_crate: indexmap::IndexMap<String, indexmap::IndexMap<Pattern, usize>> =
         indexmap::IndexMap::new();
     let mut top_n_per_crate: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+    if profile.for_set(set) <= 0.0 {
+        return (sig_per_crate, top_n_per_crate);
+    }
     let cap_matrix = &calibration.picker.cap_matrix;
     let floor = calibration.picker.top_n_floor;
     for (crate_name, counts) in per_crate_counts {
@@ -464,7 +482,7 @@ fn per_crate_picks(
         if filtered.is_empty() {
             continue;
         }
-        let sig = bucket_and_cap_by_group(&filtered, set, base_cap, cap_matrix, floor);
+        let sig = bucket_and_cap_by_group(&filtered, set, base_cap, cap_matrix, floor, profile);
         if !sig.is_empty() {
             sig_per_crate.insert(crate_name.clone(), sig);
         }
@@ -489,17 +507,24 @@ fn per_crate_picks(
 ///
 /// Where: called from `compute_significance_sets` (workspace-wide
 /// sets + post-STV clique filter) and `per_crate_picks` (per-crate
-/// sets).
+/// sets). The documentation-kind profile scales the matrix cap per
+/// set: scale 0 turns the set OFF (empty result); a nonzero scale
+/// multiplies the cell cap before the floor applies.
 fn bucket_and_cap_by_group<V>(
     counts: &indexmap::IndexMap<Pattern, V>,
     set: PickSet,
     base_cap: usize,
     matrix: &CapMatrix,
     floor: usize,
+    profile: &ProfileSetScale,
 ) -> indexmap::IndexMap<Pattern, V>
 where
     V: Clone + PartialOrd,
 {
+    let scale = profile.for_set(set);
+    if scale <= 0.0 {
+        return indexmap::IndexMap::new();
+    }
     let mut by_group: HashMap<PickGroup, Vec<(Pattern, V)>> = HashMap::new();
     for (k, v) in counts {
         by_group
@@ -517,7 +542,15 @@ where
     // the sampling contract.
     let mut capped: Vec<(Pattern, V)> = Vec::new();
     for (group, mut items) in by_group {
-        let cap = matrix.cap_for(group, set, base_cap, floor);
+        let cap = if (scale - 1.0).abs() < f64::EPSILON {
+            matrix.cap_for(group, set, base_cap, floor)
+        } else {
+            let scaled = (base_cap as f64)
+                * matrix.group.for_group(group)
+                * matrix.set.for_set(set)
+                * scale;
+            (scaled.round() as usize).max(floor)
+        };
         items.sort_by(|a, b| {
             b.1.partial_cmp(&a.1)
                 .unwrap_or(std::cmp::Ordering::Equal)

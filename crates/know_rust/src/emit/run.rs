@@ -22,7 +22,11 @@ pub fn emit(
     calibration: &Calibration,
     templates: &Templates,
     weights: Option<&WeightBlob>,
+    profile_name: &str,
 ) -> std::result::Result<(), Error> {
+    // Resolve the documentation-kind profile up front so a typo'd
+    // name fails before any artifact is written.
+    let profile = calibration.resolve_profile(profile_name)?;
     let fp_path = out_dir.join("fingerprint.json");
     let facts_path = out_dir.join("facts.json");
     let fp_text = fs::read_to_string(&fp_path).map_err(|source| Error::Read {
@@ -66,6 +70,8 @@ pub fn emit(
             calibration,
             templates,
             tweights,
+            profile_name,
+            &profile,
         )
     };
     fs::write(&orientation_path, &orientation_text).map_err(|source| Error::Write {

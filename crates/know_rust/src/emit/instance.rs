@@ -578,6 +578,7 @@ pub fn candidate_instances(
     facts: &serde_json::Value,
     calibration: &Calibration,
     weights: Option<&TargetWeights>,
+    profile: &ProfileSetScale,
 ) -> EnrichedSets {
     let histogram = fp
         .get("pattern_histogram")
@@ -613,6 +614,7 @@ pub fn candidate_instances(
         top_n_workspace,
         calibration,
         weights,
+        profile,
     );
 
     let pattern_metrics = fp

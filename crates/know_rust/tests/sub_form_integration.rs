@@ -329,7 +329,7 @@ fn orientation_emits_budget_suffix_on_s5_picks() {
     let (_fp, out) = run_characterize(root);
     let calibration = Calibration::default();
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
     let orient_text =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
 
@@ -406,7 +406,7 @@ fn orientation_budget_suffix_carries_sub_form_when_classified() {
     let (_fp, out) = run_characterize(root);
     let calibration = Calibration::default();
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
     let orient_text =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
 

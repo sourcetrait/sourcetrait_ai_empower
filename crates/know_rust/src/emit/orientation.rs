@@ -24,14 +24,17 @@ pub fn render_orientation(
     calibration: &Calibration,
     templates: &Templates,
     weights: Option<&TargetWeights>,
+    profile_name: &str,
+    profile: &ProfileSetScale,
 ) -> String {
     let sel = fp.get("selection").cloned().unwrap_or(serde_json::Value::Null);
     let vocab = core_vocabulary(fp, facts);
-    let cands = candidate_instances(fp, facts, calibration, weights);
+    let cands = candidate_instances(fp, facts, calibration, weights, profile);
     let forecast_chars = cands.total_budget_chars();
     let forecast_tokens = forecast_chars / 4;
     eprintln!(
-        "[emit] kp forecast: {}K tokens ({}K chars; sum of budget_hints across surviving picks per R4b cap matrix)",
+        "[emit] kp forecast (profile {}): {}K tokens ({}K chars; sum of budget_hints across surviving picks per R4b cap matrix)",
+        profile_name,
         forecast_tokens / 1000,
         forecast_chars / 1000,
     );
@@ -514,79 +517,89 @@ pub fn render_orientation(
             ));
         }
         lines.push(String::new());
-        // 5.4 Clique
-        lines.push(format!(
-            "### 5.4 Clique significance ({} elected; workspace-wide STV over per-crate intra \
-             ballots)",
-            cands.clique.len()
-        ));
-        lines.push(String::new());
-        for entry in sorted_entries_desc(&cands.clique) {
+        // 5.4 Clique. Sets a profile scales to zero are OFF: their
+        // sections are omitted entirely (a consumer-profile bundle
+        // carries no per-crate internals), not rendered empty.
+        if profile.for_set(PickSet::Clique) > 0.0 {
             lines.push(format!(
-                "- `{}` - clique votes {} - seed {}{}",
-                entry.pattern,
-                format_float_2(entry.count),
-                span(&entry.instance),
-                budget_suffix(&entry),
-            ));
-        }
-        lines.push(String::new());
-        // 5.5 Intra-crate
-        lines.push(
-            "### 5.5 Intra-crate significance (per crate; patterns this crate uses with origin \
-             in OTHER workspace crates, after dedup vs clique)".to_string(),
-        );
-        lines.push(String::new());
-        let mut intra_crates: Vec<String> = cands.intra_crate_per_crate.keys().cloned().collect();
-        intra_crates.sort();
-        for crate_name in &intra_crates {
-            let entries = match cands.intra_crate_per_crate.get(crate_name) {
-                Some(e) if !e.is_empty() => e,
-                _ => continue,
-            };
-            lines.push(format!(
-                "#### crate `{}` ({} significant)",
-                crate_name, entries.len()
+                "### 5.4 Clique significance ({} elected; workspace-wide STV over per-crate intra \
+                 ballots)",
+                cands.clique.len()
             ));
             lines.push(String::new());
-            for entry in sorted_entries_desc(entries) {
+            for entry in sorted_entries_desc(&cands.clique) {
                 lines.push(format!(
-                    "- `{}` - {} occurrences - seed {}{}",
+                    "- `{}` - clique votes {} - seed {}{}",
                     entry.pattern,
-                    format_count_int(entry.count),
+                    format_float_2(entry.count),
                     span(&entry.instance),
                     budget_suffix(&entry),
                 ));
+            }
+            lines.push(String::new());
+        }
+        // 5.5 Intra-crate
+        if profile.for_set(PickSet::IntraCrate) > 0.0 {
+            lines.push(
+                "### 5.5 Intra-crate significance (per crate; patterns this crate uses with origin \
+                 in OTHER workspace crates, after dedup vs clique)".to_string(),
+            );
+            lines.push(String::new());
+            let mut intra_crates: Vec<String> =
+                cands.intra_crate_per_crate.keys().cloned().collect();
+            intra_crates.sort();
+            for crate_name in &intra_crates {
+                let entries = match cands.intra_crate_per_crate.get(crate_name) {
+                    Some(e) if !e.is_empty() => e,
+                    _ => continue,
+                };
+                lines.push(format!(
+                    "#### crate `{}` ({} significant)",
+                    crate_name, entries.len()
+                ));
                 lines.push(String::new());
+                for entry in sorted_entries_desc(entries) {
+                    lines.push(format!(
+                        "- `{}` - {} occurrences - seed {}{}",
+                        entry.pattern,
+                        format_count_int(entry.count),
+                        span(&entry.instance),
+                        budget_suffix(&entry),
+                    ));
+                    lines.push(String::new());
+                }
             }
         }
         // 5.6 Inner-crate
-        lines.push(
-            "### 5.6 Inner-crate significance (per crate; patterns originating IN and used IN \
-             this crate - the crate's own architecture)".to_string(),
-        );
-        lines.push(String::new());
-        let mut inner_crates: Vec<String> = cands.inner_crate_per_crate.keys().cloned().collect();
-        inner_crates.sort();
-        for crate_name in &inner_crates {
-            let entries = match cands.inner_crate_per_crate.get(crate_name) {
-                Some(e) if !e.is_empty() => e,
-                _ => continue,
-            };
-            lines.push(format!(
-                "#### crate `{}` ({} significant)",
-                crate_name, entries.len()
-            ));
+        if profile.for_set(PickSet::InnerCrate) > 0.0 {
+            lines.push(
+                "### 5.6 Inner-crate significance (per crate; patterns originating IN and used IN \
+                 this crate - the crate's own architecture)".to_string(),
+            );
             lines.push(String::new());
-            for entry in sorted_entries_desc(entries) {
+            let mut inner_crates: Vec<String> =
+                cands.inner_crate_per_crate.keys().cloned().collect();
+            inner_crates.sort();
+            for crate_name in &inner_crates {
+                let entries = match cands.inner_crate_per_crate.get(crate_name) {
+                    Some(e) if !e.is_empty() => e,
+                    _ => continue,
+                };
                 lines.push(format!(
-                    "- `{}` - {} occurrences - seed {}{}",
-                    entry.pattern,
-                    format_count_int(entry.count),
-                    span(&entry.instance),
-                    budget_suffix(&entry),
+                    "#### crate `{}` ({} significant)",
+                    crate_name, entries.len()
                 ));
                 lines.push(String::new());
+                for entry in sorted_entries_desc(entries) {
+                    lines.push(format!(
+                        "- `{}` - {} occurrences - seed {}{}",
+                        entry.pattern,
+                        format_count_int(entry.count),
+                        span(&entry.instance),
+                        budget_suffix(&entry),
+                    ));
+                    lines.push(String::new());
+                }
             }
         }
         // Tier guidance

@@ -64,7 +64,7 @@ fn clique_result_is_deduped_against_workspace_wide_sets() {
     let calibration = Calibration::default();
     characterize(root, &out, &calibration).expect("characterize succeeds");
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
 
     let orient =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");

@@ -33,6 +33,7 @@ pub fn run() -> std::result::Result<(), Error> {
             &calibration,
             &templates,
             weights.as_ref(),
+            &cli.profile,
         ),
         Command::Measure { measure } => dispatch_measure(measure),
         Command::RustdocOverlay {

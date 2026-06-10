@@ -70,7 +70,7 @@ fn scaffolding_defined_patterns_are_not_picked() {
     let calibration = Calibration::default();
     characterize(root, &out, &calibration).expect("characterize succeeds");
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
 
     let fp: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(out.join("fingerprint.json")).expect("read fingerprint"),

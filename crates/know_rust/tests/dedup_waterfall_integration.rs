@@ -102,7 +102,7 @@ fn arch_cap_cut_candidates_fall_to_public_and_tier_stays_unique() {
     calibration.picker.sloc_divisor = 1_000_000;
     characterize(root, &out, &calibration).expect("characterize succeeds");
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
     let orient =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
 

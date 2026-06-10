@@ -160,6 +160,29 @@ pub struct FnEntry {
     pub brace_depth: usize,
     pub doc: String,
     pub visibility: String,
+    /// What: the INLINE module chain enclosing a module-level fn
+    /// (`""` at file top level, `"m"` inside `mod m { .. }`,
+    /// `"a::b"` nested). `None` when the fn is NOT module-level
+    /// (nested in a body / impl / trait) or came from a macro
+    /// template's token walk.
+    ///
+    /// Why: the hard declaration path = the file-derived module
+    /// chain + this inline chain; the decl-driven API channel mints
+    /// keys only for module-level fns and needs the chain for
+    /// pub-reachability + canonical-binding selection.
+    ///
+    /// Where: set by `FileWalker::visit_item_fn` from its mod stack;
+    /// consumed by the decl channel in characterize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<String>,
+    /// What: true when the declaration carries `#[doc(hidden)]`.
+    ///
+    /// Why: a hidden item is the publisher saying "not the public
+    /// face" - it is disqualified from the decl-driven API channel.
+    ///
+    /// Where: set via `is_doc_hidden` in the walker's fn visitors.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub doc_hidden: bool,
 }
 
 /// What: one `mod X` declaration (with or without inline content).
@@ -169,6 +192,22 @@ pub struct ModEntry {
     pub name: String,
     pub line: usize,
     pub visibility: String,
+    /// What: the INLINE module chain enclosing this declaration
+    /// (`""` at file top; the declaring file's own chain comes from
+    /// the file path).
+    ///
+    /// Why: pub-reachability walks module chains segment by
+    /// segment; each segment's visibility lives on its ModEntry and
+    /// the parent chain locates it.
+    ///
+    /// Where: set by `FileWalker::visit_item_mod`; consumed by the
+    /// decl channel's reachability resolver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<String>,
+    /// What: true when the mod carries `#[doc(hidden)]` (hides the
+    /// whole subtree from the public face).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub doc_hidden: bool,
 }
 
 /// What: one `use X::Y` statement; `reexport` flags `pub use ...`.
@@ -178,6 +217,21 @@ pub struct UseEntry {
     pub reexport: bool,
     pub path: String,
     pub line: usize,
+    /// What: the INLINE module chain enclosing the use statement
+    /// (`""` at file top).
+    ///
+    /// Why: a `pub use` creates a soft binding AT its module chain;
+    /// the binding's public path = file chain + this chain +
+    /// binding name.
+    ///
+    /// Where: set by `FileWalker::visit_item_use`; consumed by the
+    /// decl channel's binding builder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<String>,
+    /// What: true when the use carries `#[doc(hidden)]` (the
+    /// binding is not part of the public face).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub doc_hidden: bool,
 }
 
 /// What: one macro call site (function-form or attribute-form). `kind`

@@ -396,4 +396,17 @@ pub struct WorkspaceFacts {
     /// from `item_facts.carries` after the per-crate scan loop.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub carries: BTreeMap<Pattern, Vec<CarryEntry>>,
+    /// What: per rendered-pair wire name (`<outer>::<fn>`), the
+    /// item's ALTERNATE binding outers (hard declaration parent +
+    /// every other public `pub use` spelling).
+    ///
+    /// Why: identity = the hard path, names = soft bindings; the
+    /// demand matcher consults the full binding union so a consumer
+    /// demanding through any spelling is served by the one rendered
+    /// key.
+    ///
+    /// Where: built by `decl_api::decl_api_channel`; consumed by
+    /// `measure_demand::trace::demand_report`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pair_aliases: BTreeMap<String, Vec<String>>,
 }

@@ -429,6 +429,32 @@ fn reconcile(
         }
     }
 
+    // rustdoc's canonical paths for function items: name -> joined
+    // path list (deduped, deterministic order).
+    let mut fn_paths: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    if let Some(paths_tbl) = rustdoc.get("paths").and_then(|v| v.as_object()) {
+        for entry in paths_tbl.values() {
+            if entry.get("kind").and_then(|v| v.as_str()) != Some("function") {
+                continue;
+            }
+            let Some(segs) = entry.get("path").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            let parts: Vec<&str> = segs.iter().filter_map(|s| s.as_str()).collect();
+            if let Some(name) = parts.last() {
+                fn_paths
+                    .entry((*name).to_string())
+                    .or_default()
+                    .insert(parts.join("::"));
+            }
+        }
+    }
+    let paths: std::collections::BTreeMap<String, Vec<String>> = fn_paths
+        .into_iter()
+        .map(|(k, v)| (k, v.into_iter().collect()))
+        .collect();
+
     let rustdoc_impl_traits: HashSet<String> = macro_generated
         .iter()
         .map(|m| m.trait_name.clone())
@@ -471,5 +497,6 @@ fn reconcile(
         reexports,
         null_span_items,
         disagreements,
+        paths,
     })
 }

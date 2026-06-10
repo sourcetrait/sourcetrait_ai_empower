@@ -327,6 +327,35 @@ pub(crate) fn demand_report(
     let covered: std::collections::BTreeSet<String> =
         pick_names.union(&carry_names).cloned().collect();
 
+    // Alternate binding outers per rendered pair (the hard+soft item
+    // model): a demand reaching ANY public spelling of an item is
+    // served by the one rendered key.
+    let mut alias_outers_by_pair: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Some(aliases) = target_facts.get("pair_aliases").and_then(|v| v.as_object()) {
+        for (pair, outers) in aliases {
+            if let Some(arr) = outers.as_array() {
+                alias_outers_by_pair.insert(
+                    pair.clone(),
+                    arr.iter()
+                        .filter_map(|o| o.as_str().map(String::from))
+                        .collect(),
+                );
+            }
+        }
+    }
+    // Rendered pairs indexed by inner name for the alias consult.
+    let mut rendered_by_inner: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for p in &pick_pairs {
+        if let Some((_, inner)) = p.split_once("::") {
+            rendered_by_inner
+                .entry(inner.to_string())
+                .or_default()
+                .push(p.clone());
+        }
+    }
+
     let mut mod_ns: Vec<DemandRecord> = Vec::new();
     let mut hits: Vec<DemandRecord> = Vec::new();
     let mut misses: Vec<DemandRecord> = Vec::new();
@@ -351,6 +380,15 @@ pub(crate) fn demand_report(
                 roots
                     .iter()
                     .any(|r| pick_pairs.contains(&format!("{}::{}", r, nm)))
+                    || rendered_by_inner.get(nm).map_or(false, |pairs| {
+                        pairs.iter().any(|p| {
+                            alias_outers_by_pair
+                                .get(p)
+                                .map_or(false, |outers| {
+                                    outers.iter().any(|o| roots.contains(o))
+                                })
+                        })
+                    })
             })
             .unwrap_or(false);
         if !decl.contains_key(nm) && mods.contains(nm) {
@@ -366,8 +404,20 @@ pub(crate) fn demand_report(
     let mut pair_name_level: Vec<String> = Vec::new();
     let mut pair_misses: Vec<String> = Vec::new();
     for p in pairs.keys() {
-        let o = p.split_once("::").map(|(o, _)| o).unwrap_or(p);
-        if pick_pairs.contains(p) {
+        let (o, i) = match p.split_once("::") {
+            Some((o, i)) => (o, i),
+            None => (p.as_str(), ""),
+        };
+        // Exact under the rendered spelling OR under any alternate
+        // binding outer of a rendered pair with the same inner.
+        let alias_exact = rendered_by_inner.get(i).map_or(false, |pairs| {
+            pairs.iter().any(|rp| {
+                alias_outers_by_pair
+                    .get(rp)
+                    .map_or(false, |outers| outers.iter().any(|a| a == o))
+            })
+        });
+        if pick_pairs.contains(p) || alias_exact {
             pair_exact.push(p.clone());
         } else if covered.contains(o) {
             pair_name_level.push(p.clone());

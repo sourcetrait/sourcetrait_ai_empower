@@ -22,6 +22,13 @@ pub(crate) struct FileWalker {
     current_trait_vis: Option<String>,
     current_trait_name: Option<String>,
     current_impl_type_name: Option<String>,
+    /// Inline `mod` chain at the current visit position; joined as
+    /// the `module_path` wire field on module-level decls.
+    mod_stack: Vec<String>,
+    /// Statement-block nesting via `walk_block_stmts`; zero means
+    /// module level (decl-channel eligible), nonzero means inside
+    /// some body.
+    body_depth: usize,
     facts: FileLevelFacts,
 }
 
@@ -36,6 +43,8 @@ impl FileWalker {
             current_trait_vis: None,
             current_trait_name: None,
             current_impl_type_name: None,
+            mod_stack: Vec::new(),
+            body_depth: 0,
             facts: FileLevelFacts::default(),
         }
     }
@@ -292,11 +301,15 @@ impl FileWalker {
     /// Iterate the stmts of a block at the CURRENT brace depth (no
     /// further increment). Used by impl-item / trait-item fn handlers,
     /// which fold the impl/trait brace and the fn body brace into one
-    /// depth level to match the python rustscan convention.
+    /// depth level to match the python rustscan convention. This is
+    /// the single statement funnel, so `body_depth` (module-level vs
+    /// inside-a-body for the decl channel) increments here.
     fn walk_block_stmts(&mut self, block: &syn::Block) {
+        self.body_depth += 1;
         for stmt in &block.stmts {
             self.visit_stmt(stmt);
         }
+        self.body_depth -= 1;
     }
 
     /// Process attrs on every field in a struct / enum-variant / union;
@@ -338,6 +351,8 @@ impl FileWalker {
                     brace_depth: self.brace_depth,
                     doc: extract_doc(&f.attrs),
                     visibility: trait_vis.to_string(),
+                    module_path: None,
+                    doc_hidden: is_doc_hidden(&f.attrs),
                 });
                 // R2-expansion: trait method sig carry under
                 // `trait_functions:<trait>::<method>`. Mirrors the
@@ -676,6 +691,14 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             return;
         }
         syn::visit::visit_signature(self, &f.sig);
+        // Module-level (not inside any body): record the inline mod
+        // chain so the decl channel can build the hard path; a
+        // body-nested fn carries None and is decl-ineligible.
+        let module_path = if self.body_depth == 0 {
+            Some(self.mod_stack.join("::"))
+        } else {
+            None
+        };
         self.facts.fns.push(FnEntry {
             file: self.file.clone(),
             name: f.sig.ident.to_string(),
@@ -683,6 +706,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             brace_depth: self.brace_depth,
             doc: extract_doc(&f.attrs),
             visibility: visibility_string(&f.vis),
+            module_path,
+            doc_hidden: is_doc_hidden(&f.attrs),
         });
         if f.sig.unsafety.is_some() {
             self.bump_seam(SeamKind::Unsafe, 1);
@@ -699,12 +724,16 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             name: m.ident.to_string(),
             line: m.ident.span().start().line,
             visibility: visibility_string(&m.vis),
+            module_path: Some(self.mod_stack.join("::")),
+            doc_hidden: is_doc_hidden(&m.attrs),
         });
         if let Some((_, items)) = &m.content {
             self.brace_depth += 1;
+            self.mod_stack.push(m.ident.to_string());
             for item in items {
                 self.visit_item(item);
             }
+            self.mod_stack.pop();
             self.brace_depth -= 1;
         }
     }
@@ -773,6 +802,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             reexport: matches!(u.vis, syn::Visibility::Public(_)),
             path: flatten_use_tree(&u.tree),
             line: u.use_token.span.start().line,
+            module_path: Some(self.mod_stack.join("::")),
+            doc_hidden: is_doc_hidden(&u.attrs),
         });
     }
 
@@ -799,6 +830,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
                         brace_depth: self.brace_depth,
                         doc: extract_doc(&ff.attrs),
                         visibility: visibility_string(&ff.vis),
+                        module_path: None,
+                        doc_hidden: is_doc_hidden(&ff.attrs),
                     });
                 }
                 syn::ForeignItem::Static(s) => {
@@ -892,6 +925,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             brace_depth: self.brace_depth,
             doc: extract_doc(&f.attrs),
             visibility: visibility_string(&f.vis),
+            module_path: None,
+            doc_hidden: is_doc_hidden(&f.attrs),
         });
         // R2 carry extraction: when inside an impl block with a
         // resolvable Self-type ident, record carry for this method's

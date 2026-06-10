@@ -19,6 +19,18 @@ pub struct Overlay {
     pub reexports: Vec<Reexport>,
     pub null_span_items: Vec<NullSpanItem>,
     pub disagreements: Vec<Disagreement>,
+    /// What: rustdoc's canonical paths for FUNCTION items - fn name
+    /// -> the `::`-joined path list from the rustdoc JSON `paths`
+    /// table (multiple same-name fns keep all paths).
+    ///
+    /// Why: rustdoc computes reachability-true canonical paths; the
+    /// section validates the decl channel's structural canonical
+    /// choice and supplies extra matcher alias spellings. Keys stay
+    /// overlay-INDEPENDENT (the structural fallback selects them)
+    /// so pair passes without an overlay key identically.
+    ///
+    /// Where: built in `reconcile` from the rustdoc `paths` table.
+    pub paths: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// What: one macro-generated impl entry - the trait name, a null span

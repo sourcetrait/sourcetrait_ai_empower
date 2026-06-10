@@ -30,6 +30,7 @@ pub(crate) mod config {
     pub(crate) mod loader;
     pub(crate) mod templates;
 }
+pub(crate) mod decl_api;
 pub(crate) mod error;
 pub(crate) mod model {
     pub(crate) mod identity;
@@ -85,6 +86,7 @@ pub(crate) use crate::{
     characterize::types::*,
     characterize::use_classification::*,
     cli::*,
+    decl_api::*,
     emit::cluster::*,
     emit::container_routing::*,
     emit::contexts::*,

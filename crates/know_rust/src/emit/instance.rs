@@ -299,6 +299,38 @@ pub fn instance_for_kind(
                     .cloned()
                     .collect();
             }
+            if inst.is_empty() {
+                // Decl-driven zero-usage picks: seed at the fn
+                // declaration. Prefer decls whose file path carries
+                // the pair's outer module (disambiguates same-named
+                // fns); deterministic fallback to the first sorted.
+                if let Some((outer, fn_name)) = name.split_once("::") {
+                    let fns_arr =
+                        facts.get("fns").and_then(|v| v.as_array()).unwrap_or(&empty);
+                    let mut decls: Vec<serde_json::Value> = fns_arr
+                        .iter()
+                        .filter(|f| {
+                            f.get("name").and_then(|v| v.as_str()) == Some(fn_name)
+                                && f.get("module_path").is_some()
+                        })
+                        .cloned()
+                        .collect();
+                    decls.sort_by(|a, b| {
+                        let fa = a.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                        let fb = b.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                        let oa = fa.contains(&format!("/{}.", outer))
+                            || fa.contains(&format!("/{}/", outer))
+                            || a.get("module_path").and_then(|v| v.as_str())
+                                .map_or(false, |m| m.split("::").last() == Some(outer));
+                        let ob = fb.contains(&format!("/{}.", outer))
+                            || fb.contains(&format!("/{}/", outer))
+                            || b.get("module_path").and_then(|v| v.as_str())
+                                .map_or(false, |m| m.split("::").last() == Some(outer));
+                        ob.cmp(&oa).then_with(|| fa.cmp(fb))
+                    });
+                    inst = decls;
+                }
+            }
             let first = inst.first().cloned();
             let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
             (first, spans)

@@ -404,6 +404,8 @@ pub(crate) fn scan_macro_body_tokens(
                                 brace_depth,
                                 doc: String::new(),
                                 visibility: String::new(),
+                                module_path: None,
+                                doc_hidden: false,
                             });
                             i = i + 1 + cursor.pos();
                             continue;
@@ -417,6 +419,8 @@ pub(crate) fn scan_macro_body_tokens(
                                 name: nm,
                                 line,
                                 visibility: String::new(),
+                                module_path: None,
+                                doc_hidden: false,
                             });
                             i = i + 1 + cursor.pos();
                             continue;

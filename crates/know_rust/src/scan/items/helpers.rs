@@ -90,6 +90,21 @@ pub(crate) fn attr_line(attr: &syn::Attribute) -> usize {
     attr.pound_token.span.start().line
 }
 
+/// What: true when an attribute list carries `#[doc(hidden)]`.
+///
+/// Why: a hidden item/binding is excluded from the decl-driven API
+/// channel - the publisher's explicit "not the public face" signal.
+///
+/// Where: called from the walker's fn / mod / use visitors when
+/// populating the `doc_hidden` wire flags.
+pub(crate) fn is_doc_hidden(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        attribute_path_string(a) == "doc"
+            && matches!(&a.meta, syn::Meta::List(list)
+                if list.tokens.to_string().split(',').any(|t| t.trim() == "hidden"))
+    })
+}
+
 /// What: join all `///` / `#[doc = "..."]` strings on an item into a
 /// single space-separated docstring.
 ///

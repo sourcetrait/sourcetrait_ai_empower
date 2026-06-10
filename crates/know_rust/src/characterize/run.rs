@@ -80,6 +80,7 @@ pub fn characterize(
         ast_type_refs: Vec::new(),
         ast_method_refs: Vec::new(),
         carries: BTreeMap::new(),
+        pair_aliases: BTreeMap::new(),
     };
     let mut per_crate: indexmap::IndexMap<String, PerCrateFingerprint> = indexmap::IndexMap::new();
     let mut free_fns_by_crate: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
@@ -255,7 +256,12 @@ pub fn characterize(
         }
     }
 
-    let pattern_metrics = compute_pattern_metrics(&all_facts, Some(&usage_facts), &crates, calibration);
+    let mut pattern_metrics =
+        compute_pattern_metrics(&all_facts, Some(&usage_facts), &crates, calibration);
+    // Declaration-driven API channel: pub-reachable module-level fns
+    // get a pair key even with zero usage; alternate binding outers
+    // land in facts.pair_aliases for the demand matcher.
+    all_facts.pair_aliases = decl_api_channel(&all_facts, &crates, &mut pattern_metrics);
     let workspace_use_classification =
         classify_workspace_use(&crates, &pattern_metrics, calibration);
 

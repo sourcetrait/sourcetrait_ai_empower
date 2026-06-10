@@ -371,13 +371,23 @@ pub(crate) fn scan_macro_body_tokens(
                     "trait" => {
                         let mut cursor = TokenCursor::new(&trees[i + 1..]);
                         if let Some(nm) = cursor.next_ident() {
+                            // Bare-pub recovery mirrors the fn/mod
+                            // arms: a macro-INVOCATION-declared
+                            // `pub trait` is a real pub declaration
+                            // (bevy's define_label!{ pub trait
+                            // ScheduleLabel } gated its is_pub and
+                            // with it every public-set eligibility).
                             facts.traits.push(TraitEntry {
                                 file: file.to_string(),
                                 name: nm,
                                 line,
                                 cfg_gated: false,
                                 doc: String::new(),
-                                visibility: String::new(),
+                                visibility: if prev_pub {
+                                    "pub".to_string()
+                                } else {
+                                    String::new()
+                                },
                             });
                             i = i + 1 + cursor.pos();
                             continue;
@@ -399,7 +409,11 @@ pub(crate) fn scan_macro_body_tokens(
                                 line,
                                 cfg_gated: false,
                                 doc: String::new(),
-                                visibility: String::new(),
+                                visibility: if prev_pub {
+                                    "pub".to_string()
+                                } else {
+                                    String::new()
+                                },
                             });
                             i = i + 1 + cursor.pos();
                             continue;
@@ -455,7 +469,11 @@ pub(crate) fn scan_macro_body_tokens(
                                 line,
                                 cfg_gated: false,
                                 doc: String::new(),
-                                visibility: String::new(),
+                                visibility: if prev_pub {
+                                    "pub".to_string()
+                                } else {
+                                    String::new()
+                                },
                             });
                             i = i + 1 + cursor.pos();
                             continue;

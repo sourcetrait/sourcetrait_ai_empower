@@ -97,9 +97,17 @@ fn arch_cap_cut_candidates_fall_to_public_and_tier_stays_unique() {
     std::fs::create_dir_all(&out).expect("mkdir orientation");
     let mut calibration = Calibration::default();
     // Pin every base cap to the floor so the matrix caps are tiny and
-    // deterministic regardless of fixture SLOC.
+    // deterministic regardless of fixture SLOC, and pin the author
+    // profile to NEUTRAL - this test's subject is the waterfall
+    // arithmetic over the base matrix, not the shipped author scales.
     calibration.picker.top_n_floor = 1;
     calibration.picker.sloc_divisor = 1_000_000;
+    calibration.profile.insert(
+        "author".to_string(),
+        ProfileConfig {
+            set_scale: ProfileSetScale::neutral(),
+        },
+    );
     characterize(root, &out, &calibration).expect("characterize succeeds");
     let templates = Templates::new(None);
     emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");

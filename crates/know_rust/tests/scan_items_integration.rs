@@ -132,6 +132,44 @@ fn macro_args_captured() {
 }
 
 #[test]
+fn macro_invocation_bare_pub_recovery_covers_items() {
+    // Bare `pub` before trait / struct / type / fn / mod keywords in
+    // a macro INVOCATION's tokens recovers the visibility the token
+    // walk otherwise drops (bevy's define_label!{ pub trait
+    // ScheduleLabel } class); macro_rules DEFINITION templates stay
+    // blank (a template item is not a declaration until expanded).
+    let f = scan_source(
+        "t.rs",
+        "define_label!{ pub trait ScheduleLabel {} pub struct Marker; pub type Alias = u8; }\nmacro_rules! tmpl { () => { pub trait TemplTrait {} }; }",
+    )
+    .expect("parse ok");
+    let t = f
+        .traits
+        .iter()
+        .find(|t| t.name == "ScheduleLabel")
+        .expect("invocation trait recovered");
+    assert_eq!(t.visibility, "pub", "invocation pub trait recovers vis");
+    let s = f
+        .types
+        .iter()
+        .find(|t| t.name == "Marker")
+        .expect("invocation struct recovered");
+    assert_eq!(s.visibility, "pub", "invocation pub struct recovers vis");
+    let a = f
+        .types
+        .iter()
+        .find(|t| t.name == "Alias")
+        .expect("invocation type alias recovered");
+    assert_eq!(a.visibility, "pub", "invocation pub type recovers vis");
+    let tmpl = f
+        .traits
+        .iter()
+        .find(|t| t.name == "TemplTrait")
+        .expect("template trait still recorded");
+    assert_eq!(tmpl.visibility, "", "macro_rules template stays blank");
+}
+
+#[test]
 fn derive_and_attr_macro() {
     let f = scan_source("t.rs", "#[derive(Debug, Clone)]\n#[tokio::main]\nstruct X;")
         .expect("parse ok");

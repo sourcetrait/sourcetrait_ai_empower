@@ -63,7 +63,7 @@ fn build_target(root: &Path) -> std::path::PathBuf {
     let calibration = Calibration::default();
     characterize(root, &out, &calibration).expect("characterize succeeds");
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
     out
 }
 
@@ -151,7 +151,7 @@ fn demand_resolves_lib_and_dep_renames() {
     let calibration = Calibration::default();
     characterize(troot, &tout, &calibration).expect("characterize succeeds");
     let templates = Templates::new(None);
-    emit(troot, &tout, &calibration, &templates).expect("emit succeeds");
+    emit(troot, &tout, &calibration, &templates, None).expect("emit succeeds");
 
     let ctmp = TempDir::new().expect("consumer tempdir");
     let cfiles: HashMap<&str, String> = [
@@ -253,7 +253,7 @@ fn crate_qualified_call_is_served_by_the_pair_pick() {
     let calibration = Calibration::default();
     characterize(root, &out, &calibration).expect("characterize succeeds");
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
     let orient = std::fs::read_to_string(out.join("orientation.md")).expect("read orientation");
     assert!(
         orient.contains("`implementation_functions:lib::helper`"),

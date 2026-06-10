@@ -61,7 +61,7 @@ fn build_target(root: &Path) -> std::path::PathBuf {
     let calibration = Calibration::default();
     characterize(root, &out, &calibration).expect("characterize succeeds");
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
     out
 }
 

@@ -23,10 +23,11 @@ pub fn render_orientation(
     facts: &serde_json::Value,
     calibration: &Calibration,
     templates: &Templates,
+    weights: Option<&TargetWeights>,
 ) -> String {
     let sel = fp.get("selection").cloned().unwrap_or(serde_json::Value::Null);
     let vocab = core_vocabulary(fp, facts);
-    let cands = candidate_instances(fp, facts, calibration);
+    let cands = candidate_instances(fp, facts, calibration, weights);
     let forecast_chars = cands.total_budget_chars();
     let forecast_tokens = forecast_chars / 4;
     eprintln!(

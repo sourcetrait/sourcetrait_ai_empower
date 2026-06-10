@@ -21,6 +21,7 @@ pub fn emit(
     out_dir: &Path,
     calibration: &Calibration,
     templates: &Templates,
+    weights: Option<&WeightBlob>,
 ) -> std::result::Result<(), Error> {
     let fp_path = out_dir.join("fingerprint.json");
     let facts_path = out_dir.join("facts.json");
@@ -45,10 +46,27 @@ pub fn emit(
         .and_then(|v| v.get("shape"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    // Resolve which blob target applies to this workspace (basename
+    // first, else a crate-name match); container shapes skip the
+    // picker entirely so weights never apply there.
+    let crate_names: Vec<String> = fp
+        .get("per_crate")
+        .and_then(|v| v.as_object())
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+    let tweights = weights.and_then(|b| target_weights(b, workspace_root, &crate_names));
     let orientation_text = if shape == "container" {
         render_container_routing(workspace_root, out_dir, &fp, templates)
     } else {
-        render_orientation(workspace_root, out_dir, &fp, &facts, calibration, templates)
+        render_orientation(
+            workspace_root,
+            out_dir,
+            &fp,
+            &facts,
+            calibration,
+            templates,
+            tweights,
+        )
     };
     fs::write(&orientation_path, &orientation_text).map_err(|source| Error::Write {
         path: orientation_path,

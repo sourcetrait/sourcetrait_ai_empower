@@ -190,7 +190,7 @@ fn emit_two_files_and_spans() {
     let (_fp, out) = run_characterize(root);
     let calibration = Calibration::default();
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
 
     let orient_text =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");

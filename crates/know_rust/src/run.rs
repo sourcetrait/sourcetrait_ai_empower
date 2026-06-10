@@ -14,6 +14,10 @@ pub fn run() -> std::result::Result<(), Error> {
     let cli = Cli::parse();
     let calibration = load_calibration(cli.calibration_path.as_deref())?;
     let templates = Templates::new(cli.templates_path.clone());
+    let weights = match cli.weights_path.as_deref() {
+        Some(p) => Some(load_weights(p)?),
+        None => None,
+    };
     match cli.command {
         Command::Scan { scan } => dispatch_scan(scan),
         Command::Characterize {
@@ -23,7 +27,13 @@ pub fn run() -> std::result::Result<(), Error> {
         Command::Emit {
             workspace_root,
             out_dir,
-        } => emit(&workspace_root, &out_dir, &calibration, &templates),
+        } => emit(
+            &workspace_root,
+            &out_dir,
+            &calibration,
+            &templates,
+            weights.as_ref(),
+        ),
         Command::Measure { measure } => dispatch_measure(measure),
         Command::RustdocOverlay {
             workspace_root,

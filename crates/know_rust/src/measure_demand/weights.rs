@@ -14,12 +14,12 @@ use crate::*;
 /// Where: produced by `parse_consumer_repos`; consumed by
 /// `measure_demand::run::measure_consumers`.
 #[derive(Debug, Clone)]
-pub(crate) struct ConsumerRow {
-    pub(crate) target: String,
-    pub(crate) snake: String,
-    pub(crate) role: ConsumerRole,
-    pub(crate) url: String,
-    pub(crate) root_override: Option<PathBuf>,
+pub struct ConsumerRow {
+    pub target: String,
+    pub snake: String,
+    pub role: ConsumerRole,
+    pub url: String,
+    pub root_override: Option<PathBuf>,
 }
 
 /// What: the roster role - `Weight` rows feed the aggregated demand
@@ -33,13 +33,13 @@ pub(crate) struct ConsumerRow {
 /// Where: parsed in `parse_consumer_repos`; branched on in
 /// `measure_consumers` for gating + blob aggregation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConsumerRole {
+pub enum ConsumerRole {
     Weight,
     Audit,
 }
 
 impl ConsumerRole {
-    pub(crate) fn wire(self) -> &'static str {
+    pub fn wire(self) -> &'static str {
         match self {
             Self::Weight => "weight",
             Self::Audit => "audit",
@@ -59,7 +59,7 @@ impl ConsumerRole {
 /// without adding a column that is usually empty.
 ///
 /// Where: called by `measure_consumers` on the CLI-supplied path.
-pub(crate) fn parse_consumer_repos(path: &Path) -> Result<Vec<ConsumerRow>> {
+pub fn parse_consumer_repos(path: &Path) -> Result<Vec<ConsumerRow>> {
     let text = fs::read_to_string(path).map_err(|source| Error::Read {
         path: path.to_path_buf(),
         source,
@@ -111,10 +111,10 @@ pub(crate) fn parse_consumer_repos(path: &Path) -> Result<Vec<ConsumerRow>> {
 
 /// What: per-entry weight cell - how many weight consumers demanded
 /// the key and across how many recorded demand sites.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub(crate) struct WeightCell {
-    pub(crate) consumers: usize,
-    pub(crate) sites: usize,
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct WeightCell {
+    pub consumers: usize,
+    pub sites: usize,
 }
 
 /// What: one target's aggregated consumer-demand weights - the
@@ -128,19 +128,22 @@ pub(crate) struct WeightCell {
 ///
 /// Where: values of `WeightBlob::targets`; built by
 /// `aggregate_weights`.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub(crate) struct TargetWeights {
-    pub(crate) sources: Vec<WeightSource>,
-    pub(crate) names: BTreeMap<String, WeightCell>,
-    pub(crate) pairs: BTreeMap<String, WeightCell>,
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct TargetWeights {
+    #[serde(default)]
+    pub sources: Vec<WeightSource>,
+    #[serde(default)]
+    pub names: BTreeMap<String, WeightCell>,
+    #[serde(default)]
+    pub pairs: BTreeMap<String, WeightCell>,
 }
 
 /// What: one contributing weight consumer - its snake and the
 /// target pass directory its trace ran against (the pass identity).
-#[derive(Debug, Clone, serde::Serialize)]
-pub(crate) struct WeightSource {
-    pub(crate) consumer: String,
-    pub(crate) pass: String,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WeightSource {
+    pub consumer: String,
+    pub pass: String,
 }
 
 /// What: the consumer-demand weight blob, keyed by roster target.
@@ -153,9 +156,48 @@ pub(crate) struct WeightSource {
 ///
 /// Where: written by `measure_consumers --weights-out`; consumed by
 /// the characterize/emit weight term.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub(crate) struct WeightBlob {
-    pub(crate) targets: BTreeMap<String, TargetWeights>,
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct WeightBlob {
+    pub targets: BTreeMap<String, TargetWeights>,
+}
+
+/// What: load a weight blob JSON from disk.
+///
+/// Why: emit consumes the blob via the global `--weights` flag; the
+/// loader keeps the read + parse error shapes uniform.
+///
+/// Where: called from `crate::run::run` when the flag is present.
+pub fn load_weights(path: &Path) -> Result<WeightBlob> {
+    let text = fs::read_to_string(path).map_err(|source| Error::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    serde_json::from_str(&text).map_err(|source| Error::Serialize { source })
+}
+
+/// What: resolve which blob target applies to the workspace being
+/// emitted: the workspace root's basename first (panel + pair clone
+/// layouts name the dir after the target), else the first blob
+/// target that is one of the workspace's own crate names.
+///
+/// Why: the blob is keyed by roster target name; the workspace under
+/// emit carries no roster identity of its own, so resolution rides
+/// the two naming conventions that hold across the panel, pair dirs,
+/// and fixtures.
+///
+/// Where: called by `emit::run::emit` before threading the target
+/// weights into the picker.
+pub fn target_weights<'a>(
+    blob: &'a WeightBlob,
+    workspace_root: &Path,
+    crate_names: &[String],
+) -> Option<&'a TargetWeights> {
+    if let Some(base) = workspace_root.file_name().and_then(|n| n.to_str()) {
+        if let Some(tw) = blob.targets.get(base) {
+            return Some(tw);
+        }
+    }
+    crate_names.iter().find_map(|c| blob.targets.get(c))
 }
 
 /// What: fold one weight pair's demand report into the blob under
@@ -167,7 +209,7 @@ pub(crate) struct WeightBlob {
 /// the blob needs no new extraction pass.
 ///
 /// Where: called by `measure_consumers` for each Weight-role row.
-pub(crate) fn fold_weights(
+pub fn fold_weights(
     blob: &mut WeightBlob,
     target: &str,
     consumer: &str,

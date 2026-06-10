@@ -233,7 +233,7 @@ fn embedded_units_carry_identity_and_attribution() {
     // S1 renders the unit table with provenance: the non-conflation
     // surface reaches the consuming agent structurally.
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
     let orient =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
     assert!(

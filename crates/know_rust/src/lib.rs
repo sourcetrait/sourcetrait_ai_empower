@@ -99,7 +99,6 @@ pub(crate) use crate::{
     error::*,
     measure_demand::trace::*,
     measure_demand::types::*,
-    measure_demand::weights::*,
     measure_overlap::parse::*,
     measure_overlap::score::*,
     measure_overlap::types::*,
@@ -142,6 +141,7 @@ pub use crate::run::run;
 pub use crate::characterize::run::*;
 pub use crate::emit::run::*;
 pub use crate::measure_demand::run::*;
+pub use crate::measure_demand::weights::*;
 pub use crate::measure_overlap::run::*;
 pub use crate::rustdoc_overlay::run::*;
 pub use crate::config::calibration::*;

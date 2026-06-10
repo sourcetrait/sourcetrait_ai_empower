@@ -31,6 +31,12 @@ pub(crate) struct Cli {
     #[arg(short = 't', long = "templates", global = true)]
     pub(crate) templates_path: Option<PathBuf>,
 
+    /// Path to a consumer-demand weight blob (written by
+    /// `measure consumers --weights-out`); when present, emit's
+    /// picker scores declared-API picks by revealed consumer demand.
+    #[arg(short = 'w', long = "weights", global = true)]
+    pub(crate) weights_path: Option<PathBuf>,
+
     #[command(subcommand)]
     pub(crate) command: Command,
 }

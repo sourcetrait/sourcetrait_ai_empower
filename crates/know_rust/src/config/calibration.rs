@@ -62,6 +62,27 @@ pub struct PickerConfig {
     pub classifier: ClassifierConfig,
     pub prose_budget: ProseBudgetMatrix,
     pub cap_matrix: CapMatrix,
+    pub consumer_weight: ConsumerWeightConfig,
+}
+
+/// What: knobs for the consumer-demand weight term. `site_weight` is
+/// the per-demand-site BASE score a zero-usage decl-channel pair key
+/// earns (entering the PUBLIC set as public-by-consumption);
+/// `usage_boost` is the additive per-site boost for keys already
+/// carrying usage-derived public scores.
+///
+/// Why: declared-but-internally-unused API has no usage signal by
+/// construction; revealed consumer demand (the weight blob) is its
+/// mechanical significance source, and the knobs keep the term
+/// calibratable without recompiling.
+///
+/// Where: held inside `PickerConfig`; consumed by
+/// `emit::picker::compute_significance_sets` when a weight blob is
+/// supplied.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ConsumerWeightConfig {
+    pub site_weight: f64,
+    pub usage_boost: f64,
 }
 
 /// What: form sub-classifier thresholds the structure + traits

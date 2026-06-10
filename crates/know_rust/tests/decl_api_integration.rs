@@ -143,11 +143,82 @@ fn decl_channel_mints_reachable_pairs_with_aliases() {
 
     // Zero-score minted keys stay unrendered until the weight term.
     let templates = Templates::new(None);
-    emit(root, &out, &calibration, &templates).expect("emit succeeds");
+    emit(root, &out, &calibration, &templates, None).expect("emit succeeds");
     let orient =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
     assert!(
         !orient.contains("`implementation_functions:m::channel`"),
         "zero-score decl pick must not render without a weight"
+    );
+
+    // With a weight blob the pick earns a public-by-consumption score,
+    // renders in 5.2, and a consumer demanding the HARD spelling
+    // (lib::inner::channel) is served through the pair alias.
+    let mut pairs = std::collections::BTreeMap::new();
+    pairs.insert(
+        "m::channel".to_string(),
+        WeightCell {
+            consumers: 1,
+            sites: 5,
+        },
+    );
+    let mut targets = std::collections::BTreeMap::new();
+    targets.insert(
+        "lib".to_string(),
+        TargetWeights {
+            sources: Vec::new(),
+            names: std::collections::BTreeMap::new(),
+            pairs,
+        },
+    );
+    let blob = WeightBlob { targets };
+    emit(root, &out, &calibration, &templates, Some(&blob)).expect("weighted emit succeeds");
+    let orient =
+        std::fs::read_to_string(out.join("orientation.md")).expect("read weighted orientation");
+    let s52: String = orient
+        .lines()
+        .skip_while(|l| !l.starts_with("### 5.2"))
+        .take_while(|l| !l.starts_with("### 5.3"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        s52.contains("`implementation_functions:m::channel`"),
+        "weighted decl pick renders in the PUBLIC set; 5.2:\n{s52}"
+    );
+
+    let ctmp = TempDir::new().expect("consumer tempdir");
+    let cfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"consumer\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../t/lib\"}\n",
+            ),
+        ),
+        (
+            // The HARD spelling: full path through the private inner
+            // module. Served only via the m::channel pair's alias.
+            "src/lib.rs",
+            String::from("pub fn go() { lib::m::inner::channel(); }\n"),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(ctmp.path(), &cfiles);
+    let trace_out = ctmp.path().join("trace.json");
+    measure_demand(ctmp.path(), &out, Some(&trace_out))
+        .expect("hard-spelling demand served via the pair alias");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&trace_out).expect("read trace"),
+    )
+    .expect("parse trace");
+    assert_eq!(
+        report.pointer("/summary/miss_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "no name misses"
+    );
+    assert_eq!(
+        report.pointer("/summary/pair_miss_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "the inner::channel pair lands exact via the alias tier"
     );
 }

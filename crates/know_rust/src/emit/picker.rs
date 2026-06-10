@@ -20,6 +20,7 @@ pub fn compute_significance_sets(
     per_crate_sloc: &indexmap::IndexMap<String, usize>,
     top_n_workspace: usize,
     calibration: &Calibration,
+    weights: Option<&TargetWeights>,
 ) -> SignificanceSets {
     let pattern_metrics = fp
         .get("pattern_metrics")
@@ -189,6 +190,72 @@ pub fn compute_significance_sets(
         }
         if ic > 0 {
             inter_scores.insert(pattern.clone(), ic);
+        }
+    }
+
+    // Consumer-demand weight term: revealed third-party demand from
+    // the weight blob. Zero-usage decl-channel pair keys earn their
+    // BASE public score from demand sites (public-by-consumption);
+    // usage-backed keys already in the public pool get an additive
+    // per-site boost. Pair spellings resolve through facts'
+    // pair_aliases so a demand recorded under an alternate binding
+    // outer still lands on the one rendered key.
+    if let Some(tw) = weights {
+        let cw = &calibration.picker.consumer_weight;
+        let alias_outers: HashMap<String, Vec<String>> = facts
+            .get("pair_aliases")
+            .and_then(|v| v.as_object())
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            v.as_array()
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(|o| o.as_str().map(String::from))
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (pattern, m) in &pm_by_pattern {
+            let Pattern::ImplementationFunctions { outer, inner } = pattern else {
+                continue;
+            };
+            if outer == "_" {
+                continue;
+            }
+            let dc = m.get("defining_crate").and_then(|v| v.as_str());
+            if dc.map(|c| scaffolding.contains(c)).unwrap_or(true) {
+                continue;
+            }
+            let pair = format!("{}::{}", outer, inner);
+            let mut sites = tw.pairs.get(&pair).map(|c| c.sites).unwrap_or(0);
+            if let Some(aliases) = alias_outers.get(&pair) {
+                for a in aliases {
+                    sites += tw
+                        .pairs
+                        .get(&format!("{}::{}", a, inner))
+                        .map(|c| c.sites)
+                        .unwrap_or(0);
+                }
+            }
+            if sites == 0 {
+                continue;
+            }
+            let usage_total = m.get("intra_count").and_then(|v| v.as_u64()).unwrap_or(0)
+                + m.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            if usage_total == 0 {
+                public_scores
+                    .entry(pattern.clone())
+                    .or_insert(cw.site_weight * sites as f64);
+            } else if let Some(s) = public_scores.get_mut(pattern) {
+                *s += cw.usage_boost * sites as f64;
+            }
         }
     }
 

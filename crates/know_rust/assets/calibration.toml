@@ -282,6 +282,21 @@ inner_crate = 60
 # globals lifted to 1.5 / 1.2 (the initial 0.8 / 0.5 trim suppressed
 # too much of bevy's contribution under the prose budgets).
 
+[picker.consumer_weight]
+# Consumer-demand significance weights (the weight blob written by
+# `measure consumers --weights-out`, supplied to emit via the global
+# `-w/--weights` flag; no blob = term off).
+#
+# site_weight: per-demand-site BASE score for zero-usage decl-channel
+#   pair keys (consumer demand is their only score source); they enter
+#   the PUBLIC set ("public-by-consumption") and compete under the
+#   existing cap matrix.
+# usage_boost: additive per-site boost for pair keys that already
+#   carry usage-derived public scores (consumer demand corroborating
+#   internal significance).
+site_weight = 1.0
+usage_boost = 0.25
+
 [picker.cap_matrix.set]
 architecture = 2.5
 public = 3.5

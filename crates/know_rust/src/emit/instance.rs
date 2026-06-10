@@ -577,6 +577,7 @@ pub fn candidate_instances(
     fp: &serde_json::Value,
     facts: &serde_json::Value,
     calibration: &Calibration,
+    weights: Option<&TargetWeights>,
 ) -> EnrichedSets {
     let histogram = fp
         .get("pattern_histogram")
@@ -605,7 +606,14 @@ pub fn candidate_instances(
         let s = v.get("sloc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         per_crate_sloc.insert(k.clone(), s);
     }
-    let sig = compute_significance_sets(fp, facts, &per_crate_sloc, top_n_workspace, calibration);
+    let sig = compute_significance_sets(
+        fp,
+        facts,
+        &per_crate_sloc,
+        top_n_workspace,
+        calibration,
+        weights,
+    );
 
     let pattern_metrics = fp
         .get("pattern_metrics")

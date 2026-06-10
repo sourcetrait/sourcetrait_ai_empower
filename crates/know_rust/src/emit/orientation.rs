@@ -798,21 +798,26 @@ pub(crate) fn foreign_api_surface(
             }
         }
     }
-    // Local-module gate (mirrors the demand side): a relative
-    // re-export path roots at the crate's own module, not a foreign
-    // crate.
-    let mut mods_by_crate: std::collections::HashMap<String, HashSet<String>> =
-        std::collections::HashMap::new();
+    // Local-module gate (mirrors the demand side): a uniform-path
+    // re-export roots at the module in SCOPE - the gate matches mod
+    // decls at the SAME (crate, file, inline module chain) as the
+    // use fact; a crate-wide name match over-gates (nested shim
+    // mods must not shadow other files' std re-exports).
+    let mut local_mod_scopes: std::collections::HashSet<(String, String, String, String)> =
+        std::collections::HashSet::new();
     let empty: Vec<serde_json::Value> = Vec::new();
     for m in facts.get("mods").and_then(|v| v.as_array()).unwrap_or(&empty) {
-        if let (Some(n), Some(c)) = (
+        if let (Some(n), Some(c), Some(f)) = (
             m.get("name").and_then(|v| v.as_str()),
             m.get("crate").and_then(|v| v.as_str()),
+            m.get("file").and_then(|v| v.as_str()),
         ) {
-            mods_by_crate
-                .entry(c.to_string())
-                .or_default()
-                .insert(n.to_string());
+            let mp = m
+                .get("module_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            local_mod_scopes.insert((c.to_string(), f.to_string(), mp, n.to_string()));
         }
     }
     let mut out: std::collections::BTreeMap<String, ForeignRootSurface> =
@@ -835,12 +840,25 @@ pub(crate) fn foreign_api_surface(
         {
             continue;
         }
-        let local_mod = u
-            .get("crate")
-            .and_then(|v| v.as_str())
-            .and_then(|c| mods_by_crate.get(c))
-            .map(|s| s.contains(&parsed.root))
-            .unwrap_or(false);
+        let local_mod = match (
+            u.get("crate").and_then(|v| v.as_str()),
+            u.get("file").and_then(|v| v.as_str()),
+        ) {
+            (Some(c), Some(f)) => {
+                let mp = u
+                    .get("module_path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                local_mod_scopes.contains(&(
+                    c.to_string(),
+                    f.to_string(),
+                    mp,
+                    parsed.root.clone(),
+                ))
+            }
+            _ => false,
+        };
         if local_mod {
             continue;
         }

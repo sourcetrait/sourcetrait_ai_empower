@@ -79,24 +79,34 @@ pub(crate) fn demand_report(
     // Demands served only by these classify into the non-gating
     // foreign_reexport bucket.
     let lang_roots = ["crate", "self", "super"];
-    // Local-module gate: a RELATIVE re-export path (`pub use
-    // action::Action;` in a lib.rs) roots at the crate's OWN module,
-    // not a foreign crate. mods facts per crate answer "is this root
-    // a local module of the re-exporting crate".
-    let mut mods_by_crate: std::collections::HashMap<
-        String,
-        std::collections::HashSet<String>,
-    > = std::collections::HashMap::new();
+    // Local-module gate: a uniform-path re-export (`pub use
+    // action::Action;` beside `mod action;`) roots at the module in
+    // SCOPE, not a foreign crate. Uniform-path resolution is
+    // per-module-scope, so the gate matches mod decls at the SAME
+    // (crate, file, inline module chain) as the use fact - a
+    // crate-wide name match over-gates (tokio's nested loom `std`
+    // shim must not shadow `pub use std::time::Duration` written in
+    // another file).
+    let mut local_mod_scopes: std::collections::HashSet<(String, String, String, String)> =
+        std::collections::HashSet::new();
     if let Some(arr) = target_facts.get("mods").and_then(|v| v.as_array()) {
         for m in arr {
-            if let (Some(n), Some(c)) = (
+            if let (Some(n), Some(c), Some(f)) = (
                 m.get("name").and_then(|v| v.as_str()),
                 m.get("crate").and_then(|v| v.as_str()),
+                m.get("file").and_then(|v| v.as_str()),
             ) {
-                mods_by_crate
-                    .entry(c.to_string())
-                    .or_default()
-                    .insert(n.to_string());
+                let mp = m
+                    .get("module_path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                local_mod_scopes.insert((
+                    c.to_string(),
+                    f.to_string(),
+                    mp,
+                    n.to_string(),
+                ));
             }
         }
     }
@@ -119,12 +129,25 @@ pub(crate) fn demand_report(
             {
                 continue;
             }
-            let local_mod = u
-                .get("crate")
-                .and_then(|v| v.as_str())
-                .and_then(|c| mods_by_crate.get(c))
-                .map(|s| s.contains(&parsed.root))
-                .unwrap_or(false);
+            let local_mod = match (
+                u.get("crate").and_then(|v| v.as_str()),
+                u.get("file").and_then(|v| v.as_str()),
+            ) {
+                (Some(c), Some(f)) => {
+                    let mp = u
+                        .get("module_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    local_mod_scopes.contains(&(
+                        c.to_string(),
+                        f.to_string(),
+                        mp,
+                        parsed.root.clone(),
+                    ))
+                }
+                _ => false,
+            };
             if local_mod {
                 continue;
             }

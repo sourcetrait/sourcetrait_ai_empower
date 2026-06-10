@@ -39,6 +39,7 @@ pub(crate) mod measure_demand {
     pub(crate) mod run;
     pub(crate) mod trace;
     pub(crate) mod types;
+    pub(crate) mod weights;
 }
 pub(crate) mod measure_overlap {
     pub(crate) mod parse;
@@ -96,6 +97,7 @@ pub(crate) use crate::{
     error::*,
     measure_demand::trace::*,
     measure_demand::types::*,
+    measure_demand::weights::*,
     measure_overlap::parse::*,
     measure_overlap::score::*,
     measure_overlap::types::*,

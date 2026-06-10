@@ -13,6 +13,15 @@ pub struct DemandRecord {
     pub name: String,
     pub kinds: Vec<String>,
     pub srcs: Vec<String>,
+    /// What: how many consumer sites demanded this name (every
+    /// stream insertion counts one site).
+    ///
+    /// Why: the consumer-weight blob scales by demand magnitude,
+    /// not just presence; additive wire field.
+    ///
+    /// Where: tallied in `demand_report`; folded by
+    /// `weights::fold_weights`.
+    pub sites: usize,
 }
 
 /// What: the demand-trace summary block - name counts (with the full
@@ -56,4 +65,8 @@ pub struct DemandReport {
     pub hits: Vec<DemandRecord>,
     pub mod_namespace: Vec<DemandRecord>,
     pub pair_name_level: Vec<String>,
+    /// What: per demanded `<outer>::<inner>` pair, the consumer
+    /// site count (additive wire field; the weight blob's pair
+    /// magnitude).
+    pub pair_sites: std::collections::BTreeMap<String, usize>,
 }

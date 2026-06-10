@@ -84,6 +84,12 @@ pub(crate) fn demand_report(
 
     let mut demand: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
         std::collections::BTreeMap::new();
+    // Per demanded name / pair: consumer site counts (every stream
+    // insertion is one site) - the weight blob's magnitude signal.
+    let mut demand_sites: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    let mut pair_sites: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
     // Per demanded name: the normalized target ROOT bindings the
     // demand resolved through. The end-product criterion ("would the
     // reading agent find it in the bundle") makes `<root>::<name>`
@@ -140,6 +146,7 @@ pub(crate) fn demand_report(
                                 .or_default()
                                 .insert(p.clone());
                         }
+                        *demand_sites.entry(nm.clone()).or_default() += 1;
                         demand.entry(nm).or_default().insert(kind.to_string());
                     }
                 }
@@ -181,6 +188,7 @@ pub(crate) fn demand_report(
             for r in root_candidates(&root, consumer_renames) {
                 demand_roots.entry(src.clone()).or_default().insert(r);
             }
+            *demand_sites.entry(src.clone()).or_default() += 1;
             demand.entry(src).or_default().insert("ident".to_string());
         }
     }
@@ -207,6 +215,7 @@ pub(crate) fn demand_report(
                     .or_default()
                     .insert(p.clone());
             }
+            *demand_sites.entry(src.clone()).or_default() += 1;
             demand.entry(src).or_default().insert("fn_call".to_string());
         }
     }
@@ -223,12 +232,15 @@ pub(crate) fn demand_report(
             for r in root_candidates(&root, consumer_renames) {
                 demand_roots.entry(src.clone()).or_default().insert(r);
             }
+            *demand_sites.entry(src.clone()).or_default() += 1;
             demand
                 .entry(src.clone())
                 .or_default()
                 .insert("method_ref".to_string());
+            let pair_key = format!("{}::{}", src, e.inner);
+            *pair_sites.entry(pair_key.clone()).or_default() += 1;
             pairs
-                .entry(format!("{}::{}", src, e.inner))
+                .entry(pair_key)
                 .or_default()
                 .insert("method_ref".to_string());
         }
@@ -253,12 +265,15 @@ pub(crate) fn demand_report(
             for r in root_candidates(&root, consumer_renames) {
                 demand_roots.entry(src.clone()).or_default().insert(r);
             }
+            *demand_sites.entry(src.clone()).or_default() += 1;
             demand
                 .entry(src.clone())
                 .or_default()
                 .insert("type_usage".to_string());
+            let pair_key = format!("{}::{}", src, i);
+            *pair_sites.entry(pair_key.clone()).or_default() += 1;
             pairs
-                .entry(format!("{}::{}", src, i))
+                .entry(pair_key)
                 .or_default()
                 .insert("type_usage".to_string());
         }
@@ -324,6 +339,7 @@ pub(crate) fn demand_report(
             name: nm.clone(),
             kinds,
             srcs: srcs.iter().cloned().collect(),
+            sites: demand_sites.get(nm).copied().unwrap_or(0),
         };
         // End-product criterion: a name is served when the bundle
         // presents it - by its own name in picks/carry, OR as the
@@ -378,6 +394,7 @@ pub(crate) fn demand_report(
         hits,
         mod_namespace: mod_ns,
         pair_name_level,
+        pair_sites,
     }
 }
 

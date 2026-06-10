@@ -21,6 +21,47 @@ pub fn measure_demand(
     target_out_dir: &Path,
     out: Option<&Path>,
 ) -> std::result::Result<(), Error> {
+    let report = trace_pair(consumer_root, target_out_dir)?;
+
+    let consumer_canon =
+        fs::canonicalize(consumer_root).unwrap_or_else(|_| consumer_root.to_path_buf());
+    let target_canon =
+        fs::canonicalize(target_out_dir).unwrap_or_else(|_| target_out_dir.to_path_buf());
+    println!("== demand scoreboard ==");
+    println!("consumer: {}", consumer_canon.display());
+    println!("target: {}", target_canon.display());
+    println!();
+    print_summary(&report.summary);
+
+    let out_path = out
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| target_out_dir.join("consumer_trace.json"));
+    write_report(&report, &out_path)?;
+
+    let s = &report.summary;
+    if s.miss_count > 0 || s.pair_miss_count > 0 {
+        return Err(Error::DemandMisses {
+            names: s.miss_count,
+            pairs: s.pair_miss_count,
+        });
+    }
+    Ok(())
+}
+
+/// What: run the demand trace for one (consumer root, target pass
+/// dir) pair: in-process consumer scans, target artifact loads, and
+/// the report build. No printing, no gating, no writes.
+///
+/// Why: the single-pair CLI and the roster-driven batch share
+/// exactly this unit; extracting it keeps the gate + presentation
+/// concerns in the orchestrators.
+///
+/// Where: called by `measure_demand` and per-row by
+/// `measure_consumers`.
+pub(crate) fn trace_pair(
+    consumer_root: &Path,
+    target_out_dir: &Path,
+) -> std::result::Result<DemandReport, Error> {
     let consumer_items = scan_workspace(consumer_root);
     let consumer_usages = walk_workspace(consumer_root)?;
     let consumer_renames = consumer_dep_renames(consumer_root);
@@ -47,24 +88,23 @@ pub fn measure_demand(
         source,
     })?;
 
-    let report = demand_report(
+    Ok(demand_report(
         &consumer_items,
         &consumer_usages,
         &consumer_renames,
         &target_facts,
         &target_fp,
         &orientation,
-    );
+    ))
+}
 
-    let consumer_canon =
-        fs::canonicalize(consumer_root).unwrap_or_else(|_| consumer_root.to_path_buf());
-    let target_canon =
-        fs::canonicalize(target_out_dir).unwrap_or_else(|_| target_out_dir.to_path_buf());
-    let s = &report.summary;
-    println!("== demand scoreboard ==");
-    println!("consumer: {}", consumer_canon.display());
-    println!("target: {}", target_canon.display());
-    println!();
+/// What: print one summary block (counts + miss details) to stdout.
+///
+/// Why: shared between the single-pair scoreboard and the batch's
+/// per-pair sections so the human-readable shape stays identical.
+///
+/// Where: called by `measure_demand` and `measure_consumers`.
+fn print_summary(s: &DemandSummary) {
     println!("{:<22} {:>6}", "demanded names", s.demanded_names);
     println!("{:<22} {:>6}", "covered", s.hits);
     println!("{:<22} {:>6}", "missing", s.miss_count);
@@ -93,25 +133,153 @@ pub fn measure_demand(
             println!("  [-] {}", p);
         }
     }
+}
 
-    let out_path = out
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| target_out_dir.join("consumer_trace.json"));
+/// What: serialize a report to pretty JSON at `out_path`.
+fn write_report(report: &DemandReport, out_path: &Path) -> std::result::Result<(), Error> {
     let json =
-        serde_json::to_string_pretty(&report).map_err(|source| Error::Serialize { source })?;
-    fs::write(&out_path, json).map_err(|source| Error::Write {
-        path: out_path.clone(),
+        serde_json::to_string_pretty(report).map_err(|source| Error::Serialize { source })?;
+    fs::write(out_path, json).map_err(|source| Error::Write {
+        path: out_path.to_path_buf(),
         source,
     })?;
     eprintln!("[measure demand] wrote {}", out_path.display());
+    Ok(())
+}
 
-    if s.miss_count > 0 || s.pair_miss_count > 0 {
+/// What: orchestrate the roster-driven batch: parse
+/// consumer_repos.txt, resolve each row's consumer root + target
+/// pass dir, trace every pair, write each pair's trace JSON into its
+/// pair dir, print per-pair summaries + an aggregate table, emit the
+/// aggregated consumer-demand weight blob from Weight-role rows when
+/// `--weights-out` is given, and gate (nonzero exit) on misses from
+/// Audit-role rows only.
+///
+/// Why: the four-plus-pair re-audit is one command instead of N, the
+/// role column keeps weight sources out of the independent audit,
+/// and the blob regeneration is a whole-roster pure function per the
+/// weights design.
+///
+/// Where: dispatched by `crate::run::run` via the
+/// `MeasureCommand::Consumers` arm; called from
+/// `tests/measure_consumers_integration.rs`.
+pub fn measure_consumers(
+    consumer_repos: &Path,
+    pairs_root: &Path,
+    outputs_root: &Path,
+    weights_out: Option<&Path>,
+) -> std::result::Result<(), Error> {
+    let rows = parse_consumer_repos(consumer_repos)?;
+    let mut blob = WeightBlob::default();
+    let mut audit_name_misses = 0usize;
+    let mut audit_pair_misses = 0usize;
+    let mut table: Vec<String> = Vec::new();
+
+    for row in &rows {
+        let pair_dir = pairs_root.join(&row.snake);
+        let consumer_root = resolve_consumer_root(row, &pair_dir);
+        let pass = {
+            let own = pair_dir.join(format!("orientation_{}", row.target));
+            if own.is_dir() {
+                own
+            } else {
+                outputs_root.join(&row.target)
+            }
+        };
+        if !consumer_root.is_dir() {
+            return Err(Error::Read {
+                path: consumer_root,
+                source: io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("consumer root for `{}` not found", row.snake),
+                ),
+            });
+        }
+        println!(
+            "== {} -> {} ({}) ==",
+            row.snake,
+            row.target,
+            row.role.wire()
+        );
+        let report = trace_pair(&consumer_root, &pass)?;
+        print_summary(&report.summary);
+        println!();
+        let trace_path = pair_dir.join(format!("consumer_trace_{}.json", row.snake));
+        if pair_dir.is_dir() {
+            write_report(&report, &trace_path)?;
+        }
+        let s = &report.summary;
+        table.push(format!(
+            "{:<14} {:<14} {:<7} names {:>4}/{:<4} pairs {:>4}/{:<4} miss {}+{}",
+            row.target,
+            row.snake,
+            row.role.wire(),
+            s.hits,
+            s.hits + s.miss_count,
+            s.pair_exact + s.pair_name_level,
+            s.pairs_total,
+            s.miss_count,
+            s.pair_miss_count,
+        ));
+        match row.role {
+            ConsumerRole::Audit => {
+                audit_name_misses += s.miss_count;
+                audit_pair_misses += s.pair_miss_count;
+            }
+            ConsumerRole::Weight => {
+                fold_weights(&mut blob, &row.target, &row.snake, &pass, &report);
+            }
+        }
+    }
+
+    println!("== aggregate ==");
+    for line in &table {
+        println!("{}", line);
+    }
+
+    if let Some(wpath) = weights_out {
+        let json = serde_json::to_string_pretty(&blob)
+            .map_err(|source| Error::Serialize { source })?;
+        fs::write(wpath, json).map_err(|source| Error::Write {
+            path: wpath.to_path_buf(),
+            source,
+        })?;
+        eprintln!("[measure consumers] wrote weights {}", wpath.display());
+    }
+
+    if audit_name_misses > 0 || audit_pair_misses > 0 {
         return Err(Error::DemandMisses {
-            names: s.miss_count,
-            pairs: s.pair_miss_count,
+            names: audit_name_misses,
+            pairs: audit_pair_misses,
         });
     }
     Ok(())
+}
+
+/// What: resolve a roster row's consumer root: the `local:<path>`
+/// URL form, then a `# root:` override, then the pair dir's clone
+/// (URL basename minus `.git`).
+///
+/// Why: three declaration shapes cover the roster's realities -
+/// on-box workspace crates, reused clones living elsewhere
+/// (cosmic-files inside the cosmic-epoch submodule), and ordinary
+/// pair-dir clones.
+///
+/// Where: called per row by `measure_consumers`.
+fn resolve_consumer_root(row: &ConsumerRow, pair_dir: &Path) -> PathBuf {
+    if let Some(local) = row.url.strip_prefix("local:") {
+        return PathBuf::from(local);
+    }
+    if let Some(root) = &row.root_override {
+        return root.clone();
+    }
+    let basename = row
+        .url
+        .rsplit('/')
+        .next()
+        .unwrap_or(&row.snake)
+        .trim_end_matches(".git");
+    pair_dir.join(basename)
 }
 
 /// What: collect the consumer's dependency renames
@@ -125,8 +293,7 @@ pub fn measure_demand(
 /// is consumer-wide (not per-member) at first-wins granularity,
 /// matching the trace's existing alias-map pragmatics.
 ///
-/// Where: called by `measure_demand` before building the report;
-/// threaded into `demand_report`'s root checks.
+/// Where: called by `trace_pair` before building the report.
 fn consumer_dep_renames(consumer_root: &Path) -> HashMap<String, String> {
     let mut manifests: Vec<PathBuf> = walkdir::WalkDir::new(consumer_root)
         .into_iter()

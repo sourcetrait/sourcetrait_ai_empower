@@ -109,6 +109,25 @@ pub(crate) enum MeasureCommand {
         #[arg(long = "out")]
         out: Option<PathBuf>,
     },
+    /// Roster-driven batch demand: trace every consumer_repos.txt
+    /// pair, print per-pair scoreboards + an aggregate table, emit
+    /// the consumer-demand weight blob from weight-role rows, and
+    /// gate (nonzero exit) on audit-role misses only.
+    Consumers {
+        /// Path to consumer_repos.txt (5 columns:
+        /// target snake role url ref; `# root:` comment overrides a
+        /// row's consumer root).
+        consumer_repos: PathBuf,
+        /// Root of the pair dirs
+        /// (e.g. ~/repos/know_rust_consumer).
+        pairs_root: PathBuf,
+        /// Root of per-target pass outputs used when a pair has no
+        /// own orientation_<target>/ (e.g. a sample's output/ dir).
+        outputs_root: PathBuf,
+        /// Write the aggregated weight blob JSON here.
+        #[arg(long = "weights-out")]
+        weights_out: Option<PathBuf>,
+    },
     /// Measure picker overlap against a manual ground-truth list.
     /// Walks each target's orientation.md under `samples_dir`, parses
     /// the S5.1..5.6 pick lists, and reports per-target overlap +

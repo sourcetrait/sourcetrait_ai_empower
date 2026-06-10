@@ -53,6 +53,17 @@ fn dispatch_measure(measure: MeasureCommand) -> std::result::Result<(), Error> {
             target_out_dir,
             out,
         } => measure_demand(&consumer_root, &target_out_dir, out.as_deref()),
+        MeasureCommand::Consumers {
+            consumer_repos,
+            pairs_root,
+            outputs_root,
+            weights_out,
+        } => measure_consumers(
+            &consumer_repos,
+            &pairs_root,
+            &outputs_root,
+            weights_out.as_deref(),
+        ),
         MeasureCommand::Overlap {
             samples_dir,
             ground_truth,

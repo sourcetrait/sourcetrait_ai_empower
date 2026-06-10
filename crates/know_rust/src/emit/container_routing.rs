@@ -133,6 +133,16 @@ pub fn render_container_routing(
          typical of containers should be visible here.".to_string(),
     );
     lines.push(String::new());
+    lines.push(
+        "Raw pre-translation kinds (the audit signal; counts untouched). Legend (kind -> \
+         pick group): trait_impl -> traits; derive + attr_macro -> configuring; reg_macro + \
+         free_fn -> utilities; pub_type -> structure | traits; method_ref -> \
+         implementation_functions; assoc_const -> globals; type_usage -> \
+         implementation_functions + structure (the bridge; the structure side aggregates \
+         across `Outer::*` siblings); fn_table -> histogram-only (no pick group)."
+            .to_string(),
+    );
+    lines.push(String::new());
     let histogram = fp
         .get("pattern_histogram")
         .and_then(|v| v.as_array())

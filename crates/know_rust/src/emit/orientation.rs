@@ -751,6 +751,20 @@ pub fn render_orientation(
     // Appendix
     lines.push("## Appendix: full pattern histogram".to_string());
     lines.push(String::new());
+    // The appendix stays the RAW pre-translation audit signal
+    // (translating in place would double bridge entries and break
+    // the truncated-list aggregation); the legend maps kinds to the
+    // pick groups the S5 sections speak in.
+    lines.push(
+        "Raw pre-translation kinds (the audit signal; counts untouched). Legend (kind -> \
+         pick group): trait_impl -> traits; derive + attr_macro -> configuring; reg_macro + \
+         free_fn -> utilities; pub_type -> structure | traits; method_ref -> \
+         implementation_functions; assoc_const -> globals; type_usage -> \
+         implementation_functions + structure (the bridge; the structure side aggregates \
+         across `Outer::*` siblings); fn_table -> histogram-only (no pick group)."
+            .to_string(),
+    );
+    lines.push(String::new());
     let histogram = fp
         .get("pattern_histogram")
         .and_then(|v| v.as_array())

@@ -199,6 +199,10 @@ fn emit_two_files_and_spans() {
     assert!(orient_text.contains("[AGENT]"));
     assert!(ref_text.contains("src/lib.rs:"));
     assert!(orient_text.contains("trait_impl:Cmd"));
+    assert!(
+        orient_text.contains("Legend (kind -> pick group)"),
+        "the histogram appendix carries the kind->group legend"
+    );
 }
 
 #[test]

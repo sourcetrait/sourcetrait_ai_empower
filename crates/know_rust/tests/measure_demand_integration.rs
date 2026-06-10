@@ -74,9 +74,14 @@ fn consumer_files(with_hidden: bool) -> HashMap<&'static str, String> {
          use lib::{Hidden, boot};\n\
          pub fn run(_h: Hidden) { boot(); let _ = JsonVal::new(); }\n"
     } else {
+        // The full-path glob (`use lib::*;`, no brace group) must
+        // land in the GLOBS bucket, not register a demanded name
+        // `*` (the suffix-glob parse bug found by the bevy_ahoy
+        // consumer trace).
         "pub(crate) mod inner;\n\
          use lib::Value as JsonVal;\n\
          use lib::boot;\n\
+         use lib::*;\n\
          pub fn run() { boot(); let _ = JsonVal::new(); }\n"
     };
     [
@@ -247,6 +252,16 @@ fn miss_gates_and_clean_run_passes() {
     assert_eq!(
         report.pointer("/summary/pair_miss_count").and_then(|v| v.as_u64()),
         Some(0)
+    );
+    let globs: Vec<&str> = report
+        .pointer("/summary/globs")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(
+        globs,
+        vec!["lib::*"],
+        "full-path glob lands in the globs bucket, not as a `*` name miss"
     );
     let hit_names: Vec<&str> = report
         .get("hits")

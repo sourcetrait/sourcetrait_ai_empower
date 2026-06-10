@@ -93,6 +93,15 @@ pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
             return;
         }
         let leaf = s.rsplit("::").next().unwrap_or(s).trim();
+        // Full-path glob (`a::b::*`, no brace group): the bare-`*`
+        // check above only sees brace PIECES, so the suffix form
+        // must divert here or the glob parses as Named("*") - inert
+        // on the capture side (no ident is ever `*`) but the demand
+        // trace misreported it as a missing NAME instead of a glob.
+        if leaf == "*" {
+            out.push(UseLeaf::Glob);
+            return;
+        }
         if !leaf.is_empty() {
             out.push(UseLeaf::Named {
                 binding: leaf.to_string(),

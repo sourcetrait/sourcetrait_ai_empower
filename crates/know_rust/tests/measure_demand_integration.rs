@@ -229,7 +229,7 @@ fn crate_qualified_call_is_served_by_the_pair_pick() {
         (
             "lib/src/lib.rs",
             String::from(
-                "macro_rules! decl_api { () => { pub fn helper() {} }; }\ndecl_api!();\npub mod m { pub fn mfn() {} }\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\npub fn seed() -> Core { Core::new() }\npub fn seed2() -> Core { Core::new() }\n",
+                "macro_rules! decl_api { () => { pub fn helper() {} }; }\ndecl_api!();\npub mod m { pub fn mfn() {} pub fn mfn2() {} }\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\npub fn seed() -> Core { Core::new() }\npub fn seed2() -> Core { Core::new() }\n",
             ),
         ),
         (
@@ -241,7 +241,7 @@ fn crate_qualified_call_is_served_by_the_pair_pick() {
         (
             "app/src/lib.rs",
             String::from(
-                "pub fn run(_c: lib::Core) { lib::helper(); lib::m::mfn(); }\npub fn run2() { lib::helper(); lib::m::mfn(); }\n",
+                "pub fn run(_c: lib::Core) { lib::helper(); lib::m::mfn(); lib::m::mfn2(); }\npub fn run2() { lib::helper(); lib::m::mfn(); lib::m::mfn2(); }\n",
             ),
         ),
     ]
@@ -267,6 +267,10 @@ fn crate_qualified_call_is_served_by_the_pair_pick() {
         orient.contains("`implementation_functions:m::mfn`"),
         "fixture premise: the module-fn pair pick renders"
     );
+    assert!(
+        orient.contains("`implementation_functions:m::mfn2`"),
+        "fixture premise: the second module-fn pair pick renders"
+    );
 
     let ctmp = TempDir::new().expect("consumer tempdir");
     let cfiles: HashMap<&str, String> = [
@@ -280,10 +284,13 @@ fn crate_qualified_call_is_served_by_the_pair_pick() {
             // helper: crate-qualified call -> served by the
             // `lib::helper` pair. mfn: module-pathed import (nested
             // brace piece) + bare call -> the leaf's PARENT segment
-            // serves it through the `m::mfn` pair.
+            // serves it through the `m::mfn` pair. mfn2: full-path
+            // call with NO import -> only the CALL-SITE parent
+            // segment can reach the `m::mfn2` pair (the 0.0.37
+            // TRACE-BLIND shape: cosmic::iced::stream::channel).
             "src/lib.rs",
             String::from(
-                "use lib::{m::mfn, Core};\npub fn go(_c: Core) { lib::helper(); mfn(); }\n",
+                "use lib::{m::mfn, Core};\npub fn go(_c: Core) { lib::helper(); mfn(); }\npub fn go2() { lib::m::mfn2(); }\n",
             ),
         ),
     ]
@@ -314,6 +321,10 @@ fn crate_qualified_call_is_served_by_the_pair_pick() {
     assert!(
         hit_names.contains(&"mfn"),
         "mfn served via the m::mfn pair pick (use-path penultimate); hits: {hit_names:?}"
+    );
+    assert!(
+        hit_names.contains(&"mfn2"),
+        "mfn2 served via the m::mfn2 pair pick (call-site parent); hits: {hit_names:?}"
     );
     assert_eq!(
         report.pointer("/summary/miss_count").and_then(|v| v.as_u64()),

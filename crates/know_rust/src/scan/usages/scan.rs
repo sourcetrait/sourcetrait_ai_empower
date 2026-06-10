@@ -365,11 +365,20 @@ fn record_call_head(
         } else {
             None
         };
+        // Full-path calls keep the segment before the callee so the
+        // demand side can look up `<module>::<fn>` pair picks; the
+        // two-segment form's outer is already the qualifier.
+        let parent = if segs.len() >= 3 {
+            Some(segs[segs.len() - 2].ident.to_string())
+        } else {
+            None
+        };
         facts.fn_call_usages.push(FnCallUsage {
             file: file.to_string(),
             name: name.clone(),
             line,
             qualifier,
+            parent,
         });
     }
     for seg in &segs {

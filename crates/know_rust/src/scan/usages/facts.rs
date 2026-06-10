@@ -75,6 +75,23 @@ pub struct FnCallUsage {
     pub line: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qualifier: Option<String>,
+    /// What: the path segment immediately preceding the callee when
+    /// the call was written with three or more segments
+    /// (`cosmic::iced::stream::channel(..)` -> name `channel`,
+    /// qualifier `cosmic`, parent `stream`). `None` for bare and
+    /// two-segment calls (the qualifier already carries the
+    /// two-segment outer).
+    ///
+    /// Why: pair picks render as `<module>::<fn>`; a full-path call
+    /// kept only its root qualifier, so the demand side could not
+    /// look the pair up and scored the name a miss (the 0.0.37
+    /// TRACE-BLIND class).
+    ///
+    /// Where: set by `record_call_head`; consumed by
+    /// `measure_demand::trace::demand_report`'s fn_call stream as a
+    /// demand-root candidate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// What: a single type-identifier occurrence inside a function

@@ -197,6 +197,16 @@ pub(crate) fn demand_report(
             for r in root_candidates(&root, consumer_renames) {
                 demand_roots.entry(src.clone()).or_default().insert(r);
             }
+            // The call-site parent joins the root set the same way
+            // the import-leaf parent does: a full-path call
+            // (`cosmic::iced::stream::channel(..)`) is served by the
+            // rendered `stream::channel` pair pick.
+            if let Some(p) = &e.parent {
+                demand_roots
+                    .entry(src.clone())
+                    .or_default()
+                    .insert(p.clone());
+            }
             demand.entry(src).or_default().insert("fn_call".to_string());
         }
     }

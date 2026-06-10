@@ -109,9 +109,15 @@ fn print_summary(s: &DemandSummary) {
     println!("{:<22} {:>6}", "covered", s.hits);
     println!("{:<22} {:>6}", "missing", s.miss_count);
     println!("{:<22} {:>6}", "module-namespace", s.mod_namespace_count);
+    println!("{:<22} {:>6}", "foreign-reexport", s.foreign_reexport_count);
     println!(
-        "{:<22} {:>6}  (exact {}, name-level {}, missing {})",
-        "pairs", s.pairs_total, s.pair_exact, s.pair_name_level, s.pair_miss_count
+        "{:<22} {:>6}  (exact {}, name-level {}, foreign {}, missing {})",
+        "pairs",
+        s.pairs_total,
+        s.pair_exact,
+        s.pair_name_level,
+        s.pair_foreign.len(),
+        s.pair_miss_count
     );
     println!("{:<22} {:>6}", "globs", s.globs.len());
     if !s.misses.is_empty() {
@@ -126,11 +132,25 @@ fn print_summary(s: &DemandSummary) {
             );
         }
     }
+    if !s.foreign_reexports.is_empty() {
+        println!();
+        println!("## foreign re-exports (reported, not gated)");
+        for m in &s.foreign_reexports {
+            println!("  [f] {} via {}", m.name, m.srcs.join(", "));
+        }
+    }
     if !s.pair_misses.is_empty() {
         println!();
         println!("## missing pairs");
         for p in &s.pair_misses {
             println!("  [-] {}", p);
+        }
+    }
+    if !s.pair_foreign.is_empty() {
+        println!();
+        println!("## foreign pairs (reported, not gated)");
+        for p in &s.pair_foreign {
+            println!("  [f] {}", p);
         }
     }
 }

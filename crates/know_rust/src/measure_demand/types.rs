@@ -41,11 +41,33 @@ pub struct DemandSummary {
     pub miss_count: usize,
     pub misses: Vec<DemandRecord>,
     pub mod_namespace_count: usize,
+    /// What: demanded names the target serves by RE-EXPORTING a
+    /// FOREIGN (non-workspace) crate's item or namespace - reported
+    /// in their own bucket, not miss-counted (the mod_namespace
+    /// pattern).
+    ///
+    /// Why: a `pub use futures::SinkExt` demand is real consumer
+    /// demand on the target's surface, but no workspace pick can
+    /// ever serve it; counting it a miss made the iced/libcosmic
+    /// audits dishonest. The bucket keeps the gate meaningful until
+    /// the foreign-API-surface emit section SERVES the class.
+    ///
+    /// Where: classified in `demand_report` from the target's
+    /// foreign `pub use` facts; printed by `print_summary`.
+    #[serde(default)]
+    pub foreign_reexport_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub foreign_reexports: Vec<DemandRecord>,
     pub pairs_total: usize,
     pub pair_exact: usize,
     pub pair_name_level: usize,
     pub pair_miss_count: usize,
     pub pair_misses: Vec<String>,
+    /// What: demanded `<outer>::<inner>` pairs whose OUTER is a
+    /// foreign re-exported namespace/root - the pair-tier mirror of
+    /// the foreign_reexports bucket (non-gating).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pair_foreign: Vec<String>,
     pub globs: Vec<String>,
 }
 

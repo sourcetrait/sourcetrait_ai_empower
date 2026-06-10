@@ -67,6 +67,50 @@ pub(crate) fn demand_report(
         })
         .unwrap_or_default();
 
+    // Foreign re-export surface: the target's `pub use` facts whose
+    // ROOT is neither a workspace crate nor a self-reference root
+    // expose FOREIGN items/namespaces on the target's API - std /
+    // core / alloc COUNT as foreign (tokio's `pub use
+    // std::time::Duration` is exactly the class: real surface no
+    // workspace pick can serve). Leaf bindings (pub use mime::Mime
+    // [as X]) collect by their EXPOSED name; single-segment
+    // re-exports (pub use futures;) plus every foreign root form
+    // the namespace set the demand-root/parent match consults.
+    // Demands served only by these classify into the non-gating
+    // foreign_reexport bucket.
+    let lang_roots = ["crate", "self", "super"];
+    let mut foreign_leafs: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    let mut foreign_ns: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    if let Some(uses) = target_facts.get("uses").and_then(|v| v.as_array()) {
+        for u in uses {
+            if !u.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
+                continue;
+            }
+            let Some(path) = u.get("path").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let parsed = parse_use_leaves(path);
+            if parsed.root.is_empty()
+                || lang_roots.contains(&parsed.root.as_str())
+                || target_crates.contains(&demand_norm(&parsed.root))
+            {
+                continue;
+            }
+            foreign_ns.insert(demand_norm(&parsed.root));
+            let crate_level = !path.trim().contains("::");
+            for leaf in &parsed.leaves {
+                if let UseLeaf::Named { binding, .. } = leaf {
+                    foreign_leafs.insert(binding.clone());
+                    if crate_level {
+                        foreign_ns.insert(demand_norm(binding));
+                    }
+                }
+            }
+        }
+    }
+
     // Consumer import surface: the per-file binding maps come from
     // the shared builder (the same one pattern_metrics uses); the
     // crate-wide rename map - demand's own concept, for consumer-
@@ -359,6 +403,7 @@ pub(crate) fn demand_report(
     let mut mod_ns: Vec<DemandRecord> = Vec::new();
     let mut hits: Vec<DemandRecord> = Vec::new();
     let mut misses: Vec<DemandRecord> = Vec::new();
+    let mut foreign: Vec<DemandRecord> = Vec::new();
     for (nm, srcs) in &demand {
         let kinds: Vec<String> = match decl.get(nm) {
             Some(k) if !k.is_empty() => k.iter().cloned().collect(),
@@ -391,10 +436,20 @@ pub(crate) fn demand_report(
                     })
             })
             .unwrap_or(false);
+        // Foreign classification fires only when nothing in the
+        // bundle serves the name (a served name is a hit regardless
+        // of how the target also re-exports foreign material).
+        let foreign_served = foreign_leafs.contains(nm)
+            || demand_roots
+                .get(nm)
+                .map(|roots| roots.iter().any(|r| foreign_ns.contains(&demand_norm(r))))
+                .unwrap_or(false);
         if !decl.contains_key(nm) && mods.contains(nm) {
             mod_ns.push(rec);
         } else if covered.contains(nm) || root_pair_served {
             hits.push(rec);
+        } else if foreign_served {
+            foreign.push(rec);
         } else {
             misses.push(rec);
         }
@@ -403,6 +458,7 @@ pub(crate) fn demand_report(
     let mut pair_exact: Vec<String> = Vec::new();
     let mut pair_name_level: Vec<String> = Vec::new();
     let mut pair_misses: Vec<String> = Vec::new();
+    let mut pair_foreign: Vec<String> = Vec::new();
     for p in pairs.keys() {
         let (o, i) = match p.split_once("::") {
             Some((o, i)) => (o, i),
@@ -421,6 +477,10 @@ pub(crate) fn demand_report(
             pair_exact.push(p.clone());
         } else if covered.contains(o) {
             pair_name_level.push(p.clone());
+        } else if foreign_ns.contains(&demand_norm(o)) || foreign_leafs.contains(o) {
+            // Foreign-outer pairs mirror the name bucket: real
+            // demand, structurally unservable by workspace picks.
+            pair_foreign.push(p.clone());
         } else {
             pair_misses.push(p.clone());
         }
@@ -432,11 +492,14 @@ pub(crate) fn demand_report(
         miss_count: misses.len(),
         misses: misses.clone(),
         mod_namespace_count: mod_ns.len(),
+        foreign_reexport_count: foreign.len(),
+        foreign_reexports: foreign,
         pairs_total: pairs.len(),
         pair_exact: pair_exact.len(),
         pair_name_level: pair_name_level.len(),
         pair_miss_count: pair_misses.len(),
         pair_misses,
+        pair_foreign,
         globs,
     };
     DemandReport {

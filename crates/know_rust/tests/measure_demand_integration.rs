@@ -433,3 +433,105 @@ fn miss_gates_and_clean_run_passes() {
         "cross-file alias pair lands name-level; got {name_level:?}"
     );
 }
+
+#[test]
+fn foreign_reexport_demands_bucket_without_gating() {
+    // The target re-exports a FOREIGN crate's item (pub use
+    // extfut::SinkExt) and namespace (pub use extfut;). Consumer
+    // demands through both spellings are real demand the workspace
+    // can never serve - they classify into the non-gating
+    // foreign_reexport bucket and the run passes the zero-miss gate.
+    let tmp = TempDir::new().expect("target tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub use extfut::SinkExt;\npub use extfut;\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\npub fn boot() {}\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use lib::{Core, boot};\npub fn a() { let _ = Core::new(); boot(); }\npub fn b() { let _ = Core::new(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+    let out = root.join(".orientation");
+    std::fs::create_dir_all(&out).expect("mkdir orientation");
+    let calibration = Calibration::default();
+    characterize(root, &out, &calibration).expect("characterize succeeds");
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
+
+    let ctmp = TempDir::new().expect("consumer tempdir");
+    let cfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"consumer\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../t/lib\"}\n",
+            ),
+        ),
+        (
+            "src/lib.rs",
+            String::from(
+                "use lib::{SinkExt, Core};\nuse lib::extfut::FuturesOrdered;\npub fn go(_c: Core) { let _ = Core::new(); }\npub fn t<T: SinkExt>() {}\npub fn h(_f: FuturesOrdered) {}\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(ctmp.path(), &cfiles);
+
+    let out_path = ctmp.path().join("trace_out.json");
+    measure_demand(ctmp.path(), &out, Some(&out_path))
+        .expect("foreign-reexport demands must not gate");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&out_path).expect("read --out json"),
+    )
+    .expect("parse --out json");
+    assert_eq!(
+        report.pointer("/summary/miss_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "no gated misses"
+    );
+    assert_eq!(
+        report
+            .pointer("/summary/foreign_reexport_count")
+            .and_then(|v| v.as_u64()),
+        Some(2),
+        "SinkExt (leaf) + FuturesOrdered (namespace) bucket as foreign"
+    );
+    let foreign_names: Vec<&str> = report
+        .pointer("/summary/foreign_reexports")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        foreign_names.contains(&"SinkExt") && foreign_names.contains(&"FuturesOrdered"),
+        "bucket carries both spellings; got {foreign_names:?}"
+    );
+}

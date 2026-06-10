@@ -130,30 +130,38 @@ pub(crate) fn demand_report(
             {
                 continue;
             }
-            let local_mod = match (
-                u.get("crate").and_then(|v| v.as_str()),
-                u.get("file").and_then(|v| v.as_str()),
-            ) {
-                (Some(c), Some(f)) => {
-                    let mp = u
-                        .get("module_path")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    local_mod_scopes.contains(&(
-                        c.to_string(),
-                        f.to_string(),
-                        mp,
-                        parsed.root.clone(),
-                    ))
+            // An explicit-external path (leading `::`) names the
+            // foreign crate by language semantics; the local-module
+            // gate never applies to it.
+            let local_mod = if parsed.explicit_external {
+                false
+            } else {
+                match (
+                    u.get("crate").and_then(|v| v.as_str()),
+                    u.get("file").and_then(|v| v.as_str()),
+                ) {
+                    (Some(c), Some(f)) => {
+                        let mp = u
+                            .get("module_path")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        local_mod_scopes.contains(&(
+                            c.to_string(),
+                            f.to_string(),
+                            mp,
+                            parsed.root.clone(),
+                        ))
+                    }
+                    _ => false,
                 }
-                _ => false,
             };
             if local_mod {
                 continue;
             }
             foreign_ns.insert(demand_norm(&parsed.root));
-            let crate_level = !path.trim().contains("::");
+            let path_stripped = path.trim().strip_prefix("::").unwrap_or(path.trim());
+            let crate_level = !path_stripped.contains("::");
             for leaf in &parsed.leaves {
                 if let UseLeaf::Named { binding, .. } = leaf {
                     foreign_leafs.insert(binding.clone());
@@ -228,12 +236,15 @@ pub(crate) fn demand_report(
         }
         // Uniform-path local import: consumer-internal, never target
         // demand; its renamed leaves must not seed the crate-wide
-        // alias map either.
-        if local_use_scopes.contains(&(
-            u.file.clone(),
-            u.module_path.clone().unwrap_or_default(),
-            parsed.root.clone(),
-        )) {
+        // alias map either. An explicit-external path (leading `::`)
+        // bypasses the gate by language semantics.
+        if !parsed.explicit_external
+            && local_use_scopes.contains(&(
+                u.file.clone(),
+                u.module_path.clone().unwrap_or_default(),
+                parsed.root.clone(),
+            ))
+        {
             continue;
         }
         for leaf in &parsed.leaves {

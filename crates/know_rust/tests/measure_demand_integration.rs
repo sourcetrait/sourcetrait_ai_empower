@@ -656,6 +656,113 @@ fn overlay_paths_serve_as_matcher_aliases() {
     );
 }
 
+#[test]
+fn explicit_external_reexport_bypasses_local_shim() {
+    // The bevy Write shape: the target carries a local `mod core`
+    // shim AND `pub use ::core::fmt::Write;` in the same scope. The
+    // leading `::` is the explicit-external marker - the
+    // local-module gate must not absorb it, so Write reaches the
+    // foreign tiers (5F + the non-gating demand bucket).
+    let tmp = TempDir::new().expect("target tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "mod core { pub fn shim() {} }\npub use ::core::fmt::Write;\npub struct Core2;\nimpl Core2 { pub fn new() -> Self { Core2 } }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use lib::Core2;\npub fn a() -> Core2 { Core2::new() }\npub fn b() -> Core2 { Core2::new() }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+    let out = root.join(".orientation");
+    std::fs::create_dir_all(&out).expect("mkdir orientation");
+    let calibration = Calibration::default();
+    characterize(root, &out, &calibration).expect("characterize succeeds");
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
+    let orient =
+        std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
+    assert!(
+        orient.contains("## 5F. Foreign API surface (re-exported)")
+            && orient.contains("**`core`**: Write"),
+        "explicit-external re-export reaches 5F despite the shim mod; 5F:\n{}",
+        orient
+            .lines()
+            .skip_while(|l| !l.starts_with("## 5F."))
+            .take(8)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let ctmp = TempDir::new().expect("consumer tempdir");
+    let cfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"consumer\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../t/lib\"}\n",
+            ),
+        ),
+        (
+            "src/lib.rs",
+            String::from(
+                "use lib::{Write, Core2};\npub fn t<T: Write>() {}\npub fn go() -> Core2 { Core2::new() }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(ctmp.path(), &cfiles);
+    let out_path = ctmp.path().join("trace_out.json");
+    measure_demand(ctmp.path(), &out, Some(&out_path))
+        .expect("foreign-served Write must not gate");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&out_path).expect("read --out json"),
+    )
+    .expect("parse --out json");
+    assert_eq!(
+        report.pointer("/summary/miss_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "no gated misses"
+    );
+    let foreign_names: Vec<&str> = report
+        .pointer("/summary/foreign_reexports")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        foreign_names.contains(&"Write"),
+        "Write buckets foreign; got {foreign_names:?}"
+    );
+}
+
 fn build_nu_named_target(root: &Path) -> std::path::PathBuf {
     // A target whose member crate is literally named `nu` - the
     // collision shape behind the demand-side local-module gate

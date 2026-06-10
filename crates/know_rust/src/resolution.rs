@@ -42,6 +42,11 @@ pub(crate) enum UseLeaf {
 pub(crate) struct UseParse {
     pub(crate) root: String,
     pub(crate) leaves: Vec<UseLeaf>,
+    /// What: true when the written path carried a leading `::` -
+    /// the language's explicit-external marker. Local-module gates
+    /// must never absorb an explicit-external root (bevy's
+    /// `pub use ::core::fmt::Write;` beside shim mods).
+    pub(crate) explicit_external: bool,
 }
 
 /// What: expand one flattened use-tree string (the
@@ -134,7 +139,13 @@ pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
         }
         parent_last.map(String::from)
     }
-    let trimmed = path.trim();
+    let trimmed_raw = path.trim();
+    // A leading `::` is the explicit-external marker; strip it into
+    // the flag so the root parses from the real first segment.
+    let (explicit_external, trimmed) = match trimmed_raw.strip_prefix("::") {
+        Some(rest) => (true, rest),
+        None => (false, trimmed_raw),
+    };
     // The root is the first segment of the BASE path: a
     // single-segment rename (`core_k as ck`) carries its ` as `
     // suffix inside the first `::`-chunk and must be stripped, or
@@ -153,7 +164,11 @@ pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
     if !root.is_empty() {
         leaves(trimmed, None, &mut out);
     }
-    UseParse { root, leaves: out }
+    UseParse {
+        root,
+        leaves: out,
+        explicit_external,
+    }
 }
 
 /// What: one per-file import binding - the path ROOT the binding
@@ -295,10 +310,14 @@ where
                     .insert(binding.clone());
             }
         }
-        let trimmed = path.trim();
-        if trimmed.contains('{') {
+        let trimmed_raw = path.trim();
+        if trimmed_raw.contains('{') {
             continue;
         }
+        // Facade shape checks run on the ::-stripped form so an
+        // explicit-external prefix doesn't disguise a crate-level
+        // re-export's shape.
+        let trimmed = trimmed_raw.strip_prefix("::").unwrap_or(trimmed_raw);
         let base = trimmed
             .rsplit_once(" as ")
             .map(|(b, _)| b.trim())

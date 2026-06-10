@@ -797,10 +797,21 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
 
     fn visit_item_use(&mut self, u: &'ast syn::ItemUse) {
         let _ = self.process_item_attrs(&u.attrs);
+        // The leading `::` is the writer's EXPLICIT-EXTERNAL marker
+        // (`pub use ::core::fmt::Write;` names the core CRATE even
+        // beside a local `mod core` shim); dropping it from the wire
+        // let the local-module gates eat the root. Emit it verbatim;
+        // parse_use_leaves strips it into the explicit-external flag.
+        let flat = flatten_use_tree(&u.tree);
+        let path = if u.leading_colon.is_some() {
+            format!("::{}", flat)
+        } else {
+            flat
+        };
         self.facts.uses.push(UseEntry {
             file: self.file.clone(),
             reexport: matches!(u.vis, syn::Visibility::Public(_)),
-            path: flatten_use_tree(&u.tree),
+            path,
             line: u.use_token.span.start().line,
             module_path: Some(self.mod_stack.join("::")),
             doc_hidden: is_doc_hidden(&u.attrs),

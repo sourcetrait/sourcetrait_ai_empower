@@ -841,24 +841,30 @@ pub(crate) fn foreign_api_surface(
         {
             continue;
         }
-        let local_mod = match (
-            u.get("crate").and_then(|v| v.as_str()),
-            u.get("file").and_then(|v| v.as_str()),
-        ) {
-            (Some(c), Some(f)) => {
-                let mp = u
-                    .get("module_path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                local_mod_scopes.contains(&(
-                    c.to_string(),
-                    f.to_string(),
-                    mp,
-                    parsed.root.clone(),
-                ))
+        // Explicit-external paths (leading `::`) bypass the
+        // local-module gate by language semantics.
+        let local_mod = if parsed.explicit_external {
+            false
+        } else {
+            match (
+                u.get("crate").and_then(|v| v.as_str()),
+                u.get("file").and_then(|v| v.as_str()),
+            ) {
+                (Some(c), Some(f)) => {
+                    let mp = u
+                        .get("module_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    local_mod_scopes.contains(&(
+                        c.to_string(),
+                        f.to_string(),
+                        mp,
+                        parsed.root.clone(),
+                    ))
+                }
+                _ => false,
             }
-            _ => false,
         };
         if local_mod {
             continue;
@@ -867,7 +873,8 @@ pub(crate) fn foreign_api_surface(
             namespace: false,
             leaves: Vec::new(),
         });
-        if !path.trim().contains("::") {
+        let path_stripped = path.trim().strip_prefix("::").unwrap_or(path.trim());
+        if !path_stripped.contains("::") {
             entry.namespace = true;
             continue;
         }

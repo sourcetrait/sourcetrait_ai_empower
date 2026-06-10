@@ -170,6 +170,31 @@ fn macro_invocation_bare_pub_recovery_covers_items() {
 }
 
 #[test]
+fn leading_colon_use_paths_keep_the_marker() {
+    // The leading `::` is the explicit-external marker; the wire
+    // must carry it (dropping it let local-module gates absorb
+    // `pub use ::core::fmt::Write` beside a `mod core` shim).
+    let f = scan_source(
+        "t.rs",
+        "pub use ::core::fmt::Write;\nuse ::alloc::vec::Vec;\nuse std::io::Read;\n",
+    )
+    .expect("parse ok");
+    let paths: Vec<&str> = f.uses.iter().map(|u| u.path.as_str()).collect();
+    assert!(
+        paths.contains(&"::core::fmt::Write"),
+        "explicit-external re-export keeps the prefix; paths: {paths:?}"
+    );
+    assert!(
+        paths.contains(&"::alloc::vec::Vec"),
+        "explicit-external import keeps the prefix"
+    );
+    assert!(
+        paths.contains(&"std::io::Read"),
+        "plain paths stay unprefixed"
+    );
+}
+
+#[test]
 fn derive_and_attr_macro() {
     let f = scan_source("t.rs", "#[derive(Debug, Clone)]\n#[tokio::main]\nstruct X;")
         .expect("parse ok");

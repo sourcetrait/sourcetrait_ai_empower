@@ -92,15 +92,18 @@ pub fn compute_pattern_metrics(
     // sites importing through the facade (use ratatui::Frame, decl in
     // ratatui-core) credit the declaring crate. Name-level match,
     // consistent with the system's attribution granularity.
-    let reexports_by_crate = build_reexport_index(all_facts.uses.iter().filter_map(|u| {
-        if !u.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
-            return None;
-        }
-        Some((
-            u.get("crate").and_then(|v| v.as_str())?,
-            u.get("path").and_then(|v| v.as_str())?,
-        ))
-    }));
+    let facades = build_facade_index(
+        all_facts.uses.iter().filter_map(|u| {
+            if !u.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return None;
+            }
+            Some((
+                u.get("crate").and_then(|v| v.as_str())?,
+                u.get("path").and_then(|v| v.as_str())?,
+            ))
+        }),
+        &vocab,
+    );
 
     let test_weight = calibration.picker.example.test_weight;
     let bench_weight = calibration.picker.example.bench_weight;
@@ -275,7 +278,7 @@ pub fn compute_pattern_metrics(
                 &local_decl_crates,
                 &local_mod_crates,
             );
-            if !site_credits(&origin, using, &defining_crate, &resolve_target, &reexports_by_crate) {
+            if !site_credits(&origin, using, &defining_crate, &resolve_target, &facades) {
                 continue;
             }
             let norm = file.replace('\\', "/");
@@ -397,7 +400,7 @@ pub fn compute_pattern_metrics(
                         &local_decl_crates,
                         &local_mod_crates,
                     );
-                    site_credits(&origin, &using, &defining_crate, &ident, &reexports_by_crate)
+                    site_credits(&origin, &using, &defining_crate, &ident, &facades)
                 })
                 .map(|(f, _)| f.clone())
                 .collect();
@@ -471,7 +474,7 @@ pub fn compute_pattern_metrics(
                 &local_decl_crates,
                 &local_mod_crates,
             );
-            if !site_credits(&origin, &using, &defn.crate_name, &ent.outer, &reexports_by_crate) {
+            if !site_credits(&origin, &using, &defn.crate_name, &ent.outer, &facades) {
                 continue;
             }
             // Labels routing (R8 slice 3): constant-shaped inners are
@@ -688,27 +691,41 @@ pub fn compute_pattern_metrics(
                 .unwrap_or(false);
             let target = if vis_ok {
                 Some(c.clone())
-            } else if reexports_by_crate
-                .get(&c)
-                .map(|s| s.contains(&ent.name))
-                .unwrap_or(false)
-            {
-                // Facade re-export: the binding crate re-exports the
-                // fn; credit the unique pub workspace declaration.
+            } else {
+                // Facade redirect: the binding crate re-exports the
+                // fn by name (unique pub workspace declaration wins)
+                // or wholesale re-exports a namespace that declares
+                // it (unique pub declaration inside the closure wins).
                 free_fn_decls.get(&ent.name).and_then(|m| {
                     let pubs: Vec<&String> = m
                         .iter()
                         .filter(|(_, v)| v.starts_with("pub"))
                         .map(|(k, _)| k)
                         .collect();
-                    if pubs.len() == 1 {
-                        Some(pubs[0].clone())
+                    let leaf = facades
+                        .leaf_reexports
+                        .get(&c)
+                        .map(|s| s.contains(&ent.name))
+                        .unwrap_or(false);
+                    if leaf && pubs.len() == 1 {
+                        return Some(pubs[0].clone());
+                    }
+                    let ns_pubs: Vec<&&String> = pubs
+                        .iter()
+                        .filter(|k| {
+                            facades
+                                .ns_closure
+                                .get(&c)
+                                .map(|s| s.contains(**k))
+                                .unwrap_or(false)
+                        })
+                        .collect();
+                    if ns_pubs.len() == 1 {
+                        Some((*ns_pubs[0]).clone())
                     } else {
                         None
                     }
                 })
-            } else {
-                None
             };
             let Some(target) = target else { continue };
             free_fn_sites

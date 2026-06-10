@@ -101,8 +101,15 @@ pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
         }
     }
     let trimmed = path.trim();
+    // The root is the first segment of the BASE path: a
+    // single-segment rename (`core_k as ck`) carries its ` as `
+    // suffix inside the first `::`-chunk and must be stripped, or
+    // the binding resolves to garbage (External).
     let root = trimmed
         .split("::")
+        .next()
+        .unwrap_or("")
+        .split(" as ")
         .next()
         .unwrap_or("")
         .trim()
@@ -174,24 +181,73 @@ where
     by_file
 }
 
-/// What: build the crate -> re-exported BINDING names index from
-/// (crate, use-path) pairs of `pub use` facts.
+/// What: the facade re-export index. `leaf_reexports` holds each
+/// crate's re-exported BINDING names (`pub use core::X as Y` exposes
+/// Y); `ns_closure` holds, per crate, the transitive set of in-repo
+/// crates whose whole NAMESPACE the crate re-exports - a
+/// crate-level `pub use iced;` / `pub use iced_core as core;` /
+/// root-glob `pub use iced::*;` creates an edge, and edges chain
+/// (libcosmic -> iced -> iced_core).
 ///
-/// Why: a workspace FACADE crate re-exporting another member's item
-/// is the same item - sites importing through the facade credit the
-/// declaring crate (the ratatui/ratatui-core split). Name-level
-/// match, consistent with the system's attribution granularity; the
-/// re-export exposes the BINDING name (`pub use core::X as Y` exposes
-/// Y).
+/// Why: a workspace facade re-exporting another crate's item is the
+/// same item, and that holds for whole-crate namespace re-exports
+/// too: a site spelled `cosmic::iced::Foo` resolves
+/// Workspace(libcosmic) while Foo defines in a fork crate; the
+/// name-level leaf rule alone covered only itemwise re-exports.
+/// Module-level re-exports (`pub use k::m;`) stay out of scope -
+/// name-level granularity, consistent with the system's attribution.
 ///
-/// Where: called from `compute_pattern_metrics` over reexport-flagged
-/// `uses` facts; the index feeds `site_credits` and the free-fn
+/// Where: built in `compute_pattern_metrics` via
+/// `build_facade_index`; judged by `site_credits` and the free-fn
 /// facade redirect.
-pub(crate) fn build_reexport_index<'a, I>(reexports: I) -> HashMap<String, HashSet<String>>
+pub(crate) struct FacadeIndex {
+    pub(crate) leaf_reexports: HashMap<String, HashSet<String>>,
+    pub(crate) ns_closure: HashMap<String, HashSet<String>>,
+}
+
+impl FacadeIndex {
+    /// What: true when `via_crate` re-exports `ident` by name OR
+    /// wholesale re-exports (transitively) the namespace of
+    /// `defining_crate`.
+    ///
+    /// Why: the single verdict both facade forms feed; callers stay
+    /// agnostic of which form carried the site.
+    ///
+    /// Where: called from `site_credits` for the Workspace /
+    /// SelfCrate arms.
+    pub(crate) fn credits(&self, via_crate: &str, defining_crate: &str, ident: &str) -> bool {
+        self.leaf_reexports
+            .get(via_crate)
+            .map(|s| s.contains(ident))
+            .unwrap_or(false)
+            || self
+                .ns_closure
+                .get(via_crate)
+                .map(|s| s.contains(defining_crate))
+                .unwrap_or(false)
+    }
+}
+
+/// What: build the facade index from (crate, use-path) pairs of
+/// `pub use` facts: binding leaves into `leaf_reexports`, and
+/// crate-level namespace edges - a non-group path whose base (before
+/// any `as` rename) is a single segment resolving through the
+/// vocabulary to an in-repo crate, or a root-glob `k::*` - expanded
+/// to a transitive closure.
+///
+/// Why: one construction point for both facade forms keeps the
+/// credit rule's evidence uniform; resolving edge targets through
+/// `ResolveVocab` means lib renames participate (`pub use cosmic;`
+/// would edge to package libcosmic).
+///
+/// Where: called from `compute_pattern_metrics` over
+/// reexport-flagged `uses` facts.
+pub(crate) fn build_facade_index<'a, I>(reexports: I, vocab: &ResolveVocab) -> FacadeIndex
 where
     I: IntoIterator<Item = (&'a str, &'a str)>,
 {
-    let mut by_crate: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut leaf_reexports: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut edges: HashMap<String, HashSet<String>> = HashMap::new();
     for (krate, path) in reexports {
         let parsed = parse_use_leaves(path);
         if parsed.root.is_empty() {
@@ -199,14 +255,59 @@ where
         }
         for leaf in &parsed.leaves {
             if let UseLeaf::Named { binding, .. } = leaf {
-                by_crate
+                leaf_reexports
                     .entry(krate.to_string())
                     .or_default()
                     .insert(binding.clone());
             }
         }
+        let trimmed = path.trim();
+        if trimmed.contains('{') {
+            continue;
+        }
+        let base = trimmed
+            .rsplit_once(" as ")
+            .map(|(b, _)| b.trim())
+            .unwrap_or(trimmed);
+        let is_crate_level = !base.contains("::");
+        let is_root_glob = base
+            .split_once("::")
+            .map(|(_, rest)| rest.trim() == "*")
+            .unwrap_or(false);
+        if is_crate_level || is_root_glob {
+            if let Some(canonical) = vocab.resolve_root(krate, &parsed.root) {
+                if canonical != krate {
+                    edges
+                        .entry(krate.to_string())
+                        .or_default()
+                        .insert(canonical.clone());
+                }
+            }
+        }
     }
-    by_crate
+    // Transitive closure (cycle-safe BFS): libcosmic -> iced ->
+    // iced_core chains into one reachable set per crate.
+    let mut ns_closure: HashMap<String, HashSet<String>> = HashMap::new();
+    for start in edges.keys() {
+        let mut reach: HashSet<String> = HashSet::new();
+        let mut queue: Vec<String> = edges
+            .get(start)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        while let Some(k) = queue.pop() {
+            if k == *start || !reach.insert(k.clone()) {
+                continue;
+            }
+            if let Some(next) = edges.get(&k) {
+                queue.extend(next.iter().cloned());
+            }
+        }
+        ns_closure.insert(start.clone(), reach);
+    }
+    FacadeIndex {
+        leaf_reexports,
+        ns_closure,
+    }
 }
 
 /// What: the bindings -> crate vocabulary: every name a source root
@@ -480,18 +581,17 @@ pub(crate) fn site_credits(
     using_crate: &str,
     defining_crate: &str,
     ident: &str,
-    reexports_by_crate: &HashMap<String, HashSet<String>>,
+    facades: &FacadeIndex,
 ) -> bool {
-    let reexported_via = |c: &str| {
-        reexports_by_crate
-            .get(c)
-            .map(|s| s.contains(ident))
-            .unwrap_or(false)
-    };
     match origin {
         IdentOrigin::Std | IdentOrigin::External => false,
-        IdentOrigin::Workspace(c) => c == defining_crate || reexported_via(c),
-        IdentOrigin::SelfCrate => using_crate == defining_crate || reexported_via(using_crate),
+        IdentOrigin::Workspace(c) => {
+            c == defining_crate || facades.credits(c, defining_crate, ident)
+        }
+        IdentOrigin::SelfCrate => {
+            using_crate == defining_crate
+                || facades.credits(using_crate, defining_crate, ident)
+        }
         IdentOrigin::Unresolved => true,
     }
 }

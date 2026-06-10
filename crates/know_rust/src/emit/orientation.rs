@@ -632,6 +632,49 @@ pub fn render_orientation(
     }
     lines.push(String::new());
 
+    // 5F. Foreign API surface: the re-exported non-workspace items
+    // a consumer legitimately reaches THROUGH this workspace. The
+    // demand trace classifies these into the non-gating
+    // foreign_reexport bucket; this section is the serving half -
+    // the reader sees what the surface re-exports without chasing
+    // the foreign source.
+    let foreign = foreign_api_surface(fp, facts);
+    if !foreign.is_empty() {
+        lines.push("## 5F. Foreign API surface (re-exported)".to_string());
+        lines.push(String::new());
+        lines.push(
+            "Items below are NOT workspace-defined: the workspace re-exports them from \
+             foreign crates (std included) as part of its public face. Authoring against \
+             them follows the FOREIGN crate's contract; the workspace controls only the \
+             re-export path. Grouped by foreign root; `(namespace)` marks whole-crate \
+             re-exports whose full surface lives in the foreign crate's own docs."
+                .to_string(),
+        );
+        lines.push(String::new());
+        for (root, entry) in &foreign {
+            let ns = if entry.namespace { " (namespace)" } else { "" };
+            if entry.leaves.is_empty() {
+                lines.push(format!("- **`{}`**{}", root, ns));
+            } else {
+                let shown: Vec<String> =
+                    entry.leaves.iter().take(20).cloned().collect();
+                let tail = if entry.leaves.len() > 20 {
+                    format!(" (+{} more)", entry.leaves.len() - 20)
+                } else {
+                    String::new()
+                };
+                lines.push(format!(
+                    "- **`{}`**{}: {}{}",
+                    root,
+                    ns,
+                    shown.join(", "),
+                    tail
+                ));
+            }
+        }
+        lines.push(String::new());
+    }
+
     // 6. UNRESOLVED guardrails
     lines.push("## 6. UNRESOLVED guardrails".to_string());
     lines.push(String::new());
@@ -720,6 +763,107 @@ pub fn render_orientation(
     lines.push(String::new());
 
     lines.join("\n")
+}
+
+/// What: one foreign root's re-exported surface - whether the whole
+/// namespace is re-exported and the sorted distinct leaf names.
+pub(crate) struct ForeignRootSurface {
+    pub(crate) namespace: bool,
+    pub(crate) leaves: Vec<String>,
+}
+
+/// What: build the foreign-API surface from the facts' `pub use`
+/// entries: every re-export whose ROOT is neither a workspace crate
+/// (package or lib-rename binding, per the fingerprint's per_crate)
+/// nor a crate/self/super self-reference groups under its foreign
+/// root - std/core/alloc count as foreign. Returns root ->
+/// (namespace flag, sorted leaves), sorted by root.
+///
+/// Why: the demand side's foreign_reexport bucket reports this class
+/// as structurally unservable by workspace picks; this builder feeds
+/// the orientation section that SERVES it instead, using the same
+/// detection semantics so the two halves cannot drift.
+///
+/// Where: called by `render_orientation` for the 5F section.
+pub(crate) fn foreign_api_surface(
+    fp: &serde_json::Value,
+    facts: &serde_json::Value,
+) -> std::collections::BTreeMap<String, ForeignRootSurface> {
+    let mut ws_roots: HashSet<String> = HashSet::new();
+    if let Some(pc) = fp.get("per_crate").and_then(|v| v.as_object()) {
+        for (name, c) in pc {
+            ws_roots.insert(name.replace('-', "_"));
+            if let Some(ln) = c.get("lib_name").and_then(|v| v.as_str()) {
+                ws_roots.insert(ln.replace('-', "_"));
+            }
+        }
+    }
+    // Local-module gate (mirrors the demand side): a relative
+    // re-export path roots at the crate's own module, not a foreign
+    // crate.
+    let mut mods_by_crate: std::collections::HashMap<String, HashSet<String>> =
+        std::collections::HashMap::new();
+    let empty: Vec<serde_json::Value> = Vec::new();
+    for m in facts.get("mods").and_then(|v| v.as_array()).unwrap_or(&empty) {
+        if let (Some(n), Some(c)) = (
+            m.get("name").and_then(|v| v.as_str()),
+            m.get("crate").and_then(|v| v.as_str()),
+        ) {
+            mods_by_crate
+                .entry(c.to_string())
+                .or_default()
+                .insert(n.to_string());
+        }
+    }
+    let mut out: std::collections::BTreeMap<String, ForeignRootSurface> =
+        std::collections::BTreeMap::new();
+    for u in facts.get("uses").and_then(|v| v.as_array()).unwrap_or(&empty) {
+        if !u.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let Some(path) = u.get("path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if !is_src_file(u.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+            continue;
+        }
+        let parsed = parse_use_leaves(path);
+        let root_norm = parsed.root.replace('-', "_");
+        if parsed.root.is_empty()
+            || ["crate", "self", "super"].contains(&parsed.root.as_str())
+            || ws_roots.contains(&root_norm)
+        {
+            continue;
+        }
+        let local_mod = u
+            .get("crate")
+            .and_then(|v| v.as_str())
+            .and_then(|c| mods_by_crate.get(c))
+            .map(|s| s.contains(&parsed.root))
+            .unwrap_or(false);
+        if local_mod {
+            continue;
+        }
+        let entry = out.entry(parsed.root.clone()).or_insert(ForeignRootSurface {
+            namespace: false,
+            leaves: Vec::new(),
+        });
+        if !path.trim().contains("::") {
+            entry.namespace = true;
+            continue;
+        }
+        for leaf in &parsed.leaves {
+            if let UseLeaf::Named { binding, .. } = leaf {
+                if !entry.leaves.contains(binding) {
+                    entry.leaves.push(binding.clone());
+                }
+            }
+        }
+    }
+    for e in out.values_mut() {
+        e.leaves.sort();
+    }
+    out
 }
 
 /// What: sort an IndexMap of pattern -> EnrichedEntry by descending

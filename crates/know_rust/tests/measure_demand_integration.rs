@@ -483,6 +483,24 @@ fn foreign_reexport_demands_bucket_without_gating() {
     let templates = Templates::new(None);
     emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
 
+    // The serving half: orientation renders the foreign surface.
+    let orient =
+        std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
+    assert!(
+        orient.contains("## 5F. Foreign API surface (re-exported)"),
+        "5F section renders when foreign re-exports exist"
+    );
+    assert!(
+        orient.contains("**`extfut`** (namespace): SinkExt"),
+        "foreign root lists its namespace flag + leaf; got:\n{}",
+        orient
+            .lines()
+            .skip_while(|l| !l.starts_with("## 5F."))
+            .take(8)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
     let ctmp = TempDir::new().expect("consumer tempdir");
     let cfiles: HashMap<&str, String> = [
         (

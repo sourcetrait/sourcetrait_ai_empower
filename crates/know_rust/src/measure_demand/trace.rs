@@ -79,6 +79,27 @@ pub(crate) fn demand_report(
     // Demands served only by these classify into the non-gating
     // foreign_reexport bucket.
     let lang_roots = ["crate", "self", "super"];
+    // Local-module gate: a RELATIVE re-export path (`pub use
+    // action::Action;` in a lib.rs) roots at the crate's OWN module,
+    // not a foreign crate. mods facts per crate answer "is this root
+    // a local module of the re-exporting crate".
+    let mut mods_by_crate: std::collections::HashMap<
+        String,
+        std::collections::HashSet<String>,
+    > = std::collections::HashMap::new();
+    if let Some(arr) = target_facts.get("mods").and_then(|v| v.as_array()) {
+        for m in arr {
+            if let (Some(n), Some(c)) = (
+                m.get("name").and_then(|v| v.as_str()),
+                m.get("crate").and_then(|v| v.as_str()),
+            ) {
+                mods_by_crate
+                    .entry(c.to_string())
+                    .or_default()
+                    .insert(n.to_string());
+            }
+        }
+    }
     let mut foreign_leafs: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
     let mut foreign_ns: std::collections::BTreeSet<String> =
@@ -96,6 +117,15 @@ pub(crate) fn demand_report(
                 || lang_roots.contains(&parsed.root.as_str())
                 || target_crates.contains(&demand_norm(&parsed.root))
             {
+                continue;
+            }
+            let local_mod = u
+                .get("crate")
+                .and_then(|v| v.as_str())
+                .and_then(|c| mods_by_crate.get(c))
+                .map(|s| s.contains(&parsed.root))
+                .unwrap_or(false);
+            if local_mod {
                 continue;
             }
             foreign_ns.insert(demand_norm(&parsed.root));

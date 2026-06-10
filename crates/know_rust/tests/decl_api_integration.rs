@@ -41,10 +41,11 @@ fn decl_channel_mints_reachable_pairs_with_aliases() {
             // public spelling exists only via the pub use lift.
             // p::ghost_fn is pub-in-private-mod (not API);
             // hidden_fn is doc(hidden); rootfn is root-level API;
-            // crate_fn is pub(crate) (not the public face).
+            // crate_fn is pub(crate) (not the public face);
+            // main is a language entry point (never minted).
             "lib/src/lib.rs",
             String::from(
-                "pub mod m {\n    mod inner { pub fn channel() {} }\n    pub use inner::channel;\n}\nmod p { pub fn ghost_fn() {} }\npub mod h { #[doc(hidden)] pub fn hidden_fn() {} }\npub fn rootfn() {}\npub(crate) fn crate_fn() {}\npub mod util;\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
+                "pub mod m {\n    mod inner { pub fn channel() {} }\n    pub use inner::channel;\n}\nmod p { pub fn ghost_fn() {} }\npub mod h { #[doc(hidden)] pub fn hidden_fn() {} }\npub fn rootfn() {}\npub fn main() {}\npub(crate) fn crate_fn() {}\npub mod util;\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
             ),
         ),
         (
@@ -125,6 +126,11 @@ fn decl_channel_mints_reachable_pairs_with_aliases() {
     assert!(
         !pm.keys().any(|k| k.contains("crate_fn")),
         "pub(crate) is not the public face"
+    );
+    assert!(
+        !pm.keys().any(|k| k.ends_with("::main")),
+        "`fn main` is a language entry point - the decl channel never mints it; keys: {:?}",
+        pm.keys().filter(|k| k.contains("main")).collect::<Vec<_>>()
     );
 
     // Root-level fn keys under the crate binding; file-mod fn under

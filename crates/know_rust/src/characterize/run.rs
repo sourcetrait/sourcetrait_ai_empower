@@ -261,7 +261,8 @@ pub fn characterize(
     // Declaration-driven API channel: pub-reachable module-level fns
     // get a pair key even with zero usage; alternate binding outers
     // land in facts.pair_aliases for the demand matcher.
-    all_facts.pair_aliases = decl_api_channel(&all_facts, &crates, &mut pattern_metrics);
+    all_facts.pair_aliases =
+        decl_api_channel(&all_facts, &crates, &mut pattern_metrics, calibration);
     let workspace_use_classification =
         classify_workspace_use(&crates, &pattern_metrics, calibration);
 

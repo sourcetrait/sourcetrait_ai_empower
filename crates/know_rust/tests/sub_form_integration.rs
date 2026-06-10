@@ -437,11 +437,14 @@ fn nf5_test_helper_substring_filter_drops_type_usages() {
          impl Value {\n\
              pub fn test_string() -> Self { Value }\n\
              pub fn int() -> Self { Value }\n\
-         }\n",
+         }\n\
+         pub mod util { pub fn _var_for_test_state() -> u8 { 0 } pub fn var_state() -> u8 { 0 } }\n",
     );
     let app_src = String::from(
-        "use lib::Value;\n\
+        "use lib::{Value, util};\n\
          pub fn run() -> (Value, Value) {\n\
+             let _a = util::_var_for_test_state();\n\
+             let _b = util::var_state();\n\
              (Value::test_string(), Value::int())\n\
          }\n",
     );
@@ -490,6 +493,17 @@ fn nf5_test_helper_substring_filter_drops_type_usages() {
     assert!(
         pm.contains_key("structure:Value"),
         "structure:Value should still aggregate from Value::int"
+    );
+    // The infix `_test_` substring catches the _var_for_test_* shape
+    // in BOTH channels: the usage stream and the decl-channel mint.
+    assert!(
+        !pm.keys().any(|k| k.contains("_var_for_test_state")),
+        "infix _test_ shape dropped (usage + decl mint); keys: {:?}",
+        pm.keys().filter(|k| k.contains("test")).collect::<Vec<_>>()
+    );
+    assert!(
+        pm.contains_key("implementation_functions:util::var_state"),
+        "sibling production fn unaffected by the _test_ substring"
     );
 }
 

@@ -877,13 +877,18 @@ fn translate_to_group_keys(
                 // is not a structure pick. Enum-VARIANT inners collapse
                 // into the structure aggregate only (R8 slice 3):
                 // variants are the enum's surface, not per-variant
-                // implementation_functions picks.
+                // implementation_functions picks. A module/crate-outer
+                // `::main` is a language ENTRY POINT, not consumable
+                // API - no pair key (cosmic-epoch's pop-launcher
+                // plugin mains); a TYPE-outer `main` assoc fn stays.
                 let (outer, inner_part) = inner
                     .split_once("::")
                     .map(|(o, i)| (o, i))
                     .unwrap_or((inner.as_str(), ""));
                 let collapses = enum_names.contains(outer) && is_variant_shaped(inner_part);
-                if !collapses {
+                let entry_main =
+                    inner_part == "main" && !type_def_lookup.contains_key(outer);
+                if !collapses && !entry_main {
                     let impl_fn_key = format!("implementation_functions:{}", inner);
                     merge_metric(&mut new, impl_fn_key, metric.clone());
                 }
@@ -1449,8 +1454,11 @@ fn round3(x: f64) -> f64 {
 ///
 /// Where: called at the three pattern-insertion sites in
 /// `compute_pattern_metrics` (the main seen_patterns loop + the
-/// pub_type synth loop + the method_ref synth loop).
-fn should_skip_pattern(pattern: &str, calibration: &Calibration) -> bool {
+/// pub_type synth loop + the method_ref synth loop), and by
+/// `decl_api::decl_api_channel` before minting declaration keys (a
+/// minted key must not resurrect a family NF5 dropped from the
+/// usage streams).
+pub(crate) fn should_skip_pattern(pattern: &str, calibration: &Calibration) -> bool {
     calibration
         .filters
         .pattern_skip_substrings

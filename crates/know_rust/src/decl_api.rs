@@ -26,6 +26,7 @@ pub(crate) fn decl_api_channel(
     all_facts: &WorkspaceFacts,
     crates: &indexmap::IndexMap<String, CrateInfo>,
     metrics: &mut indexmap::IndexMap<String, PatternMetric>,
+    calibration: &Calibration,
 ) -> BTreeMap<String, Vec<String>> {
     let mods = ModIndex::build(all_facts, crates);
     let decls = collect_decls(all_facts, crates, &mods);
@@ -91,6 +92,12 @@ pub(crate) fn decl_api_channel(
         };
         let key = Pattern::impl_fn(canonical_outer.clone(), decl.name.clone());
         let key_wire = key.to_string();
+        // NF5 parity: a minted decl key must not resurrect a family
+        // the substring filter dropped from the usage streams
+        // (sourcetrait_common's `util::_var_for_test_*` class).
+        if should_skip_pattern(&key_wire, calibration) {
+            continue;
+        }
         if !metrics.contains_key(&key_wire) {
             metrics.insert(
                 key_wire,
@@ -248,6 +255,12 @@ fn collect_decls(
             continue;
         }
         if f.get("doc_hidden").and_then(|v| v.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        // `fn main` is a language ENTRY POINT, not consumable API
+        // (the_user-granted noise rule); the decl channel never
+        // mints it (cosmic-epoch's per-binary crate-root mains).
+        if name == "main" {
             continue;
         }
         if !is_src_file(file) {

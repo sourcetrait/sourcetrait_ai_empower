@@ -109,6 +109,79 @@ fn variants_collapse_constants_label_methods_stay() {
 }
 
 #[test]
+fn entry_point_mains_are_not_pair_keys() {
+    // A module/crate-outer `::main` is a language ENTRY POINT, not
+    // consumable API (the cosmic-epoch pop-launcher plugin-main
+    // class): no implementation_functions pair key, neither from the
+    // usage bridge nor from the decl channel. A TYPE-outer `main`
+    // assoc fn is ordinary API and keeps its key; a sibling module
+    // fn keeps its key (the rule is main-exact).
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub mod boot { pub fn main() {} pub fn start() {} }\n\
+                 pub struct App;\nimpl App { pub fn main() -> Self { App } }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use lib::{boot, App};\n\
+                 pub fn run() -> App {\n\
+                     boot::main();\n\
+                     boot::start();\n\
+                     App::main()\n\
+                 }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let fp = run_characterize(root);
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics");
+
+    assert!(
+        !pm.contains_key("implementation_functions:boot::main"),
+        "module-outer ::main must not key; impl-fn keys: {:?}",
+        pm.keys()
+            .filter(|k| k.contains("main"))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        pm.contains_key("implementation_functions:boot::start"),
+        "sibling module fn keeps its key"
+    );
+    assert!(
+        pm.contains_key("implementation_functions:App::main"),
+        "TYPE-outer main assoc fn is ordinary API"
+    );
+}
+
+#[test]
 fn variant_constructor_refs_collapse_not_family() {
     // Constructor REFERENCES in argument position (map(Value::Text))
     // across unrelated enums sharing a variant name must not form a

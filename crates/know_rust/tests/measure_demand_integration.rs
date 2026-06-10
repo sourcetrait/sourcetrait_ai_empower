@@ -655,3 +655,173 @@ fn overlay_paths_serve_as_matcher_aliases() {
         "util2::mfn lands exact via the overlay alias tier"
     );
 }
+
+fn build_nu_named_target(root: &Path) -> std::path::PathBuf {
+    // A target whose member crate is literally named `nu` - the
+    // collision shape behind the demand-side local-module gate
+    // (nu-jupyter-kernel vs nushell's `nu` binary crate).
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"nu\",\"app\"]\n"),
+        ),
+        (
+            "nu/Cargo.toml",
+            String::from(
+                "[package]\nname=\"nu\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "nu/src/lib.rs",
+            String::from(
+                "pub struct Konst;\nimpl Konst { pub fn new() -> Self { Konst } }\npub fn reg() {}\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nnu={path=\"../nu\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use nu::{Konst, reg};\npub fn a() -> Konst { reg(); Konst::new() }\npub fn b() -> Konst { reg(); Konst::new() }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+    let out = root.join(".orientation");
+    std::fs::create_dir_all(&out).expect("mkdir orientation");
+    let calibration = Calibration::default();
+    characterize(root, &out, &calibration).expect("characterize succeeds");
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
+    out
+}
+
+#[test]
+fn consumer_local_module_is_not_target_demand() {
+    // The nu-jupyter-kernel shape: the consumer declares its OWN
+    // top-level `nu` module and reaches it via uniform paths - a
+    // scope-precise import (`use nu::konst::Konst;` beside
+    // `pub mod nu;`), a qualified call (`nu::konst::reg()`), and a
+    // bare factory call through the file binding (`Konst::new()`).
+    // None of it is target demand; the trace must read zero.
+    let tmp = TempDir::new().expect("target tempdir");
+    let target_out = build_nu_named_target(tmp.path());
+
+    let ctmp = TempDir::new().expect("consumer tempdir");
+    let cfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"kernel\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            // Top-level local module + scope-precise import +
+            // qualified call + bare factory call through the file
+            // binding.
+            "src/lib.rs",
+            String::from(
+                "pub mod handlers;\npub mod nu;\nuse nu::konst::Konst;\npub fn go() -> Konst { nu::konst::reg(); Konst::new() }\n",
+            ),
+        ),
+        (
+            // The handlers/shell.rs shape: the qualifier `nu` here is
+            // a crate-rooted module BINDING (`use crate::nu;`), not a
+            // crate name - the qualifier-binding resolution must read
+            // it as consumer-internal.
+            "src/handlers.rs",
+            String::from("use crate::nu;\npub fn h() { nu::konst::reg(); }\n"),
+        ),
+        ("src/nu/mod.rs", String::from("pub mod konst;\n")),
+        (
+            "src/nu/konst.rs",
+            String::from(
+                "pub struct Konst;\nimpl Konst { pub fn new() -> Self { Konst } }\npub fn reg() {}\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(ctmp.path(), &cfiles);
+    let out_path = ctmp.path().join("trace_out.json");
+    measure_demand(ctmp.path(), &target_out, Some(&out_path))
+        .expect("a local-module consumer registers no demand");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&out_path).expect("read --out json"),
+    )
+    .expect("parse --out json");
+    assert_eq!(
+        report
+            .pointer("/summary/demanded_names")
+            .and_then(|v| v.as_u64()),
+        Some(0),
+        "every nu:: spelling is consumer-local; report: {report}"
+    );
+    assert_eq!(
+        report.pointer("/summary/pairs_total").and_then(|v| v.as_u64()),
+        Some(0),
+        "no phantom pairs"
+    );
+}
+
+#[test]
+fn real_target_import_still_demands_without_local_module() {
+    // Negative control for the local-module gate: same target, a
+    // consumer with NO local `nu` module - `use nu::Konst;` is real
+    // demand and must register and be covered.
+    let tmp = TempDir::new().expect("target tempdir");
+    let target_out = build_nu_named_target(tmp.path());
+
+    let ctmp = TempDir::new().expect("consumer tempdir");
+    let cfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"consumer\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nnu={path=\"../t/nu\"}\n",
+            ),
+        ),
+        (
+            // Direct import PLUS a renamed namespace import whose
+            // qualified call must resolve through the binding
+            // (`use nu as nucrate; nucrate::reg()` is real target
+            // demand under the qualifier-binding resolution).
+            "src/lib.rs",
+            String::from(
+                "use nu as nucrate;\nuse nu::Konst;\npub fn go() -> Konst { Konst::new() }\npub fn go2() { nucrate::reg(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(ctmp.path(), &cfiles);
+    let out_path = ctmp.path().join("trace_out.json");
+    measure_demand(ctmp.path(), &target_out, Some(&out_path))
+        .expect("real demand is covered by the target's picks");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&out_path).expect("read --out json"),
+    )
+    .expect("parse --out json");
+    let hit_names: Vec<&str> = report
+        .get("hits")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        hit_names.contains(&"Konst"),
+        "no-local-module consumer still demands the target; hits: {hit_names:?}"
+    );
+    assert!(
+        hit_names.contains(&"reg"),
+        "renamed-namespace qualified call resolves through the binding; hits: {hit_names:?}"
+    );
+}

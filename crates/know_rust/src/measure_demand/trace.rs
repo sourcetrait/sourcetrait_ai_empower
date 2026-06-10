@@ -177,6 +177,27 @@ pub(crate) fn demand_report(
             .iter()
             .map(|u| (u.file.as_str(), u.path.as_str())),
     );
+    // Consumer-local module gate (the demand-side mirror of the
+    // capture/5F local-module gates): a use-import whose ROOT names
+    // a module declared in the SAME (file, inline module chain) is
+    // uniform-path-local to the consumer, never target demand
+    // (nu-jupyter-kernel's `use nu::konst::Konst;` beside `mod nu;`
+    // must not resolve to nushell's `nu` binary crate). Use-path
+    // resolution is same-module + extern prelude - not lexical
+    // ancestors - so same-(file, chain) matching is the language
+    // semantics, exactly like the capture gate. Qualified usage
+    // sites and per-file bindings gate at FILE level only (the
+    // usage wire carries no inline chain); the approximation is
+    // bounded to same-file name collisions.
+    let mut local_use_scopes: std::collections::HashSet<(String, String, String)> =
+        std::collections::HashSet::new();
+    let mut local_mod_files: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+    for m in &consumer_items.mods {
+        let mp = m.module_path.clone().unwrap_or_default();
+        local_use_scopes.insert((m.file.clone(), mp, m.name.clone()));
+        local_mod_files.insert((m.file.clone(), m.name.clone()));
+    }
     let mut alias_global: std::collections::HashMap<String, ImportBinding> =
         std::collections::HashMap::new();
 
@@ -203,6 +224,16 @@ pub(crate) fn demand_report(
     for u in &consumer_items.uses {
         let parsed = parse_use_leaves(&u.path);
         if parsed.root.is_empty() {
+            continue;
+        }
+        // Uniform-path local import: consumer-internal, never target
+        // demand; its renamed leaves must not seed the crate-wide
+        // alias map either.
+        if local_use_scopes.contains(&(
+            u.file.clone(),
+            u.module_path.clone().unwrap_or_default(),
+            parsed.root.clone(),
+        )) {
             continue;
         }
         for leaf in &parsed.leaves {
@@ -282,9 +313,18 @@ pub(crate) fn demand_report(
             &alias_global,
             consumer_renames,
             &target_crates,
+            &local_mod_files,
         ) {
             for r in root_candidates(&root, consumer_renames) {
                 demand_roots.entry(src.clone()).or_default().insert(r);
+            }
+            // The written qualifier joins the root set as a literal
+            // spelling: when the qualifier resolved through a
+            // binding (use tokio::io; io::copy(..)), the written
+            // module segment is the spelling rendered pair picks
+            // are keyed under.
+            if let Some(q) = qualifier.as_deref() {
+                demand_roots.entry(src.clone()).or_default().insert(q.to_string());
             }
             *demand_sites.entry(src.clone()).or_default() += 1;
             demand.entry(src).or_default().insert("ident".to_string());
@@ -299,6 +339,7 @@ pub(crate) fn demand_report(
             &alias_global,
             consumer_renames,
             &target_crates,
+            &local_mod_files,
         ) {
             for r in root_candidates(&root, consumer_renames) {
                 demand_roots.entry(src.clone()).or_default().insert(r);
@@ -313,6 +354,9 @@ pub(crate) fn demand_report(
                     .or_default()
                     .insert(p.clone());
             }
+            if let Some(q) = e.qualifier.as_deref() {
+                demand_roots.entry(src.clone()).or_default().insert(q.to_string());
+            }
             *demand_sites.entry(src.clone()).or_default() += 1;
             demand.entry(src).or_default().insert("fn_call".to_string());
         }
@@ -326,9 +370,13 @@ pub(crate) fn demand_report(
             &alias_global,
             consumer_renames,
             &target_crates,
+            &local_mod_files,
         ) {
             for r in root_candidates(&root, consumer_renames) {
                 demand_roots.entry(src.clone()).or_default().insert(r);
+            }
+            if let Some(q) = e.qualifier.as_deref() {
+                demand_roots.entry(src.clone()).or_default().insert(q.to_string());
             }
             *demand_sites.entry(src.clone()).or_default() += 1;
             demand
@@ -359,9 +407,13 @@ pub(crate) fn demand_report(
             &alias_global,
             consumer_renames,
             &target_crates,
+            &local_mod_files,
         ) {
             for r in root_candidates(&root, consumer_renames) {
                 demand_roots.entry(src.clone()).or_default().insert(r);
+            }
+            if let Some(q) = t.qualifier.as_deref() {
+                demand_roots.entry(src.clone()).or_default().insert(q.to_string());
             }
             *demand_sites.entry(src.clone()).or_default() += 1;
             demand
@@ -530,7 +582,13 @@ pub(crate) fn demand_report(
                 .get(nm)
                 .map(|roots| roots.iter().any(|r| foreign_ns.contains(&demand_norm(r))))
                 .unwrap_or(false);
-        if !decl.contains_key(nm) && mods.contains(nm) {
+        // A demanded name that IS a target crate binding is a
+        // crate-NAMESPACE import (`use tokio as tk;` / `pub use
+        // ratatui;`) - a binding to the whole surface, not an item
+        // demand; the namespace bucket is its home (non-gating).
+        if !decl.contains_key(nm)
+            && (mods.contains(nm) || target_crates.contains(&demand_norm(nm)))
+        {
             mod_ns.push(rec);
         } else if covered.contains(nm) || root_pair_served {
             hits.push(rec);
@@ -562,6 +620,13 @@ pub(crate) fn demand_report(
         if pick_pairs.contains(p) || alias_exact {
             pair_exact.push(p.clone());
         } else if covered.contains(o) {
+            pair_name_level.push(p.clone());
+        } else if target_crates.contains(&demand_norm(o)) && covered.contains(i) {
+            // A crate-qualified spelling of a covered bare name
+            // (`nu::reg()` with `utilities:reg` rendered): the pair
+            // IS the name demand under crate qualification - served
+            // name-level, mirroring the crate-namespace rule on the
+            // name tier.
             pair_name_level.push(p.clone());
         } else if foreign_ns.contains(&demand_norm(o)) || foreign_leafs.contains(o) {
             // Foreign-outer pairs mirror the name bucket: real
@@ -666,6 +731,7 @@ fn add_decls(
 /// `implementation_functions:tokio::spawn` pick).
 ///
 /// Where: called per usage-site stream in `demand_report`.
+#[allow(clippy::too_many_arguments)]
 fn demand_resolved(
     file: &str,
     name: &str,
@@ -674,19 +740,46 @@ fn demand_resolved(
     alias_global: &std::collections::HashMap<String, ImportBinding>,
     consumer_renames: &std::collections::HashMap<String, String>,
     target_crates: &std::collections::BTreeSet<String>,
+    local_mod_files: &std::collections::HashSet<(String, String)>,
 ) -> Option<(String, String)> {
     if let Some(q) = qualifier {
-        if root_in_targets(q, consumer_renames, target_crates) {
-            if let Some(b) = alias_global.get(name) {
-                if root_in_targets(&b.root, consumer_renames, target_crates) {
-                    return b.source.clone().map(|s| (s, b.root.clone()));
+        // A written qualifier is a BINDING, not necessarily a crate
+        // name. Resolve it through this file's own import surface
+        // first (`use crate::nu;` makes a qualified `nu::execute(..)`
+        // consumer-internal even when a target crate is named `nu`;
+        // `use tokio as tk;` makes `tk::spawn(..)` real target
+        // demand), then through the same-file local-module gate
+        // (uniform paths), then as a directly-written root. The
+        // name-binding/alias fallbacks below still apply on
+        // fall-through: a local module may re-export a target item
+        // (the consumer-internal re-export chain the alias map
+        // serves).
+        let q_effective: Option<String> = match imap
+            .get(file)
+            .and_then(|m| m.get(q))
+            .map(|b| b.root.clone())
+        {
+            Some(r) if ["crate", "self", "super"].contains(&r.as_str()) => None,
+            Some(r) if local_mod_files.contains(&(file.to_string(), r.clone())) => None,
+            Some(r) => Some(r),
+            None if local_mod_files.contains(&(file.to_string(), q.to_string())) => None,
+            None => Some(q.to_string()),
+        };
+        if let Some(qr) = q_effective {
+            if root_in_targets(&qr, consumer_renames, target_crates) {
+                if let Some(b) = alias_global.get(name) {
+                    if root_in_targets(&b.root, consumer_renames, target_crates) {
+                        return b.source.clone().map(|s| (s, b.root.clone()));
+                    }
                 }
+                return Some((name.to_string(), qr));
             }
-            return Some((name.to_string(), q.to_string()));
         }
     }
     if let Some(b) = imap.get(file).and_then(|m| m.get(name)) {
-        if root_in_targets(&b.root, consumer_renames, target_crates) {
+        if !local_mod_files.contains(&(file.to_string(), b.root.clone()))
+            && root_in_targets(&b.root, consumer_renames, target_crates)
+        {
             return Some((
                 b.source
                     .clone()

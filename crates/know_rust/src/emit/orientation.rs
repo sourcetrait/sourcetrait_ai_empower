@@ -26,10 +26,11 @@ pub fn render_orientation(
     weights: Option<&TargetWeights>,
     profile_name: &str,
     profile: &ProfileSetScale,
+    vis_backfill: Option<&VisBackfill>,
 ) -> String {
     let sel = fp.get("selection").cloned().unwrap_or(serde_json::Value::Null);
     let vocab = core_vocabulary(fp, facts);
-    let cands = candidate_instances(fp, facts, calibration, weights, profile);
+    let cands = candidate_instances(fp, facts, calibration, weights, profile, vis_backfill);
     let forecast_chars = cands.total_budget_chars();
     let forecast_tokens = forecast_chars / 4;
     eprintln!(

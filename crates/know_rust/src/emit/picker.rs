@@ -14,6 +14,37 @@ use crate::*;
 /// Where: called from `crate::emit::run::emit` after fingerprint +
 /// facts are loaded; output threaded into section renderers (S5 +
 /// downstream picker-driven sections).
+/// What: post-expansion public trait/type name sets from the rustdoc
+/// overlay, used to backfill `is_pub` for entries whose declaration
+/// visibility the floor's token walk could not see.
+///
+/// Why: bevy's define_label! emits `pub trait ScheduleLabel` from a
+/// name-only invocation - the floor records the trait with blank
+/// visibility and every public-set eligibility dies on is_pub. The
+/// overlay sees the expansion; overlay-bearing emits flip the flag.
+///
+/// Where: built by `emit::run::emit` from rustdoc_overlay.json;
+/// consulted in the public-scores loop of
+/// `compute_significance_sets`.
+pub struct VisBackfill {
+    pub traits: HashSet<String>,
+    pub types: HashSet<String>,
+}
+
+impl VisBackfill {
+    /// What: true when the overlay's pub sets vouch for this
+    /// pattern's declaration being public (group-aware: traits /
+    /// configuring check the trait set; structure checks the type
+    /// set).
+    pub fn backfills(&self, pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Traits(n) | Pattern::Configuring(n) => self.traits.contains(n),
+            Pattern::Structure(n) => self.types.contains(n),
+            _ => false,
+        }
+    }
+}
+
 pub fn compute_significance_sets(
     fp: &serde_json::Value,
     facts: &serde_json::Value,
@@ -22,6 +53,7 @@ pub fn compute_significance_sets(
     calibration: &Calibration,
     weights: Option<&TargetWeights>,
     profile: &ProfileSetScale,
+    vis_backfill: Option<&VisBackfill>,
 ) -> SignificanceSets {
     let pattern_metrics = fp
         .get("pattern_metrics")
@@ -185,7 +217,8 @@ pub fn compute_significance_sets(
             .get("curated_example_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
-        let is_pub = m.get("is_pub").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_pub = m.get("is_pub").and_then(|v| v.as_bool()).unwrap_or(false)
+            || vis_backfill.map(|v| v.backfills(pattern)).unwrap_or(false);
         if is_pub && curated > 0 {
             public_scores.insert(pattern.clone(), curated as f64 * public_example_weight);
         }

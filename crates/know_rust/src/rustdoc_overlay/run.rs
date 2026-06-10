@@ -455,6 +455,33 @@ fn reconcile(
         .map(|(k, v)| (k, v.into_iter().collect()))
         .collect();
 
+    // Public trait/type names per the post-expansion index: the
+    // vis-backfill source for macro-expansion-invisible visibility.
+    let mut pub_traits: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut pub_types: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for item in index.values() {
+        if item.get("visibility").and_then(|v| v.as_str()) != Some("public") {
+            continue;
+        }
+        let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let kind = item
+            .get("inner")
+            .and_then(|v| v.as_object())
+            .and_then(|o| o.keys().next().cloned())
+            .unwrap_or_default();
+        match kind.as_str() {
+            "trait" => {
+                pub_traits.insert(name.to_string());
+            }
+            "struct" | "enum" | "union" | "type_alias" | "typedef" => {
+                pub_types.insert(name.to_string());
+            }
+            _ => {}
+        }
+    }
+
     let rustdoc_impl_traits: HashSet<String> = macro_generated
         .iter()
         .map(|m| m.trait_name.clone())
@@ -498,5 +525,7 @@ fn reconcile(
         null_span_items,
         disagreements,
         paths,
+        pub_traits: pub_traits.into_iter().collect(),
+        pub_types: pub_types.into_iter().collect(),
     })
 }

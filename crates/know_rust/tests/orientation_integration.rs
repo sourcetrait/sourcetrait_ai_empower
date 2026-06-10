@@ -200,3 +200,77 @@ fn emit_two_files_and_spans() {
     assert!(ref_text.contains("src/lib.rs:"));
     assert!(orient_text.contains("trait_impl:Cmd"));
 }
+
+#[test]
+fn overlay_vis_backfill_admits_macro_invisible_pub_trait() {
+    // The trait is declared through macro-invocation tokens WITHOUT a
+    // pub token (the define_label!-class expansion hides visibility),
+    // so the floor records blank vis and the public set rejects it
+    // despite curated example evidence. A pass-local overlay whose
+    // pub_traits carries the name flips is_pub at emit time and the
+    // pick renders in 5.2.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, &str> = [
+        ("Cargo.toml", "[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        (
+            "lib/Cargo.toml",
+            "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+        ),
+        (
+            "lib/src/lib.rs",
+            "mklabel!{ trait Sched {} }\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
+        ),
+        (
+            "lib/examples/demo.rs",
+            "use lib::Sched;\n#[derive(Sched)]\nstruct D;\nfn main() {}\n",
+        ),
+        (
+            "app/Cargo.toml",
+            "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+        ),
+        (
+            "app/src/lib.rs",
+            "use lib::{Sched, Core};\n#[derive(Sched)]\npub struct A;\n#[derive(Sched)]\npub struct B;\npub fn touch() -> Core { Core::new() }\n",
+        ),
+    ]
+    .iter()
+    .cloned()
+    .collect();
+    write_tree(root, &files);
+
+    let (_fp, out) = run_characterize(root);
+    let calibration = Calibration::default();
+    let templates = Templates::new(None);
+
+    emit(root, &out, &calibration, &templates, None, "author").expect("plain emit");
+    let plain = std::fs::read_to_string(out.join("orientation.md")).expect("read plain");
+    let upper_tier = |text: &str| -> String {
+        text.lines()
+            .skip_while(|l| !l.starts_with("### 5.1"))
+            .take_while(|l| !l.starts_with("### 5.3"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(
+        !upper_tier(&plain).contains("`configuring:Sched`"),
+        "blank-vis trait must not enter the public-qualified tiers without an overlay"
+    );
+
+    std::fs::write(
+        out.join("rustdoc_overlay.json"),
+        "{\"status\":\"ok\",\"pub_traits\":[\"Sched\"],\"pub_types\":[]}",
+    )
+    .expect("write overlay");
+    emit(root, &out, &calibration, &templates, None, "author").expect("overlay emit");
+    let backfilled =
+        std::fs::read_to_string(out.join("orientation.md")).expect("read backfilled");
+    // The backfilled flag makes Sched public-qualified; with its
+    // existing inter signal it promotes into ARCHITECTURE (public
+    // AND inter), the top tier.
+    assert!(
+        upper_tier(&backfilled).contains("`configuring:Sched`"),
+        "overlay pub_traits backfills is_pub; the pick renders in 5.1/5.2; got:\n{}",
+        upper_tier(&backfilled)
+    );
+}

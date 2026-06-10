@@ -579,6 +579,7 @@ pub fn candidate_instances(
     calibration: &Calibration,
     weights: Option<&TargetWeights>,
     profile: &ProfileSetScale,
+    vis_backfill: Option<&VisBackfill>,
 ) -> EnrichedSets {
     let histogram = fp
         .get("pattern_histogram")
@@ -615,6 +616,7 @@ pub fn candidate_instances(
         calibration,
         weights,
         profile,
+        vis_backfill,
     );
 
     let pattern_metrics = fp

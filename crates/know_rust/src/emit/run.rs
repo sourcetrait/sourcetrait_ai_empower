@@ -59,6 +59,32 @@ pub fn emit(
         .map(|m| m.keys().cloned().collect())
         .unwrap_or_default();
     let tweights = weights.and_then(|b| target_weights(b, workspace_root, &crate_names));
+    // Overlay vis backfill: when the pass carries an overlay, its
+    // post-expansion pub trait/type sets flip is_pub for entries the
+    // floor's token walk could not see (the define_label! class).
+    // Loaded as a Value so pre-section overlays degrade to empty.
+    let vis_backfill: Option<VisBackfill> = {
+        let p = out_dir.join("rustdoc_overlay.json");
+        fs::read_to_string(&p)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .map(|v| {
+                let take = |key: &str| -> HashSet<String> {
+                    v.get(key)
+                        .and_then(|a| a.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|s| s.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                VisBackfill {
+                    traits: take("pub_traits"),
+                    types: take("pub_types"),
+                }
+            })
+    };
     let orientation_text = if shape == "container" {
         render_container_routing(workspace_root, out_dir, &fp, templates)
     } else {
@@ -72,6 +98,7 @@ pub fn emit(
             tweights,
             profile_name,
             &profile,
+            vis_backfill.as_ref(),
         )
     };
     fs::write(&orientation_path, &orientation_text).map_err(|source| Error::Write {

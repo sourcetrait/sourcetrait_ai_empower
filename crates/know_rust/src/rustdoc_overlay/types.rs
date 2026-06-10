@@ -31,6 +31,24 @@ pub struct Overlay {
     ///
     /// Where: built in `reconcile` from the rustdoc `paths` table.
     pub paths: std::collections::BTreeMap<String, Vec<String>>,
+    /// What: names of PUBLIC trait / type items per rustdoc's
+    /// post-expansion index (visibility == "public"; kinds trait /
+    /// struct / enum / union / type alias).
+    ///
+    /// Why: macro-expansion-invisible VISIBILITY (bevy's
+    /// define_label! emits `pub trait ScheduleLabel` from a
+    /// name-only invocation) leaves the floor's is_pub false and
+    /// blocks public-set eligibility no token recovery can fix;
+    /// rustdoc sees the expansion, so overlay-bearing emits backfill
+    /// is_pub from these sets.
+    ///
+    /// Where: built in `reconcile` from the rustdoc index; consumed
+    /// by `emit::picker::compute_significance_sets` via the
+    /// vis-backfill thread.
+    #[serde(default)]
+    pub pub_traits: Vec<String>,
+    #[serde(default)]
+    pub pub_types: Vec<String>,
 }
 
 /// What: one macro-generated impl entry - the trait name, a null span

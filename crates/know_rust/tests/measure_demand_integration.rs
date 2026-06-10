@@ -553,3 +553,105 @@ fn foreign_reexport_demands_bucket_without_gating() {
         "bucket carries both spellings; got {foreign_names:?}"
     );
 }
+
+#[test]
+fn overlay_paths_serve_as_matcher_aliases() {
+    // A pass carrying rustdoc_overlay.json lends its canonical fn
+    // paths to the matcher: a demand spelled through a path the
+    // structural binding collector cannot see (the glob-re-export
+    // class) is served by the rendered pair via the overlay alias.
+    let tmp = TempDir::new().expect("target tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            // util2 exists as a real module (the glob-re-export class
+            // hides the BINDING, not the module): the demanded outer
+            // lands in the mod_namespace bucket while the overlay
+            // alias serves the fn + pair.
+            "lib/src/lib.rs",
+            String::from(
+                "pub mod m { pub fn mfn() {} }\npub mod util2 {}\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "pub fn run(_c: lib::Core) { lib::m::mfn(); }\npub fn run2() { lib::m::mfn(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+    let out = root.join(".orientation");
+    std::fs::create_dir_all(&out).expect("mkdir orientation");
+    let calibration = Calibration::default();
+    characterize(root, &out, &calibration).expect("characterize succeeds");
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
+    let orient = std::fs::read_to_string(out.join("orientation.md")).expect("read orientation");
+    assert!(
+        orient.contains("`implementation_functions:m::mfn`"),
+        "fixture premise: the m::mfn pair renders"
+    );
+    // Fabricated overlay: rustdoc's canonical path for mfn runs
+    // through util2 (the spelling the structural collector cannot
+    // bind).
+    std::fs::write(
+        out.join("rustdoc_overlay.json"),
+        "{\"status\":\"ok\",\"paths\":{\"mfn\":[\"lib::util2::mfn\"]}}",
+    )
+    .expect("write overlay");
+
+    let ctmp = TempDir::new().expect("consumer tempdir");
+    let cfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"consumer\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../t/lib\"}\n",
+            ),
+        ),
+        (
+            // The overlay-only spelling: full-path call through
+            // util2 (parent joins the demand root set).
+            "src/lib.rs",
+            String::from("pub fn go() { lib::util2::mfn(); }\n"),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(ctmp.path(), &cfiles);
+    let out_path = ctmp.path().join("trace_out.json");
+    measure_demand(ctmp.path(), &out, Some(&out_path))
+        .expect("overlay-alias spelling is served");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&out_path).expect("read --out json"),
+    )
+    .expect("parse --out json");
+    assert_eq!(
+        report.pointer("/summary/miss_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "mfn served via the overlay alias"
+    );
+    assert_eq!(
+        report.pointer("/summary/pair_miss_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "util2::mfn lands exact via the overlay alias tier"
+    );
+}

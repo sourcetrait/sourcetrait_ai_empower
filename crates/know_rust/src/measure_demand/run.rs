@@ -87,6 +87,35 @@ pub(crate) fn trace_pair(
         path: orient_path.clone(),
         source,
     })?;
+    // Overlay paths as ADDITIONAL matcher aliases when the pass
+    // carries one (panel passes do; pair passes don't): rustdoc's
+    // canonical fn paths close the glob-re-export alias gap the
+    // structural binding collector cannot see (helix `pub use
+    // imp::*`). Absent overlay = empty map; serving is only ever
+    // additive.
+    let overlay_path = target_out_dir.join("rustdoc_overlay.json");
+    let overlay_fn_paths: HashMap<String, Vec<String>> = fs::read_to_string(&overlay_path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| {
+            v.get("paths").and_then(|p| p.as_object()).map(|m| {
+                m.iter()
+                    .map(|(k, arr)| {
+                        (
+                            k.clone(),
+                            arr.as_array()
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(|s| s.as_str().map(String::from))
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
 
     Ok(demand_report(
         &consumer_items,
@@ -95,6 +124,7 @@ pub(crate) fn trace_pair(
         &target_facts,
         &target_fp,
         &orientation,
+        &overlay_fn_paths,
     ))
 }
 

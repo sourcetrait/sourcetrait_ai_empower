@@ -26,6 +26,7 @@ pub(crate) fn demand_report(
     target_facts: &serde_json::Value,
     target_fp: &serde_json::Value,
     target_orientation: &str,
+    overlay_fn_paths: &std::collections::HashMap<String, Vec<String>>,
 ) -> DemandReport {
     // Target vocabulary: package bindings plus lib-rename bindings
     // (names are bindings; `use cosmic::` must reach package
@@ -450,6 +451,38 @@ pub(crate) fn demand_report(
                 .entry(inner.to_string())
                 .or_default()
                 .push(p.clone());
+        }
+    }
+    // Overlay paths join the alias union: for each rendered pair
+    // whose inner has rustdoc canonical paths, the paths' penultimate
+    // segments become additional consultable outers (name-level
+    // granularity; same-name collision risk is the system's standing
+    // trade). Closes the glob-re-export alias gap.
+    for (inner, rendered) in &rendered_by_inner {
+        let Some(paths) = overlay_fn_paths.get(inner) else {
+            continue;
+        };
+        let penults: Vec<String> = paths
+            .iter()
+            .filter_map(|p| {
+                let segs: Vec<&str> = p.split("::").collect();
+                if segs.len() >= 2 {
+                    Some(segs[segs.len() - 2].to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if penults.is_empty() {
+            continue;
+        }
+        for rp in rendered {
+            let entry = alias_outers_by_pair.entry(rp.clone()).or_default();
+            for p in &penults {
+                if !entry.contains(p) {
+                    entry.push(p.clone());
+                }
+            }
         }
     }
 

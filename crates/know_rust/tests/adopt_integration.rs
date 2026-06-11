@@ -47,6 +47,44 @@ fn adopted_roots_resolve_forms_and_exclusions() {
          mod hidden { pub struct NoSee; }\n",
     )
     .expect("write checkout lib");
+    // A namespace-only root's checkout: enumerated for the demand
+    // vocabulary, but its items must never mint bare-name keys.
+    let ns_checkout = fake_home
+        .path()
+        .join("registry")
+        .join("src")
+        .join("index.test-0000")
+        .join("extns-0.1.0");
+    std::fs::create_dir_all(ns_checkout.join("src")).expect("mkdir ns checkout");
+    std::fs::write(
+        ns_checkout.join("Cargo.toml"),
+        "[package]\nname=\"extns\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+    )
+    .expect("write ns manifest");
+    std::fs::write(
+        ns_checkout.join("src").join("lib.rs"),
+        "pub struct NsThing;\n",
+    )
+    .expect("write ns lib");
+    // A leaf-only root's checkout: leaf adoption mints, and a
+    // RENAMED leaf mints under the exposed binding.
+    let leaf_checkout = fake_home
+        .path()
+        .join("registry")
+        .join("src")
+        .join("index.test-0000")
+        .join("extleaf-0.2.0");
+    std::fs::create_dir_all(leaf_checkout.join("src")).expect("mkdir leaf checkout");
+    std::fs::write(
+        leaf_checkout.join("Cargo.toml"),
+        "[package]\nname=\"extleaf\"\nversion=\"0.2.0\"\nedition=\"2021\"\n",
+    )
+    .expect("write leaf manifest");
+    std::fs::write(
+        leaf_checkout.join("src").join("lib.rs"),
+        "pub struct LeafT;\n",
+    )
+    .expect("write leaf lib");
     // SAFETY: single mutation before any reader; tests in this file
     // run in one process and no other test consults CARGO_HOME.
     unsafe { std::env::set_var("CARGO_HOME", fake_home.path()) };
@@ -64,6 +102,8 @@ fn adopted_roots_resolve_forms_and_exclusions() {
             String::from(
                 "version = 4\n\n[[package]]\nname = \"extmath\"\nversion = \"0.30.10\"\n\n\
                  [[package]]\nname = \"extfut\"\nversion = \"0.3.31\"\n\n\
+                 [[package]]\nname = \"extns\"\nversion = \"0.1.0\"\n\n\
+                 [[package]]\nname = \"extleaf\"\nversion = \"0.2.0\"\n\n\
                  [[package]]\nname = \"lib\"\nversion = \"0.0.1\"\n",
             ),
         ),
@@ -79,11 +119,15 @@ fn adopted_roots_resolve_forms_and_exclusions() {
                 "pub use extmath::*;\n\
                  pub use extmath::swizzles::Vec3Swizzles;\n\
                  pub use extfut;\n\
+                 pub use extns;\n\
+                 pub use extleaf::LeafT as TheLeaf;\n\
                  pub use std::time::Duration;\n\
                  pub use crate::detail::Inner;\n\
                  pub enum Align { Left, Right }\n\
                  pub use Align::*;\n\
                  pub mod detail { pub struct Inner; }\n\
+                 pub mod localm { pub struct L; }\n\
+                 pub use localm::L;\n\
                  pub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n\
                  pub struct Wrap { pub v: extmath::Vec9 }\n",
             ),
@@ -163,14 +207,40 @@ fn adopted_roots_resolve_forms_and_exclusions() {
         "single-segment re-export is namespace adoption"
     );
 
-    // Exclusions: std / lang-rooted / type-rooted / example-site.
-    for never in ["std", "crate", "Align", "exdemo"] {
+    // Exclusions: std / lang-rooted / type-rooted / example-site /
+    // uniform-path LOCAL-module re-export (the M1 gate: `pub mod
+    // localm` + `pub use localm::L;` re-exports the local module).
+    for never in ["std", "crate", "Align", "exdemo", "localm"] {
         assert!(
             !by_root.contains_key(never),
             "{never} must not adopt; roots: {:?}",
             by_root.keys().collect::<Vec<_>>()
         );
     }
+
+    // M2 exposure rule: the namespace-only root enumerates (its
+    // surface serves the demand vocabulary) but mints NOTHING.
+    let extns = by_root.get("extns").expect("extns still adopts (ns)");
+    assert!(
+        extns
+            .get("surface")
+            .and_then(|v| v.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
+        "ns-only root enumerates for the vocabulary; got {:?}",
+        extns.get("surface")
+    );
+    // Leaf-only root enumerates too (the mint needs kind + seed).
+    let extleaf = by_root.get("extleaf").expect("extleaf adopts (leaf)");
+    assert!(
+        extleaf
+            .get("surface")
+            .and_then(|v| v.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
+        "leaf-bearing root enumerates; got {:?}",
+        extleaf.get("surface")
+    );
 
     // Enumeration: the glob root's checkout resolved through the
     // fake registry and its pub surface enumerated - root decls,
@@ -299,5 +369,26 @@ fn adopted_roots_resolve_forms_and_exclusions() {
             .map(|v| v.is_null())
             .unwrap_or(true),
         "workspace-origin keys carry no adopted mark"
+    );
+
+    // M2: namespace-only items never mint bare-name keys.
+    assert!(
+        !pm.contains_key("structure:NsThing"),
+        "ns-only adoption must not mint; structure keys: {:?}",
+        pm.keys().filter(|k| k.starts_with("structure:")).collect::<Vec<_>>()
+    );
+    // M2: a renamed LEAF mints under the EXPOSED binding with
+    // adopted provenance; the source spelling stays unkeyed.
+    let leaf = pm
+        .get("structure:TheLeaf")
+        .expect("renamed leaf mints under the exposed binding");
+    assert_eq!(
+        leaf.get("adopted").and_then(|v| v.as_str()),
+        Some("extleaf@0.2.0"),
+        "leaf mint carries provenance; got {leaf}"
+    );
+    assert!(
+        !pm.contains_key("structure:LeafT"),
+        "the leaf's source spelling must not key"
     );
 }

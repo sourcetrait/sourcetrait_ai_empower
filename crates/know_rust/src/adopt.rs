@@ -94,6 +94,29 @@ pub fn resolve_adopted_roots(
     let lang_roots = ["crate", "self", "super"];
     let std_roots = ["std", "core", "alloc"];
 
+    // Uniform-path local-module gate (the scope-precise rule shared
+    // with the unit-1 demand gate and the 5F builder): a re-export
+    // whose root names a mod declared in the SAME (crate, file,
+    // inline module chain) re-exports the LOCAL module, never a
+    // foreign crate - bevy_time's `mod time;` + `pub use time::*;`
+    // must not adopt the time crate.
+    let mut local_mod_scopes: HashSet<(String, String, String, String)> = HashSet::new();
+    for m in &all_facts.mods {
+        if let (Some(n), Some(c), Some(f)) = (
+            m.get("name").and_then(|v| v.as_str()),
+            m.get("crate").and_then(|v| v.as_str()),
+            m.get("file").and_then(|v| v.as_str()),
+        ) {
+            let mp = m.get("module_path").and_then(|v| v.as_str()).unwrap_or("");
+            local_mod_scopes.insert((
+                c.to_string(),
+                f.to_string(),
+                mp.to_string(),
+                n.to_string(),
+            ));
+        }
+    }
+
     // root (underscore-normalized) -> accumulating entry.
     let mut roots: BTreeMap<String, AdoptedRoot> = BTreeMap::new();
 
@@ -121,6 +144,19 @@ pub fn resolve_adopted_roots(
         }
         if std_roots.contains(&parsed.root.as_str()) {
             continue;
+        }
+        // Local-module gate: explicit-external `::` paths bypass per
+        // language semantics.
+        if !parsed.explicit_external {
+            let mp = u.get("module_path").and_then(|v| v.as_str()).unwrap_or("");
+            if local_mod_scopes.contains(&(
+                using.to_string(),
+                file.to_string(),
+                mp.to_string(),
+                parsed.root.clone(),
+            )) {
+                continue;
+            }
         }
         // Type-rooted re-exports (`pub use Alignment::*;`) lift enum
         // variants of a WORKSPACE type - not adoption.
@@ -247,7 +283,10 @@ pub fn resolve_adopted_roots(
 /// `resolve_adopted_roots`.
 pub fn enumerate_adopted_surfaces(roots: &mut [AdoptedRoot]) {
     for r in roots.iter_mut() {
-        if !(r.namespace || !r.globs.is_empty()) {
+        // Every checkout-bearing root enumerates: glob + leaf forms
+        // feed bare-name mints; namespace-only surfaces still serve
+        // the demand vocabulary + seeds (enumeration data, no keys).
+        if !(r.namespace || !r.globs.is_empty() || !r.leaves.is_empty()) {
             continue;
         }
         let Some(checkout) = r.checkout.clone() else {
@@ -298,14 +337,17 @@ pub fn enumerate_adopted_surfaces(roots: &mut [AdoptedRoot]) {
 }
 
 /// What: mint pattern_metrics keys for workspace-ADOPTED items -
-/// the eligibility slice. Glob-adopted items (surface entries whose
-/// shortest chain equals the glob's path), namespace-adopted items
-/// (the whole surface), and leaf-adopted items (matched in the
-/// surface by source name) become first-class keys: bare
-/// `structure:`/`traits:` for types, `implementation_functions:` /
-/// `globals:` pairs for fns/consts (outer = the chain tail, else
-/// the adopted root). Zero counts; is_pub; `adopted` carries
-/// `<package>@<version>`.
+/// the eligibility slice under the M2 exposure rule. Only
+/// BARE-NAME-EXPOSED items mint: glob-adopted items (surface
+/// entries whose shortest chain equals the glob's path) and
+/// leaf-adopted items (matched in the surface by source name;
+/// renamed leaves mint under the EXPOSED binding). Namespace-only
+/// adoption exposes the namespace path, not bare names - those
+/// items stay enumeration data (demand vocabulary + 5F) and never
+/// mint. Keys: bare `structure:`/`traits:` for types,
+/// `implementation_functions:` / `globals:` pairs for fns/consts
+/// (outer = the chain tail, else the adopted root). Zero counts;
+/// is_pub; `adopted` carries `<package>@<version>`.
 ///
 /// Why: the workspace-adopted design rule - re-exported foreign
 /// items are the workspace's own API surface and must be
@@ -350,15 +392,18 @@ pub fn adopted_channel(
             continue;
         }
         let provenance = format!("{}@{}", root.package, root.version);
-        // Which surface items the adoption forms expose.
-        let exposed: Vec<&SurfaceItem> = root
+        // Which surface items the adoption forms BARE-NAME expose
+        // (the M2 exposure rule): a glob whose path equals the item's
+        // chain, or a leaf naming the item - a renamed leaf exposes
+        // the BINDING, so the key mints under the exposed name.
+        // Namespace-only adoption exposes the namespace PATH, not
+        // bare names: ns-only items never mint or re-attribute (they
+        // stay enumeration data for the demand vocabulary + 5F).
+        let exposed: Vec<(&SurfaceItem, String)> = root
             .surface
             .iter()
-            .filter(|s| {
-                if root.namespace {
-                    return true;
-                }
-                if root.globs.iter().any(|g| {
+            .filter_map(|s| {
+                let glob_hit = root.globs.iter().any(|g| {
                     let gp: Vec<&str> = if g.is_empty() {
                         Vec::new()
                     } else {
@@ -366,14 +411,18 @@ pub fn adopted_channel(
                     };
                     s.chain.len() == gp.len()
                         && s.chain.iter().zip(gp.iter()).all(|(a, b)| a == b)
-                }) {
-                    return true;
+                });
+                if glob_hit {
+                    return Some((s, s.name.clone()));
                 }
-                root.leaves.iter().any(|(src, _)| src == &s.name)
+                root.leaves
+                    .iter()
+                    .find(|(src, _)| src == &s.name)
+                    .map(|(_, exposed_name)| (s, exposed_name.clone()))
             })
             .collect();
-        for item in exposed {
-            if item.kind == "fn" && item.name == "main" {
+        for (item, key_name) in exposed {
+            if item.kind == "fn" && key_name == "main" {
                 continue;
             }
             let outer = item
@@ -382,20 +431,20 @@ pub fn adopted_channel(
                 .cloned()
                 .unwrap_or_else(|| root.root.clone());
             let key_wire = match item.kind.as_str() {
-                "fn" => Pattern::impl_fn(&outer, &item.name).to_string(),
+                "fn" => Pattern::impl_fn(&outer, &key_name).to_string(),
                 "const" | "static" => {
-                    Pattern::globals(format!("{}::{}", outer, item.name)).to_string()
+                    Pattern::globals(format!("{}::{}", outer, key_name)).to_string()
                 }
-                "trait" => Pattern::traits(&item.name).to_string(),
+                "trait" => Pattern::traits(&key_name).to_string(),
                 // struct / enum / union / type aliases.
-                _ => Pattern::structure(&item.name).to_string(),
+                _ => Pattern::structure(&key_name).to_string(),
             };
             // NF5 parity: adopted mints respect the substring filter.
             if should_skip_pattern(&key_wire, calibration) {
                 continue;
             }
             let bare_type = matches!(item.kind.as_str(), "fn" | "const" | "static") == false;
-            if bare_type && true_decls.contains(&item.name) {
+            if bare_type && true_decls.contains(&key_name) {
                 // Workspace-origin shadows adoption.
                 continue;
             }
@@ -426,7 +475,7 @@ pub fn adopted_channel(
                             adopted: Some(provenance.clone()),
                         },
                     );
-                    fresh.push((key_wire, root_idx, item.kind.clone(), item.name.clone()));
+                    fresh.push((key_wire, root_idx, item.kind.clone(), key_name.clone()));
                 }
             }
         }

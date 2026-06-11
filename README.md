@@ -2,7 +2,7 @@ SourceTrait Empower
 ================================================================================
 [![License Badge]][License] [![Linkable Badge]][Linkable] [![AI Badge]][AI]
 
-*Harness toolkit for AI-assisted data analysis and development tooling*
+*Toolkit for AI-assisted data analysis and tooling*
 
 
 Crates

@@ -152,12 +152,20 @@ pub fn characterize(
             .extend(entries.iter().cloned());
     }
 
+    // Workspace-adopted roots resolve early: carry's origin gate and
+    // the adopted channel both consume the table; the artifact write
+    // happens at the end.
+    let mut adopted = resolve_adopted_roots(&all_facts, &crates, workspace_root);
+    enumerate_adopted_surfaces(&mut adopted);
+
     // Workspace-origin gate on carry: the picks-data design rule is that
     // all forms of picks (Picked + Carried) exclude types defined outside
-    // the workspace. The items walker records carry structurally and has
-    // no cross-workspace knowledge; here the full workspace type+trait set
-    // exists to enforce origin. See notes/know_rust/working/02_picks_data.md.
-    filter_carries_to_workspace(&mut all_facts);
+    // the workspace - except ADOPTED items, which are workspace API by
+    // the author's re-export (carry adopts too). The items walker
+    // records carry structurally and has no cross-workspace knowledge;
+    // here the full workspace type+trait set exists to enforce origin.
+    // See notes/know_rust/working/03_picks_data.md.
+    filter_carries_to_workspace(&mut all_facts, &adopted);
 
     for ent in &usage_facts.ast_fn_sig_usages {
         if ent.ident.is_empty() {
@@ -265,13 +273,18 @@ pub fn characterize(
     // land in facts.pair_aliases for the demand matcher.
     all_facts.pair_aliases =
         decl_api_channel(&all_facts, &crates, &mut pattern_metrics, calibration);
-    // Workspace-adopted channel (the_user's adoption rule): the
-    // re-exported foreign surface resolves, enumerates from registry
-    // checkouts, and mints/re-attributes first-class keys with
-    // adopted provenance.
-    let mut adopted = resolve_adopted_roots(&all_facts, &crates, workspace_root);
-    enumerate_adopted_surfaces(&mut adopted);
-    adopted_channel(&adopted, &all_facts, &mut pattern_metrics, calibration);
+    // Workspace-adopted channel (the_user's adoption rule): mints +
+    // re-attributes first-class keys with adopted provenance from
+    // the table resolved above; fresh mints earn workspace usage
+    // counts (intra = adopting-crate self-use, inter = cross-crate
+    // reliance through the surface).
+    adopted_channel(
+        &adopted,
+        &all_facts,
+        Some(&usage_facts),
+        &mut pattern_metrics,
+        calibration,
+    );
     let workspace_use_classification =
         classify_workspace_use(&crates, &pattern_metrics, calibration);
 
@@ -421,23 +434,42 @@ fn extend_with_crate(
 ///
 /// Where: called from `characterize` after per-crate facts + the
 /// item-walker carries are merged into `all_facts`.
-fn filter_carries_to_workspace(all_facts: &mut WorkspaceFacts) {
+fn filter_carries_to_workspace(all_facts: &mut WorkspaceFacts, adopted: &[AdoptedRoot]) {
     // Example-declared types/traits never qualify as carry origin
     // (the example-origin rule): a name declared only in example
     // files is not workspace API and drops from carry like any
     // external.
-    let ws_types: HashSet<String> = all_facts
+    let mut ws_types: HashSet<String> = all_facts
         .types
         .iter()
         .filter(|t| !is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")))
         .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
         .collect();
-    let ws_traits: HashSet<String> = all_facts
+    let mut ws_traits: HashSet<String> = all_facts
         .traits
         .iter()
         .filter(|t| !is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")))
         .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
         .collect();
+    // Carry adopts too (the workspace-adopted rule): a workspace
+    // struct with a glam::Vec3 field carries Vec3.
+    for r in adopted {
+        for s in &r.surface {
+            match s.kind.as_str() {
+                "trait" => {
+                    ws_traits.insert(s.name.clone());
+                }
+                "fn" | "const" | "static" => {}
+                _ => {
+                    ws_types.insert(s.name.clone());
+                }
+            }
+        }
+        for (src, exposed) in &r.leaves {
+            ws_types.insert(src.clone());
+            ws_types.insert(exposed.clone());
+        }
+    }
     let name_ok = |n: &str| ws_types.contains(n) || ws_traits.contains(n);
     let key_ok = |pat: &Pattern| -> bool {
         match pat {

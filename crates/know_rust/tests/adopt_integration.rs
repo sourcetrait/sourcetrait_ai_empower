@@ -84,7 +84,8 @@ fn adopted_roots_resolve_forms_and_exclusions() {
                  pub enum Align { Left, Right }\n\
                  pub use Align::*;\n\
                  pub mod detail { pub struct Inner; }\n\
-                 pub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
+                 pub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n\
+                 pub struct Wrap { pub v: extmath::Vec9 }\n",
             ),
         ),
         (
@@ -100,7 +101,10 @@ fn adopted_roots_resolve_forms_and_exclusions() {
         ),
         (
             "app/src/lib.rs",
-            String::from("use lib::Core;\npub fn go() -> Core { Core::new() }\n"),
+            String::from(
+                "use lib::Core;\npub fn go() -> Core { Core::new() }\n\
+                 pub fn take(_v: extmath::Vec9) {}\n",
+            ),
         ),
     ]
     .into_iter()
@@ -239,6 +243,30 @@ fn adopted_roots_resolve_forms_and_exclusions() {
         Some("extmath"),
         "defining identity is the adopted crate"
     );
+    // Internal counting: app's qualified sig usage credits the fresh
+    // mint as INTER (app is not an adopting crate); example sites
+    // never count.
+    assert!(
+        vec9.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(0) >= 1,
+        "workspace usage credits the adopted key; got {vec9}"
+    );
+    // Carry adopts: lib's Wrap field carries Vec9 through the origin
+    // gate.
+    let facts: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(tmp.path().join(".orientation").join("facts.json"))
+            .expect("read facts"),
+    )
+    .expect("parse facts");
+    let wrap_carry = facts
+        .pointer("/carries/structure:Wrap")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| e.get("name").and_then(|v| v.as_str()))
+                .any(|n| n == "Vec9")
+        })
+        .unwrap_or(false);
+    assert!(wrap_carry, "adopted type rides carry; got {:?}", facts.pointer("/carries/structure:Wrap"));
     assert!(
         pm.contains_key("globals:extmath::EPS"),
         "adopted const mints a globals pair under the root outer"

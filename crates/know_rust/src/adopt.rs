@@ -46,6 +46,12 @@ pub struct AdoptedRoot {
     pub leaves: Vec<(String, String)>,
     /// Adopting re-export rows observed (site count).
     pub sites: usize,
+    /// Workspace crates whose re-exports adopt this root - the
+    /// intra/inter split's pivot for adopted items (an adopting
+    /// crate's own usage is intra; other crates' usage through the
+    /// surface is inter) and the through-adopter credit set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adopting_crates: Vec<String>,
     /// The adopted crate's pub-reachable module-level surface (kind /
     /// name / shortest public chain), enumerated from the registry
     /// checkout through the decl channel's reachability machinery.
@@ -154,9 +160,13 @@ pub fn resolve_adopted_roots(
             globs: Vec::new(),
             leaves: Vec::new(),
             sites: 0,
+            adopting_crates: Vec::new(),
             surface: Vec::new(),
         });
         entry.sites += 1;
+        if !entry.adopting_crates.iter().any(|c| c == using) {
+            entry.adopting_crates.push(using.to_string());
+        }
         if crate_level {
             entry.namespace = true;
         }
@@ -313,6 +323,7 @@ pub fn enumerate_adopted_surfaces(roots: &mut [AdoptedRoot]) {
 pub fn adopted_channel(
     adopted: &[AdoptedRoot],
     all_facts: &WorkspaceFacts,
+    ast_usages: Option<&UsageFacts>,
     metrics: &mut indexmap::IndexMap<String, PatternMetric>,
     calibration: &Calibration,
 ) {
@@ -333,7 +344,8 @@ pub fn adopted_channel(
         }
     }
 
-    for root in adopted {
+    let mut fresh: Vec<(String, usize, String, String)> = Vec::new();
+    for (root_idx, root) in adopted.iter().enumerate() {
         if root.surface.is_empty() {
             continue;
         }
@@ -398,8 +410,10 @@ pub fn adopted_channel(
                     m.is_pub = true;
                 }
                 None => {
+                    // Fresh mint: zero counts now; the counting pass
+                    // below credits workspace usage sites.
                     metrics.insert(
-                        key_wire,
+                        key_wire.clone(),
                         PatternMetric {
                             defining_crate: Some(root.root.clone()),
                             intra_count: 0,
@@ -412,7 +426,184 @@ pub fn adopted_channel(
                             adopted: Some(provenance.clone()),
                         },
                     );
+                    fresh.push((key_wire, root_idx, item.kind.clone(), item.name.clone()));
                 }
+            }
+        }
+    }
+
+    count_adopted_usage(&fresh, adopted, all_facts, ast_usages, metrics);
+}
+
+/// What: credit WORKSPACE usage sites to freshly-minted adopted keys
+/// (the internal-usage counting slice). A site credits when its
+/// written qualifier or import binding resolves to the adopted root
+/// directly, or to a workspace crate that ADOPTS that root (usage
+/// through the re-exporting surface). The intra/inter split pivots
+/// on the adopting set: an adopting crate's own usage is intra;
+/// any other crate's usage through the surface is inter - the
+/// architectural-reliance signal (the_user: bevy relies on glam's
+/// types internally and externally).
+///
+/// Why: adoption's significance must not depend on consumer demand
+/// alone - the workspace's own reliance is the primary signal
+/// (working/03, internal-usage-counts ruling). Only FRESH mints
+/// count here: re-attributed keys keep their existing counts (the
+/// same sites already credited them through the pseudo-decl
+/// attribution; re-counting would double).
+///
+/// Where: tail of `adopted_channel`. Example-dir sites never count
+/// (units 10/12); evidence tallies stay untouched.
+fn count_adopted_usage(
+    fresh: &[(String, usize, String, String)],
+    adopted: &[AdoptedRoot],
+    all_facts: &WorkspaceFacts,
+    ast_usages: Option<&UsageFacts>,
+    metrics: &mut indexmap::IndexMap<String, PatternMetric>,
+) {
+    if fresh.is_empty() {
+        return;
+    }
+    let import_maps = build_import_bindings(all_facts.uses.iter().filter_map(|u| {
+        Some((
+            u.get("file").and_then(|v| v.as_str())?,
+            u.get("path").and_then(|v| v.as_str())?,
+        ))
+    }));
+    // name -> (key, root index) per kind family.
+    let mut type_keys: HashMap<&str, (&str, usize)> = HashMap::new();
+    let mut trait_keys: HashMap<&str, (&str, usize)> = HashMap::new();
+    let mut fn_keys: HashMap<&str, (&str, usize)> = HashMap::new();
+    for (key, root_idx, kind, name) in fresh {
+        match kind.as_str() {
+            "trait" => {
+                trait_keys.insert(name.as_str(), (key.as_str(), *root_idx));
+            }
+            "fn" => {
+                fn_keys.insert(name.as_str(), (key.as_str(), *root_idx));
+            }
+            "const" | "static" => {}
+            _ => {
+                type_keys.insert(name.as_str(), (key.as_str(), *root_idx));
+            }
+        }
+    }
+    // A site credits root R when its resolved root IS R's binding or
+    // a workspace crate adopting R.
+    let site_credits_root = |file: &str, name: &str, qualifier: Option<&str>, r: &AdoptedRoot| -> bool {
+        if let Some(q) = qualifier {
+            let qn = q.replace('-', "_");
+            return qn == r.root || r.adopting_crates.iter().any(|c| c.replace('-', "_") == qn);
+        }
+        if let Some(b) = import_maps.get(file).and_then(|m| m.get(name)) {
+            let rn = b.root.replace('-', "_");
+            return rn == r.root
+                || r.adopting_crates.iter().any(|c| c.replace('-', "_") == rn);
+        }
+        false
+    };
+    let mut credit = |key: &str, using: &str, r: &AdoptedRoot| {
+        if let Some(m) = metrics.get_mut(key) {
+            if r.adopting_crates.iter().any(|c| c == using) {
+                m.intra_count += 1;
+            } else {
+                m.inter_count += 1;
+            }
+            let total = m.intra_count + m.inter_count;
+            m.inter_ratio = if total > 0 {
+                let raw = m.inter_count as f64 / total as f64;
+                format!("{:.3}", raw).parse().unwrap_or(raw)
+            } else {
+                0.0
+            };
+        }
+    };
+
+    // Trait kinds: impl + derive facts.
+    for (facts, field) in [(&all_facts.impls, "trait"), (&all_facts.derives, "trait")] {
+        for f in facts.iter() {
+            let Some(n) = f.get(field).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some((key, ri)) = trait_keys.get(n) else {
+                continue;
+            };
+            let file = f.get("file").and_then(|v| v.as_str()).unwrap_or("");
+            if is_example_path(file) {
+                continue;
+            }
+            let using = f.get("crate").and_then(|v| v.as_str()).unwrap_or("");
+            if using.is_empty() {
+                continue;
+            }
+            let r = &adopted[*ri];
+            if site_credits_root(file, n, f.get("qualifier").and_then(|v| v.as_str()), r) {
+                credit(key, using, r);
+            }
+        }
+    }
+    // Type kinds: factory-call outers (main stream) + AST sig/field/
+    // alias idents.
+    for f in all_facts.type_usages.iter() {
+        let Some(nm) = f.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let outer = nm.split("::").next().unwrap_or(nm);
+        let Some((key, ri)) = type_keys.get(outer) else {
+            continue;
+        };
+        let file = f.get("file").and_then(|v| v.as_str()).unwrap_or("");
+        if is_example_path(file) {
+            continue;
+        }
+        let using = f.get("crate").and_then(|v| v.as_str()).unwrap_or("");
+        if using.is_empty() {
+            continue;
+        }
+        let r = &adopted[*ri];
+        if site_credits_root(file, outer, f.get("qualifier").and_then(|v| v.as_str()), r) {
+            credit(key, using, r);
+        }
+    }
+    if let Some(usages) = ast_usages {
+        // The three ident-shaped AST streams are distinct types;
+        // flatten to (ident, file, qualifier). The AST wires carry
+        // no crate, so these credit conservatively as inter
+        // (cross-crate reliance is the signal that matters;
+        // adopting-crate self-use mostly rides the qualified +
+        // imported streams above).
+        let mut ident_sites: Vec<(&str, &str, Option<&str>)> = Vec::new();
+        for e in &usages.ast_fn_sig_usages {
+            ident_sites.push((e.ident.as_str(), e.file.as_str(), e.qualifier.as_deref()));
+        }
+        for e in &usages.ast_field_usages {
+            ident_sites.push((e.ident.as_str(), e.file.as_str(), e.qualifier.as_deref()));
+        }
+        for e in &usages.ast_type_alias_usages {
+            ident_sites.push((e.ident.as_str(), e.file.as_str(), e.qualifier.as_deref()));
+        }
+        for (ident, file, qualifier) in ident_sites {
+            let Some((key, ri)) = type_keys.get(ident) else {
+                continue;
+            };
+            if is_example_path(file) {
+                continue;
+            }
+            let r = &adopted[*ri];
+            if site_credits_root(file, ident, qualifier, r) {
+                credit(key, "", r);
+            }
+        }
+        for e in &usages.ast_fn_call_usages {
+            let Some((key, ri)) = fn_keys.get(e.name.as_str()) else {
+                continue;
+            };
+            if is_example_path(&e.file) {
+                continue;
+            }
+            let r = &adopted[*ri];
+            if site_credits_root(&e.file, &e.name, e.qualifier.as_deref(), r) {
+                credit(key, "", r);
             }
         }
     }

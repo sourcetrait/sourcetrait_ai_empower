@@ -115,24 +115,38 @@ struct DeclCandidate {
     hard_public: bool,
 }
 
-/// What: one leaf soft binding - the public path chain a `pub use`
-/// gives the name and the use path's source-parent segment (for
-/// matching the binding to the right same-named decl). The no-parent
-/// match rule consults the per-leg name-count map instead of a baked
-/// uniqueness flag.
+/// What: one leaf soft binding - the chain a `pub use` gives the
+/// name, the use path's source-parent segment (for matching the
+/// binding to the right same-named decl), and whether the binding
+/// SITE's chain is pub-reachable. Private-site bindings still
+/// create virtual LOCATIONS for further re-export hops (tokio's
+/// io-util: `pub use copy::copy;` sits in the private io::util,
+/// and io/mod.rs's `pub use util::{copy}` hops it public -
+/// re-exports pierce privacy; only the final hop's site decides
+/// publicness). The no-parent match rule consults the per-leg
+/// name-count map.
 struct SoftBinding {
     chain: Vec<String>,
     source_parent: Option<String>,
+    site_public: bool,
+    /// What: true when the use path resolves RELATIVE to its site
+    /// (uniform-path and `self::` roots). Site-relative bindings
+    /// attach only to locations UNDER their site chain - tokio's
+    /// `pub use self::copy::copy;` in fs/ must not attach the
+    /// same-parent-named io-util copy decl (the fs::copy/io::copy
+    /// conflation). crate::/super::-rooted paths stay tail-only.
+    site_relative: bool,
 }
 
-/// What: one glob soft binding - a `pub use <path>::*;` at a
-/// pub-reachable site chain. Attaches to every same-crate decl whose
-/// hard chain ends with `parent` (name-level granularity, the
-/// system's standing trade).
+/// What: one glob soft binding - a `pub use <path>::*;`. Attaches
+/// by splicing decl chains at `parent`; `site_public` marks whether
+/// the site chain is pub-reachable (private-site globs still create
+/// hop locations).
 struct GlobBinding {
     krate: String,
     chain: Vec<String>,
     parent: String,
+    site_public: bool,
 }
 
 /// What: per-(crate, module chain) visibility index built from mods
@@ -336,16 +350,17 @@ fn collect_bindings(
         site_chain.extend(split_chain(
             u.get("module_path").and_then(|v| v.as_str()).unwrap_or(""),
         ));
-        // The binding's public path = the use site's chain + the
-        // bound name; reachable when the site chain is all-pub (the
-        // `pub use` itself is pub by the reexport flag).
-        if !mods.chain_public(krate, &site_chain) {
-            continue;
-        }
+        // The binding's chain is the use site's chain (the bound
+        // name lives directly in that module) - symmetric with
+        // DeclCandidate::chain. Publicness of the SITE rides the
+        // binding; private-site bindings stay collectable as hop
+        // locations (re-exports pierce privacy).
+        let site_public = mods.chain_public(krate, &site_chain);
         let parsed = parse_use_leaves(path);
         if parsed.root.is_empty() {
             continue;
         }
+        let site_relative = parsed.root != "crate" && parsed.root != "super";
         for leaf in &parsed.leaves {
             match leaf {
                 UseLeaf::Named { binding, source, parent } => {
@@ -353,15 +368,13 @@ fn collect_bindings(
                         .clone()
                         .filter(|s| !s.is_empty())
                         .unwrap_or_else(|| binding.clone());
-                    // The binding's MODULE chain is the use site's
-                    // chain (the bound name lives directly in that
-                    // module) - symmetric with DeclCandidate::chain,
-                    // which also excludes the item name itself.
                     out.entry((krate.to_string(), src_name))
                         .or_default()
                         .push(SoftBinding {
                             chain: site_chain.clone(),
                             source_parent: parent.clone(),
+                            site_public,
+                            site_relative,
                         });
                 }
                 UseLeaf::Glob { parent: Some(p) } => {
@@ -369,6 +382,7 @@ fn collect_bindings(
                         krate: krate.to_string(),
                         chain: site_chain.clone(),
                         parent: p.clone(),
+                        site_public,
                     });
                 }
                 UseLeaf::Glob { parent: None } => {}
@@ -392,18 +406,25 @@ fn public_chains_for(
     if decl.hard_public {
         public_chains.push(decl.chain.clone());
     }
-    // Glob bindings splice the decl's chain at the named module: a
-    // `pub use m::*;` lifts every item AND pub sub-module of m, so a
-    // decl whose chain passes THROUGH m is reachable when each
-    // segment below the hop is itself a pub, non-hidden mod (bevy's
-    // `system::lifetimeless::Write` - private `mod system_param`
-    // glob-lifted into `system`, with `pub mod lifetimeless` riding
-    // inside it). The direct case (decl declared in m) is the empty
-    // suffix. Splices CHAIN (bounded closure): re-export hops
-    // compose, exactly like the facade ns_closure. Suffix visibility
-    // checks run against the REAL module tree, so a virtual
-    // (post-splice) suffix segment conservatively fails.
-    let mut spliced: Vec<Vec<String>> = Vec::new();
+    // Location BFS over the re-export graph. A LOCATION is a module
+    // chain where the item's name is in scope; hops are GLOB
+    // splices (`pub use m::*;` lifts items + pub sub-modules of m:
+    // bevy's system::lifetimeless::Write; suffix segments below the
+    // hop must each be pub, non-hidden mods of the REAL tree) and
+    // LEAF bindings (parent-matched against the item's known
+    // location tails: nushell's root `pub use engine::
+    // {NU_VARIABLE_ID}` names the VIRTUAL location). Hops compose
+    // (the closure), and they pierce privacy - a binding at a
+    // PRIVATE site still creates a hop location (tokio io-util:
+    // `pub use copy::copy;` in private io::util, hopped out by
+    // io/mod.rs's `pub use util::{copy}`); only hops whose own SITE
+    // chain is pub-reachable contribute PUBLIC chains.
+    let no_parent_attaches = name_counts
+        .get(&(decl.krate.clone(), decl.name.clone()))
+        .copied()
+        .unwrap_or(0)
+        == 1;
+    let soft = bindings.get(&(decl.krate.clone(), decl.name.clone()));
     let mut queue: Vec<Vec<String>> = vec![decl.chain.clone()];
     let mut seen: std::collections::HashSet<String> =
         std::collections::HashSet::new();
@@ -428,50 +449,33 @@ fn public_chains_for(
             let mut next = g.chain.clone();
             next.extend(chain[(i + 1)..].iter().cloned());
             if seen.insert(next.join("::")) && seen.len() <= 64 {
-                spliced.push(next.clone());
+                if g.site_public {
+                    public_chains.push(next.clone());
+                }
                 queue.push(next);
             }
         }
-    }
-    // The item's known location TAILS: the hard parent plus every
-    // spliced (virtual) location's containing module. A leaf
-    // binding's source parent names the module the use path read
-    // the item FROM - which may be a virtual location (nushell's
-    // `pub use engine::{NU_VARIABLE_ID}` at the root: the item
-    // virtually lives in `engine` via `pub use engine_state::*;`).
-    let mut tails: std::collections::HashSet<&str> =
-        std::collections::HashSet::new();
-    if let Some(t) = decl.chain.last() {
-        tails.insert(t.as_str());
-    }
-    for c in &spliced {
-        if let Some(t) = c.last() {
-            tails.insert(t.as_str());
-        }
-    }
-    if let Some(soft) = bindings.get(&(decl.krate.clone(), decl.name.clone())) {
-        for b in soft {
-            // Parent-based disambiguation: a binding whose use path
-            // named a source parent attaches only to decls located
-            // (hard or virtually) in that parent; a binding with no
-            // parent attaches when the decl name is unique among
-            // the crate's module-level decls of this leg.
-            let attaches = match &b.source_parent {
-                Some(p) => tails.contains(p.as_str()),
-                None => {
-                    name_counts
-                        .get(&(decl.krate.clone(), decl.name.clone()))
-                        .copied()
-                        .unwrap_or(0)
-                        == 1
+        if let Some(soft) = soft {
+            for b in soft {
+                let attaches = match &b.source_parent {
+                    Some(p) => {
+                        chain.last() == Some(p)
+                            && (!b.site_relative || chain.starts_with(&b.chain))
+                    }
+                    None => no_parent_attaches,
+                };
+                if !attaches {
+                    continue;
                 }
-            };
-            if attaches {
-                public_chains.push(b.chain.clone());
+                if seen.insert(b.chain.join("::")) && seen.len() <= 64 {
+                    if b.site_public {
+                        public_chains.push(b.chain.clone());
+                    }
+                    queue.push(b.chain.clone());
+                }
             }
         }
     }
-    public_chains.extend(spliced);
     public_chains
 }
 

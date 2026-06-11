@@ -182,6 +182,7 @@ pub(crate) fn scan_macro_body_tokens(
     tokens: &proc_macro2::TokenStream,
     brace_depth: usize,
     emit_attrs: bool,
+    decl_module_path: Option<&str>,
 ) {
     let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
     let mut i = 0;
@@ -273,6 +274,7 @@ pub(crate) fn scan_macro_body_tokens(
                                 &g.stream(),
                                 brace_depth,
                                 emit_attrs,
+                                None,
                             );
                             i = bracket_idx + 1;
                             continue;
@@ -285,17 +287,40 @@ pub(crate) fn scan_macro_body_tokens(
             proc_macro2::TokenTree::Ident(ident) => {
                 let name = ident.to_string();
                 let line = ident.span().start().line;
-                // Bare `pub` immediately before an item keyword in a
-                // macro INVOCATION's argument tokens: recover the
+                // Bare `pub` before an item keyword in a macro
+                // INVOCATION's argument tokens: recover the
                 // visibility the token walk otherwise drops (tokio's
                 // cfg_*! { pub mod fs; } top-level mods gated the
-                // whole decl channel). macro_rules! DEFINITION
-                // templates (emit_attrs == false) stay blank - a
-                // template fn is not a declaration until expanded.
-                // pub(crate)/pub(super) forms stay blank either way.
-                let prev_pub = emit_attrs
-                    && i >= 1
-                    && matches!(&trees[i - 1], proc_macro2::TokenTree::Ident(p) if p == "pub");
+                // whole decl channel). Fn QUALIFIERS may sit between
+                // (`pub async fn copy` - the io-util shape), so the
+                // back-walk skips async/unsafe/const/extern "C".
+                // macro_rules! DEFINITION templates (emit_attrs ==
+                // false) stay blank - a template fn is not a
+                // declaration until expanded. pub(crate)/pub(super)
+                // forms stay blank either way.
+                let prev_pub = emit_attrs && {
+                    let mut j = i;
+                    let mut found = false;
+                    while j >= 1 {
+                        match &trees[j - 1] {
+                            proc_macro2::TokenTree::Ident(p) if p == "pub" => {
+                                found = true;
+                                break;
+                            }
+                            proc_macro2::TokenTree::Ident(p)
+                                if p == "async" || p == "unsafe" || p == "const"
+                                    || p == "extern" =>
+                            {
+                                j -= 1;
+                            }
+                            proc_macro2::TokenTree::Literal(_) => {
+                                j -= 1;
+                            }
+                            _ => break,
+                        }
+                    }
+                    found
+                };
                 if emit_attrs {
                     let mut path_segs: Vec<String> = vec![name.clone()];
                     let mut k = i + 1;
@@ -343,6 +368,7 @@ pub(crate) fn scan_macro_body_tokens(
                                         &g.stream(),
                                         brace_depth,
                                         emit_attrs,
+                                        None,
                                     );
                                     i = k + 2;
                                     continue;
@@ -440,11 +466,45 @@ pub(crate) fn scan_macro_body_tokens(
                                 } else {
                                     String::new()
                                 },
-                                module_path: None,
+                                // STREAM-TOP-LEVEL fn tokens of a
+                                // module-level macro INVOCATION are
+                                // declarations at the invocation
+                                // site's module chain (tokio's
+                                // cfg_io_util! { pub async fn copy }
+                                // class) - decl-channel eligible.
+                                // Recursive frames pass None.
+                                module_path: decl_module_path.map(String::from),
                                 doc_hidden: false,
                             });
                             i = i + 1 + cursor.pos();
                             continue;
+                        }
+                    }
+                    "use" => {
+                        // Top-level `use` tokens of a module-level
+                        // macro INVOCATION: cfg-wrapped re-exports
+                        // (cfg_io_util! { pub use copy::copy; })
+                        // were walker-invisible, leaving minted
+                        // io-util fns pub-unreachable. Collect the
+                        // path tokens to `;` into the flattened
+                        // wire form. macro_rules templates and
+                        // nested frames stay out (decl_module_path
+                        // None).
+                        if let Some(mp) = decl_module_path {
+                            let (path, consumed) =
+                                collect_use_path_tokens(&trees[i + 1..]);
+                            if !path.is_empty() {
+                                facts.uses.push(UseEntry {
+                                    file: file.to_string(),
+                                    reexport: prev_pub,
+                                    path,
+                                    line,
+                                    module_path: Some(mp.to_string()),
+                                    doc_hidden: false,
+                                });
+                                i = i + 1 + consumed;
+                                continue;
+                            }
                         }
                     }
                     "mod" => {
@@ -502,7 +562,18 @@ pub(crate) fn scan_macro_body_tokens(
                 }
             }
             proc_macro2::TokenTree::Group(g) => {
-                scan_macro_body_tokens(facts, file, is_example, &g.stream(), brace_depth, emit_attrs);
+                // Recursive group descent: nested decls are NOT
+                // stream-top-level - fn-body fns and cfg_if-arm
+                // content must not mint (decl_module_path None).
+                scan_macro_body_tokens(
+                    facts,
+                    file,
+                    is_example,
+                    &g.stream(),
+                    brace_depth,
+                    emit_attrs,
+                    None,
+                );
             }
             _ => {}
         }
@@ -581,6 +652,68 @@ pub(crate) fn scan_attr_meta_for_macros(
             scan_attr_meta_for_macros(facts, file, &g.stream(), brace_depth);
         }
         i += 1;
+    }
+}
+
+/// What: collect the token run following a `use` keyword (up to the
+/// terminating `;`) into the flattened wire path form
+/// (`copy::copy`, `split::*`, `x::{A, b as c}`). Returns the path
+/// string plus the number of tokens consumed (including the `;`).
+///
+/// Why: the macro-token use arm must emit the same wire shape
+/// `flatten_use_tree` produces so `parse_use_leaves` reads both
+/// identically.
+///
+/// Where: called from `scan_macro_body_tokens`' `use` arm.
+fn collect_use_path_tokens(trees: &[proc_macro2::TokenTree]) -> (String, usize) {
+    collect_use_path_inner(trees, true)
+}
+
+fn collect_use_path_inner(
+    trees: &[proc_macro2::TokenTree],
+    require_semi: bool,
+) -> (String, usize) {
+    let mut buf = String::new();
+    let mut consumed = 0usize;
+    for t in trees {
+        consumed += 1;
+        match t {
+            proc_macro2::TokenTree::Punct(p) if p.as_char() == ';' => {
+                return (buf, consumed);
+            }
+            proc_macro2::TokenTree::Ident(id) => {
+                let s = id.to_string();
+                if s == "as" {
+                    buf.push_str(" as ");
+                } else {
+                    buf.push_str(&s);
+                }
+            }
+            proc_macro2::TokenTree::Punct(p) if p.as_char() == ':' => buf.push(':'),
+            proc_macro2::TokenTree::Punct(p) if p.as_char() == ',' => buf.push_str(", "),
+            proc_macro2::TokenTree::Punct(p) if p.as_char() == '*' => buf.push('*'),
+            proc_macro2::TokenTree::Group(g)
+                if g.delimiter() == proc_macro2::Delimiter::Brace =>
+            {
+                let inner: Vec<proc_macro2::TokenTree> =
+                    g.stream().clone().into_iter().collect();
+                // Brace-group content terminates at end-of-group,
+                // not at a `;`.
+                let (inner_str, _) = collect_use_path_inner(&inner, false);
+                buf.push('{');
+                buf.push_str(&inner_str);
+                buf.push('}');
+            }
+            // Any other token shape is not a use path; bail with
+            // nothing so the caller falls through.
+            _ => return (String::new(), 0),
+        }
+    }
+    if require_semi {
+        // No terminating `;` reached: not a recognizable use item.
+        (String::new(), 0)
+    } else {
+        (buf, consumed)
     }
 }
 

@@ -256,6 +256,53 @@ fn module_level_consts_statics_and_decl_fields() {
 }
 
 #[test]
+fn macro_invocation_top_level_decls_are_channel_eligible() {
+    // The cfg_io_util class: a module-level macro INVOCATION's
+    // stream-top-level fn carries the invocation site's chain
+    // (decl-channel eligible) and a top-level `pub use` emits a
+    // re-export UseEntry; nested-group fns and macro_rules
+    // templates stay ineligible.
+    let f = scan_source(
+        "src/lib.rs",
+        "mod cw { cfg_wrap!{ pub fn copy_like() {} } }\n\
+         cfg_wrap!{ pub use cw::copy_like; }\n\
+         cfg_wrap!{ if x { pub fn arm_fn() {} } }\n\
+         macro_rules! tmpl { () => { pub fn tmpl_fn() {} }; }\n",
+    )
+    .expect("parse ok");
+    let cl = f
+        .fns
+        .iter()
+        .find(|x| x.name == "copy_like")
+        .expect("macro-token fn recorded");
+    assert_eq!(
+        cl.module_path.as_deref(),
+        Some("cw"),
+        "invocation-site chain recorded"
+    );
+    assert_eq!(cl.visibility, "pub");
+    let use_row = f
+        .uses
+        .iter()
+        .find(|u| u.path == "cw::copy_like")
+        .expect("macro-token pub use recorded; uses: {:?}");
+    assert!(use_row.reexport, "bare pub recovered on the use");
+    assert_eq!(use_row.module_path.as_deref(), Some(""));
+    let arm = f
+        .fns
+        .iter()
+        .find(|x| x.name == "arm_fn")
+        .expect("nested-arm fn still recorded");
+    assert_eq!(arm.module_path, None, "nested groups stay ineligible");
+    let tf = f
+        .fns
+        .iter()
+        .find(|x| x.name == "tmpl_fn")
+        .expect("template fn recorded");
+    assert_eq!(tf.module_path, None, "macro_rules templates stay ineligible");
+}
+
+#[test]
 fn leading_colon_use_paths_keep_the_marker() {
     // The leading `::` is the explicit-external marker; the wire
     // must carry it (dropping it let local-module gates absorb

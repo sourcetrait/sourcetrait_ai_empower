@@ -477,6 +477,7 @@ impl FileWalker {
                     &im.mac.tokens,
                     self.brace_depth,
                     true,
+                    None,
                 );
             }
             other => {
@@ -807,6 +808,15 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
                 });
             }
         }
+        // A module-level macro INVOCATION's stream-top-level decls
+        // belong to the invocation site's module chain (the decl
+        // channel's eligibility); macro_rules! DEFINITION templates
+        // and body-nested invocations stay ineligible.
+        let decl_mp = if !is_macro_rules && self.body_depth == 0 {
+            Some(self.mod_stack.join("::"))
+        } else {
+            None
+        };
         scan_macro_body_tokens(
             &mut self.facts,
             &self.file,
@@ -814,6 +824,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             &mc.mac.tokens,
             self.brace_depth,
             !is_macro_rules,
+            decl_mp.as_deref(),
         );
     }
 
@@ -955,6 +966,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
                 tokens,
                 self.brace_depth,
                 true,
+                None,
             );
             return;
         }
@@ -1084,6 +1096,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             &im.mac.tokens,
             self.brace_depth,
             true,
+            None,
         );
     }
 
@@ -1102,6 +1115,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
                 tokens,
                 self.brace_depth,
                 true,
+                None,
             );
             self.brace_depth -= 1;
             return;
@@ -1146,6 +1160,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             &tm.mac.tokens,
             self.brace_depth,
             true,
+            None,
         );
     }
 
@@ -1252,6 +1267,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             &m.mac.tokens,
             self.brace_depth,
             true,
+            None,
         );
     }
 
@@ -1292,6 +1308,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             &sm.mac.tokens,
             self.brace_depth,
             true,
+            None,
         );
     }
 

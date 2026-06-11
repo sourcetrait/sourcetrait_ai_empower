@@ -259,7 +259,7 @@ fn decl_channel_mints_consts_and_types() {
             // unreachable type.
             "lib/src/lib.rs",
             String::from(
-                "pub mod palette {\n    pub const RED: u8 = 1;\n    #[doc(hidden)] pub const SECRET: u8 = 2;\n    const PRIV: u8 = 3;\n    pub static LABEL: &str = \"x\";\n}\nmod internal { pub const GHOST: u8 = 4; }\nmod detail {\n    pub type Lifted<T> = Option<T>;\n    pub struct Carried2;\n    pub fn glob_fn() {}\n    pub mod nested { pub type DeepLift = u16; }\n    mod sealed { pub struct NoLift; }\n}\npub use detail::*;\npub mod eng { mod st { pub const DEEP_CONST: u8 = 9; } pub use st::*; }\npub use eng::*;\npub mod eng2 { mod st2 { pub const LEAF_CONST: u8 = 7; } pub use st2::*; }\npub use eng2::LEAF_CONST;\npub type Unused = u8;\npub struct Quiet2;\npub trait Bare2 {}\n#[doc(hidden)] pub struct Veiled;\nmod hidden_mod { pub struct Ghost2; }\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
+                "pub mod palette {\n    pub const RED: u8 = 1;\n    #[doc(hidden)] pub const SECRET: u8 = 2;\n    const PRIV: u8 = 3;\n    pub static LABEL: &str = \"x\";\n}\nmod internal { pub const GHOST: u8 = 4; }\nmod detail {\n    pub type Lifted<T> = Option<T>;\n    pub struct Carried2;\n    pub fn glob_fn() {}\n    pub mod nested { pub type DeepLift = u16; }\n    mod sealed { pub struct NoLift; }\n}\npub use detail::*;\npub mod eng { mod st { pub const DEEP_CONST: u8 = 9; } pub use st::*; }\npub use eng::*;\npub mod eng2 { mod st2 { pub const LEAF_CONST: u8 = 7; } pub use st2::*; }\npub use eng2::LEAF_CONST;\nmacro_rules! cfg_wrap { ($($t:tt)*) => { $($t)* }; }\nmod cw2 { cfg_wrap!{ pub fn copy2() {} } }\ncfg_wrap!{ pub use cw2::copy2; }\npub mod io2 {\n    mod util3 {\n        mod cpy { cfg_wrap!{ pub async fn copy3() {} } }\n        cfg_wrap!{ pub use cpy::copy3; }\n    }\n    cfg_wrap!{ pub use util3::copy3; }\n}\npub mod fs2 {\n    mod cpy { cfg_wrap!{ pub fn copy3() {} } }\n    cfg_wrap!{ pub use self::cpy::copy3; }\n}\npub type Unused = u8;\npub struct Quiet2;\npub trait Bare2 {}\n#[doc(hidden)] pub struct Veiled;\nmod hidden_mod { pub struct Ghost2; }\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
             ),
         ),
         (
@@ -359,6 +359,39 @@ fn decl_channel_mints_consts_and_types() {
     assert!(
         pm.contains_key("implementation_functions:lib::glob_fn"),
         "glob-lifted fn mints under the root binding; impl-fn keys: {:?}",
+        pm.keys()
+            .filter(|k| k.starts_with("implementation_functions:"))
+            .collect::<Vec<_>>()
+    );
+    // The tokio io::copy class (unit 7a): a macro-token fn at the
+    // invocation's module chain, lifted by a macro-token `pub use`
+    // - both walker-invisible before the stream-top-level rule.
+    assert!(
+        pm.contains_key("implementation_functions:lib::copy2"),
+        "macro-token decl + macro-token pub use mint the pair; impl-fn keys: {:?}",
+        pm.keys()
+            .filter(|k| k.starts_with("implementation_functions:"))
+            .collect::<Vec<_>>()
+    );
+    // The full tokio io-util composition: `pub async fn` (qualifier
+    // back-walk), bound at a PRIVATE site (`pub use cpy::copy3;` in
+    // private util3), hopped public by `pub use util3::copy3;` at
+    // pub io2 - re-exports pierce privacy; the final hop's site
+    // decides.
+    assert!(
+        pm.contains_key("implementation_functions:io2::copy3"),
+        "binding-through-binding mints at the public hop; impl-fn keys: {:?}",
+        pm.keys()
+            .filter(|k| k.starts_with("implementation_functions:"))
+            .collect::<Vec<_>>()
+    );
+    // The fs::copy/io::copy split: SAME fn name in two subtrees with
+    // same-named private parent mods - site-relative bindings attach
+    // only under their own site, so each decl keys in its own tree
+    // (no conflation).
+    assert!(
+        pm.contains_key("implementation_functions:fs2::copy3"),
+        "the sibling subtree's same-named fn keys separately; impl-fn keys: {:?}",
         pm.keys()
             .filter(|k| k.starts_with("implementation_functions:"))
             .collect::<Vec<_>>()

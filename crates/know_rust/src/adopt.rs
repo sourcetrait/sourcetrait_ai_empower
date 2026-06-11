@@ -609,6 +609,83 @@ fn count_adopted_usage(
     }
 }
 
+/// What: load the adopted-seed index from a pass directory's
+/// `know_rust_adopted.json`: item name -> (provenance,
+/// crate-qualified file, line). Both the bare item name and the
+/// `chain-tail::name` pair spelling index the same seed.
+///
+/// Why: adopted picks have no facts rows, so `instance_for_kind`
+/// finds no seed - without this fallback an adopted pick is DROPPED
+/// at enrichment no matter its score. The seed span points into the
+/// registry checkout, crate-qualified
+/// (`glam-0.30.10:src/f32/vec3.rs:123`) because the decl lives
+/// outside the workspace tree.
+///
+/// Where: called by `render_orientation`; consumed by
+/// `build_enriched_entry`'s adopted fallback.
+pub fn load_adopted_seed_index(
+    out_dir: &Path,
+) -> HashMap<String, (String, String, u64)> {
+    let mut out: HashMap<String, (String, String, u64)> = HashMap::new();
+    let path = out_dir.join("know_rust_adopted.json");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return out;
+    };
+    let Ok(roots) = serde_json::from_str::<Vec<AdoptedRoot>>(&text) else {
+        return out;
+    };
+    for r in &roots {
+        let prov = format!("{}@{}", r.package, r.version);
+        for s in &r.surface {
+            if s.file.is_empty() {
+                continue;
+            }
+            let qfile = format!("{}-{}:{}", r.package, r.version, s.file);
+            let outer = s.chain.last().cloned().unwrap_or_else(|| r.root.clone());
+            out.entry(s.name.clone())
+                .or_insert_with(|| (prov.clone(), qfile.clone(), s.line));
+            out.entry(format!("{}::{}", outer, s.name))
+                .or_insert_with(|| (prov.clone(), qfile.clone(), s.line));
+        }
+    }
+    out
+}
+
+/// What: load (name, demand-kind) pairs for every adopted surface
+/// item from a pass directory's `know_rust_adopted.json` - the
+/// demand-side vocabulary extension.
+///
+/// Why: an adopted item IS the target's API (the adoption rule), so
+/// a consumer demanding it must read a real kind instead of
+/// `unknown`, and the name must not fall into the mod-namespace
+/// bucket guard. Serving still comes from rendered picks/carry;
+/// this is classification data.
+///
+/// Where: called by `measure_demand::run::trace_pair`; folded into
+/// the decl map by `demand_report`.
+pub fn load_adopted_decl_kinds(out_dir: &Path) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let path = out_dir.join("know_rust_adopted.json");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return out;
+    };
+    let Ok(roots) = serde_json::from_str::<Vec<AdoptedRoot>>(&text) else {
+        return out;
+    };
+    for r in &roots {
+        for s in &r.surface {
+            let kind = match s.kind.as_str() {
+                "trait" => "trait",
+                "fn" => "fn",
+                "const" | "static" => "const",
+                _ => "type",
+            };
+            out.push((s.name.clone(), kind.to_string()));
+        }
+    }
+    out
+}
+
 /// What: parse the workspace `Cargo.lock` into package -> sorted
 /// version list (a graph can pin multiple versions of one package).
 ///

@@ -117,6 +117,10 @@ pub(crate) fn trace_pair(
         })
         .unwrap_or_default();
 
+    // Adopted surface items are target API (the adoption rule):
+    // their names join the demand vocabulary with real kinds.
+    let adopted_decls = load_adopted_decl_kinds(target_out_dir);
+
     Ok(demand_report(
         &consumer_items,
         &consumer_usages,
@@ -125,6 +129,7 @@ pub(crate) fn trace_pair(
         &target_fp,
         &orientation,
         &overlay_fn_paths,
+        &adopted_decls,
     ))
 }
 

@@ -30,7 +30,16 @@ pub fn render_orientation(
 ) -> String {
     let sel = fp.get("selection").cloned().unwrap_or(serde_json::Value::Null);
     let vocab = core_vocabulary(fp, facts);
-    let cands = candidate_instances(fp, facts, calibration, weights, profile, vis_backfill);
+    let adopted_seeds = load_adopted_seed_index(out_dir);
+    let cands = candidate_instances(
+        fp,
+        facts,
+        calibration,
+        weights,
+        profile,
+        vis_backfill,
+        &adopted_seeds,
+    );
     let forecast_chars = cands.total_budget_chars();
     let forecast_tokens = forecast_chars / 4;
     eprintln!(
@@ -995,11 +1004,18 @@ fn truncate_chars(s: &str, n: usize) -> String {
 /// Where: appended to each S5.1 / 5.2 / 5.3 / 5.4 / 5.5 / 5.6 bullet
 /// inside `render_orientation`.
 fn budget_suffix(entry: &EnrichedEntry) -> String {
+    let adopted = match &entry.adopted {
+        // The cross-pollination caveat: a re-exported foreign item
+        // renders first-class WITH its true identity ("bevy's Vec3
+        // is glam's Vec3").
+        Some(p) => format!(" - adopted {}", p),
+        None => String::new(),
+    };
     if entry.budget_hint == 0 {
-        return String::new();
+        return adopted;
     }
     match entry.sub_form {
-        Some(sf) => format!(" - budget {} ({})", entry.budget_hint, sf.wire()),
-        None => format!(" - budget {}", entry.budget_hint),
+        Some(sf) => format!(" - budget {} ({}){}", entry.budget_hint, sf.wire(), adopted),
+        None => format!(" - budget {}{}", entry.budget_hint, adopted),
     }
 }

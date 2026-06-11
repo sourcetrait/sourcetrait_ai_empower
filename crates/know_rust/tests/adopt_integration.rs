@@ -115,6 +115,8 @@ fn adopted_roots_resolve_forms_and_exclusions() {
     std::fs::create_dir_all(&out).expect("mkdir orientation");
     let calibration = Calibration::default();
     characterize(root, &out, &calibration).expect("characterize succeeds");
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates, None, "author").expect("emit succeeds");
 
     let adopted: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(out.join("know_rust_adopted.json"))
@@ -267,6 +269,26 @@ fn adopted_roots_resolve_forms_and_exclusions() {
         })
         .unwrap_or(false);
     assert!(wrap_carry, "adopted type rides carry; got {:?}", facts.pointer("/carries/structure:Wrap"));
+
+    // Render: the adopted pick renders FIRST-CLASS with the
+    // cross-pollination caveat and a crate-qualified seed into the
+    // registry checkout (the seed fallback - no facts rows exist).
+    let orient = std::fs::read_to_string(
+        tmp.path().join(".orientation").join("orientation.md"),
+    )
+    .expect("read orientation");
+    let vec9_line = orient
+        .lines()
+        .find(|l| l.contains("`structure:Vec9`"))
+        .unwrap_or_default();
+    assert!(
+        vec9_line.contains("adopted extmath@0.30.10"),
+        "pick line carries the adoption caveat; got: {vec9_line}"
+    );
+    assert!(
+        vec9_line.contains("extmath-0.30.10:"),
+        "seed span is crate-qualified into the checkout; got: {vec9_line}"
+    );
     assert!(
         pm.contains_key("globals:extmath::EPS"),
         "adopted const mints a globals pair under the root outer"

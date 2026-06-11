@@ -27,6 +27,7 @@ pub(crate) fn demand_report(
     target_fp: &serde_json::Value,
     target_orientation: &str,
     overlay_fn_paths: &std::collections::HashMap<String, Vec<String>>,
+    adopted_decls: &[(String, String)],
 ) -> DemandReport {
     // Target vocabulary: package bindings plus lib-rename bindings
     // (names are bindings; `use cosmic::` must reach package
@@ -56,6 +57,12 @@ pub(crate) fn demand_report(
     add_decls(target_facts, "traits", "trait", &mut decl);
     add_decls(target_facts, "fns", "fn", &mut decl);
     add_decls(target_facts, "macro_defs", "macro", &mut decl);
+    // Adopted surface items are target API (the adoption rule):
+    // real kinds, and the mod-namespace guard sees them as item
+    // decls.
+    for (n, k) in adopted_decls {
+        decl.entry(n.clone()).or_default().insert(k.clone());
+    }
     let mods: std::collections::BTreeSet<String> = target_facts
         .get("mods")
         .and_then(|v| v.as_array())

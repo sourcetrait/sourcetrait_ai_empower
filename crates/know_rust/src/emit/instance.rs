@@ -22,6 +22,10 @@ pub struct EnrichedEntry {
     pub instance: serde_json::Value,
     pub budget_hint: usize,
     pub sub_form: Option<SubForm>,
+    /// Workspace-adopted provenance (`package@version`) when the
+    /// pick is a re-exported foreign item; renders on the pick line
+    /// so the reader sees "bevy's Vec3 is glam's Vec3".
+    pub adopted: Option<String>,
 }
 
 /// What: full output of `candidate_instances` - the six picker sets
@@ -612,6 +616,7 @@ pub fn candidate_instances(
     weights: Option<&TargetWeights>,
     profile: &ProfileSetScale,
     vis_backfill: Option<&VisBackfill>,
+    adopted_seeds: &HashMap<String, (String, String, u64)>,
 ) -> EnrichedSets {
     let histogram = fp
         .get("pattern_histogram")
@@ -662,9 +667,15 @@ pub fn candidate_instances(
     {
         let mut out: indexmap::IndexMap<Pattern, EnrichedEntry> = indexmap::IndexMap::new();
         for (pattern, count) in pattern_map.iter() {
-            if let Some(entry) =
-                build_enriched_entry(pattern, *count, set, facts, &pattern_metrics, calibration)
-            {
+            if let Some(entry) = build_enriched_entry(
+                pattern,
+                *count,
+                set,
+                facts,
+                &pattern_metrics,
+                calibration,
+                adopted_seeds,
+            ) {
                 out.insert(pattern.clone(), entry);
             }
         }
@@ -682,6 +693,7 @@ pub fn candidate_instances(
                 facts,
                 &pattern_metrics,
                 calibration,
+                adopted_seeds,
             ) {
                 out.insert(pattern.clone(), entry);
             }
@@ -740,12 +752,33 @@ fn build_enriched_entry(
     facts: &serde_json::Value,
     pattern_metrics: &serde_json::Map<String, serde_json::Value>,
     calibration: &Calibration,
+    adopted_seeds: &HashMap<String, (String, String, u64)>,
 ) -> Option<EnrichedEntry> {
+    let key = pattern.to_string();
+    let adopted = pattern_metrics
+        .get(&key)
+        .and_then(|m| m.get("adopted"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let (inst, _) = instance_for_kind(pattern, facts);
-    let instance = inst?;
+    // Adopted picks have no facts rows - their seed comes from the
+    // enumerated surface (crate-qualified span into the registry
+    // checkout). Without the fallback an adopted pick would drop
+    // here regardless of score.
+    let instance = match inst {
+        Some(i) => i,
+        None => {
+            let seed = adopted.as_ref().and_then(|_| {
+                let name = key.split(':').nth(1).unwrap_or("");
+                let inner = name.rsplit("::").next().unwrap_or(name);
+                adopted_seeds.get(name).or_else(|| adopted_seeds.get(inner))
+            })?;
+            serde_json::json!({ "file": seed.1, "line": seed.2 })
+        }
+    };
     let group = pattern.kind();
     let sub_form = pattern_metrics
-        .get(&pattern.to_string())
+        .get(&key)
         .and_then(|m| m.get("sub_form"))
         .and_then(|v| v.as_str())
         .and_then(SubForm::from_wire);
@@ -756,5 +789,6 @@ fn build_enriched_entry(
         instance,
         budget_hint,
         sub_form,
+        adopted,
     })
 }

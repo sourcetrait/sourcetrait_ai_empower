@@ -38,11 +38,21 @@ pub(crate) fn decl_api_channel(
 ) -> BTreeMap<String, Vec<String>> {
     let mods = ModIndex::build(all_facts, crates);
     let (bindings, glob_bindings) = collect_bindings(all_facts, crates, &mods);
+    // Scaffolding crates (example / demo / test members) are
+    // pick-ineligible by the established origin rule; the decl
+    // channel extends that to MINT time (the unit-9 sweep found 48
+    // test-helper-crate mints: rustls_test / iced_test /
+    // tokio_test).
+    let scaffolding: HashSet<String> = crates
+        .iter()
+        .filter(|(n, i)| is_scaffolding(n, i))
+        .map(|(n, _)| n.clone())
+        .collect();
 
     let mut pair_aliases: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
 
     // fns leg: pair keys under implementation_functions.
-    let fn_decls = collect_decl_rows(&all_facts.fns, crates, &mods, true);
+    let fn_decls = collect_decl_rows(&all_facts.fns, crates, &mods, true, &scaffolding);
     let fn_counts = module_level_name_counts(&[&all_facts.fns]);
     mint_pair_decls(
         &fn_decls,
@@ -58,7 +68,8 @@ pub(crate) fn decl_api_channel(
     );
 
     // consts leg: pair keys under globals.
-    let const_decls = collect_decl_rows(&all_facts.consts, crates, &mods, false);
+    let const_decls =
+        collect_decl_rows(&all_facts.consts, crates, &mods, false, &scaffolding);
     let const_counts = module_level_name_counts(&[&all_facts.consts]);
     mint_pair_decls(
         &const_decls,
@@ -84,6 +95,7 @@ pub(crate) fn decl_api_channel(
         &type_counts,
         metrics,
         calibration,
+        &scaffolding,
         &|name| Pattern::structure(name),
     );
     mint_type_decls(
@@ -95,6 +107,7 @@ pub(crate) fn decl_api_channel(
         &type_counts,
         metrics,
         calibration,
+        &scaffolding,
         &|name| Pattern::traits(name),
     );
 
@@ -241,6 +254,7 @@ fn collect_decl_rows(
     crates: &indexmap::IndexMap<String, CrateInfo>,
     mods: &ModIndex,
     exclude_main: bool,
+    scaffolding: &HashSet<String>,
 ) -> Vec<DeclCandidate> {
     let mut out = Vec::new();
     for f in rows {
@@ -251,6 +265,9 @@ fn collect_decl_rows(
         ) else {
             continue;
         };
+        if scaffolding.contains(krate) {
+            continue;
+        }
         let Some(mp) = f.get("module_path").and_then(|v| v.as_str()) else {
             continue;
         };
@@ -591,9 +608,10 @@ fn mint_type_decls(
     name_counts: &HashMap<(String, String), usize>,
     metrics: &mut indexmap::IndexMap<String, PatternMetric>,
     calibration: &Calibration,
+    scaffolding: &HashSet<String>,
     make_pattern: &dyn Fn(&str) -> Pattern,
 ) {
-    let decls = collect_decl_rows(rows, crates, mods, false);
+    let decls = collect_decl_rows(rows, crates, mods, false, scaffolding);
     for decl in &decls {
         let key_wire = make_pattern(&decl.name).to_string();
         if metrics.contains_key(&key_wire) {

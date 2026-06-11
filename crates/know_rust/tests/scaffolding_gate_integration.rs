@@ -88,6 +88,24 @@ fn scaffolding_defined_patterns_are_not_picked() {
         scaffolding
     );
 
+    // The decl channel never MINTS scaffolding-crate decls (the
+    // unit-9 rustls_test class): demo's pub fn `show` gets no key.
+    // The USAGE-driven structure:DemoType key (app's fn-sig
+    // reference) legitimately remains - the picker's origin gate
+    // handles it.
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics");
+    assert!(
+        !pm.keys().any(|k| k.ends_with("::show")),
+        "scaffolding fn decls never mint; keys: {:?}",
+        pm.keys().filter(|k| k.contains("show")).collect::<Vec<_>>()
+    );
+    let demo_type = pm.get("structure:DemoType").expect("usage-driven key remains");
+    let usage = demo_type.get("intra_count").and_then(|v| v.as_u64()).unwrap_or(0)
+        + demo_type.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    assert!(usage > 0, "DemoType's key is usage-driven, not a zero-count mint");
     let orient =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
     assert!(

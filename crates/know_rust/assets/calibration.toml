@@ -117,7 +117,7 @@ excluded_dir_segments = ["tests", "benches", "examples"]
 # production names like `latest_*` unaffected. Add ecosystem-specific
 # shapes (e.g. `::__bench_`, `::__fuzz_`) when a new noise family
 # surfaces.
-pattern_skip_substrings = ["::test_", "_test_"]
+pattern_skip_substrings = [":test_", "_test"]
 
 [picker.classifier]
 # Form sub-classifier thresholds. Each rides a GENERAL structural

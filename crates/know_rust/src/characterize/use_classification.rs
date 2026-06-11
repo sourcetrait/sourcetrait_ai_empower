@@ -123,7 +123,7 @@ fn classify_crate_use(
     }
 }
 
-fn is_scaffolding(name: &str, info: &CrateInfo) -> bool {
+pub(crate) fn is_scaffolding(name: &str, info: &CrateInfo) -> bool {
     let d = info.dir.to_lowercase();
     let path_segments = [
         "/examples/", "examples/", "/example/", "example/",

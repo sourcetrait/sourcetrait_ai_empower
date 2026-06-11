@@ -27,8 +27,8 @@ Crates
 AI
 --------------------------------------------------------------------------------
 
-This workspace is fully AI generated and maintained through an ongoing iterative
-process. It is essentialy tooling for AI, by AI.
+This workspace is iteratively AI authored. It is essentialy tooling for AI, by
+AI.
 
 
 Repository
@@ -86,7 +86,7 @@ External dependency licenses are listed in:
 [Linkable]: #Linking-Exception-Section-7
 [Linkable Badge]: https://img.shields.io/badge/linkable-libs-green.svg
 [AI]: #AI
-[AI Badge]: https://img.shields.io/badge/ai-author-green.svg
+[AI Badge]: https://img.shields.io/badge/ai-authored-green.svg
 
 [Nu Plugin Crate]: https://crates.io/crates/nu_plugin_empower
 [Nu Plugin Crate Badge]: https://img.shields.io/crates/v/nu_plugin_empower.svg

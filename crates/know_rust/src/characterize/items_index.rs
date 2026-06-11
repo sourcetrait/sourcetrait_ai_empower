@@ -45,6 +45,13 @@ pub fn build_items_index(facts: &ItemFacts) -> std::collections::HashMap<String,
             .fns
             .push(rec.clone());
     }
+    for rec in &facts.consts {
+        by_file
+            .entry(rec.file.clone())
+            .or_default()
+            .consts
+            .push(rec.clone());
+    }
     for rec in &facts.uses {
         by_file
             .entry(rec.file.clone())

@@ -368,7 +368,7 @@ pub fn instance_for_kind(
                     .get("ast_method_refs")
                     .and_then(|v| v.as_array())
                     .unwrap_or(&empty);
-                let inst: Vec<serde_json::Value> = arr
+                let mut inst: Vec<serde_json::Value> = arr
                     .iter()
                     .filter(|r| {
                         r.get("outer").and_then(|v| v.as_str()) == Some(outer)
@@ -376,6 +376,38 @@ pub fn instance_for_kind(
                     })
                     .cloned()
                     .collect();
+                if inst.is_empty() {
+                    // Decl-driven zero-usage const picks: seed at
+                    // the declaration (the impl-fn decl-seed
+                    // lesson - without an instance the weighted
+                    // pick drops). Prefer decls whose file/module
+                    // carries the pair's outer; deterministic
+                    // fallback to the first sorted.
+                    let consts_arr =
+                        facts.get("consts").and_then(|v| v.as_array()).unwrap_or(&empty);
+                    let mut decls: Vec<serde_json::Value> = consts_arr
+                        .iter()
+                        .filter(|c| {
+                            c.get("name").and_then(|v| v.as_str()) == Some(cname)
+                                && c.get("module_path").is_some()
+                        })
+                        .cloned()
+                        .collect();
+                    decls.sort_by(|a, b| {
+                        let fa = a.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                        let fb = b.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                        let oa = fa.contains(&format!("/{}.", outer))
+                            || fa.contains(&format!("/{}/", outer))
+                            || a.get("module_path").and_then(|v| v.as_str())
+                                .map_or(false, |m| m.split("::").last() == Some(outer));
+                        let ob = fb.contains(&format!("/{}.", outer))
+                            || fb.contains(&format!("/{}/", outer))
+                            || b.get("module_path").and_then(|v| v.as_str())
+                                .map_or(false, |m| m.split("::").last() == Some(outer));
+                        ob.cmp(&oa).then_with(|| fa.cmp(fb))
+                    });
+                    inst = decls;
+                }
                 let first = inst.first().cloned();
                 let spans: Vec<String> = inst.iter().take(200).map(span_basic).collect();
                 return (first, spans);

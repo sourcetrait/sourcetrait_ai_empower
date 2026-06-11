@@ -298,6 +298,18 @@ impl FileWalker {
         }
     }
 
+    /// What: the inline module chain for a MODULE-LEVEL decl at the
+    /// current visit position; `None` inside any body (decl-channel
+    /// ineligible). Shared by the fn / const / type / trait decl
+    /// emitters.
+    fn module_level_path(&self) -> Option<String> {
+        if self.body_depth == 0 {
+            Some(self.mod_stack.join("::"))
+        } else {
+            None
+        }
+    }
+
     /// Iterate the stmts of a block at the CURRENT brace depth (no
     /// further increment). Used by impl-item / trait-item fn handlers,
     /// which fold the impl/trait brace and the fn body brace into one
@@ -391,6 +403,10 @@ impl FileWalker {
                     cfg_gated: false,
                     doc: String::new(),
                     visibility: trait_vis.to_string(),
+                    // Associated types are type-scoped, not
+                    // module-level decls: decl-channel ineligible.
+                    module_path: None,
+                    doc_hidden: false,
                 });
                 // R2-expansion: associated-type bounds (`type X: Bound;`)
                 // carry under traits:<trait> - part of the trait's
@@ -540,6 +556,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             cfg_gated,
             doc: extract_doc(&t.attrs),
             visibility: visibility_string(&t.vis),
+            module_path: self.module_level_path(),
+            doc_hidden: is_doc_hidden(&t.attrs),
         });
         if t.unsafety.is_some() {
             self.bump_seam(SeamKind::Unsafe, 1);
@@ -578,6 +596,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             cfg_gated,
             doc: extract_doc(&s.attrs),
             visibility: visibility_string(&s.vis),
+            module_path: self.module_level_path(),
+            doc_hidden: is_doc_hidden(&s.attrs),
         });
         syn::visit::visit_generics(self, &s.generics);
         // R2 carry extraction: field types -> carry under structure:<name>
@@ -614,6 +634,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             cfg_gated,
             doc: extract_doc(&e.attrs),
             visibility: visibility_string(&e.vis),
+            module_path: self.module_level_path(),
+            doc_hidden: is_doc_hidden(&e.attrs),
         });
         syn::visit::visit_generics(self, &e.generics);
         // R2 carry extraction: variant payload types -> carry under structure:<name>
@@ -661,6 +683,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             cfg_gated,
             doc: extract_doc(&u.attrs),
             visibility: visibility_string(&u.vis),
+            module_path: self.module_level_path(),
+            doc_hidden: is_doc_hidden(&u.attrs),
         });
         syn::visit::visit_generics(self, &u.generics);
         for f in &u.fields.named {
@@ -681,6 +705,8 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             cfg_gated: false,
             doc: String::new(),
             visibility: visibility_string(&ta.vis),
+            module_path: self.module_level_path(),
+            doc_hidden: is_doc_hidden(&ta.attrs),
         });
         syn::visit::visit_generics(self, &ta.generics);
         self.visit_type(&ta.ty);
@@ -694,11 +720,7 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         // Module-level (not inside any body): record the inline mod
         // chain so the decl channel can build the hard path; a
         // body-nested fn carries None and is decl-ineligible.
-        let module_path = if self.body_depth == 0 {
-            Some(self.mod_stack.join("::"))
-        } else {
-            None
-        };
+        let module_path = self.module_level_path();
         self.facts.fns.push(FnEntry {
             file: self.file.clone(),
             name: f.sig.ident.to_string(),
@@ -859,6 +881,10 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
                         cfg_gated: false,
                         doc: extract_doc(&t.attrs),
                         visibility: visibility_string(&t.vis),
+                        // Foreign-mod types are FFI surface, not
+                        // module-level Rust decls.
+                        module_path: None,
+                        doc_hidden: false,
                     });
                 }
                 syn::ForeignItem::Macro(m) => {
@@ -880,6 +906,19 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         if self.process_item_attrs(&c.attrs).is_none() {
             return;
         }
+        // Module-level (not inside any body): record the inline mod
+        // chain so the decl channel can build the hard path; a
+        // body-nested const carries None and is decl-ineligible.
+        let module_path = self.module_level_path();
+        self.facts.consts.push(ConstEntry {
+            file: self.file.clone(),
+            kind: ConstEntryKind::Const,
+            name: c.ident.to_string(),
+            line: c.ident.span().start().line,
+            visibility: visibility_string(&c.vis),
+            module_path,
+            doc_hidden: is_doc_hidden(&c.attrs),
+        });
         self.visit_type(&c.ty);
         self.visit_expr(&c.expr);
     }
@@ -888,6 +927,16 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
         if self.process_item_attrs(&s.attrs).is_none() {
             return;
         }
+        let module_path = self.module_level_path();
+        self.facts.consts.push(ConstEntry {
+            file: self.file.clone(),
+            kind: ConstEntryKind::Static,
+            name: s.ident.to_string(),
+            line: s.ident.span().start().line,
+            visibility: visibility_string(&s.vis),
+            module_path,
+            doc_hidden: is_doc_hidden(&s.attrs),
+        });
         self.visit_type(&s.ty);
         self.visit_expr(&s.expr);
     }
@@ -979,6 +1028,9 @@ impl<'ast> syn::visit::Visit<'ast> for FileWalker {
             cfg_gated: false,
             doc: String::new(),
             visibility: visibility_string(&ty.vis),
+            // Impl associated types are type-scoped: ineligible.
+            module_path: None,
+            doc_hidden: false,
         });
     }
 

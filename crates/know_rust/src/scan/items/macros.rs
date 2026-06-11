@@ -388,6 +388,11 @@ pub(crate) fn scan_macro_body_tokens(
                                 } else {
                                     String::new()
                                 },
+                                // Macro-token decls carry no module
+                                // chain (the unit-7a seam): decl-
+                                // channel ineligible.
+                                module_path: None,
+                                doc_hidden: false,
                             });
                             i = i + 1 + cursor.pos();
                             continue;
@@ -414,6 +419,8 @@ pub(crate) fn scan_macro_body_tokens(
                                 } else {
                                     String::new()
                                 },
+                                module_path: None,
+                                doc_hidden: false,
                             });
                             i = i + 1 + cursor.pos();
                             continue;
@@ -474,6 +481,8 @@ pub(crate) fn scan_macro_body_tokens(
                                 } else {
                                     String::new()
                                 },
+                                module_path: None,
+                                doc_hidden: false,
                             });
                             i = i + 1 + cursor.pos();
                             continue;

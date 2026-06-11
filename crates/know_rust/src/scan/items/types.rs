@@ -21,6 +21,21 @@ pub struct ItemFacts {
     pub traits: Vec<TraitEntry>,
     pub types: Vec<TypeEntry>,
     pub fns: Vec<FnEntry>,
+    /// What: module-level `const` / `static` declarations (the
+    /// labels stream). Additive wire field; absent on pre-stream
+    /// JSONs.
+    ///
+    /// Why: module-level pub consts (ratatui's `symbols::line::*`,
+    /// bevy's color palettes) had NO capture channel - assoc_const
+    /// is type-scoped and the fns stream is fn-shaped - so the decl
+    /// channel could not mint `globals:` keys for the class the
+    /// consumer audits demand.
+    ///
+    /// Where: emitted by `FileWalker::visit_item_const` /
+    /// `visit_item_static`; consumed by the decl channel's globals
+    /// leg in characterize.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub consts: Vec<ConstEntry>,
     pub mods: Vec<ModEntry>,
     pub uses: Vec<UseEntry>,
     pub macros: Vec<MacroEntry>,
@@ -63,6 +78,7 @@ pub struct FileLevelFacts {
     pub traits: Vec<TraitEntry>,
     pub types: Vec<TypeEntry>,
     pub fns: Vec<FnEntry>,
+    pub consts: Vec<ConstEntry>,
     pub mods: Vec<ModEntry>,
     pub uses: Vec<UseEntry>,
     pub macros: Vec<MacroEntry>,
@@ -116,6 +132,21 @@ pub struct TraitEntry {
     pub cfg_gated: bool,
     pub doc: String,
     pub visibility: String,
+    /// What: the INLINE module chain enclosing a module-level trait
+    /// decl (`""` at file top). `None` when the decl is not
+    /// module-level (body-nested) or came from a macro token walk.
+    ///
+    /// Why: the decl channel's types leg mints zero-usage
+    /// pub-reachable trait decls; reachability walks the hard chain
+    /// = file chain + this inline chain.
+    ///
+    /// Where: set by `FileWalker::visit_item_trait`; consumed by
+    /// the decl channel in characterize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<String>,
+    /// What: true when the declaration carries `#[doc(hidden)]`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub doc_hidden: bool,
 }
 
 /// What: one type-like declaration: struct, enum, union, or type alias.
@@ -129,6 +160,23 @@ pub struct TypeEntry {
     pub cfg_gated: bool,
     pub doc: String,
     pub visibility: String,
+    /// What: the INLINE module chain enclosing a module-level type
+    /// decl (`""` at file top). `None` when the decl is not
+    /// module-level (body-nested, an impl/trait associated type,
+    /// a foreign-mod type) or came from a macro token walk.
+    ///
+    /// Why: the decl channel's types leg mints zero-usage
+    /// pub-reachable type decls (the bevy `pub type Write` class);
+    /// reachability walks the hard chain = file chain + this inline
+    /// chain. `None` marks decl-ineligible rows.
+    ///
+    /// Where: set by the walker's struct/enum/union/type visitors;
+    /// consumed by the decl channel in characterize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<String>,
+    /// What: true when the declaration carries `#[doc(hidden)]`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub doc_hidden: bool,
 }
 
 /// What: which type-like shape a `TypeEntry` records.
@@ -183,6 +231,36 @@ pub struct FnEntry {
     /// Where: set via `is_doc_hidden` in the walker's fn visitors.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub doc_hidden: bool,
+}
+
+/// What: one module-level `const` / `static` declaration (the labels
+/// stream). Impl-level and trait-level associated consts stay OUT of
+/// this stream - they are type-scoped and already covered by the
+/// assoc_const usage channel.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConstEntry {
+    pub file: String,
+    pub kind: ConstEntryKind,
+    pub name: String,
+    pub line: usize,
+    pub visibility: String,
+    /// What: the INLINE module chain enclosing the declaration
+    /// (`""` at file top). `None` when the decl is body-nested
+    /// (decl-channel ineligible).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<String>,
+    /// What: true when the declaration carries `#[doc(hidden)]`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub doc_hidden: bool,
+}
+
+/// What: which label shape a `ConstEntry` records (`"const"` /
+/// `"static"` wire tokens).
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstEntryKind {
+    Const,
+    Static,
 }
 
 /// What: one `mod X` declaration (with or without inline content).

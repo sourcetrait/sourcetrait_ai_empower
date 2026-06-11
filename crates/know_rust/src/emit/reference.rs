@@ -48,6 +48,17 @@ pub fn render_reference(
             }
         }
     }
+    if let Some(arr) = facts.get("consts").and_then(|v| v.as_array()) {
+        for c in arr {
+            // Module-level only (body-nested decls carry no
+            // module_path and are not API surface).
+            if c.get("module_path").and_then(|v| v.as_str()).is_none() {
+                continue;
+            }
+            let crate_name = c.get("crate").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+            by_crate.entry(crate_name).or_default().consts.push(c.clone());
+        }
+    }
     if let Some(arr) = facts.get("macros").and_then(|v| v.as_array()) {
         for m in arr {
             let crate_name = m.get("crate").and_then(|v| v.as_str()).unwrap_or("?").to_string();
@@ -163,6 +174,20 @@ pub fn render_reference(
                 lines.push(format!("- `fn {}` - {}", name, span(&f)));
             }
         }
+        if !bucket.consts.is_empty() {
+            lines.push("### consts".to_string());
+            let mut sorted = bucket.consts.clone();
+            sorted.sort_by(|a, b| {
+                let na = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let nb = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                na.cmp(nb)
+            });
+            for c in sorted {
+                let kind = c.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                lines.push(format!("- `{} {}` - {}", kind, name, span(&c)));
+            }
+        }
         if !bucket.macros.is_empty() {
             lines.push(
                 "### macro applications *(expansion unverified without rustdoc overlay)*".to_string(),
@@ -214,6 +239,7 @@ struct CrateBucket {
     traits: Vec<serde_json::Value>,
     impls: Vec<serde_json::Value>,
     fns: Vec<serde_json::Value>,
+    consts: Vec<serde_json::Value>,
     macros: Vec<serde_json::Value>,
     reexports: Vec<serde_json::Value>,
 }

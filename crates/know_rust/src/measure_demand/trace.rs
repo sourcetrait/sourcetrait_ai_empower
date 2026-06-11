@@ -265,7 +265,7 @@ pub(crate) fn demand_report(
             let kind = if u.reexport { "reexport" } else { "use" };
             for leaf in &parsed.leaves {
                 match leaf {
-                    UseLeaf::Glob => globs.push(u.path.clone()),
+                    UseLeaf::Glob { .. } => globs.push(u.path.clone()),
                     UseLeaf::Named { binding, source, parent } => {
                         // Demand records the SOURCE name; the binding
                         // is only the consumer's local spelling. The

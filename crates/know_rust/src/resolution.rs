@@ -27,7 +27,18 @@ pub(crate) enum UseLeaf {
         source: Option<String>,
         parent: Option<String>,
     },
-    Glob,
+    /// What: a `*` import. `parent` is the segment immediately
+    /// preceding the star (`system_param` in
+    /// `pub use system_param::*;`; the enclosing prefix's last
+    /// segment for a brace-piece star).
+    ///
+    /// Why: a glob re-export at a pub-reachable site is a SOFT
+    /// BINDING for every item declared in the named module (the
+    /// hard+soft item model's glob case - bevy's private
+    /// `mod system_param;` + `pub use system_param::*;` is the only
+    /// public path to `pub type Write`). The decl channel attaches
+    /// glob bindings by matching decl chains against this parent.
+    Glob { parent: Option<String> },
 }
 
 /// What: the parse of one flattened use-tree string - the path's ROOT
@@ -72,7 +83,9 @@ pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
             return;
         }
         if s == "*" {
-            out.push(UseLeaf::Glob);
+            out.push(UseLeaf::Glob {
+                parent: parent_last.map(String::from),
+            });
             return;
         }
         if let Some(brace) = s.find('{') {
@@ -115,7 +128,9 @@ pub(crate) fn parse_use_leaves(path: &str) -> UseParse {
         // on the capture side (no ident is ever `*`) but the demand
         // trace misreported it as a missing NAME instead of a glob.
         if leaf == "*" {
-            out.push(UseLeaf::Glob);
+            out.push(UseLeaf::Glob {
+                parent: piece_parent(s, parent_last),
+            });
             return;
         }
         if !leaf.is_empty() {

@@ -69,6 +69,7 @@ pub fn characterize(
         traits: Vec::new(),
         types: Vec::new(),
         fns: Vec::new(),
+        consts: Vec::new(),
         uses: Vec::new(),
         macros: Vec::new(),
         derives: Vec::new(),
@@ -126,6 +127,7 @@ pub fn characterize(
         extend_with_crate(&mut all_facts.traits, cf.traits, name);
         extend_with_crate(&mut all_facts.types, cf.types, name);
         extend_with_crate(&mut all_facts.fns, cf.fns, name);
+        extend_with_crate(&mut all_facts.consts, cf.consts, name);
         extend_with_crate(&mut all_facts.uses, cf.uses, name);
         extend_with_crate(&mut all_facts.macros, cf.macros, name);
         extend_with_crate(&mut all_facts.derives, cf.derives, name);

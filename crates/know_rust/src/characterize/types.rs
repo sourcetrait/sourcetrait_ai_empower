@@ -81,6 +81,7 @@ pub struct ItemFile {
     pub traits: Vec<TraitEntry>,
     pub types: Vec<TypeEntry>,
     pub fns: Vec<FnEntry>,
+    pub consts: Vec<ConstEntry>,
     pub uses: Vec<UseEntry>,
     pub macros: Vec<MacroEntry>,
     pub derives: Vec<DeriveEntry>,
@@ -107,6 +108,7 @@ pub struct CrateAggregate {
     pub traits: Vec<serde_json::Value>,
     pub types: Vec<serde_json::Value>,
     pub fns: Vec<serde_json::Value>,
+    pub consts: Vec<serde_json::Value>,
     pub uses: Vec<serde_json::Value>,
     pub macros: Vec<serde_json::Value>,
     pub derives: Vec<serde_json::Value>,
@@ -372,6 +374,10 @@ pub struct WorkspaceFacts {
     pub traits: Vec<serde_json::Value>,
     pub types: Vec<serde_json::Value>,
     pub fns: Vec<serde_json::Value>,
+    /// What: module-level const / static decl facts (the labels
+    /// stream). Additive: absent on pre-stream facts.json.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub consts: Vec<serde_json::Value>,
     pub uses: Vec<serde_json::Value>,
     pub macros: Vec<serde_json::Value>,
     pub derives: Vec<serde_json::Value>,

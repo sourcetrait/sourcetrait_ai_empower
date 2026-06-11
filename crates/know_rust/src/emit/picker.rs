@@ -271,17 +271,9 @@ pub fn compute_significance_sets(
                     .collect()
             })
             .unwrap_or_default();
-        for (pattern, m) in &pm_by_pattern {
-            let Pattern::ImplementationFunctions { outer, inner } = pattern else {
-                continue;
-            };
-            if outer == "_" {
-                continue;
-            }
-            let dc = m.get("defining_crate").and_then(|v| v.as_str());
-            if dc.map(|c| scaffolding.contains(c)).unwrap_or(true) {
-                continue;
-            }
+        // Pair-site lookup shared by the pair-shaped weight arms:
+        // the rendered spelling plus every pair-alias spelling.
+        let pair_sites = |outer: &str, inner: &str| -> usize {
             let pair = format!("{}::{}", outer, inner);
             let mut sites = tw.pairs.get(&pair).map(|c| c.sites).unwrap_or(0);
             if let Some(aliases) = alias_outers.get(&pair) {
@@ -293,17 +285,64 @@ pub fn compute_significance_sets(
                         .unwrap_or(0);
                 }
             }
-            if sites == 0 {
+            sites
+        };
+        let name_sites = |n: &str| -> usize { tw.names.get(n).map(|c| c.sites).unwrap_or(0) };
+        for (pattern, m) in &pm_by_pattern {
+            let dc = m.get("defining_crate").and_then(|v| v.as_str());
+            if dc.map(|c| scaffolding.contains(c)).unwrap_or(true) {
+                continue;
+            }
+            // The public pool's own bar holds for demand entries:
+            // a non-pub key never scores public-by-consumption
+            // (blob names fold miss records, which can carry
+            // collision noise).
+            let backfilled = vis_backfill.map(|v| v.backfills(pattern)).unwrap_or(false);
+            if !(m.get("is_pub").and_then(|v| v.as_bool()).unwrap_or(false) || backfilled) {
                 continue;
             }
             let usage_total = m.get("intra_count").and_then(|v| v.as_u64()).unwrap_or(0)
                 + m.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(0);
-            if usage_total == 0 {
-                public_scores
-                    .entry(pattern.clone())
-                    .or_insert(cw.site_weight * sites as f64);
-            } else if let Some(s) = public_scores.get_mut(pattern) {
-                *s += cw.usage_boost * sites as f64;
+            let sites = match pattern {
+                // Pair keys (fn + const) consult pair demand under
+                // the rendered spelling + aliases; zero-usage decl
+                // mints additionally consult the inner's NAME cell -
+                // import-shaped demand (`use nu_protocol::
+                // NU_VARIABLE_ID;`, palette imports) records a name,
+                // not a pair, and the decl key is that demand's only
+                // server. Name-level inner attribution is the
+                // system's standing granularity trade.
+                Pattern::ImplementationFunctions { outer, inner } if outer != "_" => {
+                    pair_sites(outer, inner)
+                        + if usage_total == 0 { name_sites(inner) } else { 0 }
+                }
+                Pattern::Globals(name) => match name.split_once("::") {
+                    Some((o, i)) => {
+                        pair_sites(o, i)
+                            + if usage_total == 0 { name_sites(i) } else { 0 }
+                    }
+                    None => continue,
+                },
+                // Bare type/trait keys: the name demand IS the
+                // demand (the bevy `pub type Write` + `Disabled`
+                // classes).
+                Pattern::Structure(n) | Pattern::Traits(n) => name_sites(n),
+                _ => continue,
+            };
+            if sites == 0 {
+                continue;
+            }
+            // Public-by-consumption, uniformly: a demanded key
+            // ABSENT from the public pool earns the demand BASE
+            // (internal usage does not disqualify consumer-facing
+            // significance - the avian `Disabled` class: 5 internal
+            // sites, 73 consumer demand sites, no curated evidence);
+            // a key already public-scored earns the additive boost.
+            match public_scores.get_mut(pattern) {
+                Some(s) => *s += cw.usage_boost * sites as f64,
+                None => {
+                    public_scores.insert(pattern.clone(), cw.site_weight * sites as f64);
+                }
             }
         }
     }

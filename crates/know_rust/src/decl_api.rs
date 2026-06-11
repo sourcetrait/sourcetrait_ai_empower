@@ -1,27 +1,35 @@
 use crate::*;
 
-/// What: the declaration-driven API channel. For every module-level
-/// `pub fn` whose declaration is pub-REACHABLE (its hard module
-/// chain, or at least one `pub use` soft binding, runs through
-/// all-pub, non-doc(hidden) modules), ensure a pair-shaped
-/// pattern_metrics key exists (`implementation_functions:
-/// <outer>::<fn>`) and record the item's alternate binding outers as
-/// pair aliases for the demand matcher. Returns the alias map
-/// (rendered-pair wire name -> alias outers).
+/// What: the declaration-driven API channel over the full
+/// pub-reachable module-level decl surface. Three legs share one
+/// reachability substrate (hard chains + leaf soft bindings + glob
+/// soft bindings):
+///
+/// - fns: mint `implementation_functions:<outer>::<fn>` pair keys
+///   (zero counts) + pair aliases for the demand matcher.
+/// - consts/statics: mint `globals:<outer>::<NAME>` pair keys the
+///   same way (ratatui's `symbols::line::*`, bevy's palettes).
+/// - types/traits: mint bare `structure:<name>` / `traits:<name>`
+///   keys (zero counts) for pub-reachable decls no usage stream
+///   ever keyed (bevy's `pub type Write` class).
+///
+/// Returns the pair-alias map (rendered-pair wire name -> alias
+/// outers).
 ///
 /// Why: pure consumer-facing API (zero internal usage) produces no
 /// usage-driven key at all - the largest real miss class in the
-/// consumer audits. Identity = the hard declaration path; names =
-/// soft bindings (the_user's both-model ruling): the KEY is one
-/// spelling (an existing usage spelling wins, else the canonical
-/// binding by curated-lift), and every other public binding rides as
-/// a matcher-consultable alias so a demand through any spelling is
-/// served.
+/// consumer audits, on the fn, const, AND type sides. Identity = the
+/// hard declaration path; names = soft bindings (the_user's
+/// both-model ruling). A glob re-export at a pub site is a soft
+/// binding for every item in the named module - bevy's private
+/// `mod system_param;` + `pub use system_param::*;` is the only
+/// public path to `pub type Write`. Minted keys carry zero counts
+/// and render only when the consumer-weight term scores them
+/// (weighted-render-only).
 ///
 /// Where: called by `characterize::run::characterize` after
 /// `compute_pattern_metrics`; the alias map lands in
-/// `WorkspaceFacts::pair_aliases` and the minted zero-count metrics
-/// rows await the consumer-weight score term.
+/// `WorkspaceFacts::pair_aliases`.
 pub(crate) fn decl_api_channel(
     all_facts: &WorkspaceFacts,
     crates: &indexmap::IndexMap<String, CrateInfo>,
@@ -29,107 +37,66 @@ pub(crate) fn decl_api_channel(
     calibration: &Calibration,
 ) -> BTreeMap<String, Vec<String>> {
     let mods = ModIndex::build(all_facts, crates);
-    let decls = collect_decls(all_facts, crates, &mods);
-    let bindings = collect_bindings(all_facts, crates, &mods);
+    let (bindings, glob_bindings) = collect_bindings(all_facts, crates, &mods);
 
     let mut pair_aliases: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
-    for decl in &decls {
-        // Public binding set: the hard chain when reachable, plus
-        // every reachable soft binding matched to this decl.
-        let mut public_chains: Vec<Vec<String>> = Vec::new();
-        if decl.hard_public {
-            public_chains.push(decl.chain.clone());
-        }
-        if let Some(soft) = bindings.get(&(decl.krate.clone(), decl.name.clone())) {
-            for b in soft {
-                // Parent-based disambiguation: a binding whose use
-                // path named a source parent attaches only to decls
-                // whose hard chain ends in that parent; a binding
-                // with no parent attaches when the decl name is
-                // unique in the crate (handled by the caller's
-                // uniqueness map inside collect_bindings).
-                let attaches = match &b.source_parent {
-                    Some(p) => decl.chain.last().map(|s| s == p).unwrap_or(false),
-                    None => b.unique_in_crate,
-                };
-                if attaches {
-                    public_chains.push(b.chain.clone());
-                }
-            }
-        }
-        if public_chains.is_empty() {
-            continue;
-        }
-        // Outer per chain: last module segment, else the crate's
-        // root binding (lib rename when one exists).
-        let root_outer = crates
-            .get(&decl.krate)
-            .and_then(|c| c.lib_name.clone())
-            .unwrap_or_else(|| decl.krate.replace('-', "_"));
-        let mut outers: Vec<String> = public_chains
-            .iter()
-            .map(|c| c.last().cloned().unwrap_or_else(|| root_outer.clone()))
-            .collect();
-        outers.sort();
-        outers.dedup();
 
-        // One key per item: an existing usage-driven spelling wins;
-        // else the canonical binding (shortest public chain,
-        // deterministic tie-break).
-        let existing = outers
-            .iter()
-            .find(|o| metrics.contains_key(&Pattern::impl_fn((*o).clone(), decl.name.clone()).to_string()));
-        let canonical_outer = match existing {
-            Some(o) => o.clone(),
-            None => {
-                let mut ranked = public_chains.clone();
-                ranked.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.join("::").cmp(&b.join("::"))));
-                ranked
-                    .first()
-                    .and_then(|c| c.last().cloned())
-                    .unwrap_or_else(|| root_outer.clone())
-            }
-        };
-        let key = Pattern::impl_fn(canonical_outer.clone(), decl.name.clone());
-        let key_wire = key.to_string();
-        // NF5 parity: a minted decl key must not resurrect a family
-        // the substring filter dropped from the usage streams
-        // (sourcetrait_common's `util::_var_for_test_*` class).
-        if should_skip_pattern(&key_wire, calibration) {
-            continue;
-        }
-        if !metrics.contains_key(&key_wire) {
-            metrics.insert(
-                key_wire,
-                PatternMetric {
-                    defining_crate: Some(decl.krate.clone()),
-                    intra_count: 0,
-                    inter_count: 0,
-                    inter_ratio: 0.0,
-                    is_pub: true,
-                    example_count: serde_json::Value::from(0),
-                    curated_example_count: 0,
-                    sub_form: None,
-                },
-            );
-        }
-        let alias_set = pair_aliases
-            .entry(format!("{}::{}", canonical_outer, decl.name))
-            .or_default();
-        for o in outers {
-            if o != canonical_outer {
-                alias_set.insert(o);
-            }
-        }
-        // The hard parent is always a consultable spelling even when
-        // the hard chain is not itself public (a demand written
-        // through a deep path still means this item).
-        if let Some(hp) = decl.chain.last() {
-            if hp != &canonical_outer {
-                alias_set.insert(hp.clone());
-            }
-        }
-    }
+    // fns leg: pair keys under implementation_functions.
+    let fn_decls = collect_decl_rows(&all_facts.fns, crates, &mods, true);
+    let fn_counts = module_level_name_counts(&[&all_facts.fns]);
+    mint_pair_decls(
+        &fn_decls,
+        &fn_counts,
+        &bindings,
+        &glob_bindings,
+        &mods,
+        crates,
+        metrics,
+        calibration,
+        &mut pair_aliases,
+        &|outer, name| Pattern::impl_fn(outer, name),
+    );
+
+    // consts leg: pair keys under globals.
+    let const_decls = collect_decl_rows(&all_facts.consts, crates, &mods, false);
+    let const_counts = module_level_name_counts(&[&all_facts.consts]);
+    mint_pair_decls(
+        &const_decls,
+        &const_counts,
+        &bindings,
+        &glob_bindings,
+        &mods,
+        crates,
+        metrics,
+        calibration,
+        &mut pair_aliases,
+        &|outer, name| Pattern::globals(format!("{}::{}", outer, name)),
+    );
+
+    // types leg: bare structure:/traits: keys, reachability-gated.
+    let type_counts = module_level_name_counts(&[&all_facts.types, &all_facts.traits]);
+    mint_type_decls(
+        &all_facts.types,
+        crates,
+        &mods,
+        &bindings,
+        &glob_bindings,
+        &type_counts,
+        metrics,
+        calibration,
+        &|name| Pattern::structure(name),
+    );
+    mint_type_decls(
+        &all_facts.traits,
+        crates,
+        &mods,
+        &bindings,
+        &glob_bindings,
+        &type_counts,
+        metrics,
+        calibration,
+        &|name| Pattern::traits(name),
+    );
 
     pair_aliases
         .into_iter()
@@ -138,9 +105,9 @@ pub(crate) fn decl_api_channel(
         .collect()
 }
 
-/// What: a module-level pub fn declaration candidate - crate, name,
-/// full hard module chain (file-derived + inline), and whether that
-/// hard chain is pub-reachable.
+/// What: a module-level pub decl candidate - crate, name, full hard
+/// module chain (file-derived + inline), and whether that hard chain
+/// is pub-reachable.
 struct DeclCandidate {
     krate: String,
     name: String,
@@ -148,15 +115,24 @@ struct DeclCandidate {
     hard_public: bool,
 }
 
-/// What: one soft binding - the public path chain a `pub use` gives
-/// the name, the use path's source-parent segment (for matching the
-/// binding to the right same-named decl), and whether the bound name
-/// is unique among the crate's decl candidates (the no-parent match
-/// rule).
+/// What: one leaf soft binding - the public path chain a `pub use`
+/// gives the name and the use path's source-parent segment (for
+/// matching the binding to the right same-named decl). The no-parent
+/// match rule consults the per-leg name-count map instead of a baked
+/// uniqueness flag.
 struct SoftBinding {
     chain: Vec<String>,
     source_parent: Option<String>,
-    unique_in_crate: bool,
+}
+
+/// What: one glob soft binding - a `pub use <path>::*;` at a
+/// pub-reachable site chain. Attaches to every same-crate decl whose
+/// hard chain ends with `parent` (name-level granularity, the
+/// system's standing trade).
+struct GlobBinding {
+    krate: String,
+    chain: Vec<String>,
+    parent: String,
 }
 
 /// What: per-(crate, module chain) visibility index built from mods
@@ -230,17 +206,30 @@ impl ModIndex {
         }
         true
     }
+
+    /// What: the (is_pub, doc_hidden) of the single mod declared at
+    /// `chain` (not the full-prefix walk - the glob splice checks
+    /// per-level visibility below the hop, where the prefix above
+    /// the hop is vouched by the glob site).
+    fn vis_of(&self, krate: &str, chain: &[String]) -> Option<(bool, bool)> {
+        self.vis
+            .get(&(krate.to_string(), chain.join("::")))
+            .copied()
+    }
 }
 
-/// What: collect module-level pub fn decl candidates with their hard
-/// chains + reachability.
-fn collect_decls(
-    all_facts: &WorkspaceFacts,
+/// What: collect module-level pub decl candidates with their hard
+/// chains + reachability from one fact array (fns or consts share
+/// the field shape: name / crate / file / module_path / visibility /
+/// doc_hidden). `exclude_main` applies the fn-only entry-point rule.
+fn collect_decl_rows(
+    rows: &[serde_json::Value],
     crates: &indexmap::IndexMap<String, CrateInfo>,
     mods: &ModIndex,
+    exclude_main: bool,
 ) -> Vec<DeclCandidate> {
     let mut out = Vec::new();
-    for f in &all_facts.fns {
+    for f in rows {
         let (Some(name), Some(krate), Some(file)) = (
             f.get("name").and_then(|v| v.as_str()),
             f.get("crate").and_then(|v| v.as_str()),
@@ -260,7 +249,7 @@ fn collect_decls(
         // `fn main` is a language ENTRY POINT, not consumable API
         // (the_user-granted noise rule); the decl channel never
         // mints it (cosmic-epoch's per-binary crate-root mains).
-        if name == "main" {
+        if exclude_main && name == "main" {
             continue;
         }
         if !is_src_file(file) {
@@ -284,29 +273,43 @@ fn collect_decls(
     out
 }
 
-/// What: collect reachable soft bindings from `pub use` facts, keyed
-/// by (crate, source name).
+/// What: per-(crate, name) counts of MODULE-LEVEL decls across the
+/// given fact arrays - the no-parent soft-binding attach rule's
+/// ambiguity guard (a binding with no source parent attaches only
+/// when the name is unique among the crate's module-level decls).
+fn module_level_name_counts(
+    lists: &[&[serde_json::Value]],
+) -> HashMap<(String, String), usize> {
+    let mut counts: HashMap<(String, String), usize> = HashMap::new();
+    for rows in lists {
+        for f in rows.iter() {
+            if f.get("module_path").and_then(|v| v.as_str()).is_none() {
+                continue;
+            }
+            if let (Some(n), Some(k)) = (
+                f.get("name").and_then(|v| v.as_str()),
+                f.get("crate").and_then(|v| v.as_str()),
+            ) {
+                *counts.entry((k.to_string(), n.to_string())).or_default() += 1;
+            }
+        }
+    }
+    counts
+}
+
+/// What: collect reachable soft bindings from `pub use` facts - leaf
+/// bindings keyed by (crate, source name) plus the glob bindings
+/// (`pub use <path>::*;` sites).
 fn collect_bindings(
     all_facts: &WorkspaceFacts,
     crates: &indexmap::IndexMap<String, CrateInfo>,
     mods: &ModIndex,
-) -> HashMap<(String, String), Vec<SoftBinding>> {
-    // Name uniqueness among decl candidates per crate, for the
-    // no-parent binding match rule.
-    let mut name_counts: HashMap<(String, String), usize> = HashMap::new();
-    for f in &all_facts.fns {
-        if f.get("module_path").and_then(|v| v.as_str()).is_none() {
-            continue;
-        }
-        if let (Some(n), Some(k)) = (
-            f.get("name").and_then(|v| v.as_str()),
-            f.get("crate").and_then(|v| v.as_str()),
-        ) {
-            *name_counts.entry((k.to_string(), n.to_string())).or_default() += 1;
-        }
-    }
-
+) -> (
+    HashMap<(String, String), Vec<SoftBinding>>,
+    Vec<GlobBinding>,
+) {
     let mut out: HashMap<(String, String), Vec<SoftBinding>> = HashMap::new();
+    let mut globs: Vec<GlobBinding> = Vec::new();
     for u in &all_facts.uses {
         if !u.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
             continue;
@@ -344,33 +347,276 @@ fn collect_bindings(
             continue;
         }
         for leaf in &parsed.leaves {
-            let UseLeaf::Named { binding, source, parent } = leaf else {
-                continue;
-            };
-            let src_name = source
-                .clone()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| binding.clone());
-            // The binding's MODULE chain is the use site's chain (the
-            // bound name lives directly in that module) - symmetric
-            // with DeclCandidate::chain, which also excludes the fn
-            // name itself.
-            let chain = site_chain.clone();
-            let unique = name_counts
-                .get(&(krate.to_string(), src_name.clone()))
-                .copied()
-                .unwrap_or(0)
-                == 1;
-            out.entry((krate.to_string(), src_name))
-                .or_default()
-                .push(SoftBinding {
-                    chain,
-                    source_parent: parent.clone(),
-                    unique_in_crate: unique,
-                });
+            match leaf {
+                UseLeaf::Named { binding, source, parent } => {
+                    let src_name = source
+                        .clone()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| binding.clone());
+                    // The binding's MODULE chain is the use site's
+                    // chain (the bound name lives directly in that
+                    // module) - symmetric with DeclCandidate::chain,
+                    // which also excludes the item name itself.
+                    out.entry((krate.to_string(), src_name))
+                        .or_default()
+                        .push(SoftBinding {
+                            chain: site_chain.clone(),
+                            source_parent: parent.clone(),
+                        });
+                }
+                UseLeaf::Glob { parent: Some(p) } => {
+                    globs.push(GlobBinding {
+                        krate: krate.to_string(),
+                        chain: site_chain.clone(),
+                        parent: p.clone(),
+                    });
+                }
+                UseLeaf::Glob { parent: None } => {}
+            }
         }
     }
-    out
+    (out, globs)
+}
+
+/// What: the public binding chains for one decl - the hard chain
+/// when reachable, every attaching reachable leaf binding, and every
+/// matching glob binding.
+fn public_chains_for(
+    decl: &DeclCandidate,
+    name_counts: &HashMap<(String, String), usize>,
+    bindings: &HashMap<(String, String), Vec<SoftBinding>>,
+    glob_bindings: &[GlobBinding],
+    mods: &ModIndex,
+) -> Vec<Vec<String>> {
+    let mut public_chains: Vec<Vec<String>> = Vec::new();
+    if decl.hard_public {
+        public_chains.push(decl.chain.clone());
+    }
+    // Glob bindings splice the decl's chain at the named module: a
+    // `pub use m::*;` lifts every item AND pub sub-module of m, so a
+    // decl whose chain passes THROUGH m is reachable when each
+    // segment below the hop is itself a pub, non-hidden mod (bevy's
+    // `system::lifetimeless::Write` - private `mod system_param`
+    // glob-lifted into `system`, with `pub mod lifetimeless` riding
+    // inside it). The direct case (decl declared in m) is the empty
+    // suffix. Splices CHAIN (bounded closure): re-export hops
+    // compose, exactly like the facade ns_closure. Suffix visibility
+    // checks run against the REAL module tree, so a virtual
+    // (post-splice) suffix segment conservatively fails.
+    let mut spliced: Vec<Vec<String>> = Vec::new();
+    let mut queue: Vec<Vec<String>> = vec![decl.chain.clone()];
+    let mut seen: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    seen.insert(decl.chain.join("::"));
+    while let Some(chain) = queue.pop() {
+        for g in glob_bindings {
+            if g.krate != decl.krate {
+                continue;
+            }
+            let Some(i) = chain.iter().rposition(|s| s == &g.parent) else {
+                continue;
+            };
+            let suffix_ok = ((i + 1)..chain.len()).all(|j| {
+                matches!(
+                    mods.vis_of(&decl.krate, &chain[..=j]),
+                    Some((true, false))
+                )
+            });
+            if !suffix_ok {
+                continue;
+            }
+            let mut next = g.chain.clone();
+            next.extend(chain[(i + 1)..].iter().cloned());
+            if seen.insert(next.join("::")) && seen.len() <= 64 {
+                spliced.push(next.clone());
+                queue.push(next);
+            }
+        }
+    }
+    // The item's known location TAILS: the hard parent plus every
+    // spliced (virtual) location's containing module. A leaf
+    // binding's source parent names the module the use path read
+    // the item FROM - which may be a virtual location (nushell's
+    // `pub use engine::{NU_VARIABLE_ID}` at the root: the item
+    // virtually lives in `engine` via `pub use engine_state::*;`).
+    let mut tails: std::collections::HashSet<&str> =
+        std::collections::HashSet::new();
+    if let Some(t) = decl.chain.last() {
+        tails.insert(t.as_str());
+    }
+    for c in &spliced {
+        if let Some(t) = c.last() {
+            tails.insert(t.as_str());
+        }
+    }
+    if let Some(soft) = bindings.get(&(decl.krate.clone(), decl.name.clone())) {
+        for b in soft {
+            // Parent-based disambiguation: a binding whose use path
+            // named a source parent attaches only to decls located
+            // (hard or virtually) in that parent; a binding with no
+            // parent attaches when the decl name is unique among
+            // the crate's module-level decls of this leg.
+            let attaches = match &b.source_parent {
+                Some(p) => tails.contains(p.as_str()),
+                None => {
+                    name_counts
+                        .get(&(decl.krate.clone(), decl.name.clone()))
+                        .copied()
+                        .unwrap_or(0)
+                        == 1
+                }
+            };
+            if attaches {
+                public_chains.push(b.chain.clone());
+            }
+        }
+    }
+    public_chains.extend(spliced);
+    public_chains
+}
+
+/// What: mint pair-shaped decl keys (zero counts) for one leg's
+/// candidates: an existing usage-driven spelling wins the canonical
+/// outer, else the shortest public chain; alternate outers + the
+/// hard parent ride `pair_aliases`. NF5 parity holds (a minted key
+/// must not resurrect a substring-dropped family).
+#[allow(clippy::too_many_arguments)]
+fn mint_pair_decls(
+    decls: &[DeclCandidate],
+    name_counts: &HashMap<(String, String), usize>,
+    bindings: &HashMap<(String, String), Vec<SoftBinding>>,
+    glob_bindings: &[GlobBinding],
+    mods: &ModIndex,
+    crates: &indexmap::IndexMap<String, CrateInfo>,
+    metrics: &mut indexmap::IndexMap<String, PatternMetric>,
+    calibration: &Calibration,
+    pair_aliases: &mut BTreeMap<String, std::collections::BTreeSet<String>>,
+    make_pattern: &dyn Fn(&str, &str) -> Pattern,
+) {
+    for decl in decls {
+        let public_chains =
+            public_chains_for(decl, name_counts, bindings, glob_bindings, mods);
+        if public_chains.is_empty() {
+            continue;
+        }
+        // Outer per chain: last module segment, else the crate's
+        // root binding (lib rename when one exists).
+        let root_outer = crates
+            .get(&decl.krate)
+            .and_then(|c| c.lib_name.clone())
+            .unwrap_or_else(|| decl.krate.replace('-', "_"));
+        let mut outers: Vec<String> = public_chains
+            .iter()
+            .map(|c| c.last().cloned().unwrap_or_else(|| root_outer.clone()))
+            .collect();
+        outers.sort();
+        outers.dedup();
+
+        // One key per item: an existing usage-driven spelling wins;
+        // else the canonical binding (shortest public chain,
+        // deterministic tie-break).
+        let existing = outers
+            .iter()
+            .find(|o| metrics.contains_key(&make_pattern(o, &decl.name).to_string()));
+        let canonical_outer = match existing {
+            Some(o) => o.clone(),
+            None => {
+                let mut ranked = public_chains.clone();
+                ranked.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.join("::").cmp(&b.join("::"))));
+                ranked
+                    .first()
+                    .and_then(|c| c.last().cloned())
+                    .unwrap_or_else(|| root_outer.clone())
+            }
+        };
+        let key = make_pattern(&canonical_outer, &decl.name);
+        let key_wire = key.to_string();
+        // NF5 parity: a minted decl key must not resurrect a family
+        // the substring filter dropped from the usage streams
+        // (sourcetrait_common's `util::_var_for_test_*` class).
+        if should_skip_pattern(&key_wire, calibration) {
+            continue;
+        }
+        if !metrics.contains_key(&key_wire) {
+            metrics.insert(
+                key_wire,
+                PatternMetric {
+                    defining_crate: Some(decl.krate.clone()),
+                    intra_count: 0,
+                    inter_count: 0,
+                    inter_ratio: 0.0,
+                    is_pub: true,
+                    example_count: serde_json::Value::from(0),
+                    curated_example_count: 0,
+                    sub_form: None,
+                },
+            );
+        }
+        let alias_set = pair_aliases
+            .entry(format!("{}::{}", canonical_outer, decl.name))
+            .or_default();
+        for o in outers {
+            if o != canonical_outer {
+                alias_set.insert(o);
+            }
+        }
+        // The hard parent is always a consultable spelling even when
+        // the hard chain is not itself public (a demand written
+        // through a deep path still means this item).
+        if let Some(hp) = decl.chain.last() {
+            if hp != &canonical_outer {
+                alias_set.insert(hp.clone());
+            }
+        }
+    }
+}
+
+/// What: mint bare-name decl keys (structure:/traits:, zero counts)
+/// for pub-reachable module-level type/trait decls no usage stream
+/// keyed - the type-side DECLARED-UNCAPTURED class (bevy's
+/// `pub type Write`, `Disabled`, `Mutable`). Weighted-render-only:
+/// minted keys stay unrendered until the consumer-weight term
+/// scores them.
+#[allow(clippy::too_many_arguments)]
+fn mint_type_decls(
+    rows: &[serde_json::Value],
+    crates: &indexmap::IndexMap<String, CrateInfo>,
+    mods: &ModIndex,
+    bindings: &HashMap<(String, String), Vec<SoftBinding>>,
+    glob_bindings: &[GlobBinding],
+    name_counts: &HashMap<(String, String), usize>,
+    metrics: &mut indexmap::IndexMap<String, PatternMetric>,
+    calibration: &Calibration,
+    make_pattern: &dyn Fn(&str) -> Pattern,
+) {
+    let decls = collect_decl_rows(rows, crates, mods, false);
+    for decl in &decls {
+        let key_wire = make_pattern(&decl.name).to_string();
+        if metrics.contains_key(&key_wire) {
+            continue;
+        }
+        if should_skip_pattern(&key_wire, calibration) {
+            continue;
+        }
+        let reachable =
+            !public_chains_for(decl, name_counts, bindings, glob_bindings, mods).is_empty();
+        if !reachable {
+            continue;
+        }
+        metrics.insert(
+            key_wire,
+            PatternMetric {
+                defining_crate: Some(decl.krate.clone()),
+                intra_count: 0,
+                inter_count: 0,
+                inter_ratio: 0.0,
+                is_pub: true,
+                example_count: serde_json::Value::from(0),
+                curated_example_count: 0,
+                sub_form: None,
+            },
+        );
+    }
 }
 
 /// What: derive the module chain a file contributes from its path

@@ -228,3 +228,248 @@ fn decl_channel_mints_reachable_pairs_with_aliases() {
         "the inner::channel pair lands exact via the alias tier"
     );
 }
+
+#[test]
+fn decl_channel_mints_consts_and_types() {
+    // The broadened decl surface: module-level pub consts/statics
+    // mint globals pairs; zero-usage pub-reachable type decls mint
+    // bare structure:/traits: keys - including the bevy `pub type
+    // Write` shape (private mod + `pub use <mod>::*;` glob lift) and
+    // the glob-lifted fn shape. All weighted-render-only.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            // palette: pub mod consts (RED minted; SECRET doc(hidden);
+            // PRIV not pub; LABEL static minted). internal: private
+            // mod (GHOST unreachable). detail: the bevy Write shape -
+            // private mod + glob re-export lifts Lifted/Carried2 (and
+            // the fn glob_fn). Quiet2/Bare2/Unused: zero-usage
+            // top-level type decls. Veiled: doc(hidden). hidden_mod:
+            // unreachable type.
+            "lib/src/lib.rs",
+            String::from(
+                "pub mod palette {\n    pub const RED: u8 = 1;\n    #[doc(hidden)] pub const SECRET: u8 = 2;\n    const PRIV: u8 = 3;\n    pub static LABEL: &str = \"x\";\n}\nmod internal { pub const GHOST: u8 = 4; }\nmod detail {\n    pub type Lifted<T> = Option<T>;\n    pub struct Carried2;\n    pub fn glob_fn() {}\n    pub mod nested { pub type DeepLift = u16; }\n    mod sealed { pub struct NoLift; }\n}\npub use detail::*;\npub mod eng { mod st { pub const DEEP_CONST: u8 = 9; } pub use st::*; }\npub use eng::*;\npub mod eng2 { mod st2 { pub const LEAF_CONST: u8 = 7; } pub use st2::*; }\npub use eng2::LEAF_CONST;\npub type Unused = u8;\npub struct Quiet2;\npub trait Bare2 {}\n#[doc(hidden)] pub struct Veiled;\nmod hidden_mod { pub struct Ghost2; }\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use lib::Core;\npub fn a() -> Core { Core::new() }\npub fn b() -> Core { Core::new() }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let out = root.join(".orientation");
+    std::fs::create_dir_all(&out).expect("mkdir orientation");
+    let calibration = Calibration::default();
+    characterize(root, &out, &calibration).expect("characterize succeeds");
+    let fp: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join("fingerprint.json")).expect("read fingerprint"),
+    )
+    .expect("parse fingerprint");
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics");
+
+    // Consts leg: pub-reachable module-level consts/statics mint
+    // globals pairs with zero counts. DEEP_CONST is the
+    // glob-through-glob shape (nushell's NU_VARIABLE_ID:
+    // `pub use st::*;` into eng, `pub use eng::*;` to the root) -
+    // the splice closure chains, and the shortest chain (the root)
+    // is canonical.
+    for key in [
+        "globals:palette::RED",
+        "globals:palette::LABEL",
+        "globals:lib::DEEP_CONST",
+        // The nushell NU_VARIABLE_ID shape: a root LEAF re-export
+        // whose parent names the item's VIRTUAL (glob-spliced)
+        // location, not its hard parent.
+        "globals:lib::LEAF_CONST",
+    ] {
+        let m = pm.get(key).unwrap_or_else(|| {
+            panic!(
+                "{key} minted; globals keys: {:?}",
+                pm.keys().filter(|k| k.starts_with("globals:")).collect::<Vec<_>>()
+            )
+        });
+        assert_eq!(m.get("intra_count").and_then(|v| v.as_u64()), Some(0));
+        assert_eq!(m.get("is_pub").and_then(|v| v.as_bool()), Some(true));
+    }
+    assert!(
+        !pm.keys().any(|k| k.contains("SECRET") || k.contains("PRIV") || k.contains("GHOST")),
+        "hidden / non-pub / unreachable consts never mint; globals keys: {:?}",
+        pm.keys().filter(|k| k.starts_with("globals:")).collect::<Vec<_>>()
+    );
+
+    // Types leg: zero-usage pub-reachable decls mint bare keys -
+    // including the glob-lifted private-mod class (bevy Write).
+    for key in [
+        "structure:Lifted",
+        "structure:Carried2",
+        // The bevy Write topology: a pub mod riding INSIDE the
+        // glob-lifted private mod (system::lifetimeless::Write);
+        // the glob splice carries the pub suffix.
+        "structure:DeepLift",
+        "structure:Unused",
+        "structure:Quiet2",
+        "traits:Bare2",
+    ] {
+        let m = pm.get(key).unwrap_or_else(|| {
+            panic!(
+                "{key} minted; structure/trait keys: {:?}",
+                pm.keys()
+                    .filter(|k| k.starts_with("structure:") || k.starts_with("traits:"))
+                    .collect::<Vec<_>>()
+            )
+        });
+        assert_eq!(m.get("intra_count").and_then(|v| v.as_u64()), Some(0));
+        assert_eq!(m.get("is_pub").and_then(|v| v.as_bool()), Some(true));
+    }
+    assert!(
+        !pm.contains_key("structure:Veiled") && !pm.contains_key("structure:Ghost2"),
+        "doc(hidden) + unreachable types never mint"
+    );
+    assert!(
+        !pm.contains_key("structure:NoLift"),
+        "a PRIVATE mod below the glob hop stays unreachable"
+    );
+    // The glob lift covers fns uniformly (the helix `pub use imp::*`
+    // class): glob_fn keys under the crate root binding.
+    assert!(
+        pm.contains_key("implementation_functions:lib::glob_fn"),
+        "glob-lifted fn mints under the root binding; impl-fn keys: {:?}",
+        pm.keys()
+            .filter(|k| k.starts_with("implementation_functions:"))
+            .collect::<Vec<_>>()
+    );
+
+    // Weighted-render-only: nothing renders without a blob...
+    let templates = Templates::new(None);
+    emit(root, &out, &calibration, &templates, None, "author").expect("plain emit");
+    let plain = std::fs::read_to_string(out.join("orientation.md")).expect("read plain");
+    for pick in ["globals:palette::RED", "structure:Lifted"] {
+        assert!(
+            !plain.contains(&format!("`{}`", pick)),
+            "zero-score decl pick must not render without a weight: {pick}"
+        );
+    }
+
+    // ...and demand-backed picks render in 5.2 with a blob (pair
+    // demand for the const; NAME demand for the type).
+    let mut pairs = std::collections::BTreeMap::new();
+    pairs.insert(
+        "palette::RED".to_string(),
+        WeightCell {
+            consumers: 1,
+            sites: 4,
+        },
+    );
+    let mut names = std::collections::BTreeMap::new();
+    names.insert(
+        "Lifted".to_string(),
+        WeightCell {
+            consumers: 1,
+            sites: 3,
+        },
+    );
+    // Import-shaped const demand records a NAME, not a pair; the
+    // zero-usage globals key must consult the name cell.
+    names.insert(
+        "DEEP_CONST".to_string(),
+        WeightCell {
+            consumers: 1,
+            sites: 2,
+        },
+    );
+    let mut targets = std::collections::BTreeMap::new();
+    targets.insert(
+        "lib".to_string(),
+        TargetWeights {
+            sources: Vec::new(),
+            names,
+            pairs,
+        },
+    );
+    let blob = WeightBlob { targets };
+    emit(root, &out, &calibration, &templates, Some(&blob), "author")
+        .expect("weighted emit succeeds");
+    let weighted =
+        std::fs::read_to_string(out.join("orientation.md")).expect("read weighted");
+    let s52: String = weighted
+        .lines()
+        .skip_while(|l| !l.starts_with("### 5.2"))
+        .take_while(|l| !l.starts_with("### 5.3"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        s52.contains("`globals:palette::RED`"),
+        "weighted const pick renders in PUBLIC (the decl-site seed feeds the instance); 5.2:\n{s52}"
+    );
+    assert!(
+        s52.contains("`structure:Lifted`"),
+        "weighted glob-lifted type pick renders in PUBLIC; 5.2:\n{s52}"
+    );
+    assert!(
+        s52.contains("`globals:lib::DEEP_CONST`"),
+        "name-cell demand renders the chained-glob const at its root canonical; 5.2:\n{s52}"
+    );
+
+    // Serving: a consumer demanding the const through its module
+    // path and the type by name reads zero misses.
+    let ctmp = TempDir::new().expect("consumer tempdir");
+    let cfiles: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from(
+                "[package]\nname=\"consumer\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../t/lib\"}\n",
+            ),
+        ),
+        (
+            "src/lib.rs",
+            String::from(
+                "use lib::palette::RED;\nuse lib::{Lifted, DEEP_CONST};\npub fn go(_l: Lifted<u8>) -> u8 { RED + DEEP_CONST }\npub fn take() { let _ = lib::palette::LABEL; }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(ctmp.path(), &cfiles);
+    let trace_out = ctmp.path().join("trace.json");
+    measure_demand(ctmp.path(), &out, Some(&trace_out))
+        .expect("const + type demands served by the decl picks");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&trace_out).expect("read trace"),
+    )
+    .expect("parse trace");
+    assert_eq!(
+        report.pointer("/summary/miss_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "no name misses; report: {report}"
+    );
+    assert_eq!(
+        report.pointer("/summary/pair_miss_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "no pair misses"
+    );
+}

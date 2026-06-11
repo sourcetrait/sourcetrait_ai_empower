@@ -122,6 +122,7 @@ fn merge_file_facts(
     facts.traits.extend(file_facts.traits);
     facts.types.extend(file_facts.types);
     facts.fns.extend(file_facts.fns);
+    facts.consts.extend(file_facts.consts);
     facts.mods.extend(file_facts.mods);
     facts.uses.extend(file_facts.uses);
     facts.macros.extend(file_facts.macros);

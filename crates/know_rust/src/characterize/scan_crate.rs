@@ -82,6 +82,9 @@ pub fn scan_crate(
             for r in &f.fns {
                 agg.fns.push(serde_json::to_value(r).expect("FnEntry serializes"));
             }
+            for r in &f.consts {
+                agg.consts.push(serde_json::to_value(r).expect("ConstEntry serializes"));
+            }
             for r in &f.uses {
                 agg.uses.push(serde_json::to_value(r).expect("UseEntry serializes"));
             }

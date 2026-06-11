@@ -170,6 +170,92 @@ fn macro_invocation_bare_pub_recovery_covers_items() {
 }
 
 #[test]
+fn module_level_consts_statics_and_decl_fields() {
+    // The labels stream: module-level const/static decls emit
+    // ConstEntry rows with the inline mod chain; body-nested decls
+    // carry None (decl-channel ineligible); assoc consts stay out of
+    // the stream entirely. Type/trait decls carry the same
+    // module_path/doc_hidden fields for the decl channel's types leg.
+    let f = scan_source(
+        "src/lib.rs",
+        "pub const TOP: u8 = 1;\n\
+         #[doc(hidden)]\npub static VEILED: u8 = 2;\n\
+         pub mod colors { pub const RED: u8 = 3; }\n\
+         fn body() { const NESTED: u8 = 4; let _ = NESTED; }\n\
+         pub struct S1;\n\
+         pub mod inner { pub type Alias1 = u8; pub trait T1 {} }\n\
+         impl S1 { pub const ASSOC: u8 = 5; }\n",
+    )
+    .expect("parse ok");
+
+    let top = f
+        .consts
+        .iter()
+        .find(|c| c.name == "TOP")
+        .expect("module-level const recorded");
+    assert_eq!(top.module_path.as_deref(), Some(""), "file-top chain is empty");
+    assert_eq!(top.visibility, "pub");
+    assert!(!top.doc_hidden);
+
+    let veiled = f
+        .consts
+        .iter()
+        .find(|c| c.name == "VEILED")
+        .expect("static recorded");
+    assert!(veiled.doc_hidden, "doc(hidden) captured");
+    assert!(
+        matches!(veiled.kind, ConstEntryKind::Static),
+        "static kind recorded"
+    );
+
+    let red = f
+        .consts
+        .iter()
+        .find(|c| c.name == "RED")
+        .expect("inline-mod const recorded");
+    assert_eq!(
+        red.module_path.as_deref(),
+        Some("colors"),
+        "inline mod chain recorded"
+    );
+
+    let nested = f
+        .consts
+        .iter()
+        .find(|c| c.name == "NESTED")
+        .expect("body-nested const still recorded");
+    assert_eq!(nested.module_path, None, "body-nested decl is ineligible");
+
+    assert!(
+        !f.consts.iter().any(|c| c.name == "ASSOC"),
+        "impl assoc consts stay out of the labels stream"
+    );
+
+    let s1 = f
+        .types
+        .iter()
+        .find(|t| t.name == "S1")
+        .expect("struct recorded");
+    assert_eq!(s1.module_path.as_deref(), Some(""), "struct decl chain");
+    let alias = f
+        .types
+        .iter()
+        .find(|t| t.name == "Alias1")
+        .expect("type alias recorded");
+    assert_eq!(
+        alias.module_path.as_deref(),
+        Some("inner"),
+        "type alias inline chain"
+    );
+    let t1 = f
+        .traits
+        .iter()
+        .find(|t| t.name == "T1")
+        .expect("trait recorded");
+    assert_eq!(t1.module_path.as_deref(), Some("inner"), "trait inline chain");
+}
+
+#[test]
 fn leading_colon_use_paths_keep_the_marker() {
     // The leading `::` is the explicit-external marker; the wire
     // must carry it (dropping it let local-module gates absorb

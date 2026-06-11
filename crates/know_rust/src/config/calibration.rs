@@ -168,6 +168,62 @@ pub struct PickerConfig {
     pub prose_budget: ProseBudgetMatrix,
     pub cap_matrix: CapMatrix,
     pub consumer_weight: ConsumerWeightConfig,
+    pub seating: SeatingConfig,
+}
+
+/// What: variety-scaled channel seating knobs (the_user ruling,
+/// 2026-06-11). The PUBLIC set's per-(group) cells partition into
+/// example-evidence + demand-evidence sub-pools; the demand quota is
+/// `min(|D|, round(share * cap))` with
+/// `share = min(demand_share_max, breadth / breadth_ref)`, breadth
+/// being the blob target's distinct demanded keys (names + pairs).
+/// Within the demand sub-pool entries rank by
+/// `consumers * site_dampening(sites)`.
+///
+/// Why: demand evidence is a CURATED INPUT - the authoring
+/// user/agent selects consumers, and richness varies per target
+/// exactly as example corpora do - so the render guarantee slides
+/// with the demand variety available to the kp-authoring instead of
+/// competing demand against examples in incomparable units
+/// (site_weight*sites vs curated*log2(example_files), the boundary
+/// defect that cut the cosmic_files module fns and adopted
+/// DQuat/IVec3).
+///
+/// Where: loaded from `[picker.seating]`; consumed by
+/// `emit::picker::seat_public_by_group`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SeatingConfig {
+    pub demand_share_max: f64,
+    pub breadth_ref: f64,
+    pub site_dampening: SiteDampening,
+}
+
+/// What: the demand-rank site dampening function. `Log2` is
+/// log2(1 + sites) (hard dampening - corroboration dominates a
+/// single consumer's site volume); `Sqrt` is sqrt(sites) (raw sites
+/// keep more pull).
+///
+/// Why: a 618-site single-consumer giant must not bury a 2-consumer
+/// handful-of-sites key; the knob states how hard site volume
+/// flattens.
+///
+/// Where: applied per demand entry in
+/// `emit::picker::seat_public_by_group`.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SiteDampening {
+    Log2,
+    Sqrt,
+}
+
+impl SiteDampening {
+    /// What: apply the dampening to a site count.
+    pub fn apply(self, sites: usize) -> f64 {
+        match self {
+            Self::Log2 => (1.0 + sites as f64).log2(),
+            Self::Sqrt => (sites as f64).sqrt(),
+        }
+    }
 }
 
 /// What: knobs for the consumer-demand weight term. `site_weight` is
@@ -708,6 +764,22 @@ mod tests {
         assert!(lifecycle >= foundational);
         assert!(configuring > globals);
         assert!(foundational > globals);
+    }
+
+    #[test]
+    fn seating_default_loads_with_ruled_knobs() {
+        // Pins the embedded calibration.toml's seating knobs to the
+        // 2026-06-11 the_user-approved values (0.60 is the seating
+        // edge for the four boundary cases; 0.65 the plateau) so
+        // unintended toml drift fails fast.
+        let cal = Calibration::default();
+        let s = &cal.picker.seating;
+        assert_eq!(s.demand_share_max, 0.65);
+        assert_eq!(s.breadth_ref, 700.0);
+        assert_eq!(s.site_dampening, SiteDampening::Log2);
+        // Dampening arithmetic: log2(1+7) = 3; sqrt(9) = 3.
+        assert_eq!(SiteDampening::Log2.apply(7), 3.0);
+        assert_eq!(SiteDampening::Sqrt.apply(9), 3.0);
     }
 
     #[test]

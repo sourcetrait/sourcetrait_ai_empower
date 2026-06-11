@@ -410,6 +410,14 @@ pub fn compute_significance_sets(
         }
     }
 
+    // Channel snapshot for the public set's variety-scaled seating:
+    // entries present BEFORE the demand term are the EXAMPLE channel
+    // (curated evidence); entries the demand term inserts are the
+    // DEMAND channel. Demand evidence (sites, consumers) rides along
+    // for the demand sub-pool's corroboration-weighted rank.
+    let example_channel: HashSet<Pattern> = public_scores.keys().cloned().collect();
+    let mut demand_evidence: HashMap<Pattern, (usize, usize)> = HashMap::new();
+
     // Consumer-demand weight term: revealed third-party demand from
     // the weight blob. Zero-usage decl-channel pair keys earn their
     // BASE public score from demand sites (public-by-consumption);
@@ -456,6 +464,26 @@ pub fn compute_significance_sets(
             sites
         };
         let name_sites = |n: &str| -> usize { tw.names.get(n).map(|c| c.sites).unwrap_or(0) };
+        // Distinct-consumer corroboration per spelling family: MAX
+        // across the consulted cells (the same consumer may demand an
+        // item under several spellings; summing would double-count).
+        let pair_consumers = |outer: &str, inner: &str| -> usize {
+            let pair = format!("{}::{}", outer, inner);
+            let mut consumers = tw.pairs.get(&pair).map(|c| c.consumers).unwrap_or(0);
+            if let Some(aliases) = alias_outers.get(&pair) {
+                for a in aliases {
+                    consumers = consumers.max(
+                        tw.pairs
+                            .get(&format!("{}::{}", a, inner))
+                            .map(|c| c.consumers)
+                            .unwrap_or(0),
+                    );
+                }
+            }
+            consumers
+        };
+        let name_consumers =
+            |n: &str| -> usize { tw.names.get(n).map(|c| c.consumers).unwrap_or(0) };
         for (pattern, m) in &pm_by_pattern {
             let dc = m.get("defining_crate").and_then(|v| v.as_str());
             if dc.map(|c| scaffolding.contains(c)).unwrap_or(true) {
@@ -471,7 +499,7 @@ pub fn compute_significance_sets(
             }
             let usage_total = m.get("intra_count").and_then(|v| v.as_u64()).unwrap_or(0)
                 + m.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(0);
-            let sites = match pattern {
+            let (sites, consumers) = match pattern {
                 // Pair keys (fn + const) consult pair demand under
                 // the rendered spelling + aliases; zero-usage decl
                 // mints additionally consult the inner's NAME cell -
@@ -481,25 +509,42 @@ pub fn compute_significance_sets(
                 // server. Name-level inner attribution is the
                 // system's standing granularity trade.
                 Pattern::ImplementationFunctions { outer, inner } if outer != "_" => {
-                    pair_sites(outer, inner)
-                        + if usage_total == 0 { name_sites(inner) } else { 0 }
+                    let mut c = pair_consumers(outer, inner);
+                    if usage_total == 0 {
+                        c = c.max(name_consumers(inner));
+                    }
+                    (
+                        pair_sites(outer, inner)
+                            + if usage_total == 0 { name_sites(inner) } else { 0 },
+                        c,
+                    )
                 }
                 Pattern::Globals(name) => match name.split_once("::") {
                     Some((o, i)) => {
-                        pair_sites(o, i)
-                            + if usage_total == 0 { name_sites(i) } else { 0 }
+                        let mut c = pair_consumers(o, i);
+                        if usage_total == 0 {
+                            c = c.max(name_consumers(i));
+                        }
+                        (
+                            pair_sites(o, i)
+                                + if usage_total == 0 { name_sites(i) } else { 0 },
+                            c,
+                        )
                     }
                     None => continue,
                 },
                 // Bare type/trait keys: the name demand IS the
                 // demand (the bevy `pub type Write` + `Disabled`
                 // classes).
-                Pattern::Structure(n) | Pattern::Traits(n) => name_sites(n),
+                Pattern::Structure(n) | Pattern::Traits(n) => {
+                    (name_sites(n), name_consumers(n))
+                }
                 _ => continue,
             };
             if sites == 0 {
                 continue;
             }
+            demand_evidence.insert(pattern.clone(), (sites, consumers));
             // Public-by-consumption, uniformly: a demanded key
             // ABSENT from the public pool earns the demand BASE
             // (internal usage does not disqualify consumer-facing
@@ -550,13 +595,20 @@ pub fn compute_significance_sets(
         .filter(|(k, _)| !significant_architecture.contains_key(*k))
         .map(|(k, v)| (k.clone(), *v))
         .collect();
-    let significant_public = bucket_and_cap_by_group(
+    // The blob target's demand VARIETY: distinct demanded keys
+    // (names + pairs). Drives the public set's per-cell demand quota;
+    // zero breadth (no blob / undemanded target) seats pure example.
+    let breadth = weights.map(|tw| tw.names.len() + tw.pairs.len()).unwrap_or(0);
+    let significant_public = seat_public_by_group(
         &public_counts,
-        PickSet::Public,
+        &example_channel,
+        &demand_evidence,
+        breadth,
         top_n_workspace,
         cap_matrix,
         floor,
         profile,
+        &calibration.picker.seating,
     );
     let inter_counts: indexmap::IndexMap<Pattern, usize> = inter_scores
         .iter()
@@ -743,6 +795,165 @@ fn per_crate_picks(
         }
     }
     (sig_per_crate, top_n_per_crate)
+}
+
+/// What: the PUBLIC set's per-cell variety-scaled channel seating
+/// (the_user ruling, 2026-06-11). Each (group, Public) cell's
+/// EXISTING cap partitions into demand-evidence + example-evidence
+/// sub-pools: `q_d = min(|D|, round(share * cap))` demand seats with
+/// `share = min(demand_share_max, breadth / breadth_ref)`; examples
+/// keep the remainder; unused guarantees SPILL to the other channel
+/// (the `min` returns unfilled demand seats to examples, and a thin
+/// example pool returns its spare seats to demand), so the cell
+/// always fills to cap when the pool allows - no new seats, bundle
+/// sizes hold. Within sub-pools competition is LIKE-VS-LIKE: demand
+/// entries rank by `consumers * f(sites)` (corroboration multiplies,
+/// sites dampened); example entries rank by their existing scores.
+/// Membership is all that changes - entries keep their raw public
+/// scores for display and downstream dedup.
+///
+/// Why: demand evidence is a CURATED INPUT (the authoring user/agent
+/// selects consumers; richness varies per target exactly as example
+/// corpora do), so the render guarantee slides with the demand
+/// variety available to that kp-authoring. The replaced unified
+/// ranking compared channels in incomparable units
+/// (site_weight*sites vs curated*log2(example_files)) - the boundary
+/// defect that cut the cosmic_files module fns and the adopted
+/// DQuat/IVec3 while example tails held seats no consumer ever
+/// demanded. Zero breadth degrades to pure example seating
+/// (byte-identical to the pre-seating picker).
+///
+/// Where: called by `compute_significance_sets` for the Public set
+/// only; every other set keeps `bucket_and_cap_by_group`.
+#[allow(clippy::too_many_arguments)]
+fn seat_public_by_group(
+    counts: &indexmap::IndexMap<Pattern, f64>,
+    example_channel: &HashSet<Pattern>,
+    demand_evidence: &HashMap<Pattern, (usize, usize)>,
+    breadth: usize,
+    base_cap: usize,
+    matrix: &CapMatrix,
+    floor: usize,
+    profile: &ProfileSetScale,
+    seating: &SeatingConfig,
+) -> indexmap::IndexMap<Pattern, f64> {
+    let set = PickSet::Public;
+    let scale = profile.for_set(set);
+    if scale <= 0.0 {
+        return indexmap::IndexMap::new();
+    }
+    let share = seating
+        .demand_share_max
+        .min(breadth as f64 / seating.breadth_ref);
+    let mut by_group: HashMap<PickGroup, Vec<(Pattern, f64)>> = HashMap::new();
+    for (k, v) in counts {
+        by_group.entry(k.kind()).or_default().push((k.clone(), *v));
+    }
+    let mut capped: Vec<(Pattern, f64)> = Vec::new();
+    for (group, items) in by_group {
+        let cap = if (scale - 1.0).abs() < f64::EPSILON {
+            matrix.cap_for(group, set, base_cap, floor)
+        } else {
+            let scaled = (base_cap as f64)
+                * matrix.group.for_group(group)
+                * matrix.set.for_set(set)
+                * scale;
+            (scaled.round() as usize).max(floor)
+        };
+        let (mut examples, mut demand): (Vec<(Pattern, f64)>, Vec<(Pattern, f64)>) =
+            items
+                .into_iter()
+                .partition(|(k, _)| example_channel.contains(k));
+        examples.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        let demand_rank = |k: &Pattern| -> f64 {
+            let (sites, consumers) = demand_evidence.get(k).copied().unwrap_or((0, 0));
+            consumers.max(1) as f64 * seating.site_dampening.apply(sites)
+        };
+        demand.sort_by(|a, b| {
+            demand_rank(&b.0)
+                .partial_cmp(&demand_rank(&a.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        let quota = (share * cap as f64).round() as usize;
+        let mut q_d = demand.len().min(quota);
+        let q_e = cap.saturating_sub(q_d);
+        if examples.len() < q_e {
+            q_d = demand.len().min(q_d + (q_e - examples.len()));
+        }
+        capped.extend(demand.into_iter().take(q_d));
+        // Unused-quota refill order: quota seats the pure-demand pool
+        // did not fill go to DEMANDED example entries first (the
+        // mixed-evidence class - demanded AND example-backed - ranked
+        // by the same demand metric), then any remainder spills to
+        // the example-rank order. A demanded key must not lose its
+        // guaranteed voice merely because it ALSO carries example
+        // evidence (the bevy structure:Hdr regression: example rank
+        // 182 of 566 under a squeezed q_e while 57 quota seats sat
+        // unused). Binding quotas have no unused seats, so the
+        // boundary-case cells are untouched; the entries this bumps
+        // are undemanded by construction and can never create a new
+        // demand miss.
+        let unused = quota.saturating_sub(q_d).min(cap.saturating_sub(q_d));
+        let natural_e = cap.saturating_sub(q_d).saturating_sub(unused);
+        let mut seated_e: Vec<(Pattern, f64)> = Vec::new();
+        let mut tail: Vec<(Pattern, f64)> = Vec::new();
+        for (i, e) in examples.into_iter().enumerate() {
+            if i < natural_e {
+                seated_e.push(e);
+            } else {
+                tail.push(e);
+            }
+        }
+        if unused > 0 {
+            let mut demanded_tail: Vec<(Pattern, f64)> = Vec::new();
+            let mut undemanded_tail: Vec<(Pattern, f64)> = Vec::new();
+            for e in tail {
+                if demand_evidence.contains_key(&e.0) {
+                    demanded_tail.push(e);
+                } else {
+                    undemanded_tail.push(e);
+                }
+            }
+            demanded_tail.sort_by(|a, b| {
+                demand_rank(&b.0)
+                    .partial_cmp(&demand_rank(&a.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            let take_mixed = unused.min(demanded_tail.len());
+            let mut rest: Vec<(Pattern, f64)> = demanded_tail.split_off(take_mixed);
+            seated_e.extend(demanded_tail);
+            // Remaining seats fill by example order (the merged
+            // leftover, re-sorted to the example-pool ranking).
+            rest.extend(undemanded_tail);
+            rest.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            let remaining = cap
+                .saturating_sub(q_d)
+                .saturating_sub(seated_e.len());
+            seated_e.extend(rest.into_iter().take(remaining));
+        } else {
+            let q_e = cap.saturating_sub(q_d);
+            seated_e.extend(tail.into_iter().take(q_e.saturating_sub(natural_e)));
+        }
+        capped.extend(seated_e);
+    }
+    // Deterministic output order (score desc, key asc), independent of
+    // HashMap bucketing - the sampling contract's byte-reproducibility.
+    capped.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    capped.into_iter().collect()
 }
 
 /// What: bucket the input score map by `PickGroup` (extracted from

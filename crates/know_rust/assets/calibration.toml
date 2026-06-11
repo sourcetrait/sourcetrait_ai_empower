@@ -301,6 +301,30 @@ inner_crate = 60
 site_weight = 1.0
 usage_boost = 0.25
 
+[picker.seating]
+# Variety-scaled channel seating (the_user ruling 2026-06-11): each
+# public (group, set) cell's existing cap partitions into
+# example-evidence + demand-evidence sub-pools; the demand quota
+# slides with the target's demand VARIETY (breadth = distinct
+# demanded keys in the blob target), so a rich curated roster earns
+# a larger demand voice and a thin one keeps a small-but-nonzero
+# voice. No new seats: unused guarantees spill to the other channel,
+# cells always fill to cap, bundle sizes hold. Zero breadth (no blob
+# or an undemanded target) degrades to pure example seating.
+#
+# demand_share_max: ceiling on the demand sub-pool's share of a cell
+#   (the binding knob on rich rosters; 0.60 is the seating edge for
+#   the four 2026-06-11 boundary cases, 0.65 the plateau point).
+# breadth_ref: breadth normalizer (share = min(demand_share_max,
+#   breadth / breadth_ref)); only bites below breadth ~455 at the
+#   shipped ceiling.
+# site_dampening: f(sites) in the demand sub-pool rank
+#   `consumers * f(sites)` - "log2" (log2(1+sites); corroboration
+#   dominates) or "sqrt" (raw sites keep more pull).
+demand_share_max = 0.65
+breadth_ref = 700.0
+site_dampening = "log2"
+
 # Documentation-kind profiles. A profile states what KIND of
 # documentation the emit is for and calibrates at that higher level:
 # a per-set cap scale layered over [picker.cap_matrix] (1.0 = base

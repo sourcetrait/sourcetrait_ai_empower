@@ -58,6 +58,40 @@ fn fixture_root() -> PathBuf {
 // six scan-level tests, lines 24-72) ---
 
 #[test]
+fn top_level_brace_use_emits_one_row_per_item() {
+    // `use {a::b, c::d};` is N independent use paths, each with its
+    // own ROOT - one flattened row would leak a `{`-prefixed
+    // pseudo-root (the 5F `{crate` class). Nested groups keep the
+    // shared prefix inline.
+    let src = r#"
+pub use {alpha::A, beta::B as Bee, crate::gamma::G};
+use delta::{D1, D2};
+"#;
+    let f = scan_source("t.rs", src).expect("parse ok");
+    let paths: Vec<&str> = f.uses.iter().map(|u| u.path.as_str()).collect();
+    assert!(
+        paths.contains(&"alpha::A")
+            && paths.contains(&"beta::B as Bee")
+            && paths.contains(&"crate::gamma::G"),
+        "top-level group splits into per-item rows; got {paths:?}"
+    );
+    assert!(
+        paths.contains(&"delta::{D1, D2}"),
+        "nested group stays inline under its prefix; got {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p.starts_with('{')),
+        "no brace-prefixed pseudo-roots; got {paths:?}"
+    );
+    let reexports = f
+        .uses
+        .iter()
+        .filter(|u| u.path.starts_with("alpha") || u.path.starts_with("beta") || u.path.contains("gamma"))
+        .all(|u| u.reexport);
+    assert!(reexports, "pub visibility carries to every split row");
+}
+
+#[test]
 fn masking_excludes_decoys() {
     let src = r#"
 // impl Command for InComment {}

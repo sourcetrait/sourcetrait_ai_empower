@@ -31,6 +31,7 @@ pub fn render_orientation(
     let sel = fp.get("selection").cloned().unwrap_or(serde_json::Value::Null);
     let vocab = core_vocabulary(fp, facts);
     let adopted_seeds = load_adopted_seed_index(out_dir);
+    let adopted_credit = load_adopted_credit(out_dir);
     let cands = candidate_instances(
         fp,
         facts,
@@ -39,6 +40,7 @@ pub fn render_orientation(
         profile,
         vis_backfill,
         &adopted_seeds,
+        &adopted_credit,
     );
     let forecast_chars = cands.total_budget_chars();
     let forecast_tokens = forecast_chars / 4;

@@ -114,6 +114,7 @@ pub fn characterize(
                 version: info.version.clone(),
                 lib_name: info.lib_name.clone(),
                 unit: info.unit.clone(),
+                renames: info.renames.clone(),
             },
         );
         let free_fns_count = cf

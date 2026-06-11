@@ -700,6 +700,31 @@ pub fn load_adopted_seed_index(
     out
 }
 
+/// What: load root-binding -> adopting-crates pairs from a pass
+/// directory's `know_rust_adopted.json`.
+///
+/// Why: the per-crate ballot gate's adopted arm credits a site when
+/// its qualifier or import binding resolves to the adopted root or
+/// an adopting crate (the count_adopted_usage rule); emit needs
+/// that credit set without re-resolving adoption.
+///
+/// Where: called by `render_orientation`; consumed by the ballot
+/// gate in `compute_significance_sets`.
+pub fn load_adopted_credit(out_dir: &Path) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let path = out_dir.join("know_rust_adopted.json");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return out;
+    };
+    let Ok(roots) = serde_json::from_str::<Vec<AdoptedRoot>>(&text) else {
+        return out;
+    };
+    for r in roots {
+        out.insert(r.root.clone(), r.adopting_crates.clone());
+    }
+    out
+}
+
 /// What: load (name, demand-kind) pairs for every adopted surface
 /// item from a pass directory's `know_rust_adopted.json` - the
 /// demand-side vocabulary extension.

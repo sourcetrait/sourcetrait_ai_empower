@@ -609,6 +609,7 @@ pub struct CoreVocabulary {
 /// Where: called by `crate::emit::orientation::render_orientation`
 /// after `core_vocabulary` and `detected_seams` to produce the S5
 /// material.
+#[allow(clippy::too_many_arguments)]
 pub fn candidate_instances(
     fp: &serde_json::Value,
     facts: &serde_json::Value,
@@ -617,6 +618,7 @@ pub fn candidate_instances(
     profile: &ProfileSetScale,
     vis_backfill: Option<&VisBackfill>,
     adopted_seeds: &HashMap<String, (String, String, u64)>,
+    adopted_credit: &HashMap<String, Vec<String>>,
 ) -> EnrichedSets {
     let histogram = fp
         .get("pattern_histogram")
@@ -654,6 +656,7 @@ pub fn candidate_instances(
         weights,
         profile,
         vis_backfill,
+        adopted_credit,
     );
 
     let pattern_metrics = fp

@@ -50,6 +50,7 @@ impl VisBackfill {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn compute_significance_sets(
     fp: &serde_json::Value,
     facts: &serde_json::Value,
@@ -59,6 +60,7 @@ pub fn compute_significance_sets(
     weights: Option<&TargetWeights>,
     profile: &ProfileSetScale,
     vis_backfill: Option<&VisBackfill>,
+    adopted_credit: &HashMap<String, Vec<String>>,
 ) -> SignificanceSets {
     let pattern_metrics = fp
         .get("pattern_metrics")
@@ -95,6 +97,158 @@ pub fn compute_significance_sets(
             .unwrap_or(false)
     };
 
+    // Per-crate ballot resolution gate (the_user ruling, dev block
+    // 2): ballots mirror the key-level counting loop's PER-SITE
+    // resolution so same-named std/foreign usage never sweeps into
+    // workspace keys (the nushell structure:File / tokio
+    // SocketAddr::V4 class). Third consumer of the shared
+    // resolution substrate; the vocabulary rebuilds from the
+    // fingerprint's per-crate identity fields (package / lib_name /
+    // renames - the renames ride the wire for exactly this).
+    let empty_rows: Vec<serde_json::Value> = Vec::new();
+    let uses_arr = facts.get("uses").and_then(|v| v.as_array()).unwrap_or(&empty_rows);
+    let import_maps = build_import_bindings(uses_arr.iter().filter_map(|u| {
+        Some((
+            u.get("file").and_then(|v| v.as_str())?,
+            u.get("path").and_then(|v| v.as_str())?,
+        ))
+    }));
+    let vocab_crates: indexmap::IndexMap<String, CrateInfo> = fp
+        .get("per_crate")
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| {
+                    let lib_name = v
+                        .get("lib_name")
+                        .and_then(|x| x.as_str())
+                        .map(String::from);
+                    let renames: Vec<(String, String)> = v
+                        .get("renames")
+                        .and_then(|x| x.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|p| {
+                                    let pair = p.as_array()?;
+                                    Some((
+                                        pair.first()?.as_str()?.to_string(),
+                                        pair.get(1)?.as_str()?.to_string(),
+                                    ))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    (
+                        k.clone(),
+                        CrateInfo {
+                            lib_name,
+                            renames,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let vocab = ResolveVocab::from_crates(&vocab_crates);
+    let mut local_decl_crates: HashMap<String, HashSet<String>> = HashMap::new();
+    for list_key in ["types", "traits"] {
+        if let Some(arr) = facts.get(list_key).and_then(|v| v.as_array()) {
+            for t in arr {
+                if is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+                    continue;
+                }
+                if let (Some(n), Some(c)) = (
+                    t.get("name").and_then(|v| v.as_str()),
+                    t.get("crate").and_then(|v| v.as_str()),
+                ) {
+                    local_decl_crates
+                        .entry(n.to_string())
+                        .or_default()
+                        .insert(c.to_string());
+                }
+            }
+        }
+    }
+    let mut local_mod_crates: HashMap<String, HashSet<String>> = HashMap::new();
+    if let Some(arr) = facts.get("mods").and_then(|v| v.as_array()) {
+        for m in arr {
+            if is_example_path(m.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+                continue;
+            }
+            if let (Some(n), Some(c)) = (
+                m.get("name").and_then(|v| v.as_str()),
+                m.get("crate").and_then(|v| v.as_str()),
+            ) {
+                local_mod_crates
+                    .entry(n.to_string())
+                    .or_default()
+                    .insert(c.to_string());
+            }
+        }
+    }
+    let facades = build_facade_index(
+        uses_arr.iter().filter_map(|u| {
+            if !u.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return None;
+            }
+            if is_example_path(u.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+                return None;
+            }
+            Some((
+                u.get("crate").and_then(|v| v.as_str())?,
+                u.get("path").and_then(|v| v.as_str())?,
+            ))
+        }),
+        &vocab,
+    );
+    let ballot_credits = |pat: &Pattern,
+                          resolve_name: &str,
+                          qualifier: Option<&str>,
+                          file: &str,
+                          using: &str|
+     -> bool {
+        let m = match pm_by_pattern.get(pat) {
+            Some(m) => m,
+            None => return false,
+        };
+        let defining = match m.get("defining_crate").and_then(|v| v.as_str()) {
+            Some(d) => d,
+            None => return false,
+        };
+        if m.get("adopted").and_then(|v| v.as_str()).is_some() {
+            // Adopted-root rule (mirrors count_adopted_usage): the
+            // site's written qualifier or import binding resolves to
+            // the root binding or an adopting crate.
+            let adopters = adopted_credit.get(defining);
+            let hit = |r: &str| -> bool {
+                let rn = r.replace('-', "_");
+                rn == defining
+                    || adopters
+                        .map(|a| a.iter().any(|c| c.replace('-', "_") == rn))
+                        .unwrap_or(false)
+            };
+            if let Some(q) = qualifier {
+                return hit(q);
+            }
+            if let Some(b) = import_maps.get(file).and_then(|mm| mm.get(resolve_name)) {
+                return hit(&b.root);
+            }
+            return false;
+        }
+        let origin = resolve_site_origin(
+            file,
+            resolve_name,
+            qualifier,
+            using,
+            &import_maps,
+            &vocab,
+            &local_decl_crates,
+            &local_mod_crates,
+        );
+        site_credits(&origin, using, defining, resolve_name, &facades)
+    };
+
     // R3: per-crate pre-aggregation uses the picks-data model's
     // `<group>:<name>` pattern key shape (see
     // `notes/know_rust/working/02_picks_data.md`). Mapping:
@@ -112,7 +266,10 @@ pub fn compute_significance_sets(
                 if !it.get("cfg_gated").and_then(|v| v.as_bool()).unwrap_or(false) {
                     if let Some(c) = it.get("crate").and_then(|v| v.as_str()) {
                         let p = Pattern::traits(trait_name);
-                        if is_workspace_originated(&p) {
+                        let file = it.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                        if is_workspace_originated(&p)
+                            && ballot_credits(&p, trait_name, None, file, c)
+                        {
                             *per_crate_counts
                                 .entry(c.to_string())
                                 .or_default()
@@ -131,7 +288,8 @@ pub fn compute_significance_sets(
                 d.get("trait").and_then(|v| v.as_str()),
             ) {
                 let p = Pattern::configuring(nm);
-                if is_workspace_originated(&p) {
+                let file = d.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                if is_workspace_originated(&p) && ballot_credits(&p, nm, None, file, c) {
                     *per_crate_counts
                         .entry(c.to_string())
                         .or_default()
@@ -150,8 +308,15 @@ pub fn compute_significance_sets(
                 // BRIDGE: each O::i type_usage contributes to BOTH
                 // structure:O (the type's architectural footprint) and
                 // implementation_functions:O::i (the per-method usage).
+                // The gate resolves the OUTER, mirroring the counting
+                // loop's resolve_target for type_usage sites.
+                let file = tu.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                let qualifier = tu.get("qualifier").and_then(|v| v.as_str());
+                let outer = nm.split_once("::").map(|(o, _)| o).unwrap_or(nm);
                 let impl_fn = Pattern::from_group_name(PickGroup::ImplementationFunctions, nm);
-                if is_workspace_originated(&impl_fn) {
+                if is_workspace_originated(&impl_fn)
+                    && ballot_credits(&impl_fn, outer, qualifier, file, c)
+                {
                     *per_crate_counts
                         .entry(c.to_string())
                         .or_default()
@@ -160,7 +325,9 @@ pub fn compute_significance_sets(
                 }
                 if let Some(outer) = nm.split_once("::").map(|(o, _)| o) {
                     let struct_pat = Pattern::structure(outer);
-                    if is_workspace_originated(&struct_pat) {
+                    if is_workspace_originated(&struct_pat)
+                        && ballot_credits(&struct_pat, outer, qualifier, file, c)
+                    {
                         *per_crate_counts
                             .entry(c.to_string())
                             .or_default()
@@ -187,7 +354,8 @@ pub fn compute_significance_sets(
                     _ => None,
                 };
                 if let Some(p) = p {
-                    if is_workspace_originated(&p) {
+                    let file = m.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                    if is_workspace_originated(&p) && ballot_credits(&p, nm, None, file, c) {
                         *per_crate_counts
                             .entry(c.to_string())
                             .or_default()

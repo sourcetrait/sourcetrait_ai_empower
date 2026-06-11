@@ -154,6 +154,12 @@ pub struct PerCrateFingerprint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lib_name: Option<String>,
     pub unit: String,
+    /// What: this package's dependency renames as (binding, package)
+    /// pairs, carried on the wire so emit-side consumers (the
+    /// per-crate ballot gate's ResolveVocab) can rebuild the
+    /// resolution vocabulary without cargo metadata.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub renames: Vec<(String, String)>,
 }
 
 /// What: per-pattern metrics row in `pattern_metrics`: defining

@@ -18,11 +18,6 @@ Crates
 
 *Nushell engine MCP server*
 
-### [CLI Library](./crates/sourcetrait_libcli_empower)
-[![CLI Library Crate Badge]][CLI Library Crate] [![Docs Badge]][CLI Library Docs]
-
-*Command-line interface library*
-
 ### [Library](./crates/sourcetrait_lib_empower)
 [![Library Crate Badge]][Library Crate] [![Docs Badge]][Library Docs]
 

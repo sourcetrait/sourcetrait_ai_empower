@@ -1,5 +1,6 @@
 pub(crate) mod base62;
 pub(crate) mod error;
+pub(crate) mod markdown;
 pub mod consts;
 pub mod nonce;
 pub mod rerun;
@@ -10,6 +11,7 @@ pub(crate) use std::{
         Hash,
         Hasher,
     },
+    path::Path,
     sync::atomic::{
         AtomicUsize,
         Ordering,
@@ -20,6 +22,8 @@ pub(crate) use std::{
     },
 };
 
+pub(crate) use snafu::ResultExt;
+
 pub(crate) mod xxh3 {
     pub(crate) use xxhash_rust::xxh3::Xxh3;
 }
@@ -29,6 +33,8 @@ pub use crate::{
     error::{
         LibEmpowerError,
         LibEmpowerResult,
+        MarkdownError,
+        MarkdownResult,
     },
     nonce::{
         Nonce,
@@ -36,3 +42,13 @@ pub use crate::{
     },
     rerun::RerunHash,
 };
+
+pub mod md {
+    pub use crate::{
+        error::{
+            MarkdownError,
+            MarkdownResult,
+        },
+        markdown::find,
+    };
+}

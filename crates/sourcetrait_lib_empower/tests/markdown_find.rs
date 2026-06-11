@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use sourcetrait_libcli_empower::md;
+use sourcetrait_lib_empower::md;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -51,7 +51,7 @@ fn returns_empty_when_no_matches() {
 fn invalid_pattern_surfaces_invalid_pattern_error() {
     let result = md::find(&fixture("simple.md"), r"[unclosed");
     match result {
-        Err(md::FindError::InvalidPattern { pattern, .. }) => {
+        Err(md::MarkdownError::InvalidPattern { pattern, .. }) => {
             assert_eq!(pattern, "[unclosed");
         }
         other => panic!("expected InvalidPattern, got {other:?}"),
@@ -62,7 +62,7 @@ fn invalid_pattern_surfaces_invalid_pattern_error() {
 fn missing_file_surfaces_read_file_error() {
     let result = md::find(&fixture("does_not_exist.md"), r".*");
     match result {
-        Err(md::FindError::ReadFile { path, .. }) => {
+        Err(md::MarkdownError::ReadFile { path, .. }) => {
             assert!(path.ends_with("does_not_exist.md"));
         }
         other => panic!("expected ReadFile, got {other:?}"),

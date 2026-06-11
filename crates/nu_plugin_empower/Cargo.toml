@@ -18,7 +18,7 @@ path = "src/main.rs"
 nu-plugin.workspace = true
 nu-protocol.workspace = true
 snafu.workspace = true
-sourcetrait_libcli_empower.workspace = true
+sourcetrait_lib_empower.workspace = true
 
 # [dev-dependencies] left empty for now -- nu-plugin-test-support 0.113 pulls
 # in nu-plugin-engine 0.113.1 which has a non-exhaustive-match upstream bug

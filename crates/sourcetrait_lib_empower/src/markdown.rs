@@ -1,7 +1,6 @@
 //! Markdown structural-query primitives.
 
 use crate::*;
-use crate::error::{InvalidPatternSnafu, ReadFileSnafu};
 
 /// Find all regex matches in a markdown file and return their byte
 /// offsets as (offset, length) pairs. Multiline mode is on by default

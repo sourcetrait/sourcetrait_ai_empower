@@ -24,6 +24,11 @@ pub(crate) use std::{
 
 pub(crate) use snafu::ResultExt;
 
+pub(crate) use crate::error::{
+    InvalidPatternSnafu,
+    ReadFileSnafu,
+};
+
 pub(crate) mod xxh3 {
     pub(crate) use xxhash_rust::xxh3::Xxh3;
 }

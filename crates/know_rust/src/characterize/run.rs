@@ -361,9 +361,12 @@ pub fn characterize(
     }
     // Workspace-adopted roots (the_user's adoption rule): the
     // re-exported foreign surface, lock-pinned, with registry
-    // checkouts for enumeration. Purely additive artifact.
+    // checkouts; glob/namespace roots enumerate their pub surface
+    // through the decl channel's reachability machinery. Purely
+    // additive artifact.
     {
-        let adopted = resolve_adopted_roots(&all_facts, &crates, workspace_root);
+        let mut adopted = resolve_adopted_roots(&all_facts, &crates, workspace_root);
+        enumerate_adopted_surfaces(&mut adopted);
         let path = out_dir.join("know_rust_adopted.json");
         let json = serde_json::to_string_pretty(&adopted)
             .map_err(|source| Error::Serialize { source })?;

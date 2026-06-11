@@ -46,6 +46,13 @@ pub struct AdoptedRoot {
     pub leaves: Vec<(String, String)>,
     /// Adopting re-export rows observed (site count).
     pub sites: usize,
+    /// The adopted crate's pub-reachable module-level surface (kind /
+    /// name / shortest public chain), enumerated from the registry
+    /// checkout through the decl channel's reachability machinery.
+    /// Populated for glob / namespace adoptions with a checkout;
+    /// leaf-only roots need no enumeration (their items are named).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub surface: Vec<SurfaceItem>,
 }
 
 /// What: resolve the workspace's ADOPTED foreign roots from its
@@ -147,6 +154,7 @@ pub fn resolve_adopted_roots(
             globs: Vec::new(),
             leaves: Vec::new(),
             sites: 0,
+            surface: Vec::new(),
         });
         entry.sites += 1;
         if crate_level {
@@ -210,6 +218,73 @@ pub fn resolve_adopted_roots(
         out.push(r);
     }
     out
+}
+
+/// What: enumerate the pub-reachable surface of every adopted root
+/// that warrants it - glob or namespace adoption with a registry
+/// checkout. The checkout is walked by the items walker and read
+/// through the decl channel's reachability machinery (`public_surface`),
+/// so glob-of-glob closures, leaf re-export lifts, and
+/// privacy-piercing hops inside the ADOPTED crate resolve exactly
+/// like workspace crates.
+///
+/// Why: `pub use glam::*;` exposes whatever glam's own re-export
+/// graph lifts to its root - only glam's source answers that.
+/// Leaf-only adoptions skip enumeration (their items are named in
+/// the adopting row).
+///
+/// Where: called by `characterize::run::characterize` after
+/// `resolve_adopted_roots`.
+pub fn enumerate_adopted_surfaces(roots: &mut [AdoptedRoot]) {
+    for r in roots.iter_mut() {
+        if !(r.namespace || !r.globs.is_empty()) {
+            continue;
+        }
+        let Some(checkout) = r.checkout.clone() else {
+            continue;
+        };
+        let checkout_path = PathBuf::from(&checkout);
+        if !checkout_path.is_dir() {
+            continue;
+        }
+        let items = scan_workspace(&checkout_path);
+        let mut wf = WorkspaceFacts::default();
+        let krate = r.package.replace('-', "_");
+        let inject = |list: Vec<serde_json::Value>| -> Vec<serde_json::Value> {
+            list.into_iter()
+                .map(|mut v| {
+                    if let Some(o) = v.as_object_mut() {
+                        o.insert("crate".into(), serde_json::Value::from(krate.clone()));
+                    }
+                    v
+                })
+                .collect()
+        };
+        wf.fns = inject(items.fns.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect());
+        wf.consts = inject(items.consts.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect());
+        wf.types = inject(items.types.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect());
+        wf.traits = inject(items.traits.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect());
+        wf.mods = inject(items.mods.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect());
+        wf.uses = inject(items.uses.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect());
+        let mut crates_map: indexmap::IndexMap<String, CrateInfo> = indexmap::IndexMap::new();
+        crates_map.insert(
+            krate.clone(),
+            CrateInfo {
+                dir: ".".to_string(),
+                deps: Vec::new(),
+                has_bin: false,
+                has_lib: true,
+                keywords: Vec::new(),
+                categories: Vec::new(),
+                description: String::new(),
+                version: r.version.clone(),
+                lib_name: None,
+                renames: Vec::new(),
+                unit: String::new(),
+            },
+        );
+        r.surface = public_surface(&wf, &crates_map);
+    }
 }
 
 /// What: parse the workspace `Cargo.lock` into package -> sorted

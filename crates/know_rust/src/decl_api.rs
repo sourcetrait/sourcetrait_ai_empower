@@ -128,6 +128,95 @@ struct DeclCandidate {
     hard_public: bool,
 }
 
+/// What: one pub-reachable module-level item of a crate's public
+/// surface - kind tag, name, and the SHORTEST public module chain
+/// (the canonical spelling; the item name is not part of the chain).
+///
+/// Why: workspace-adopted enumeration reads a foreign checkout's
+/// public surface through the same reachability substrate the decl
+/// channel uses on workspace crates - one model, two consumers.
+///
+/// Where: produced by `public_surface`; serialized into
+/// `know_rust_adopted.json` per adopted root.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SurfaceItem {
+    pub(crate) kind: String,
+    pub(crate) name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) chain: Vec<String>,
+}
+
+/// What: enumerate a workspace's full pub-reachable module-level
+/// decl surface (fns / consts / statics / types / traits), each item
+/// carrying its shortest public chain.
+///
+/// Why: the workspace-adopted unit points this at a FOREIGN
+/// registry checkout (converted to one-crate WorkspaceFacts): the
+/// adopted crate's own re-export graph (incl. glob splices and
+/// privacy-piercing hops) decides what `pub use foreign::*;`
+/// actually exposes - the existing location-BFS machinery is the
+/// single source of that answer.
+///
+/// Where: called by `adopt::enumerate_adopted_surfaces`.
+pub(crate) fn public_surface(
+    all_facts: &WorkspaceFacts,
+    crates: &indexmap::IndexMap<String, CrateInfo>,
+) -> Vec<SurfaceItem> {
+    let mods = ModIndex::build(all_facts, crates);
+    let (bindings, glob_bindings) = collect_bindings(all_facts, crates, &mods);
+    let scaffolding: HashSet<String> = HashSet::new();
+    let mut out: Vec<SurfaceItem> = Vec::new();
+    let legs: &[(&[serde_json::Value], bool)] = &[
+        (&all_facts.fns, true),
+        (&all_facts.consts, false),
+        (&all_facts.types, false),
+        (&all_facts.traits, false),
+    ];
+    for (rows, exclude_main) in legs {
+        let decls = collect_decl_rows(rows, crates, &mods, *exclude_main, &scaffolding);
+        let counts = module_level_name_counts(&[rows]);
+        // Kind tag by name (first-wins; informational metadata - the
+        // chain, not the kind, is the load-bearing field).
+        let mut kind_of: HashMap<String, String> = HashMap::new();
+        for r in rows.iter() {
+            if let Some(n) = r.get("name").and_then(|v| v.as_str()) {
+                let k = r
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(if *exclude_main { "fn" } else { "item" });
+                kind_of.entry(n.to_string()).or_insert_with(|| k.to_string());
+            }
+        }
+        for d in decls {
+            let chains = public_chains_for(&d, &counts, &bindings, &glob_bindings, &mods);
+            if chains.is_empty() {
+                continue;
+            }
+            let mut ranked = chains;
+            ranked.sort_by(|a, b| {
+                a.len().cmp(&b.len()).then_with(|| a.join("::").cmp(&b.join("::")))
+            });
+            let kind = kind_of
+                .get(&d.name)
+                .cloned()
+                .unwrap_or_else(|| if *exclude_main { "fn".into() } else { "item".into() });
+            out.push(SurfaceItem {
+                kind,
+                name: d.name,
+                chain: ranked.first().cloned().unwrap_or_default(),
+            });
+        }
+    }
+    out.sort_by(|a, b| {
+        a.chain
+            .join("::")
+            .cmp(&b.chain.join("::"))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    out.dedup_by(|a, b| a.name == b.name && a.chain == b.chain && a.kind == b.kind);
+    out
+}
+
 /// What: one leaf soft binding - the chain a `pub use` gives the
 /// name, the use path's source-parent segment (for matching the
 /// binding to the right same-named decl), and whether the binding

@@ -21,6 +21,36 @@ fn write_tree(base: &Path, files: &HashMap<&str, String>) {
 
 #[test]
 fn adopted_roots_resolve_forms_and_exclusions() {
+    // A fake CARGO_HOME registry carries the extmath checkout so the
+    // glob root enumerates its pub surface end-to-end (the adopted
+    // crate's own re-export graph decides what `::*` exposes).
+    let fake_home = TempDir::new().expect("cargo home tempdir");
+    let checkout = fake_home
+        .path()
+        .join("registry")
+        .join("src")
+        .join("index.test-0000")
+        .join("extmath-0.30.10");
+    std::fs::create_dir_all(checkout.join("src")).expect("mkdir checkout");
+    std::fs::write(
+        checkout.join("Cargo.toml"),
+        "[package]\nname=\"extmath\"\nversion=\"0.30.10\"\nedition=\"2021\"\n",
+    )
+    .expect("write checkout manifest");
+    std::fs::write(
+        checkout.join("src").join("lib.rs"),
+        "pub struct Vec9;\n\
+         pub const EPS: f32 = 0.1;\n\
+         pub mod swizzles { pub trait Vec3Swizzles {} }\n\
+         mod detail { pub struct Lifted; }\n\
+         pub use detail::Lifted;\n\
+         mod hidden { pub struct NoSee; }\n",
+    )
+    .expect("write checkout lib");
+    // SAFETY: single mutation before any reader; tests in this file
+    // run in one process and no other test consults CARGO_HOME.
+    unsafe { std::env::set_var("CARGO_HOME", fake_home.path()) };
+
     let tmp = TempDir::new().expect("tempdir");
     let root = tmp.path();
     let files: HashMap<&str, String> = [
@@ -135,4 +165,54 @@ fn adopted_roots_resolve_forms_and_exclusions() {
             by_root.keys().collect::<Vec<_>>()
         );
     }
+
+    // Enumeration: the glob root's checkout resolved through the
+    // fake registry and its pub surface enumerated - root decls,
+    // module decls, and the leaf-lifted item from a PRIVATE module;
+    // the unreachable hidden::NoSee stays out.
+    assert!(
+        extmath
+            .get("checkout")
+            .and_then(|v| v.as_str())
+            .map(|c| c.contains("extmath-0.30.10"))
+            .unwrap_or(false),
+        "checkout resolves through the fake registry; got {:?}",
+        extmath.get("checkout")
+    );
+    let surface: Vec<(String, Vec<String>)> = extmath
+        .get("surface")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| {
+                    let name = s.get("name").and_then(|v| v.as_str())?.to_string();
+                    let chain = s
+                        .get("chain")
+                        .and_then(|v| v.as_array())
+                        .map(|c| {
+                            c.iter()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some((name, chain))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let names: Vec<&str> = surface.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(
+        names.contains(&"Vec9") && names.contains(&"EPS") && names.contains(&"Vec3Swizzles"),
+        "surface carries root + module decls; got {names:?}"
+    );
+    assert!(
+        surface
+            .iter()
+            .any(|(n, c)| n == "Lifted" && c.is_empty()),
+        "leaf-lifted item from a private module surfaces at the ROOT chain; got {surface:?}"
+    );
+    assert!(
+        !names.contains(&"NoSee"),
+        "unreachable private-module decl stays out; got {names:?}"
+    );
 }

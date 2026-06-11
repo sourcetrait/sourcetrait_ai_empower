@@ -368,7 +368,7 @@ pub struct Fingerprint {
 ///
 /// Where: assembled in `crate::characterize::run::characterize`,
 /// serialized to `facts.json`.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct WorkspaceFacts {
     pub impls: Vec<serde_json::Value>,
     pub traits: Vec<serde_json::Value>,

@@ -215,4 +215,39 @@ fn adopted_roots_resolve_forms_and_exclusions() {
         !names.contains(&"NoSee"),
         "unreachable private-module decl stays out; got {names:?}"
     );
+
+    // Eligibility: the glob-adopted root-surface items MINT
+    // first-class keys with adopted provenance; the workspace's own
+    // Core stays workspace-origin.
+    let fp: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(tmp.path().join(".orientation").join("fingerprint.json"))
+            .expect("read fingerprint"),
+    )
+    .expect("parse fingerprint");
+    let pm = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .expect("pattern_metrics");
+    let vec9 = pm.get("structure:Vec9").expect("adopted struct mints");
+    assert_eq!(
+        vec9.get("adopted").and_then(|v| v.as_str()),
+        Some("extmath@0.30.10"),
+        "adopted provenance rides the key; got {vec9}"
+    );
+    assert_eq!(
+        vec9.get("defining_crate").and_then(|v| v.as_str()),
+        Some("extmath"),
+        "defining identity is the adopted crate"
+    );
+    assert!(
+        pm.contains_key("globals:extmath::EPS"),
+        "adopted const mints a globals pair under the root outer"
+    );
+    assert!(
+        pm.get("structure:Core")
+            .and_then(|m| m.get("adopted"))
+            .map(|v| v.is_null())
+            .unwrap_or(true),
+        "workspace-origin keys carry no adopted mark"
+    );
 }

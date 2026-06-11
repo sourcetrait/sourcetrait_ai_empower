@@ -144,6 +144,16 @@ pub(crate) struct SurfaceItem {
     pub(crate) name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) chain: Vec<String>,
+    /// Decl site within the enumerated tree (checkout-relative) -
+    /// the seed-span source for adopted picks.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) file: String,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(crate) line: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// What: enumerate a workspace's full pub-reachable module-level
@@ -166,25 +176,29 @@ pub(crate) fn public_surface(
     let (bindings, glob_bindings) = collect_bindings(all_facts, crates, &mods);
     let scaffolding: HashSet<String> = HashSet::new();
     let mut out: Vec<SurfaceItem> = Vec::new();
-    let legs: &[(&[serde_json::Value], bool)] = &[
-        (&all_facts.fns, true),
-        (&all_facts.consts, false),
-        (&all_facts.types, false),
-        (&all_facts.traits, false),
+    let legs: &[(&[serde_json::Value], &str, bool)] = &[
+        (&all_facts.fns, "fn", true),
+        (&all_facts.consts, "const", false),
+        (&all_facts.types, "struct", false),
+        (&all_facts.traits, "trait", false),
     ];
-    for (rows, exclude_main) in legs {
+    for (rows, fallback_kind, exclude_main) in legs {
         let decls = collect_decl_rows(rows, crates, &mods, *exclude_main, &scaffolding);
         let counts = module_level_name_counts(&[rows]);
-        // Kind tag by name (first-wins; informational metadata - the
-        // chain, not the kind, is the load-bearing field).
-        let mut kind_of: HashMap<String, String> = HashMap::new();
+        // Kind + decl-site by name (first-wins; the chain is the
+        // load-bearing field, kind/site are pick metadata).
+        let mut meta_of: HashMap<String, (String, String, u64)> = HashMap::new();
         for r in rows.iter() {
             if let Some(n) = r.get("name").and_then(|v| v.as_str()) {
                 let k = r
                     .get("kind")
                     .and_then(|v| v.as_str())
-                    .unwrap_or(if *exclude_main { "fn" } else { "item" });
-                kind_of.entry(n.to_string()).or_insert_with(|| k.to_string());
+                    .unwrap_or(fallback_kind);
+                let f = r.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                let l = r.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+                meta_of
+                    .entry(n.to_string())
+                    .or_insert_with(|| (k.to_string(), f.to_string(), l));
             }
         }
         for d in decls {
@@ -196,14 +210,16 @@ pub(crate) fn public_surface(
             ranked.sort_by(|a, b| {
                 a.len().cmp(&b.len()).then_with(|| a.join("::").cmp(&b.join("::")))
             });
-            let kind = kind_of
+            let (kind, file, line) = meta_of
                 .get(&d.name)
                 .cloned()
-                .unwrap_or_else(|| if *exclude_main { "fn".into() } else { "item".into() });
+                .unwrap_or_else(|| (fallback_kind.to_string(), String::new(), 0));
             out.push(SurfaceItem {
                 kind,
                 name: d.name,
                 chain: ranked.first().cloned().unwrap_or_default(),
+                file,
+                line,
             });
         }
     }
@@ -659,6 +675,7 @@ fn mint_pair_decls(
                     example_count: serde_json::Value::from(0),
                     curated_example_count: 0,
                     sub_form: None,
+                    adopted: None,
                 },
             );
         }
@@ -725,6 +742,7 @@ fn mint_type_decls(
                 example_count: serde_json::Value::from(0),
                 curated_example_count: 0,
                 sub_form: None,
+                adopted: None,
             },
         );
     }

@@ -265,6 +265,13 @@ pub fn characterize(
     // land in facts.pair_aliases for the demand matcher.
     all_facts.pair_aliases =
         decl_api_channel(&all_facts, &crates, &mut pattern_metrics, calibration);
+    // Workspace-adopted channel (the_user's adoption rule): the
+    // re-exported foreign surface resolves, enumerates from registry
+    // checkouts, and mints/re-attributes first-class keys with
+    // adopted provenance.
+    let mut adopted = resolve_adopted_roots(&all_facts, &crates, workspace_root);
+    enumerate_adopted_surfaces(&mut adopted);
+    adopted_channel(&adopted, &all_facts, &mut pattern_metrics, calibration);
     let workspace_use_classification =
         classify_workspace_use(&crates, &pattern_metrics, calibration);
 
@@ -359,14 +366,8 @@ pub fn characterize(
             source,
         })?;
     }
-    // Workspace-adopted roots (the_user's adoption rule): the
-    // re-exported foreign surface, lock-pinned, with registry
-    // checkouts; glob/namespace roots enumerate their pub surface
-    // through the decl channel's reachability machinery. Purely
-    // additive artifact.
+    // The adopted-roots artifact (resolved + enumerated above).
     {
-        let mut adopted = resolve_adopted_roots(&all_facts, &crates, workspace_root);
-        enumerate_adopted_surfaces(&mut adopted);
         let path = out_dir.join("know_rust_adopted.json");
         let json = serde_json::to_string_pretty(&adopted)
             .map_err(|source| Error::Serialize { source })?;

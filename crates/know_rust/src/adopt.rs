@@ -287,6 +287,137 @@ pub fn enumerate_adopted_surfaces(roots: &mut [AdoptedRoot]) {
     }
 }
 
+/// What: mint pattern_metrics keys for workspace-ADOPTED items -
+/// the eligibility slice. Glob-adopted items (surface entries whose
+/// shortest chain equals the glob's path), namespace-adopted items
+/// (the whole surface), and leaf-adopted items (matched in the
+/// surface by source name) become first-class keys: bare
+/// `structure:`/`traits:` for types, `implementation_functions:` /
+/// `globals:` pairs for fns/consts (outer = the chain tail, else
+/// the adopted root). Zero counts; is_pub; `adopted` carries
+/// `<package>@<version>`.
+///
+/// Why: the workspace-adopted design rule - re-exported foreign
+/// items are the workspace's own API surface and must be
+/// pick-eligible with true provenance. Collision rules (the P3
+/// refinement): a TRUE workspace module-level decl (module_path
+/// Some, non-example) shadows adoption; macro-token PSEUDO-decls
+/// (module_path None - bevy's impl_reflect! rows for the glam
+/// types) yield - an existing key whose name has no true decl is
+/// RE-ATTRIBUTED to the adopted identity, keeping its counts (real
+/// workspace usage of the adopted item). NF5 parity and the
+/// fn-main rule hold at mint time.
+///
+/// Where: called by `characterize::run::characterize` after
+/// `decl_api_channel` (existing keys visible for re-attribution).
+pub fn adopted_channel(
+    adopted: &[AdoptedRoot],
+    all_facts: &WorkspaceFacts,
+    metrics: &mut indexmap::IndexMap<String, PatternMetric>,
+    calibration: &Calibration,
+) {
+    // TRUE module-level workspace decls (the shadow set): types +
+    // traits rows with module_path SOME from non-example files.
+    let mut true_decls: HashSet<String> = HashSet::new();
+    for list in [&all_facts.types, &all_facts.traits] {
+        for t in list.iter() {
+            if t.get("module_path").and_then(|v| v.as_str()).is_none() {
+                continue;
+            }
+            if is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+                continue;
+            }
+            if let Some(n) = t.get("name").and_then(|v| v.as_str()) {
+                true_decls.insert(n.to_string());
+            }
+        }
+    }
+
+    for root in adopted {
+        if root.surface.is_empty() {
+            continue;
+        }
+        let provenance = format!("{}@{}", root.package, root.version);
+        // Which surface items the adoption forms expose.
+        let exposed: Vec<&SurfaceItem> = root
+            .surface
+            .iter()
+            .filter(|s| {
+                if root.namespace {
+                    return true;
+                }
+                if root.globs.iter().any(|g| {
+                    let gp: Vec<&str> = if g.is_empty() {
+                        Vec::new()
+                    } else {
+                        g.split("::").collect()
+                    };
+                    s.chain.len() == gp.len()
+                        && s.chain.iter().zip(gp.iter()).all(|(a, b)| a == b)
+                }) {
+                    return true;
+                }
+                root.leaves.iter().any(|(src, _)| src == &s.name)
+            })
+            .collect();
+        for item in exposed {
+            if item.kind == "fn" && item.name == "main" {
+                continue;
+            }
+            let outer = item
+                .chain
+                .last()
+                .cloned()
+                .unwrap_or_else(|| root.root.clone());
+            let key_wire = match item.kind.as_str() {
+                "fn" => Pattern::impl_fn(&outer, &item.name).to_string(),
+                "const" | "static" => {
+                    Pattern::globals(format!("{}::{}", outer, item.name)).to_string()
+                }
+                "trait" => Pattern::traits(&item.name).to_string(),
+                // struct / enum / union / type aliases.
+                _ => Pattern::structure(&item.name).to_string(),
+            };
+            // NF5 parity: adopted mints respect the substring filter.
+            if should_skip_pattern(&key_wire, calibration) {
+                continue;
+            }
+            let bare_type = matches!(item.kind.as_str(), "fn" | "const" | "static") == false;
+            if bare_type && true_decls.contains(&item.name) {
+                // Workspace-origin shadows adoption.
+                continue;
+            }
+            match metrics.get_mut(&key_wire) {
+                Some(m) => {
+                    // Re-attribution: the existing key's name has no
+                    // true workspace decl (pseudo-decl or defn-null
+                    // residue) - the adopted identity wins; counts
+                    // stay (real workspace usage of this item).
+                    m.adopted = Some(provenance.clone());
+                    m.defining_crate = Some(root.root.clone());
+                    m.is_pub = true;
+                }
+                None => {
+                    metrics.insert(
+                        key_wire,
+                        PatternMetric {
+                            defining_crate: Some(root.root.clone()),
+                            intra_count: 0,
+                            inter_count: 0,
+                            inter_ratio: 0.0,
+                            is_pub: true,
+                            example_count: serde_json::Value::from(0),
+                            curated_example_count: 0,
+                            sub_form: None,
+                            adopted: Some(provenance.clone()),
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// What: parse the workspace `Cargo.lock` into package -> sorted
 /// version list (a graph can pin multiple versions of one package).
 ///

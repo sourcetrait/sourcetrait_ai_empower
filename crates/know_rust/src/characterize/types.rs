@@ -194,6 +194,22 @@ pub struct PatternMetric {
     /// `crate::config::calibration::ProseBudgetMatrix::budget_for`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sub_form: Option<SubForm>,
+    /// What: workspace-ADOPTED provenance, `<package>@<version>`,
+    /// when this pattern's item is a foreign item the workspace
+    /// re-exports as its own API (the_user's adoption rule;
+    /// notes/know_rust/working/03_picks_data.md). None for
+    /// workspace-origin patterns.
+    ///
+    /// Why: adopted items are first-class picks WITH the
+    /// cross-pollination caveat - "bevy's Vec3 is glam's Vec3" -
+    /// so the render side needs the true identity on the pick line
+    /// + kp header; identity never conflates.
+    ///
+    /// Where: set by `adopt::adopted_channel` (fresh mints and
+    /// re-attributions); consumed by the orientation pick-line
+    /// renderer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adopted: Option<String>,
 }
 
 /// What: histogram entry in `pattern_histogram`: the `kind:name`

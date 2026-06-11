@@ -272,6 +272,7 @@ pub fn compute_pattern_metrics(
                     example_count: example_count_v,
                     curated_example_count: curated_v,
                     sub_form: None,
+                    adopted: None,
                 },
             );
             continue;
@@ -365,6 +366,7 @@ pub fn compute_pattern_metrics(
                 example_count: example_count_v,
                 curated_example_count: curated_v,
                 sub_form: None,
+                adopted: None,
             },
         );
     }
@@ -465,6 +467,7 @@ pub fn compute_pattern_metrics(
                     example_count: serde_json::Value::from(example_count as f64),
                     curated_example_count: curated_count,
                     sub_form: None,
+                    adopted: None,
                 },
             );
         }
@@ -583,6 +586,7 @@ pub fn compute_pattern_metrics(
                     example_count: serde_json::Value::from(example_count as f64),
                     curated_example_count: curated_count,
                     sub_form: None,
+                    adopted: None,
                 },
             );
         }
@@ -618,6 +622,7 @@ pub fn compute_pattern_metrics(
                     example_count: serde_json::Value::from(example_count as f64),
                     curated_example_count: curated_count,
                     sub_form: None,
+                    adopted: None,
                 },
             );
         }
@@ -663,6 +668,7 @@ pub fn compute_pattern_metrics(
                     example_count: serde_json::Value::from(example_count as f64),
                     curated_example_count: curated_count,
                     sub_form: None,
+                    adopted: None,
                 },
             );
         }
@@ -809,6 +815,7 @@ pub fn compute_pattern_metrics(
                     example_count: serde_json::Value::from(example_count as f64),
                     curated_example_count: curated_count,
                     sub_form: None,
+                    adopted: None,
                 },
             );
         }
@@ -973,6 +980,7 @@ fn translate_to_group_keys(
             example_count: serde_json::Value::from((example_count * 100.0).round() / 100.0),
             curated_example_count: curated,
             sub_form: None,
+            adopted: None,
         };
         let key = format!("structure:{}", outer);
         merge_metric(&mut new, key, aggregated);

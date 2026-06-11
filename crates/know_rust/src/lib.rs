@@ -30,6 +30,7 @@ pub(crate) mod config {
     pub(crate) mod loader;
     pub(crate) mod templates;
 }
+pub(crate) mod adopt;
 pub(crate) mod decl_api;
 pub(crate) mod error;
 pub(crate) mod model {
@@ -74,6 +75,7 @@ pub(crate) mod scan {
 }
 
 pub(crate) use crate::{
+    adopt::*,
     characterize::cargo_toml::*,
     characterize::components::*,
     characterize::items_index::*,

@@ -359,6 +359,19 @@ pub fn characterize(
             source,
         })?;
     }
+    // Workspace-adopted roots (the_user's adoption rule): the
+    // re-exported foreign surface, lock-pinned, with registry
+    // checkouts for enumeration. Purely additive artifact.
+    {
+        let adopted = resolve_adopted_roots(&all_facts, &crates, workspace_root);
+        let path = out_dir.join("know_rust_adopted.json");
+        let json = serde_json::to_string_pretty(&adopted)
+            .map_err(|source| Error::Serialize { source })?;
+        fs::write(&path, json).map_err(|source| Error::Write {
+            path,
+            source,
+        })?;
+    }
 
     eprintln!(
         "[characterize] {} crates, {} SLOC, {} component(s), {} workspace root(s)",

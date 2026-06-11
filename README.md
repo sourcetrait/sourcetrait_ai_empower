@@ -1,6 +1,6 @@
 SourceTrait Empower 
 ================================================================================
-[![License Badge]][License] [![Linkable Badge]][Linkable]
+[![License Badge]][License] [![Linkable Badge]][Linkable] [![AI Badge]][AI]
 
 *Harness toolkit for AI-assisted data analysis and development tooling*
 
@@ -27,6 +27,13 @@ Crates
 [![Library Crate Badge]][Library Crate] [![Docs Badge]][Library Docs]
 
 *Common library for SourceTrait Empower*
+
+
+AI
+--------------------------------------------------------------------------------
+
+This workspace is fully AI generated and maintained through an ongoing iterative
+process. It is essentialy tooling for AI, by AI.
 
 
 Repository
@@ -82,7 +89,9 @@ External dependency licenses are listed in:
 [License]: #License-AGPL3
 [License Badge]: https://img.shields.io/badge/license-AGPL3-blue.svg
 [Linkable]: #Linking-Exception-Section-7
-[Linkable Badge]: https://img.shields.io/badge/linkable-yes-green.svg
+[Linkable Badge]: https://img.shields.io/badge/linkable-libs-green.svg
+[AI]: #AI
+[AI Badge]: https://img.shields.io/badge/ai-all-green.svg
 
 [Nu Plugin Crate]: https://crates.io/crates/nu_plugin_empower
 [Nu Plugin Crate Badge]: https://img.shields.io/crates/v/nu_plugin_empower.svg

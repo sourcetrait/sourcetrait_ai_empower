@@ -37,7 +37,7 @@ fn build_target(root: &Path) -> std::path::PathBuf {
         (
             "lib/src/lib.rs",
             String::from(
-                "pub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\npub fn ghost() {}\npub fn boot() {}\n",
+                "pub use std::time::Duration;\npub struct Core;\nimpl Core { pub fn new() -> Self { Core } }\npub fn ghost() {}\npub fn boot() {}\n",
             ),
         ),
         (
@@ -70,8 +70,9 @@ fn consumer(clean: bool) -> HashMap<&'static str, String> {
         // Covered demand only: Core (pick) + Core::new pair + boot.
         "use lib::{Core, boot};\npub fn go() { let _c = Core::new(); boot(); }\n"
     } else {
-        // Demands the unpicked `ghost` -> one name miss.
-        "use lib::{Core, ghost};\npub fn go() { let _c = Core::new(); ghost(); ghost(); }\n"
+        // Demands the unpicked `ghost` (one name miss) plus the
+        // foreign-served Duration (foreign bucket, non-gating).
+        "use lib::{Core, ghost, Duration};\npub fn go() { let _c = Core::new(); ghost(); ghost(); }\npub fn t(_d: Duration) {}\n"
     };
     [
         (
@@ -188,6 +189,17 @@ fn weight_misses_do_not_gate_and_blob_aggregates() {
             .and_then(|v| v.as_str())
             == Some("wpair"),
         "source provenance recorded"
+    );
+    // Foreign-bucket item demand folds too: the hit/foreign split
+    // consults the rendered sets, so a partial fold would make the
+    // blob depend on which blob the pass was emitted with. Folding
+    // every item-demand bucket keeps it a pure function of
+    // (roster, pins).
+    assert_eq!(
+        blob.pointer("/targets/lib/names/Duration/consumers")
+            .and_then(|v| v.as_u64()),
+        Some(1),
+        "foreign-served Duration demand rides the blob; blob: {blob}"
     );
 
     let wtrace = fx.pairs_root.join("wpair").join("consumer_trace_wpair.json");

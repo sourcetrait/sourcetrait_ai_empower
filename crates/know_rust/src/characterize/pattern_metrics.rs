@@ -282,8 +282,14 @@ pub fn compute_pattern_metrics(
                 continue;
             }
             let norm = file.replace('\\', "/");
+            // Example-dir sites are curated EVIDENCE, not usage:
+            // credit the evidence tally and skip the intra/inter
+            // increment. type_usage already arrives example-free here
+            // (the example_type_usages partition); trait_impl /
+            // derive / reg_macro / attr_macro align to it.
             if norm.contains("/examples/") || norm.starts_with("examples/") {
                 gated_example_files.insert(norm);
+                continue;
             }
             if using == defining_crate {
                 intra += 1;
@@ -1012,18 +1018,25 @@ fn count_usages(
         if using.is_empty() {
             continue;
         }
+        // Evidence-dir sites are evidence, not usage (the example-
+        // evidence alignment, uniform with the main counting loop;
+        // tests/ + benches/ never reach these streams - excluded
+        // from the walk - and stay evidence-only defensively).
+        if file_path.contains("/examples/") || file_path.starts_with("examples/") {
+            example_files.insert(file_path.clone());
+            curated_files.insert(file_path.clone());
+            continue;
+        } else if file_path.contains("/tests/") || file_path.starts_with("tests/") {
+            example_files.insert(file_path.clone());
+            continue;
+        } else if file_path.contains("/benches/") || file_path.starts_with("benches/") {
+            example_files.insert(file_path.clone());
+            continue;
+        }
         if using == defining_crate {
             intra += 1;
         } else {
             inter += 1;
-        }
-        if file_path.contains("/examples/") || file_path.starts_with("examples/") {
-            example_files.insert(file_path.clone());
-            curated_files.insert(file_path.clone());
-        } else if file_path.contains("/tests/") || file_path.starts_with("tests/") {
-            example_files.insert(file_path.clone());
-        } else if file_path.contains("/benches/") || file_path.starts_with("benches/") {
-            example_files.insert(file_path.clone());
         }
     }
     (intra, inter, example_files.len(), curated_files.len())

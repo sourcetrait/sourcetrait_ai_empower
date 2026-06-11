@@ -221,7 +221,18 @@ pub fn fold_weights(
         consumer: consumer.to_string(),
         pass: pass.display().to_string(),
     });
-    for rec in report.hits.iter().chain(report.summary.misses.iter()) {
+    // All ITEM-demand buckets fold (hits + misses + foreign);
+    // mod_namespace stays out (a crate/module-namespace binding is
+    // not item demand). The hit/foreign split consults the rendered
+    // sets, so folding only part of it would make the blob depend on
+    // which blob the pass was emitted with - folding the union keeps
+    // the blob a pure function of (roster, pins).
+    for rec in report
+        .hits
+        .iter()
+        .chain(report.summary.misses.iter())
+        .chain(report.summary.foreign_reexports.iter())
+    {
         let cell = tw.names.entry(rec.name.clone()).or_default();
         cell.consumers += 1;
         cell.sites += rec.sites.max(1);

@@ -127,6 +127,120 @@ fn example_evidence_for_derive_impl_and_macro() {
     );
 }
 
+fn counts_for(fp: &serde_json::Value, key: &str) -> (u64, u64, f64) {
+    let m = fp
+        .get("pattern_metrics")
+        .and_then(|v| v.as_object())
+        .and_then(|m| m.get(key))
+        .unwrap_or_else(|| panic!("pattern_metrics carries {key}"));
+    (
+        m.get("intra_count").and_then(|v| v.as_u64()).unwrap_or(0),
+        m.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(0),
+        m.get("example_count").and_then(|v| v.as_f64()).unwrap_or(0.0),
+    )
+}
+
+#[test]
+fn example_sites_are_evidence_not_usage() {
+    // The example-evidence alignment: an example-dir site credits the
+    // evidence tally ONLY - it never increments intra/inter. Covers
+    // the main counting loop (trait_impl / derive / reg_macro) and
+    // the AST-synthesis path (pub_type via fn-sig usage). An
+    // example-ONLY pattern legitimately stays at zero usage with
+    // evidence credit.
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let files: HashMap<&str, String> = [
+        (
+            "Cargo.toml",
+            String::from("[workspace]\nmembers=[\"lib\",\"app\"]\n"),
+        ),
+        (
+            "lib/Cargo.toml",
+            String::from(
+                "[package]\nname=\"lib\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\n",
+            ),
+        ),
+        (
+            "lib/src/lib.rs",
+            String::from(
+                "pub trait Component {}\n\
+                 pub trait Widget { fn render(&self); }\n\
+                 pub struct Gauge;\n\
+                 #[macro_export]\nmacro_rules! reg { () => {}; }\n",
+            ),
+        ),
+        (
+            "lib/examples/demo.rs",
+            String::from(
+                "use lib::{Component, Widget, Gauge};\n\
+                 #[derive(Component)]\nstruct Demo;\n\
+                 struct Shown;\nimpl Widget for Shown { fn render(&self) {} }\n\
+                 fn show(_g: Gauge) {}\n\
+                 fn main() { lib::reg!(); }\n",
+            ),
+        ),
+        (
+            "app/Cargo.toml",
+            String::from(
+                "[package]\nname=\"app\"\nversion=\"0.0.1\"\nedition=\"2021\"\n[dependencies]\nlib={path=\"../lib\"}\n",
+            ),
+        ),
+        (
+            "app/src/lib.rs",
+            String::from(
+                "use lib::Widget;\n\
+                 pub struct W;\nimpl Widget for W { fn render(&self) {} }\n\
+                 pub fn use_gauge(_g: lib::Gauge) {}\n\
+                 pub fn call_reg() { lib::reg!(); }\n",
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    write_tree(root, &files);
+
+    let fp = run_characterize(root);
+
+    // Main loop, trait_impl: the app impl is the only usage; the
+    // example impl is evidence.
+    let (intra, inter, _) = counts_for(&fp, "traits:Widget");
+    assert_eq!(
+        (intra, inter),
+        (0, 1),
+        "example impl is evidence-only; app impl is the single inter"
+    );
+    assert_eq!(curated_for(&fp, "traits:Widget"), Some(1));
+
+    // Main loop, derive: example-ONLY pattern keeps evidence credit
+    // at zero usage.
+    let (intra, inter, _) = counts_for(&fp, "configuring:Component");
+    assert_eq!(
+        (intra, inter),
+        (0, 0),
+        "example-only derive carries zero usage"
+    );
+    assert_eq!(curated_for(&fp, "configuring:Component"), Some(1));
+
+    // Main loop, reg_macro: app call counts, example call is evidence.
+    let (intra, inter, _) = counts_for(&fp, "utilities:reg");
+    assert_eq!((intra, inter), (0, 1), "example macro call is evidence-only");
+    assert_eq!(curated_for(&fp, "utilities:reg"), Some(1));
+
+    // AST synthesis (count_usages): the example fn-sig usage of Gauge
+    // is evidence; the app sig usage is the single counted site.
+    let (intra, inter, example) = counts_for(&fp, "structure:Gauge");
+    assert_eq!(
+        (intra, inter),
+        (0, 1),
+        "example sig usage is evidence-only in the pub_type synthesis"
+    );
+    assert!(
+        example >= 1.0,
+        "the example file still earns evidence credit; got {example}"
+    );
+}
+
 #[test]
 fn bridge_requires_type_def_outer() {
     // `util::helper()` (mod outer) keeps its implementation_functions

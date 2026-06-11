@@ -1,4 +1,4 @@
-SourceTrait Empower 
+SourceTrait AI Empower 
 ================================================================================
 [![License Badge]][License] [![Linkable Badge]][Linkable] [![AI Badge]][AI]
 
@@ -48,7 +48,7 @@ all copyright covering your contribution.
 
 License (AGPL3)
 --------------------------------------------------------------------------------
-SourceTrait Empower: Harness toolkit for AI-assisted data analysis and development tooling  
+SourceTrait AI Empower: Toolkit for AI-assisted data analysis and tooling  
 Developed by [SourceTrait](https://sourcetrait.com), a division of **Asmov LLC**  
 Copyright (C) 2025 [Asmov LLC](https://asmov.software)  
 
@@ -95,10 +95,6 @@ External dependency licenses are listed in:
 [Nushell MCP Crate]: https://crates.io/crates/nu_sh_mcp
 [Nushell MCP Crate Badge]: https://img.shields.io/crates/v/nu_sh_mcp.svg
 [Nushell MCP Docs]: https://docs.rs/nu_sh_mcp
-
-[CLI Library Crate]: https://crates.io/crates/sourcetrait_libcli_empower
-[CLI Library Crate Badge]: https://img.shields.io/crates/v/sourcetrait_libcli_empower.svg
-[CLI Library Docs]: https://docs.rs/sourcetrait_libcli_empower
 
 [Library Crate]: https://crates.io/crates/sourcetrait_lib_empower
 [Library Crate Badge]: https://img.shields.io/crates/v/sourcetrait_lib_empower.svg

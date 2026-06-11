@@ -405,14 +405,20 @@ fn extend_with_crate(
 /// Where: called from `characterize` after per-crate facts + the
 /// item-walker carries are merged into `all_facts`.
 fn filter_carries_to_workspace(all_facts: &mut WorkspaceFacts) {
+    // Example-declared types/traits never qualify as carry origin
+    // (the example-origin rule): a name declared only in example
+    // files is not workspace API and drops from carry like any
+    // external.
     let ws_types: HashSet<String> = all_facts
         .types
         .iter()
+        .filter(|t| !is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")))
         .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
         .collect();
     let ws_traits: HashSet<String> = all_facts
         .traits
         .iter()
+        .filter(|t| !is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")))
         .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
         .collect();
     let name_ok = |n: &str| ws_types.contains(n) || ws_traits.contains(n);

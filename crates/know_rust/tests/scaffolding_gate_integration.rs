@@ -90,9 +90,10 @@ fn scaffolding_defined_patterns_are_not_picked() {
 
     // The decl channel never MINTS scaffolding-crate decls (the
     // unit-9 rustls_test class): demo's pub fn `show` gets no key.
-    // The USAGE-driven structure:DemoType key (app's fn-sig
-    // reference) legitimately remains - the picker's origin gate
-    // handles it.
+    // The demo member also sits under examples/, so the
+    // example-origin rule strips its decls of any DEFINING side:
+    // structure:DemoType either drops from pm entirely or carries
+    // a null defining_crate (the picker's origin gate drops both).
     let pm = fp
         .get("pattern_metrics")
         .and_then(|v| v.as_object())
@@ -102,10 +103,15 @@ fn scaffolding_defined_patterns_are_not_picked() {
         "scaffolding fn decls never mint; keys: {:?}",
         pm.keys().filter(|k| k.contains("show")).collect::<Vec<_>>()
     );
-    let demo_type = pm.get("structure:DemoType").expect("usage-driven key remains");
-    let usage = demo_type.get("intra_count").and_then(|v| v.as_u64()).unwrap_or(0)
-        + demo_type.get("inter_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    assert!(usage > 0, "DemoType's key is usage-driven, not a zero-count mint");
+    if let Some(demo_type) = pm.get("structure:DemoType") {
+        assert!(
+            demo_type
+                .get("defining_crate")
+                .map(|v| v.is_null())
+                .unwrap_or(true),
+            "example-origin: DemoType must not define; got {demo_type}"
+        );
+    }
     let orient =
         std::fs::read_to_string(out.join("orientation.md")).expect("read orientation.md");
     assert!(

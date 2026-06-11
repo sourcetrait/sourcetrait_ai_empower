@@ -45,12 +45,20 @@ pub fn compute_pattern_metrics(
     // Bindings -> identity vocabulary: package names + lib renames
     // globally, dependency renames per consuming crate.
     let vocab = ResolveVocab::from_crates(crates);
+    // Example-originated decls never participate as DECLARATION
+    // sides (the_user: example items are never API): the def
+    // lookups, decl-claim maps, and facade edges below all skip
+    // example-dir rows. Usage facts from example files keep their
+    // evidence role.
     let mut local_decl_crates: std::collections::HashMap<
         String,
         std::collections::HashSet<String>,
     > = std::collections::HashMap::new();
     for list in [&all_facts.types, &all_facts.traits] {
         for t in list.iter() {
+            if is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+                continue;
+            }
             if let (Some(n), Some(c)) = (
                 t.get("name").and_then(|v| v.as_str()),
                 t.get("crate").and_then(|v| v.as_str()),
@@ -62,6 +70,10 @@ pub fn compute_pattern_metrics(
             }
         }
     }
+    // enum_names is variant-collapse ROUTING data, not a defining
+    // side - example-declared enums stay in it so their variant
+    // references still collapse (and then drop wholly at the
+    // type-def gate) instead of minting spurious impl-fn keys.
     let enum_names: std::collections::HashSet<String> = all_facts
         .types
         .iter()
@@ -77,6 +89,9 @@ pub fn compute_pattern_metrics(
         std::collections::HashSet<String>,
     > = std::collections::HashMap::new();
     for m in &all_facts.mods {
+        if is_example_path(m.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+            continue;
+        }
         if let (Some(n), Some(c)) = (
             m.get("name").and_then(|v| v.as_str()),
             m.get("crate").and_then(|v| v.as_str()),
@@ -95,6 +110,11 @@ pub fn compute_pattern_metrics(
     let facades = build_facade_index(
         all_facts.uses.iter().filter_map(|u| {
             if !u.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return None;
+            }
+            // A `pub use` in an example file is not a facade edge -
+            // example-originated surface claims are never API.
+            if is_example_path(u.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
                 return None;
             }
             Some((
@@ -224,6 +244,23 @@ pub fn compute_pattern_metrics(
             &crate_name_lookup,
         );
         if defn.is_none() {
+            // A defining-crate-less row is kept only when SOME
+            // non-example fact backs it - the row is the vehicle for
+            // the overlay vis-backfill (macro-expansion-invisible
+            // decls leave src usage but no visible decl). A pattern
+            // whose every occurrence is example-dir is
+            // example-originated residue and keys nothing (the
+            // example-origin rule); its example_type_usages seed has
+            // no src sibling by partition.
+            let has_src_fact = source.iter().any(|fact| {
+                pattern_match(kind, inner, fact)
+                    && !is_example_path(
+                        fact.get("file").and_then(|v| v.as_str()).unwrap_or(""),
+                    )
+            });
+            if !has_src_fact {
+                continue;
+            }
             metrics.insert(
                 pattern.clone(),
                 PatternMetric {
@@ -1114,6 +1151,10 @@ fn build_type_lookup(
     let mut visibilities: std::collections::HashMap<(String, String), String> =
         std::collections::HashMap::new();
     for t in types {
+        // Example-declared types never define (example-origin rule).
+        if is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+            continue;
+        }
         let name = match t.get("name").and_then(|v| v.as_str()) {
             Some(n) => n,
             None => continue,
@@ -1167,6 +1208,9 @@ fn build_type_lookup(
 fn build_trait_lookup(traits: &[serde_json::Value]) -> indexmap::IndexMap<String, PatternDef> {
     let mut lookup: indexmap::IndexMap<String, PatternDef> = indexmap::IndexMap::new();
     for t in traits {
+        if is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+            continue;
+        }
         let name = match t.get("name").and_then(|v| v.as_str()) {
             Some(n) => n,
             None => continue,
@@ -1195,6 +1239,9 @@ fn build_macro_def_lookup(
 ) -> indexmap::IndexMap<String, PatternDef> {
     let mut lookup: indexmap::IndexMap<String, PatternDef> = indexmap::IndexMap::new();
     for m in macro_defs {
+        if is_example_path(m.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+            continue;
+        }
         let name = match m.get("name").and_then(|v| v.as_str()) {
             Some(n) => n,
             None => continue,
@@ -1225,6 +1272,9 @@ fn build_macro_def_lookup(
 fn build_mod_lookup(mods: &[serde_json::Value]) -> indexmap::IndexMap<String, PatternDef> {
     let mut lookup: indexmap::IndexMap<String, PatternDef> = indexmap::IndexMap::new();
     for m in mods {
+        if is_example_path(m.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+            continue;
+        }
         let name = match m.get("name").and_then(|v| v.as_str()) {
             Some(n) => n,
             None => continue,

@@ -61,6 +61,9 @@ pub(crate) fn demand_report(
         .and_then(|v| v.as_array())
         .map(|a| {
             a.iter()
+                .filter(|m| {
+                    !is_example_path(m.get("file").and_then(|v| v.as_str()).unwrap_or(""))
+                })
                 .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
                 .filter(|n| !n.is_empty())
                 .map(String::from)
@@ -118,6 +121,11 @@ pub(crate) fn demand_report(
     if let Some(uses) = target_facts.get("uses").and_then(|v| v.as_array()) {
         for u in uses {
             if !u.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
+                continue;
+            }
+            // Example-file re-exports never expose foreign surface
+            // (the example-origin rule).
+            if is_example_path(u.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
                 continue;
             }
             let Some(path) = u.get("path").and_then(|v| v.as_str()) else {
@@ -713,6 +721,12 @@ fn add_decls(
 ) {
     if let Some(arr) = facts.get(list).and_then(|v| v.as_array()) {
         for t in arr {
+            // Example-declared items cannot serve demand (the
+            // example-origin rule): they never enter the target
+            // vocabulary.
+            if is_example_path(t.get("file").and_then(|v| v.as_str()).unwrap_or("")) {
+                continue;
+            }
             if let Some(n) = t.get("name").and_then(|v| v.as_str()) {
                 if !n.is_empty() {
                     decl.entry(n.to_string())

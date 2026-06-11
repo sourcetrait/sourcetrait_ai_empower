@@ -1,5 +1,27 @@
 use crate::*;
 
+/// What: true when a workspace-relative file path sits in an
+/// example directory (`examples/foo.rs` at any depth).
+///
+/// Why: example-originated items are never API (the_user): items
+/// DECLARED in example-dir files are pick-ineligible everywhere
+/// and can never serve demand - examples are demonstrations by
+/// Rust's design. The scaffolding-CRATE gate covers example
+/// member crates; this predicate covers example FILES belonging
+/// to a real package (bevy's root-crate `examples/*.rs`). Usage
+/// FROM example files stays curated evidence (the example-
+/// evidence alignment) - this predicate gates DECLARATION sides
+/// only.
+///
+/// Where: consulted by the pattern_metrics def-lookups + facade
+/// index, the carry origin filter, the demand-side target
+/// vocabulary, and the 5F foreign-surface builder. The decl-API
+/// channel reaches the same verdict through `is_src_file`.
+pub(crate) fn is_example_path(path: &str) -> bool {
+    let norm = path.replace('\\', "/");
+    norm.contains("/examples/") || norm.starts_with("examples/")
+}
+
 /// What: one leaf of a flattened use-tree string. `Named` carries the
 /// in-scope BINDING name plus the imported item's own SOURCE name
 /// (`X as Y` binds Y with source X; `{self}` binds the parent segment;

@@ -24,6 +24,13 @@ Build from source, install to the nushell plugin directory, register:
 Requires nushell 0.113 or later.
 
 
+AI
+--------------------------------------------------------------------------------
+
+This workspace is iteratively AI authored. It is essentialy tooling for AI, by
+AI.
+
+
 Repository
 --------------------------------------------------------------------------------
 

@@ -1,8 +1,15 @@
-SourceTrait Empower: Library
+SourceTrait AI Empower: Library
 ================================================================================
-[![License Badge]][License]
+[![Crate Badge]][Crate] [![Docs Badge]][Docs] [![License Badge]][License] [![AI Badge]][AI]
 
-*Common library for SourceTrait Empower*
+*Common library for SourceTrait AI Empower*
+
+
+AI
+--------------------------------------------------------------------------------
+
+This workspace is iteratively AI authored. It is essentialy tooling for AI, by
+AI.
 
 
 Repository
@@ -22,7 +29,7 @@ all copyright covering your contribution.
 
 License (AGPL3)
 --------------------------------------------------------------------------------
-SourceTrait Empower Library: Common library for SourceTrait Empower  
+SourceTrait AI Empower Library: Common library for SourceTrait AI Empower  
 Developed by [SourceTrait](https://sourcetrait.com), a division of **Asmov LLC**  
 Copyright (C) 2026 [Asmov LLC](https://asmov.software)  
 
@@ -58,4 +65,10 @@ External dependency licenses are listed in:
 
 [Docs Badge]: https://img.shields.io/badge/docs-blue
 [License]: #License-AGPL3
-[License Badge]: https://img.shields.io/badge/license-AGPL3-blue.svg
+[License Badge]: https://img.shields.io/badge/license-AGPL3_+_Linking-blue.svg
+[AI]: #AI
+[AI Badge]: https://img.shields.io/badge/ai-authored-green.svg
+
+[Crate]: https://crates.io/crates/sourcetrait_ai_nushell_mcp
+[Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_nushell_mcp.svg
+[Docs]: https://docs.rs/sourcetrait_ai_nushell_mcp

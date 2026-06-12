@@ -9,22 +9,22 @@ Crates
 --------------------------------------------------------------------------------
 
 ### [Nushell MCP](./crates/sourcetrait_ai_nushell_mcp)
-[![Nushell MCP Crate Badge]][Nushell MCP Crate] [![Docs Badge]][Nushell MCP Docs]
+[![Nushell MCP Crate Badge]][Nushell MCP Crate]
 
 *Nushell engine MCP server*
 
 ### [Nu Plugin](./crates/sourcetrait_ai_nu_plugin_empower)
-[![Nu Plugin Crate Badge]][Nu Plugin Crate] [![Docs Badge]][Nu Plugin Docs]
+[![Nu Plugin Crate Badge]][Nu Plugin Crate]
 
 *Nu commands*
 
 ### [Library](./crates/sourcetrait_ai_lib_empower)
-[![Library Crate Badge]][Library Crate] [![Docs Badge]][Library Docs]
+[![Library Crate Badge]][Library Crate]
 
-*Common library for SourceTrait Empower*
+*Common library for SourceTrait AI Empower*
 
 ### [Know Rust](./crates/sourcetrait_ai_know_rust)
-[![Know Rust Crate Badge]][Know Rust Crate] [![Docs Badge]][Know Rust Docs]
+[![Know Rust Crate Badge]][Know Rust Crate]
 
 *Builds deep-read knowledge skills for Rust projects*
 
@@ -71,16 +71,6 @@ You should have received a [copy](./LICENSE-AGPL-3.txt) of the
 GNU Affero General Public License along with this program.
 If not, see [https://www.gnu.org/licenses/](https://www.gnu.org/licenses/).
 
-### Linking Exception (Section 7)
-
-In addition to the *AGPL-3.0* terms above, this software is distributed with a
-*Section 7 Additional Permission* allowing it to be linked with independent
-modules under licenses of your choice, while preserving the AGPL's source
-obligations (including *Section 13 -- Remote Network Interaction*) for the
-software itself.
-
-The authoritative exception text is in:  
-[`LICENSE-AGPL-3-LINKING-EXCEPTION.txt`](./LICENSE-AGPL-3-LINKING-EXCEPTION.txt)
 
 External dependency licenses are listed in:  
 [`LICENSES-EXTERNAL.txt`](./LICENSES-EXTERNAL.txt)
@@ -95,16 +85,12 @@ External dependency licenses are listed in:
 
 [Nushell MCP Crate]: https://crates.io/crates/sourcetrait_ai_nushell_mcp
 [Nushell MCP Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_nushell_mcp.svg
-[Nushell MCP Docs]: https://docs.rs/sourcetrait_ai_nushell_mcp
 
 [Nu Plugin Crate]: https://crates.io/crates/sourcetrait_ai_nu_plugin_empower
 [Nu Plugin Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_nu_plugin_empower.svg
-[Nu Plugin Docs]: https://docs.rs/sourcetrait_ai_nu_plugin_empower
 
 [Library Crate]: https://crates.io/crates/sourcetrait_ai_lib_empower
 [Library Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_lib_empower.svg
-[Library Docs]: https://docs.rs/sourcetrait_ai_lib_empower
 
 [Know Rust Crate]: https://crates.io/crates/sourcetrait_ai_know_rust
 [Know Rust Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_know_rust.svg
-[Know Rust Docs]: https://docs.rs/sourcetrait_ai_know_rust

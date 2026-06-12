@@ -5,7 +5,8 @@ use crate::*;
 /// `custom` is `Some(path)`).
 ///
 /// Why: replaces the python port's env-var override pattern. The
-/// embedded default lives in `crates/know_rust/assets/calibration.toml`
+/// embedded default lives in
+/// `crates/sourcetrait_ai_know_rust/assets/calibration.toml`
 /// and is bundled via `include_str!` so the binary is self-contained.
 /// Users wanting to tune individual knobs supply a full custom toml
 /// via the global `-c` CLI flag; partial overrides are not supported

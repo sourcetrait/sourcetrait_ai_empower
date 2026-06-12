@@ -109,14 +109,15 @@ excluded_dir_segments = ["tests", "benches", "examples"]
 # Pattern-key substring blacklist (NF5). Any pattern key (kind:name,
 # pre-translation) containing any listed substring is dropped before
 # pattern_metrics computation; the decl-API channel consults the same
-# list before minting declaration keys. `::test_` catches the nushell
-# `Value::test_*` + `Span::test_data` test-helper noise (~3000+
-# entries per the 0.0.34 phase 4 pass B audit); `_test_` catches the
-# infix shape (`_var_for_test_*`, `into_test_result`,
-# `nu_test_support::*`) - the underscore on BOTH sides keeps
-# production names like `latest_*` unaffected. Add ecosystem-specific
-# shapes (e.g. `::__bench_`, `::__fuzz_`) when a new noise family
-# surfaces.
+# list before minting declaration keys. `:test_` catches name-leading
+# test_ shapes through both the kind separator (`free_fn:test_x`) and
+# the pair separator (`Value::test_*`, `Span::test_data` - ~3000+
+# entries per the 0.0.34 phase 4 pass B audit); `_test` catches the
+# infix and suffix shapes (`_var_for_test_*`, `into_test_result`,
+# `nu_test_support::*`, `*_test`) while substring semantics keep
+# production names like `latest_*` unaffected (no literal `_test`
+# run). Add ecosystem-specific shapes (e.g. `:__bench_`, `:__fuzz_`)
+# when a new noise family surfaces.
 pattern_skip_substrings = [":test_", "_test"]
 
 [picker.classifier]

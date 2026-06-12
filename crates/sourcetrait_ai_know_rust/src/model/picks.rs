@@ -199,8 +199,8 @@ impl PickGroup {
     /// selector only attaches to a carryable group.
     ///
     /// Where: planned consumers are
-    /// `crates/know_rust/src/scan/items/` walker logic and the
-    /// picker integration in `src/emit/picker.rs`. The `const`
+    /// `crates/sourcetrait_ai_know_rust/src/scan/items/` walker logic
+    /// and the picker integration in `src/emit/picker.rs`. The `const`
     /// shape lets it be used in const contexts (e.g. compile-time
     /// validation of carry-group sets) once those consumers land.
     pub const fn carryable(&self) -> bool {
@@ -272,7 +272,8 @@ impl PickGroup {
 ///
 /// Where: typed reference for the picks-data refactor. Will replace
 /// the implicit string keys currently used in `SignificanceSets`
-/// (`crates/know_rust/src/emit/picker.rs`) when the refactor lands.
+/// (`crates/sourcetrait_ai_know_rust/src/emit/picker.rs`) when the
+/// refactor lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PickSet {

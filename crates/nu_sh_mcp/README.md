@@ -1,6 +1,6 @@
-SourceTrait Empower: Nushell MCP
+SourceTrait AI Empower: Nushell MCP
 ================================================================================
-[![License Badge]][License]
+[![Crate Badge]][Crate] [![Docs Badge]][Docs] [![License Badge]][License] [![AI Badge]][AI]
 
 *Nushell engine MCP server*
 
@@ -41,9 +41,9 @@ all copyright covering your contribution.
 
 License (AGPL3)
 --------------------------------------------------------------------------------
-SourceTrait Empower Nushell MCP: Nushell engine MCP server  
+SourceTrait AI Empower Nushell MCP: Nushell engine MCP server  
 Developed by [SourceTrait](https://sourcetrait.com), a division of **Asmov LLC**  
-Copyright (C) 2025 [Asmov LLC](https://asmov.software)  
+Copyright (C) 2026 [Asmov LLC](https://asmov.software)  
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the **GNU Affero General Public License** as
@@ -64,3 +64,9 @@ If not, see [https://www.gnu.org/licenses/](https://www.gnu.org/licenses/).
 [Docs Badge]: https://img.shields.io/badge/docs-blue
 [License]: #License-AGPL3
 [License Badge]: https://img.shields.io/badge/license-AGPL3-blue.svg
+[AI]: #AI
+[AI Badge]: https://img.shields.io/badge/ai-authored-green.svg
+
+[Crate]: https://crates.io/crates/sourcetrait_ai_nushell_mcp
+[Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_nushell_mcp.svg
+[Docs]: https://docs.rs/sourcetrait_ai_nushell_mcp

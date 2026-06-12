@@ -26,7 +26,7 @@ pub type LibEmpowerResult<T> = Result<T, LibEmpowerError>;
 /// Where: returned (eventually) as the error half of
 /// `LibEmpowerResult<T>` from any public lib_empower function that
 /// can fail. Sister crates match on its variants; downstream
-/// `nu_sh_mcp` wraps it into `mcp::ErrorData` at the rmcp tool seam.
+/// `sourcetrait_ai_nushell_mcp` wraps it into `mcp::ErrorData` at the rmcp tool seam.
 #[derive(Debug, snafu::Snafu)]
 pub enum LibEmpowerError {
     /// Markdown surface errors bubble into the crate error even

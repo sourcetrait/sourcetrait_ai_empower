@@ -3,7 +3,7 @@ resolver = "2"
 members = [
   "crates/sourcetrait_ai_lib_empower",
   "crates/sourcetrait_ai_nu_plugin_empower",
-  "crates/nu_sh_mcp",
+  "crates/sourcetrait_ai_nushell_mcp",
   "crates/know_rust",
 ]
 

@@ -13,8 +13,8 @@ use crate::*;
 /// back-to-back.
 ///
 /// Where: produced by `NonceGen::next`, rendered into MCP envelopes
-/// by `nu_sh_mcp::server::tool::dispatch_to_worker`, and used by
-/// `nu_sh_mcp::server::cache::cache_dir` as the leaf path segment
+/// by `sourcetrait_ai_nushell_mcp::server::tool::dispatch_to_worker`, and used by
+/// `sourcetrait_ai_nushell_mcp::server::cache::cache_dir` as the leaf path segment
 /// for per-call log dirs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Nonce(u64);
@@ -28,7 +28,7 @@ impl Nonce {
     /// few callers that need the raw bits (hashing into a larger key,
     /// comparing two Nonces by integer value, tests).
     ///
-    /// Where: not used in nu_sh_mcp's hot path; reserved for future
+    /// Where: not used in sourcetrait_ai_nushell_mcp's hot path; reserved for future
     /// internal helpers and tests that need to assert specific
     /// integer values.
     pub fn to_u64(self) -> u64 {
@@ -54,7 +54,7 @@ impl Display for Nonce {
 /// lets the counter reset cleanly on server restart without bleed
 /// from a prior process.
 ///
-/// Where: constructed once in `nu_sh_mcp::server::run::run_server`,
+/// Where: constructed once in `sourcetrait_ai_nushell_mcp::server::run::run_server`,
 /// wrapped in `Arc<NonceGen>`, and shared across all rmcp tool
 /// handlers in `NuSh`. Each handler calls `next` once per
 /// dispatched worker round-trip.
@@ -76,7 +76,7 @@ impl NonceGen {
     /// hashes counter + payload + time together, so even nonce #0
     /// produces a high-entropy output. No need for randomized seeds.
     ///
-    /// Where: called once during `nu_sh_mcp::server::run::run_server`'s
+    /// Where: called once during `sourcetrait_ai_nushell_mcp::server::run::run_server`'s
     /// startup, before workers are spawned. Tests construct their own
     /// instances per-Host.
     pub fn new() -> Self {
@@ -99,7 +99,7 @@ impl NonceGen {
     /// the output space is the full u64 so collisions across a
     /// realistic session count are statistically zero.
     ///
-    /// Where: called by `nu_sh_mcp::server::tool::dispatch_to_worker`
+    /// Where: called by `sourcetrait_ai_nushell_mcp::server::tool::dispatch_to_worker`
     /// at the start of every run/interact/rerun/call. The returned
     /// `Nonce` becomes the per-call log dir name and the envelope's
     /// `nonce` field.

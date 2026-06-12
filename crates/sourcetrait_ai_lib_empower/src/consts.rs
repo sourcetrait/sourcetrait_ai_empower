@@ -1,3 +1,3 @@
-pub const NU_SH_MCP: &str = "nu_sh_mcp";
-pub const NU_SH_MCP_TEST: &str = "nu_sh_mcp_test";
+pub const NUSHELL_MCP: &str = "nushell_mcp";
+pub const NUSHELL_MCP_TEST: &str = "nushell_mcp_test";
 pub const SOURCETRAIT: &str = "sourcetrait";

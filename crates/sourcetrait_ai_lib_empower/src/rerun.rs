@@ -26,7 +26,7 @@ impl RerunHash {
     /// shape -> same id -> agent can rerun by id without re-sending
     /// the full source.
     ///
-    /// Where: called by `nu_sh_mcp::server::tool::NuSh::run` after
+    /// Where: called by `sourcetrait_ai_nushell_mcp::server::tool::NuSh::run` after
     /// successful evaluation, hashing the closure's args_schema +
     /// result_schema + body. The resulting hash becomes the envelope
     /// `rerun_id` field and the name of the
@@ -45,7 +45,7 @@ impl RerunHash {
     /// larger key, or assert exact bit patterns in tests can do so
     /// without parsing the base62 form.
     ///
-    /// Where: not used in nu_sh_mcp's hot path; reserved for tests
+    /// Where: not used in sourcetrait_ai_nushell_mcp's hot path; reserved for tests
     /// and future internal helpers.
     pub fn to_u64(self) -> u64 {
         self.0

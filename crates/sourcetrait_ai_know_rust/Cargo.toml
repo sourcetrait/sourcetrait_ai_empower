@@ -1,11 +1,11 @@
 [package]
-name = "know_rust"
+name = "sourcetrait_ai_know_rust"
 version = "0.0.40"
 edition = "2024"
 description = "Rust source scanner for know_rust - extracts type-identifier usages (fn signatures, struct fields, generic bounds, method refs) plus per-file lex+structure facts (items, traits, impls, derives, macros, uses, mods, seams) for the know_rust orientation pipeline"
 authors = ["SourceTrait <development@sourcetrait.com>"]
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/sourcetrait/sourcetrait_empower"
+repository = "https://github.com/sourcetrait/sourcetrait_ai_empower"
 homepage = "https://sourcetrait.com"
 categories = []
 keywords = ["sourcetrait", "empower", "rust", "ast", "scanner"]

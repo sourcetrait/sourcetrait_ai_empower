@@ -1,7 +1,7 @@
 //! Integration tests for the characterize + emit pipeline. Ports
 //! test_orientation.py's four workspace-shape tests (lines 90-169).
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

@@ -6,7 +6,7 @@
 //! zero-score minted keys stay UNRENDERED until a score source
 //! exists (the consumer-weight term).
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

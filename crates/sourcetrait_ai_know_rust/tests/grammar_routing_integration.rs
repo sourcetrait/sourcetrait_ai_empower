@@ -2,7 +2,7 @@
 //! collapse into their enum's structure aggregate; constant-shaped
 //! accesses are labels and route to the globals group.
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

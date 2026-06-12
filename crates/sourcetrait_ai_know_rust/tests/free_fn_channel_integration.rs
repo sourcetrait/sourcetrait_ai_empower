@@ -5,7 +5,7 @@
 //! embedding API (eval_block / parse / create_default_context) was
 //! invisible to every pick channel.
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

@@ -9,7 +9,7 @@
 //! candidates render in 5.2, (b) every candidate appears exactly
 //! once across 5.1-5.4.
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

@@ -5,7 +5,7 @@
 //! and unstable cap-boundary tie cuts used to randomize clique
 //! elections and boundary picks between runs.
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

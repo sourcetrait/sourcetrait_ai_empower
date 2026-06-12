@@ -12,7 +12,7 @@
 //! (env::args-class) keep their implementation_functions entry but no
 //! longer synthesize a structure pick.
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

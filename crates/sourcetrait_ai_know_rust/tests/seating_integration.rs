@@ -5,7 +5,7 @@
 //! sub-pool (demand: consumers * log2(1+sites)), two-way seat
 //! spillover, and pure example seating at zero breadth.
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

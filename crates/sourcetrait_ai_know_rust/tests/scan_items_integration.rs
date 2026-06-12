@@ -3,7 +3,7 @@
 //! - per-source-string walker behavior (port of test_orientation.py's
 //!   six scan-level tests, lines 24-72)
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::path::PathBuf;
 use tempfile::TempDir;
 

@@ -3,7 +3,7 @@
 //! declarations are excluded from both walkers, and the usages
 //! scanner gains parity on inline cfg(test) items.
 
-use know_rust::*;
+use sourcetrait_ai_know_rust::*;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

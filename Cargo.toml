@@ -4,7 +4,7 @@ members = [
   "crates/sourcetrait_ai_lib_empower",
   "crates/sourcetrait_ai_nu_plugin_empower",
   "crates/sourcetrait_ai_nushell_mcp",
-  "crates/know_rust",
+  "crates/sourcetrait_ai_know_rust",
 ]
 
 [workspace.dependencies]

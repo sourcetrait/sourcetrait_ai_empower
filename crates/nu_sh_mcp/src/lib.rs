@@ -131,7 +131,7 @@ pub(crate) use std::{
 
 pub(crate) use clap::Parser;
 
-pub(crate) use sourcetrait_lib_empower as lib_empower;
+pub(crate) use sourcetrait_ai_lib_empower as lib_empower;
 
 pub(crate) mod dirs {
     pub(crate) use directories::BaseDirs;

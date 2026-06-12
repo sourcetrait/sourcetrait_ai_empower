@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use sourcetrait_lib_empower::md;
+use sourcetrait_ai_lib_empower::md;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

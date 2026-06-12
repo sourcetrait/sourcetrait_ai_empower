@@ -44,7 +44,7 @@ rmp-serde.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sourcetrait_lib_empower.workspace = true
+sourcetrait_ai_lib_empower.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

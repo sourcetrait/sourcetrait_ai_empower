@@ -14,7 +14,7 @@
 pub type LibEmpowerResult<T> = Result<T, LibEmpowerError>;
 
 /// What: enum of error variants for fallible operations in
-/// `sourcetrait_lib_empower`. Currently empty (no variants) because
+/// `sourcetrait_ai_lib_empower`. Currently empty (no variants) because
 /// every public operation is infallible.
 ///
 /// Why: derives `snafu::Snafu` so future variants gain Display,

@@ -1,3 +1,7 @@
+// The item 21 grammar is a complete, deliberately-typed API: some
+// `*Kind` discriminants and `kind()` accessors are surface for callers
+// and future items (15/16) and are not all internally consumed yet.
+#![allow(dead_code)]
 use crate::*;
 
 // Structured-schema grammar (item 21). A strict, well-defined,

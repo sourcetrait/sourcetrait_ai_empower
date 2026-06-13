@@ -157,11 +157,11 @@ const REGEX_RECEIVERS: &[&str] = &[
 /// `NuSh::define_function` immediately before template synthesis.
 pub(crate) fn lint_body(
     parse_engine: &ParseEngine,
-    args_schema: &str,
+    args_type: &str,
     body: &str,
     source: Option<WhereSource>,
 ) -> Vec<LintViolation> {
-    let (wrapped, prefix_len) = wrap_as_def_body(body, args_schema);
+    let (wrapped, prefix_len) = wrap_as_def_body(body, args_type);
     let engine_state = parse_engine.engine_state();
     let mut ws = nu::StateWorkingSet::new(engine_state);
     let outer = nu::parse(&mut ws, Some("body.nu"), wrapped.as_bytes(), false);
@@ -605,11 +605,11 @@ mod tests {
     }
 
     fn lint(body: &str) -> Vec<LintViolation> {
-        lint_body(&engine(), "noop: int", body, None)
+        lint_body(&engine(), "record<noop: int>", body, None)
     }
 
     fn lint_args(args_schema: &str, body: &str) -> Vec<LintViolation> {
-        lint_body(&engine(), args_schema, body, None)
+        lint_body(&engine(), &format!("record<{args_schema}>"), body, None)
     }
 
     fn kinds(v: &[LintViolation]) -> Vec<&'static str> {

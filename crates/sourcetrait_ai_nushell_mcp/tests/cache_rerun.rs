@@ -148,8 +148,8 @@ fn extract_rerun_id(call_response: &serde_json::Value) -> String {
 fn run_returns_deterministic_rerun_id() {
     let mut host = Host::spawn();
     let closure_a = serde_json::json!({
-        "args_schema": "x: int",
-        "result_schema": "out: int",
+        "args_schema": {"x": "int"},
+        "result_schema": {"out": "int"},
         "args": {"x": 1},
         "body": "{ out: ($args.x + 100) }",
     });
@@ -167,8 +167,8 @@ fn run_returns_deterministic_rerun_id() {
 fn rerun_id_differs_when_closure_changes() {
     let mut host = Host::spawn();
     let base = serde_json::json!({
-        "args_schema": "x: int",
-        "result_schema": "out: int",
+        "args_schema": {"x": "int"},
+        "result_schema": {"out": "int"},
         "args": {"x": 1},
         "body": "{ out: ($args.x + 100) }",
     });
@@ -185,8 +185,8 @@ fn rerun_roundtrip_with_new_args() {
     let first = host.call(
         "run",
         serde_json::json!({
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "args": {"x": 5},
             "body": "{ out: ($args.x * 3) }",
         }),
@@ -258,8 +258,8 @@ fn interact_envelope_has_no_rerun_id() {
     let resp = host.call(
         "interact",
         serde_json::json!({
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "args": {"x": 4},
             "body": "{ out: ($args.x * 2) }",
         }),

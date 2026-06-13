@@ -17,8 +17,13 @@ use crate::*;
 /// `build_interact_source`) and serialized into the nonce payload.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct RunParams {
-    pub args_schema: String,
-    pub result_schema: String,
+    /// Structured args schema: a JSON object of `field -> type` (item 21
+    /// grammar). `{}` means a no-args (void) function. Converted to the
+    /// nu positional type via `schema::args_schema_to_nu`.
+    pub args_schema: mcp::JsonObject,
+    /// Structured result schema: a JSON object of `field -> type`. `{}`
+    /// means a void return.
+    pub result_schema: mcp::JsonObject,
     /// JSON object that becomes the nushell `$args` record literal at the
     /// __exec call site. Schemars represents `serde_json::Value` as the
     /// JSON Schema 2020-12 `true` keyword (match-anything), which Claude
@@ -159,8 +164,8 @@ pub(crate) struct ProcessesEnvelope {
 /// `json::from_slice` to reconstruct a `RunParams` for replay.
 #[derive(Debug, ser::Deserialize, ser::Serialize)]
 struct ClosureCacheBody {
-    args_schema: String,
-    result_schema: String,
+    args_type: String,
+    result_type: String,
     body: String,
 }
 
@@ -225,11 +230,12 @@ pub struct DefineFunctionParams {
     /// Function name; becomes the filename `<name>.nu`. Identifier
     /// shape `[a-zA-Z_][a-zA-Z0-9_-]*`; `mod` reserved.
     pub name: String,
-    /// Schema for the function's `args` positional. Comma-separated
-    /// `field: type` pairs (no surrounding `record<>`).
-    pub args_schema: String,
-    /// Schema for the function's return record.
-    pub result_schema: String,
+    /// Structured args schema: a JSON object of `field -> type` (item
+    /// 21 grammar). `{}` means a no-args (void) function.
+    pub args_schema: mcp::JsonObject,
+    /// Structured result schema: a JSON object of `field -> type`. `{}`
+    /// means a void return.
+    pub result_schema: mcp::JsonObject,
     /// Function body. Inlined inside `def main`'s block.
     pub body: String,
 }
@@ -571,14 +577,22 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let violations = lint_run_params(&self.lint_engine, &p);
+        let (args_type, result_type) =
+            match convert_schemas(&p.args_schema, &p.result_schema) {
+                Ok(t) => t,
+                Err(reason) => return Ok(error_to_call_result(
+                    Error::SchemaInvalid { reason },
+                    None,
+                )),
+            };
+        let violations = lint_run_params(&self.lint_engine, &args_type, &p.body);
         if !violations.is_empty() {
             return Ok(error_to_call_result(
                 Error::LintViolations { violations },
                 None,
             ));
         }
-        let source = build_run_source(&p);
+        let source = build_run_source(&args_type, &result_type, &p.args, &p.body);
         let payload_bytes = match json::to_vec(&p) {
             Ok(b) => b,
             Err(e) => return Ok(error_to_call_result(
@@ -609,12 +623,17 @@ impl NuSh {
             Err(de) => return Ok(error_to_call_result(de.error, de.nonce)),
         };
         let computed_rerun_id = lib_empower::RerunHash::of(&(
-            p.args_schema.as_str(),
-            p.result_schema.as_str(),
+            args_type.as_str(),
+            result_type.as_str(),
             p.body.as_str(),
         ))
         .to_string();
-        let rerun_id_opt = match write_closure_cache(&computed_rerun_id, &p) {
+        let rerun_id_opt = match write_closure_cache(
+            &computed_rerun_id,
+            &args_type,
+            &result_type,
+            &p.body,
+        ) {
             Ok(()) => Some(computed_rerun_id),
             Err(e) => {
                 eprintln!(
@@ -644,14 +663,22 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let violations = lint_run_params(&self.lint_engine, &p);
+        let (args_type, result_type) =
+            match convert_schemas(&p.args_schema, &p.result_schema) {
+                Ok(t) => t,
+                Err(reason) => return Ok(error_to_call_result(
+                    Error::SchemaInvalid { reason },
+                    None,
+                )),
+            };
+        let violations = lint_run_params(&self.lint_engine, &args_type, &p.body);
         if !violations.is_empty() {
             return Ok(error_to_call_result(
                 Error::LintViolations { violations },
                 None,
             ));
         }
-        let source = build_interact_source(&p);
+        let source = build_interact_source(&args_type, &result_type, &p.args, &p.body);
         let payload_bytes = match json::to_vec(&p) {
             Ok(b) => b,
             Err(e) => return Ok(error_to_call_result(
@@ -716,7 +743,15 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<DefineFunctionParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let violations = lint_body(&self.lint_engine, &p.args_schema, &p.body, None);
+        let (args_type, result_type) =
+            match convert_schemas(&p.args_schema, &p.result_schema) {
+                Ok(t) => t,
+                Err(reason) => return Ok(error_to_call_result(
+                    Error::SchemaInvalid { reason },
+                    None,
+                )),
+            };
+        let violations = lint_body(&self.lint_engine, &args_type, &p.body, None);
         if !violations.is_empty() {
             return Ok(error_to_call_result(
                 Error::LintViolations { violations },
@@ -726,8 +761,8 @@ impl NuSh {
         let parse_violations = parse_check_function_source(
             &self.lint_engine,
             &p.name,
-            &p.args_schema,
-            &p.result_schema,
+            &args_type,
+            &result_type,
             &p.body,
         );
         if !parse_violations.is_empty() {
@@ -751,8 +786,8 @@ impl NuSh {
             &p.library,
             &p.module_path,
             &p.name,
-            &p.args_schema,
-            &p.result_schema,
+            &args_type,
+            &result_type,
             &p.body,
         ) {
             Ok(()) => Ok(mcp::CallToolResult::default()),
@@ -818,7 +853,11 @@ impl NuSh {
                 None,
             ));
         }
-        let args_json_str = json::to_string_json(&p.args).unwrap_or_else(|_| "{}".to_string());
+        let args_json_str = if p.args.is_empty() {
+            "null".to_string()
+        } else {
+            json::to_string_json(&p.args).unwrap_or_else(|_| "{}".to_string())
+        };
         let source = format!(
             "use {}\n{} resolve ({} {})\n",
             file_path.display(),
@@ -972,31 +1011,19 @@ impl NuSh {
         // Touch mtime for the LRU signal future pruning will use.
         // Idempotent overwrite -- content is deterministic.
         let _ = fs::write(&path, &cached_bytes);
-        let reconstructed = RunParams {
-            args_schema: cached.args_schema,
-            result_schema: cached.result_schema,
-            args: p.args.clone(),
-            body: cached.body,
-            timeout_ms: p.timeout_ms,
-        };
-        let source = build_run_source(&reconstructed);
-        let payload_bytes = match json::to_vec(&reconstructed) {
-            Ok(b) => b,
-            Err(e) => return Ok(error_to_call_result(
-                Error::Internal {
-                    phase: "rerun::serialize_payload".to_string(),
-                    reason: e.to_string(),
-                },
-                None,
-            )),
-        };
-        let args_json = serde_json::Value::Object(p.args);
+        let source = build_run_source(
+            &cached.args_type,
+            &cached.result_type,
+            &p.args,
+            &cached.body,
+        );
+        let args_json = serde_json::Value::Object(p.args.clone());
         let outcome = match dispatch_pooled(
             &self.runs_pool,
             &self.nonce_gen,
             &self.in_flight,
             CacheKind::Runs,
-            &payload_bytes,
+            &cached_bytes,
             source,
             "rerun",
             args_json,
@@ -1121,8 +1148,17 @@ fn envelope_to_structured<T: ser::Serialize>(envelope: &T) -> Result<mcp::CallTo
 /// Where: called by `NuSh::run` and `NuSh::interact` before any
 /// template synthesis. The result feeds `format_lint_violations` on
 /// non-empty.
-fn lint_run_params(engine: &ParseEngine, p: &RunParams) -> Vec<LintViolation> {
-    lint_body(engine, &p.args_schema, &p.body, None)
+fn convert_schemas(
+    args_schema: &mcp::JsonObject,
+    result_schema: &mcp::JsonObject,
+) -> Result<(String, String), String> {
+    let args_type = args_schema_to_nu(args_schema)?;
+    let result_type = result_schema_to_nu(result_schema)?;
+    Ok((args_type, result_type))
+}
+
+fn lint_run_params(engine: &ParseEngine, args_type: &str, body: &str) -> Vec<LintViolation> {
+    lint_body(engine, args_type, body, None)
 }
 
 /// What: the shape returned by `dispatch_pooled` / `dispatch_interact`.
@@ -1440,18 +1476,20 @@ fn now_millis() -> u64 {
 /// happens in `NuSh::rerun` via `fs::read` + `json::from_slice`.
 fn write_closure_cache(
     rerun_id: &str,
-    p: &RunParams,
+    args_type: &str,
+    result_type: &str,
+    body: &str,
 ) -> io::Result<()> {
     let path = closure_cache_file(rerun_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let body = ClosureCacheBody {
-        args_schema: p.args_schema.clone(),
-        result_schema: p.result_schema.clone(),
-        body: p.body.clone(),
+    let cache = ClosureCacheBody {
+        args_type: args_type.to_string(),
+        result_type: result_type.to_string(),
+        body: body.to_string(),
     };
-    let bytes = json::to_vec(&body).map_err(|e| {
+    let bytes = json::to_vec(&cache).map_err(|e| {
         io::Error::other(format!("serialize ClosureCacheBody: {e}"))
     })?;
     fs::write(&path, &bytes)?;

@@ -24,6 +24,7 @@ pub enum ErrorKind {
     #[serde(rename = "function::not_defined")]         FunctionNotDefined,
     #[serde(rename = "function::invalid_name")]        FunctionInvalidName,
     #[serde(rename = "lint::violations")]              LintViolations,
+    #[serde(rename = "schema::invalid")]               SchemaInvalid,
     #[serde(rename = "closure::invalid_rerun_id")]     ClosureInvalidRerunId,
     #[serde(rename = "closure::cache_missing")]        ClosureCacheMissing,
     #[serde(rename = "closure::cache_decode")]         ClosureCacheDecode,
@@ -84,6 +85,9 @@ pub enum Error {
     #[serde(rename = "lint::violations")]
     LintViolations { violations: Vec<LintViolation> },
 
+    #[serde(rename = "schema::invalid")]
+    SchemaInvalid { reason: String },
+
     #[serde(rename = "closure::invalid_rerun_id")]
     ClosureInvalidRerunId { rerun_id: String, reason: String },
 
@@ -131,6 +135,7 @@ impl Error {
             Self::FunctionNotDefined { .. } => K::FunctionNotDefined,
             Self::FunctionInvalidName { .. } => K::FunctionInvalidName,
             Self::LintViolations { .. } => K::LintViolations,
+            Self::SchemaInvalid { .. } => K::SchemaInvalid,
             Self::ClosureInvalidRerunId { .. } => K::ClosureInvalidRerunId,
             Self::ClosureCacheMissing { .. } => K::ClosureCacheMissing,
             Self::ClosureCacheDecode { .. } => K::ClosureCacheDecode,

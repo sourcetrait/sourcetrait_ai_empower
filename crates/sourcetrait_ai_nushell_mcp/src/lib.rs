@@ -52,10 +52,8 @@ pub(crate) use crate::{
             error_to_call_result,
         },
         library::{
-            FunctionInfo,
             LibraryInfo,
             LibraryLocks,
-            ModuleInfo,
             Violation,
             call_file_path,
             define_function_impl,
@@ -80,9 +78,14 @@ pub(crate) use crate::{
             wrap_as_module,
         },
         pool::Pool,
+        schema::{
+            args_schema_to_nu,
+            nu_to_args_schema,
+            nu_to_result_schema,
+            result_schema_to_nu,
+        },
         tool::{
             NuSh,
-            RunParams,
         },
         worker_handle::{
             WorkerHandle,
@@ -162,7 +165,7 @@ pub(crate) mod nu {
         Record,
         Signals,
         Span,
-        SyntaxShape,
+        Type,
         Value,
         VarId,
         ast::{

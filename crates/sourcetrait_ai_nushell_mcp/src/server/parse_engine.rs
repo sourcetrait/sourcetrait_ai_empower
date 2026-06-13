@@ -150,8 +150,8 @@ pub(crate) fn wrap_as_module(source: &str, wrapper_name: &str) -> (String, usize
 /// Where: called by `server::lint::lint_body` immediately before
 /// `nu_parser::parse`. Mirrors `wrap_as_module` for the library
 /// validator.
-pub(crate) fn wrap_as_def_body(body: &str, args_schema: &str) -> (String, usize) {
-    let prefix = format!("def __lint_body [args: record<{args_schema}>] {{\n");
+pub(crate) fn wrap_as_def_body(body: &str, args_type: &str) -> (String, usize) {
+    let prefix = format!("def __lint_body [args: {args_type}] {{\n");
     let prefix_len = prefix.len();
     let wrapped = format!("{prefix}{body}\n}}\n");
     (wrapped, prefix_len)

@@ -180,8 +180,8 @@ fn call_after_define_returns_result() {
             "library": "calc",
             "module_path": "math",
             "name": "double",
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "body": "{ out: ($args.x * 2) }",
         }),
     );
@@ -312,8 +312,8 @@ fn call_args_typecheck_failure_surfaces() {
             "library": "strictlib",
             "module_path": "",
             "name": "needs_int",
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "body": "{ out: $args.x }",
         }),
     );

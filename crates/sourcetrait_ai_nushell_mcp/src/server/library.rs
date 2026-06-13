@@ -491,17 +491,17 @@ pub(crate) fn synthesize_function_source(
     body: &str,
 ) -> String {
     let mut out = String::with_capacity(256);
-    out.push_str("export def main [args: record<");
+    out.push_str("export def main [args: ");
     out.push_str(args_schema);
-    out.push_str(">] {\n");
+    out.push_str("] {\n");
     out.push_str(body);
     if !body.ends_with('\n') {
         out.push('\n');
     }
     out.push_str("}\n\n");
-    out.push_str("export def resolve [args: record<");
+    out.push_str("export def resolve [args: ");
     out.push_str(result_schema);
-    out.push_str(">] {\n    $args\n}\n");
+    out.push_str("] {\n    $args\n}\n");
     out
 }
 
@@ -860,9 +860,9 @@ pub(crate) fn call_file_path(
 ///
 /// Why: the agent discovers call() targets live through info()
 /// instead of relying on skill docs that go stale; the schemas are
-/// the call contract. Text typedefs for now - they flip to a
-/// structured representation if the schema-typedef conversion
-/// followup lands.
+/// the call contract. Structured per the item 21 grammar (the
+/// canonical file's verbatim positional type parsed via
+/// `schema::nu_to_args_schema` / `nu_to_result_schema`).
 ///
 /// Where: built by `build_module_tree` from each `<name>.nu`;
 /// carried in `ModuleInfo::functions` and `LibraryInfo::functions`;
@@ -870,8 +870,8 @@ pub(crate) fn call_file_path(
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct FunctionInfo {
     pub name: String,
-    pub args_schema: String,
-    pub result_schema: String,
+    pub args_schema: mcp::JsonObject,
+    pub result_schema: mcp::JsonObject,
 }
 
 /// What: one module node in the info() hierarchy. `name` is the
@@ -918,41 +918,27 @@ pub struct LibraryInfo {
     pub functions: Vec<FunctionInfo>,
 }
 
-/// What: scan `source` for `marker`, then capture the inner text of
-/// the first `record<...>` after it, counting nested `<`/`>` so
-/// nested typedefs (`record<a: list<int>>`) close correctly. None
-/// when the marker or a balanced record is absent.
+/// What: scan `source` for `marker` (an `export def <name>`), then
+/// capture the full positional TYPE of its `args` parameter -- the
+/// text between `args:` and the param list's closing `]`. That type
+/// is `record<...>` for a normal function or `nothing` for a
+/// void/no-arg one (item 21); typedef text never contains `]`, so the
+/// first `]` after the marker closes the param list.
 ///
-/// Why: canonical function files are validator-guaranteed to carry
-/// `export def main [args: record<AS>]` + `export def resolve
-/// [args: record<RS>] { $args }`, so a balanced text scan recovers
-/// the schema strings exactly as the author supplied them (define
-/// round-trips verbatim) without an AST parse per info() call.
+/// Why: info() emits the structured schema by parsing this verbatim
+/// text via `schema::nu_to_args_schema` / `nu_to_result_schema`; the
+/// canonical file is the single source of truth for the call contract.
 ///
-/// Where: called twice per function file by
-/// `extract_function_schemas`.
-fn record_inner_after(source: &str, marker: &str) -> Option<String> {
+/// Where: called twice per function file by `extract_function_schemas`.
+fn positional_type_after(source: &str, marker: &str) -> Option<String> {
     let marker_at = source.find(marker)?;
     let tail = &source[marker_at..];
-    let rec_at = tail.find("record<")?;
-    let inner_start = marker_at + rec_at + "record<".len();
-    let bytes = source.as_bytes();
-    let mut depth = 1usize;
-    let mut i = inner_start;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'<' => depth += 1,
-            b'>' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(source[inner_start..i].to_string());
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    None
+    let bracket_at = tail.find('[')?;
+    let after_bracket = &tail[bracket_at + 1..];
+    let close_rel = after_bracket.find(']')?;
+    let params = &after_bracket[..close_rel];
+    let colon = params.find(':')?;
+    Some(params[colon + 1..].trim().to_string())
 }
 
 /// What: extract `(args_schema, result_schema)` from a canonical
@@ -966,8 +952,8 @@ fn record_inner_after(source: &str, marker: &str) -> Option<String> {
 ///
 /// Where: called by `build_module_tree` for every `<name>.nu`.
 fn extract_function_schemas(source: &str) -> (String, String) {
-    let args = record_inner_after(source, "export def main").unwrap_or_default();
-    let result = record_inner_after(source, "export def resolve").unwrap_or_default();
+    let args = positional_type_after(source, "export def main").unwrap_or_default();
+    let result = positional_type_after(source, "export def resolve").unwrap_or_default();
     (args, result)
 }
 
@@ -1015,7 +1001,11 @@ fn build_module_tree(
         } else {
             let source = fs::read_to_string(dir.join(&name))?;
             let stem = name.trim_end_matches(".nu").to_string();
-            let (args_schema, result_schema) = extract_function_schemas(&source);
+            let (args_type, result_type) = extract_function_schemas(&source);
+            let args_schema = nu_to_args_schema(&args_type)
+                .map_err(|e| io::Error::other(format!("{stem}: args schema: {e}")))?;
+            let result_schema = nu_to_result_schema(&result_type)
+                .map_err(|e| io::Error::other(format!("{stem}: result schema: {e}")))?;
             functions.push(FunctionInfo {
                 name: stem,
                 args_schema,
@@ -1542,7 +1532,13 @@ fn check_args_record_positional(
     let (bad, var_id) = match positional {
         None => (true, None),
         Some(p) => {
-            let shape_ok = matches!(p.shape, nu::SyntaxShape::Record(_));
+            // Accept `record<...>` (normal) or `nothing` (void/no-arg)
+            // -- item 21. to_type() maps the positional's SyntaxShape to
+            // its value Type, so the check is robust to the exact shape.
+            let shape_ok = matches!(
+                p.shape.to_type(),
+                nu::Type::Record(_) | nu::Type::Nothing,
+            );
             ((p.name != "args" || !shape_ok), p.var_id)
         }
     };
@@ -1552,7 +1548,7 @@ fn check_args_record_positional(
             path: rel.to_string(),
             line,
             message: format!(
-                "{fn_name} must take a typed positional `args: record<...>`",
+                "{fn_name} must take a typed positional `args: record<...>` (or `args: nothing` for void)",
             ),
         });
     }
@@ -1999,7 +1995,7 @@ mod tests {
     }
 
     fn pc(body: &str) -> Vec<Violation> {
-        parse_check_function_source(&engine(), "probe", "x: int", "out: int", body)
+        parse_check_function_source(&engine(), "probe", "record<x: int>", "record<out: int>", body)
     }
 
     #[test]

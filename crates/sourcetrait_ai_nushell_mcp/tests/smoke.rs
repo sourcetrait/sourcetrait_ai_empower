@@ -148,8 +148,8 @@ fn smoke_2_runtime_arg_typecheck_error() {
     // diagnostic, which the host maps to an MCP error.
     let mut host = Host::spawn();
     let args = serde_json::json!({
-        "args_schema": "x: int",
-        "result_schema": "out: int",
+        "args_schema": {"x": "int"},
+        "result_schema": {"out": "int"},
         "args": {"x": "five"},
         "body": "{ out: ($args.x + 1) }",
     });
@@ -173,8 +173,8 @@ fn smoke_3_runtime_result_typecheck_error() {
     // ok=false with the cant_convert error.
     let mut host = Host::spawn();
     let args = serde_json::json!({
-        "args_schema": "x: int",
-        "result_schema": "out: int",
+        "args_schema": {"x": "int"},
+        "result_schema": {"out": "int"},
         "args": {"x": 5},
         "body": "{ out: \"five\" }",
     });
@@ -197,8 +197,8 @@ fn smoke_5_external_command() {
     // because `^echo` is denied by the body linter.
     let mut host = Host::spawn();
     let args = serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "out: string",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "string"},
         "args": {"noop": 0},
         "body": "{ out: (^printf hello | str trim) }",
     });
@@ -221,8 +221,8 @@ fn smoke_6_worker_death_via_exit() {
     // fail because the worker is gone (no respawn in MTP).
     let mut host = Host::spawn();
     let args = serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "out: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "int"},
         "args": {"noop": 0},
         "body": "{ out: (exit 1; 0) }",
     });
@@ -245,8 +245,8 @@ fn smoke_9_timeout_fires() {
     // next call succeeds on a fresh pool worker.
     let mut host = Host::spawn();
     let args = serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "out: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "int"},
         "args": {"noop": 0},
         // Multi-statement body without outer braces; inserted by the
         // template as the def body. `sleep 5sec` blocks the worker for
@@ -265,8 +265,8 @@ fn smoke_9_timeout_fires() {
     assert!(env["nonce"].as_str().is_some(), "expected nonce; got {env}");
     // Next call against the (respawned) pool worker should succeed.
     let args2 = serde_json::json!({
-        "args_schema": "x: int",
-        "result_schema": "out: int",
+        "args_schema": {"x": "int"},
+        "result_schema": {"out": "int"},
         "args": {"x": 7},
         "body": "{ out: ($args.x + 1) }",
     });
@@ -319,8 +319,8 @@ fn smoke_8_plugin_path_resolves() {
     // crashing AND the field assignment took effect.
     let mut host = Host::spawn();
     let args = serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "path: string",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"path": "string"},
         "args": {"noop": 0},
         "body": "{ path: $nu.plugin-path }",
     });
@@ -351,8 +351,8 @@ fn smoke_12_tls_crypto_provider_installed() {
     // ureq.
     let mut host = Host::spawn();
     let args = serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "out: string",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "string"},
         "args": {"noop": 0},
         "body": "{ out: (try { http get 'https://127.0.0.1:9' | to text } catch {|e| $e.msg }) }",
     });
@@ -380,8 +380,8 @@ fn smoke_7_multi_call_stability_and_scoping() {
     let mut host = Host::spawn();
     for i in 0..10 {
         let args = serde_json::json!({
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "args": {"x": i as i64},
             "body": "{ out: ($args.x + 100) }",
         });
@@ -400,8 +400,8 @@ fn smoke_7_multi_call_stability_and_scoping() {
     // Introspect: ask the worker whether __exec exists at the top level after
     // all 10 calls. The do-block scoping should mean __exec does NOT persist.
     let intro = serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "leaked: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"leaked": "int"},
         "args": {"noop": 0},
         "body": "{ leaked: (scope commands | where name == \"__exec\" | length) }",
     });

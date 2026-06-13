@@ -155,8 +155,8 @@ fn env_mutation_persists_across_interact_calls() {
     let first = host.call(
         "interact",
         serde_json::json!({
-            "args_schema": "value: string",
-            "result_schema": "wrote: string",
+            "args_schema": {"value": "string"},
+            "result_schema": {"wrote": "string"},
             "args": {"value": "alpha"},
             "body": "$env.SHOT_DEMO = $args.value\n{ wrote: $args.value }",
         }),
@@ -168,8 +168,8 @@ fn env_mutation_persists_across_interact_calls() {
     let second = host.call(
         "interact",
         serde_json::json!({
-            "args_schema": "noop: int",
-            "result_schema": "saw: string",
+            "args_schema": {"noop": "int"},
+            "result_schema": {"saw": "string"},
             "args": {"noop": 0},
             "body": "{ saw: $env.SHOT_DEMO }",
         }),
@@ -189,8 +189,8 @@ fn cd_persists_across_interact_calls() {
     let _ = host.call(
         "interact",
         serde_json::json!({
-            "args_schema": "target: string",
-            "result_schema": "cwd: string",
+            "args_schema": {"target": "string"},
+            "result_schema": {"cwd": "string"},
             "args": {"target": "/tmp"},
             "body": "cd $args.target\n{ cwd: (pwd) }",
         }),
@@ -199,8 +199,8 @@ fn cd_persists_across_interact_calls() {
     let second = host.call(
         "interact",
         serde_json::json!({
-            "args_schema": "noop: int",
-            "result_schema": "cwd: string",
+            "args_schema": {"noop": "int"},
+            "result_schema": {"cwd": "string"},
             "args": {"noop": 0},
             "body": "{ cwd: $env.PWD }",
         }),
@@ -222,8 +222,8 @@ fn agent_def_persists_across_interact_calls() {
     let _ = host.call(
         "interact",
         serde_json::json!({
-            "args_schema": "noop: int",
-            "result_schema": "ok: bool",
+            "args_schema": {"noop": "int"},
+            "result_schema": {"ok": "bool"},
             "args": {"noop": 0},
             "body": "def shot_helper [n: int] { $n * 100 }\n{ ok: true }",
         }),
@@ -232,8 +232,8 @@ fn agent_def_persists_across_interact_calls() {
     let second = host.call(
         "interact",
         serde_json::json!({
-            "args_schema": "n: int",
-            "result_schema": "value: int",
+            "args_schema": {"n": "int"},
+            "result_schema": {"value": "int"},
             "args": {"n": 4},
             "body": "{ value: (shot_helper $args.n) }",
         }),
@@ -255,8 +255,8 @@ fn interact_state_does_not_leak_into_run() {
     let _ = host.call(
         "interact",
         serde_json::json!({
-            "args_schema": "noop: int",
-            "result_schema": "ok: bool",
+            "args_schema": {"noop": "int"},
+            "result_schema": {"ok": "bool"},
             "args": {"noop": 0},
             "body": "def leaked [] { 999 }\n{ ok: true }",
         }),
@@ -267,8 +267,8 @@ fn interact_state_does_not_leak_into_run() {
     let resp = host.call(
         "run",
         serde_json::json!({
-            "args_schema": "noop: int",
-            "result_schema": "out: int",
+            "args_schema": {"noop": "int"},
+            "result_schema": {"out": "int"},
             "args": {"noop": 0},
             "body": "{ out: (leaked) }",
         }),
@@ -293,8 +293,8 @@ fn multi_line_body_with_command_then_record_parses() {
     let resp = host.call(
         "interact",
         serde_json::json!({
-            "args_schema": "x: int",
-            "result_schema": "y: int, slept_ms: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"y": "int", "slept_ms": "int"},
             "args": {"x": 7},
             "body": "sleep 50ms\nlet doubled = ($args.x * 2)\n{ y: $doubled, slept_ms: 50 }",
         }),

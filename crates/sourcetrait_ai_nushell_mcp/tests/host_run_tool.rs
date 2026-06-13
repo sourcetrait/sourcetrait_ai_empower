@@ -128,8 +128,8 @@ fn host_tools_list_and_run_stub() {
         "params": {
             "name": "run",
             "arguments": {
-                "args_schema": "x: int",
-                "result_schema": "out: int",
+                "args_schema": {"x": "int"},
+                "result_schema": {"out": "int"},
                 "args": {"x": 5},
                 "body": "{ out: ($args.x + 1) }",
             }

@@ -165,8 +165,8 @@ fn define_writes_file_cascade_and_mirror() {
             "library": "mathlib",
             "module_path": "math",
             "name": "double",
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "body": "{ out: ($args.x * 2) }",
         }),
     );
@@ -214,8 +214,8 @@ fn undefine_removes_and_prunes() {
             "library": "droplib",
             "module_path": "deep/path",
             "name": "victim",
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "body": "{ out: $args.x }",
         }),
     );
@@ -261,8 +261,8 @@ fn define_overwrites_existing() {
             "library": "overlib",
             "module_path": "",
             "name": "thing",
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "body": "{ out: 1 }",
         }),
     );
@@ -272,8 +272,8 @@ fn define_overwrites_existing() {
             "library": "overlib",
             "module_path": "",
             "name": "thing",
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "body": "{ out: 2 }",
         }),
     );
@@ -300,8 +300,8 @@ fn multi_function_same_dir_updates_cascade() {
                 "library": "multilib",
                 "module_path": "ops",
                 "name": fname,
-                "args_schema": "x: int",
-                "result_schema": "out: int",
+                "args_schema": {"x": "int"},
+                "result_schema": {"out": "int"},
                 "body": "{ out: $args.x }",
             }),
         );
@@ -327,8 +327,8 @@ fn define_unknown_library_errors() {
             "library": "ghost",
             "module_path": "",
             "name": "noop",
-            "args_schema": "noop: int",
-            "result_schema": "out: int",
+            "args_schema": {"noop": "int"},
+            "result_schema": {"out": "int"},
             "body": "{ out: 0 }",
         }),
     );
@@ -375,8 +375,8 @@ fn path_traversal_rejected() {
                 "library": "safelib",
                 "module_path": bad,
                 "name": "x",
-                "args_schema": "n: int",
-                "result_schema": "out: int",
+                "args_schema": {"n": "int"},
+                "result_schema": {"out": "int"},
                 "body": "{ out: 0 }",
             }),
         );
@@ -409,8 +409,8 @@ fn define_rejects_syntactically_broken_body() {
             "library": "brokenlib",
             "module_path": "",
             "name": "broken",
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             // `let z =` is an incomplete let assignment (no rhs); the
             // synthesized function source parses to a parse error.
             // (`let z` without `=` actually parses cleanly in nushell;
@@ -448,8 +448,8 @@ fn standalone_driver_invokes_defined_function() {
             "library": "drvlib",
             "module_path": "math",
             "name": "double",
-            "args_schema": "x: int",
-            "result_schema": "out: int",
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
             "body": "{ out: ($args.x * 2) }",
         }),
     );

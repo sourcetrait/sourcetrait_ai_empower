@@ -188,8 +188,8 @@ fn lint_violation_kinds(resp: &serde_json::Value) -> Vec<String> {
 fn lint_rejects_closure_with_hardcoded_path() {
     let mut host = Host::spawn();
     let resp = host.run(serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "out: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "int"},
         "args": {"noop": 0},
         "body": "{ p: \"/home/box/proj/x\", out: 0 }",
     }));
@@ -203,8 +203,8 @@ fn lint_rejects_closure_with_hardcoded_path() {
 fn lint_rejects_closure_with_denied_external() {
     let mut host = Host::spawn();
     let resp = host.run(serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "out: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "int"},
         "args": {"noop": 0},
         "body": "{ x: (^awk '{print $1}' | str trim), out: 0 }",
     }));
@@ -219,8 +219,8 @@ fn lint_passes_clean_closure() {
     // No lint violations -> reaches the worker -> normal envelope path.
     let mut host = Host::spawn();
     let resp = host.run(serde_json::json!({
-        "args_schema": "x: int",
-        "result_schema": "out: int",
+        "args_schema": {"x": "int"},
+        "result_schema": {"out": "int"},
         "args": {"x": 5},
         "body": "{ out: ($args.x + 1) }",
     }));
@@ -239,8 +239,8 @@ fn lint_passes_clean_closure() {
 fn lint_aggregates_multiple_violations() {
     let mut host = Host::spawn();
     let resp = host.run(serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "out: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "int"},
         "args": {"noop": 0},
         "body": "\
 ^awk 'x'
@@ -261,8 +261,8 @@ cd \"/a/b\"
 fn lint_interact_rejects_hardcoded_path() {
     let mut host = Host::spawn();
     let resp = host.interact(serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "out: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "int"},
         "args": {"noop": 0},
         "body": "{ p: \"/home/box/x\", out: 0 }",
     }));
@@ -275,8 +275,8 @@ fn lint_interact_rejects_hardcoded_path() {
 fn lint_interact_rejects_denied_external() {
     let mut host = Host::spawn();
     let resp = host.interact(serde_json::json!({
-        "args_schema": "noop: int",
-        "result_schema": "out: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "int"},
         "args": {"noop": 0},
         "body": "{ x: (^awk 'x' | str trim), out: 0 }",
     }));
@@ -300,8 +300,8 @@ fn lint_define_function_rejects_hardcoded_path() {
         "library": "lib1",
         "module_path": "",
         "name": "bad",
-        "args_schema": "noop: int",
-        "result_schema": "out: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "int"},
         "body": "{ p: \"/home/box/x\", out: 0 }"
     }));
     assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
@@ -320,8 +320,8 @@ fn lint_define_function_rejects_denied_external() {
         "library": "lib2",
         "module_path": "",
         "name": "bad",
-        "args_schema": "noop: int",
-        "result_schema": "out: int",
+        "args_schema": {"noop": "int"},
+        "result_schema": {"out": "int"},
         "body": "{ x: (^rm -rf /; 0) }"
     }));
     assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
@@ -340,8 +340,8 @@ fn lint_define_function_passes_clean_body() {
         "library": "lib3",
         "module_path": "",
         "name": "good",
-        "args_schema": "x: int",
-        "result_schema": "out: int",
+        "args_schema": {"x": "int"},
+        "result_schema": {"out": "int"},
         "body": "{ out: ($args.x + 1) }"
     }));
     // Expect success: no envelope error, no structuredContent on the

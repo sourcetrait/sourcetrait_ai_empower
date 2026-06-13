@@ -90,20 +90,37 @@ fn json_value_to_nu_value(v: &serde_json::Value) -> nu::Value {
 /// reconstructs a RunParams from cache and reuses the same builder)
 /// to produce the source string that gets shipped through
 /// `WorkerHandle::send_request` to the stateless worker process.
-pub(crate) fn build_run_source(p: &RunParams) -> String {
+/// The value substituted at the `__exec` call site (and the interact
+/// `let args` RHS). A void positional (`nothing`) with empty args binds
+/// the bare `null`; otherwise the args record as NUON. A void positional
+/// with NON-empty args therefore emits the record NUON against a
+/// `nothing` parameter and fails the typecheck -- strict void (item 21).
+fn args_literal(args_type: &str, args: &mcp::JsonObject) -> String {
+    if args_type == "nothing" && args.is_empty() {
+        "null".to_string()
+    } else {
+        args_to_nuon(args)
+    }
+}
+
+pub(crate) fn build_run_source(
+    args_type: &str,
+    result_type: &str,
+    args: &mcp::JsonObject,
+    body: &str,
+) -> String {
     let mut out = String::with_capacity(256);
     out.push_str("do {\n");
-    out.push_str("    def __exec [args: record<");
-    out.push_str(&p.args_schema);
-    out.push_str(">] {\n");
-    out.push_str(&p.body);
+    out.push_str("    def __exec [args: ");
+    out.push_str(args_type);
+    out.push_str("] {\n");
+    out.push_str(body);
     out.push_str("\n    }\n");
-    out.push_str("    def __resolve [result: record<");
-    out.push_str(&p.result_schema);
-    out.push_str(">] { $result }\n");
+    out.push_str("    def __resolve [result: ");
+    out.push_str(result_type);
+    out.push_str("] { $result }\n");
     out.push_str("    __resolve (__exec ");
-    let args_nuon = args_to_nuon(&p.args);
-    out.push_str(&args_nuon);
+    out.push_str(&args_literal(args_type, args));
     out.push_str(")\n");
     out.push_str("}\n");
     out
@@ -139,21 +156,25 @@ pub(crate) fn build_run_source(p: &RunParams) -> String {
 /// source string that gets shipped to the stateful worker process.
 /// Pairs with `Mode::Stateful` in `worker::request_loop::
 /// eval_source`.
-pub(crate) fn build_interact_source(p: &RunParams) -> String {
+pub(crate) fn build_interact_source(
+    args_type: &str,
+    result_type: &str,
+    args: &mcp::JsonObject,
+    body: &str,
+) -> String {
     let mut out = String::with_capacity(256);
     out.push_str("def __validate_result [] {\n");
-    out.push_str("    let r: record<");
-    out.push_str(&p.result_schema);
-    out.push_str("> = $in\n");
+    out.push_str("    let r: ");
+    out.push_str(result_type);
+    out.push_str(" = $in\n");
     out.push_str("    $r\n");
     out.push_str("}\n");
-    out.push_str("let args: record<");
-    out.push_str(&p.args_schema);
-    out.push_str("> = ");
-    let args_nuon = args_to_nuon(&p.args);
-    out.push_str(&args_nuon);
+    out.push_str("let args: ");
+    out.push_str(args_type);
+    out.push_str(" = ");
+    out.push_str(&args_literal(args_type, args));
     out.push_str("\n");
-    out.push_str(&p.body);
+    out.push_str(body);
     out.push_str("\n| __validate_result\n");
     // The closure scrubs the validator def from engine_state and
     // returns the validated value as the final pipeline output. Per

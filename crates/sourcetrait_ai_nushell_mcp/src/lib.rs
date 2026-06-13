@@ -140,6 +140,7 @@ pub(crate) mod dirs {
 pub(crate) mod nu {
     pub(crate) use nu_cmd_lang::create_default_context;
     pub(crate) use nu_command::add_shell_command_context;
+    pub(crate) use nu_command::tls::CRYPTO_PROVIDER;
     pub(crate) use nu_engine::eval_block;
     pub(crate) use nu_json::Value as JsonValue;
     pub(crate) use nu_parser::parse;

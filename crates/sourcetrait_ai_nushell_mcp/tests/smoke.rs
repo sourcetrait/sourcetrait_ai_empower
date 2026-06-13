@@ -339,6 +339,38 @@ fn smoke_8_plugin_path_resolves() {
 }
 
 #[test]
+fn smoke_12_tls_crypto_provider_installed() {
+    // The worker installs nushell's TLS crypto provider at startup
+    // (nu_command::tls::CRYPTO_PROVIDER -- nushell does NOT read the
+    // rustls process-global default). Without it, any `http` call died
+    // at "tls crypto provider not found" BEFORE opening a socket.
+    // Hermetic probe: https against the closed discard port on
+    // localhost -- with the provider installed the request reaches TCP
+    // and fails with a connection error instead. Assert only that the
+    // provider error is gone; the connection-failure text belongs to
+    // ureq.
+    let mut host = Host::spawn();
+    let args = serde_json::json!({
+        "args_schema": "noop: int",
+        "result_schema": "out: string",
+        "args": {"noop": 0},
+        "body": "{ out: (try { http get 'https://127.0.0.1:9' | to text } catch {|e| $e.msg }) }",
+    });
+    let resp = host.run(args);
+    let envelope = extract_envelope(&resp)
+        .unwrap_or_else(|| panic!("expected envelope; got {resp}"));
+    let out = envelope["result"]["out"].as_str().unwrap_or_default();
+    assert!(
+        !out.is_empty(),
+        "expected a connection error message; got empty out",
+    );
+    assert!(
+        !out.to_lowercase().contains("crypto provider"),
+        "provider should be installed; got {out:?}",
+    );
+}
+
+#[test]
 fn smoke_7_multi_call_stability_and_scoping() {
     // Ten distinct closures in sequence on the same worker. Each call's def
     // for __exec lives only inside the do block, so the worker's EngineState

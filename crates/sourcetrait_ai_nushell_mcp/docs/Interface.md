@@ -1,8 +1,8 @@
 # MCP Interface
 
 ## Overview
-- [`run()`](#run) Evaluate a typed nushell body on a stateless worker.
-- [`interact()`](#interact) Evaluate a typed nushell body on a persistent stateful worker.
+- [`run()`](#run) Evaluate a typed nushell closure body on a stateless worker.
+- [`interact()`](#interact) Evaluate a typed nushell closure body on a persistent stateful worker.
 - [`call()`](#call) Invoke a registered library function with typed args.
 - [`rerun()`](#rerun) Re-evaluate a cached `run()` body with fresh args.
 - [`register_library()`](#register_library) Register an empty library namespace.
@@ -37,8 +37,26 @@ each field name to its type. The type vocabulary:
 Records and tables are open - extra fields are accepted - and every
 declared field is required and is type-checked to its full depth.
 
+## Recursive globs
+
+A `*` segment matches one level; `**` recurses to all depths. Build the
+pattern with `path join` (a leading-`/` literal trips the path lint):
+
+```nu
+glob ($args.root | path join "**" "*")
+```
+
+The result INCLUDES the root dir itself, and returns files as well as
+directories (nu 0.113.1; `**` and `**/*` behave the same). For "every
+subdirectory below `<root>`", filter to dirs and drop the root:
+
+```nu
+glob ($args.root | path join "**" "*")
+| where {|p| (($p | path type) == "dir") and ($p != $args.root) }
+```
+
 ## `run()`
-*Evaluate a typed nushell body on a stateless worker.*
+*Evaluate a typed nushell closure body on a stateless worker.*
 
 ### arguments
 
@@ -114,7 +132,7 @@ Output (partial):
 ```
 
 ## `interact()`
-*Evaluate a typed nushell body on a persistent stateful worker.*
+*Evaluate a typed nushell closure body on a persistent stateful worker.*
 
 ### arguments
 

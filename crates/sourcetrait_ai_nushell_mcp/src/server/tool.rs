@@ -570,7 +570,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Evaluate a typed nushell closure on a stateless worker.",
+        description = "Evaluate a typed nushell closure body on a stateless worker.",
         output_schema = mcp::schema_for_type::<RunEnvelope>()
     )]
     async fn run(
@@ -656,7 +656,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Evaluate a typed administrative nushell closure on a persistent stateful worker.",
+        description = "Evaluate a typed administrative nushell closure body on a persistent stateful worker.",
         output_schema = mcp::schema_for_type::<InteractEnvelope>()
     )]
     async fn interact(
@@ -972,7 +972,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Re-evaluate a cached stateless closure by rerun_id with new args.",
+        description = "Re-evaluate a cached stateless closure body by rerun_id with new args.",
         output_schema = mcp::schema_for_type::<RerunEnvelope>()
     )]
     async fn rerun(

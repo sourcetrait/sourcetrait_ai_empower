@@ -362,14 +362,18 @@ pub struct InfoParams {}
 
 /// What: agent-facing success envelope for `info`. Carries the
 /// crate name + version, the embedded nushell engine version
-/// captured at build time, and the list of plugin names + versions
-/// visible to the worker's registry.
+/// captured at build time, the list of plugin names + versions
+/// visible to the worker's registry, and the registered-library
+/// hierarchy (library -> module -> function nodes with the call
+/// schema typedefs).
 ///
 /// Why: lifts handshake-only `serverInfo` to the tool surface so
 /// agents can read it via `tools/call` instead of relying on the
 /// rmcp client to relay handshake metadata. Plugin list is
 /// enumerated from the same `plugin.msgpackz` registry the worker
-/// loads from at startup, so the agent's view matches the worker's.
+/// loads from at startup; the library hierarchy is enumerated live
+/// from the canonical repo so an agent (or subagent) discovers
+/// call() targets without stale skill docs.
 ///
 /// Where: returned from `NuSh::info` wrapped in a `CallToolResult`
 /// whose `structured_content` carries the serialized envelope.
@@ -379,6 +383,7 @@ pub(crate) struct InfoEnvelope {
     pub version: String,
     pub nu_version: String,
     pub plugins: Vec<crate::plugins::PluginInfo>,
+    pub libraries: Vec<LibraryInfo>,
 }
 
 // outputSchema deviation note (the_user 2026-06-02): a `oneOf(Success,
@@ -1063,7 +1068,7 @@ impl NuSh {
     }
 
     #[mcp::tool(
-        description = "Name, version, nu version, and nu plugins",
+        description = "Name, version, nu version, nu plugins, and the registered library/module/function hierarchy with call schemas.",
         output_schema = mcp::schema_for_type::<InfoEnvelope>()
     )]
     async fn info(
@@ -1075,6 +1080,7 @@ impl NuSh {
             version: env!("CARGO_PKG_VERSION").to_string(),
             nu_version: env!("NU_VERSION").to_string(),
             plugins: list_registered_plugins(),
+            libraries: enumerate_libraries(&self.library_locks).await,
         })
     }
 }

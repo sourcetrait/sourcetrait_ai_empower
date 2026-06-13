@@ -851,6 +851,241 @@ pub(crate) fn call_file_path(
 }
 
 // ============================================================================
+// Library enumeration (the info() hierarchy)
+// ============================================================================
+
+/// What: one callable function in the info() hierarchy - its name
+/// plus the schema typedef strings extracted from the canonical
+/// function file (`main`'s args record + `resolve`'s result record).
+///
+/// Why: the agent discovers call() targets live through info()
+/// instead of relying on skill docs that go stale; the schemas are
+/// the call contract. Text typedefs for now - they flip to a
+/// structured representation if the schema-typedef conversion
+/// followup lands.
+///
+/// Where: built by `build_module_tree` from each `<name>.nu`;
+/// carried in `ModuleInfo::functions` and `LibraryInfo::functions`;
+/// serialized inside `InfoEnvelope::libraries`.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub struct FunctionInfo {
+    pub name: String,
+    pub args_schema: String,
+    pub result_schema: String,
+}
+
+/// What: one module node in the info() hierarchy. `name` is the
+/// single path segment; `modules` nests recursively; `functions`
+/// holds this level's callables. Pure-namespace modules (no
+/// functions, only submodules) appear as nodes.
+///
+/// Why: the envelope mirrors the library -> module -> function
+/// hierarchy regardless of internal storage (the_user design lock),
+/// and every level is a uniform node so the one-liner-docs followup
+/// can attach documentation to libraries, modules, and functions
+/// alike.
+///
+/// Where: built recursively by `build_module_tree`; carried in
+/// `LibraryInfo::modules`.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub struct ModuleInfo {
+    pub name: String,
+    pub modules: Vec<ModuleInfo>,
+    pub functions: Vec<FunctionInfo>,
+}
+
+/// What: one registered library in the info() hierarchy. `path` is
+/// the meta sidecar's `source_path` - the agent-actionable directory
+/// (the import source for imported libraries, the client mirror for
+/// registered ones). The library acts as the root module: top-level
+/// `functions` live directly on it.
+///
+/// Why: surfacing `source_path` (not the canonical repo dir, which
+/// is storage internals) tells the agent where editing happens
+/// before a reimport; the uniform node shape matches `ModuleInfo`
+/// for the per-node-docs followup.
+///
+/// Where: built by `enumerate_libraries`; serialized as
+/// `InfoEnvelope::libraries`.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub struct LibraryInfo {
+    pub name: String,
+    pub path: String,
+    pub modules: Vec<ModuleInfo>,
+    pub functions: Vec<FunctionInfo>,
+}
+
+/// What: scan `source` for `marker`, then capture the inner text of
+/// the first `record<...>` after it, counting nested `<`/`>` so
+/// nested typedefs (`record<a: list<int>>`) close correctly. None
+/// when the marker or a balanced record is absent.
+///
+/// Why: canonical function files are validator-guaranteed to carry
+/// `export def main [args: record<AS>]` + `export def resolve
+/// [args: record<RS>] { $args }`, so a balanced text scan recovers
+/// the schema strings exactly as the author supplied them (define
+/// round-trips verbatim) without an AST parse per info() call.
+///
+/// Where: called twice per function file by
+/// `extract_function_schemas`.
+fn record_inner_after(source: &str, marker: &str) -> Option<String> {
+    let marker_at = source.find(marker)?;
+    let tail = &source[marker_at..];
+    let rec_at = tail.find("record<")?;
+    let inner_start = marker_at + rec_at + "record<".len();
+    let bytes = source.as_bytes();
+    let mut depth = 1usize;
+    let mut i = inner_start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(source[inner_start..i].to_string());
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// What: extract `(args_schema, result_schema)` from a canonical
+/// function file's source. Empty strings on a failed scan - which
+/// cannot happen for files that passed the strict validator; the
+/// degenerate value keeps enumeration total rather than dropping
+/// the function silently.
+///
+/// Why: info()'s FunctionInfo carries the call contract; the
+/// canonical file is the single source of truth for it.
+///
+/// Where: called by `build_module_tree` for every `<name>.nu`.
+fn extract_function_schemas(source: &str) -> (String, String) {
+    let args = record_inner_after(source, "export def main").unwrap_or_default();
+    let result = record_inner_after(source, "export def resolve").unwrap_or_default();
+    (args, result)
+}
+
+/// What: recursively walk one directory of a canonical library,
+/// returning its (sub)modules and functions, both sorted by name.
+/// Skips dotfiles and `mod.nu` (cascade plumbing, not surface);
+/// only subdirectories carrying a `mod.nu` count as modules.
+///
+/// Why: the on-disk tree IS the module hierarchy (the mod.nu
+/// cascade mirrors it), so a sorted directory walk reproduces the
+/// library -> module -> function structure deterministically.
+///
+/// Where: called by `enumerate_libraries` at each library root and
+/// by itself for nested modules.
+fn build_module_tree(
+    dir: &std::path::Path,
+) -> io::Result<(Vec<ModuleInfo>, Vec<FunctionInfo>)> {
+    let mut entries: Vec<(String, bool)> = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || name == "mod.nu" {
+            continue;
+        }
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            if entry.path().join("mod.nu").exists() {
+                entries.push((name, true));
+            }
+        } else if ft.is_file() && name.ends_with(".nu") {
+            entries.push((name, false));
+        }
+    }
+    entries.sort();
+    let mut modules = Vec::new();
+    let mut functions = Vec::new();
+    for (name, is_dir) in entries {
+        if is_dir {
+            let (m, f) = build_module_tree(&dir.join(&name))?;
+            modules.push(ModuleInfo {
+                name,
+                modules: m,
+                functions: f,
+            });
+        } else {
+            let source = fs::read_to_string(dir.join(&name))?;
+            let stem = name.trim_end_matches(".nu").to_string();
+            let (args_schema, result_schema) = extract_function_schemas(&source);
+            functions.push(FunctionInfo {
+                name: stem,
+                args_schema,
+                result_schema,
+            });
+        }
+    }
+    Ok((modules, functions))
+}
+
+/// What: enumerate every canonical library into the info()
+/// hierarchy. Walks `libraries_dir()` for subdirs carrying the meta
+/// sidecar (the same marker `hydrate_from_disk` keys on), takes the
+/// per-library READ lock while reading that library's meta +
+/// function files (the_user ruling), and builds the recursive node
+/// tree. Libraries sorted by name; a library whose meta or tree
+/// read fails is skipped with a host-stderr note rather than
+/// failing the whole info() call.
+///
+/// Why: gives the agent a live, always-current view of the call()
+/// surface; the read lock means a concurrent define/reimport can't
+/// tear an enumeration mid-library.
+///
+/// Where: called by `server::tool::NuSh::info` to populate
+/// `InfoEnvelope::libraries`.
+pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo> {
+    let dir = libraries_dir();
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(read) = fs::read_dir(&dir) {
+        for entry in read.flatten() {
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if !is_dir {
+                continue;
+            }
+            if !entry.path().join(META_FILE).exists() {
+                continue;
+            }
+            if let Ok(name) = entry.file_name().into_string() {
+                names.push(name);
+            }
+        }
+    }
+    names.sort();
+    let mut out = Vec::new();
+    for name in names {
+        let lock = locks.lookup(&name).await;
+        let _guard = match &lock {
+            Some(l) => Some(l.read().await),
+            None => None,
+        };
+        let meta = match load_meta(&name) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("nushell_mcp: info enumeration skipped {name}: {e}");
+                continue;
+            }
+        };
+        match build_module_tree(&library_dir(&name)) {
+            Ok((modules, functions)) => out.push(LibraryInfo {
+                name,
+                path: meta.source_path.display().to_string(),
+                modules,
+                functions,
+            }),
+            Err(e) => {
+                eprintln!("nushell_mcp: info enumeration skipped {name}: {e}");
+            }
+        }
+    }
+    out
+}
+
+// ============================================================================
 // Strict library source validator (for import_library / reimport_library)
 // ============================================================================
 

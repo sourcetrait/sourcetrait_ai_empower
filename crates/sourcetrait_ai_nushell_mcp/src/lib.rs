@@ -6,6 +6,7 @@ pub(crate) mod server {
     pub(crate) mod parse_engine;
     pub(crate) mod pool;
     pub(crate) mod run;
+    pub(crate) mod schema;
     pub(crate) mod tool;
     pub(crate) mod worker_handle;
 }

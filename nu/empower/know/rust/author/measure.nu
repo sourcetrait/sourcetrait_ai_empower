@@ -44,6 +44,6 @@ export def main [args: record<out_dir: string, picks_path: string>] {
     }
 }
 
-export def resolve [args: record<valid_picks: int, failed_picks: int, total_kp_chars: int, per_set: list, per_group: list>] {
+export def resolve [args: record<valid_picks: int, failed_picks: int, total_kp_chars: int, per_set: table<set: string, count: int, kp_chars: int>, per_group: table<group: string, count: int, kp_chars: int>>] {
     $args
 }

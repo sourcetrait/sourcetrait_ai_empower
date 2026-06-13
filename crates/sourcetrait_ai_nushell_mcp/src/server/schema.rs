@@ -996,4 +996,157 @@ mod tests {
             "record<out: int>");
         assert_eq!(nu_to_result_schema("nothing").unwrap(), obj("{}"));
     }
+
+    // ---- nu -> json -> nu round-trips (the emit direction) ----
+
+    #[test]
+    fn roundtrip_nu_json_nu() {
+        // Sorted field names so the BTreeMap-sorted render is
+        // string-identical to the input.
+        for nu in [
+            "nothing",
+            "record<a: int>",
+            "record<a: int, b: string>",
+            "record<r: record<x: cell-path, y: list<string>>>",
+            "record<t: table<col: int, name: string>>",
+            "record<u: oneof<int, nothing>>",
+            "record<xs: list<oneof<int, string>>>",
+            "record<n: oneof<record<a: int>, string>>",
+        ] {
+            let json = nu_to_args_schema(nu).unwrap();
+            let back = args_schema_to_nu(&json).unwrap();
+            assert_eq!(back, nu, "nu roundtrip failed for {nu}");
+        }
+    }
+
+    // ---- emit normalizations + nested composites ----
+
+    #[test]
+    fn emit_list_of_record_normalizes_to_table_json() {
+        // list<record<...>> and table<...> share the [{...}] JSON form:
+        // the settled grammar maps [{record}] canonically to a table.
+        assert_eq!(
+            nu_to_args_schema("record<x: list<record<a: int>>>").unwrap(),
+            obj(r#"{"x":[{"a":"int"}]}"#));
+        assert_eq!(
+            nu_to_args_schema("record<x: table<a: int>>").unwrap(),
+            obj(r#"{"x":[{"a":"int"}]}"#));
+    }
+
+    #[test]
+    fn emit_nested_list_and_list_of_table() {
+        assert_eq!(
+            nu_to_args_schema("record<x: list<list<int>>>").unwrap(),
+            obj(r#"{"x":[["int"]]}"#));
+        assert_eq!(
+            nu_to_args_schema("record<x: list<table<a: int>>>").unwrap(),
+            obj(r#"{"x":[[{"a":"int"}]]}"#));
+    }
+
+    #[test]
+    fn emit_oneof_with_composite_members() {
+        assert_eq!(
+            nu_to_args_schema(
+                "record<u: oneof<record<a: int>, table<b: string>, nothing>>",
+            ).unwrap(),
+            obj(r#"{"u":{"oneof<>":[{"a":"int"},[{"b":"string"}],null]}}"#));
+    }
+
+    // ---- emit denials (the nu parse side) ----
+
+    #[test]
+    fn emit_rejects_bare_table_and_record() {
+        assert!(nu_to_args_schema("record<x: table>").is_err());
+        assert!(nu_to_args_schema("record<x: record>").is_err());
+    }
+
+    #[test]
+    fn emit_rejects_nested_empty_record_and_table() {
+        assert!(nu_to_args_schema("record<x: record<>>").is_err());
+        assert!(nu_to_args_schema("record<x: table<>>").is_err());
+    }
+
+    #[test]
+    fn emit_rejects_any_and_unknown() {
+        assert!(nu_to_args_schema("record<x: any>").is_err());
+        assert!(nu_to_args_schema("record<x: frobnicate>").is_err());
+    }
+
+    #[test]
+    fn emit_rejects_top_level_bare_forms() {
+        assert!(nu_to_args_schema("int").is_err());
+        assert!(nu_to_args_schema("list<int>").is_err());
+        assert!(nu_to_args_schema("oneof<int, string>").is_err());
+    }
+
+    // ---- json-side denials not covered above ----
+
+    #[test]
+    fn deny_oneof_extra_key() {
+        assert!(args_schema_to_nu(
+            &obj(r#"{"x":{"oneof<>":["int"],"k":"string"}}"#)).is_err());
+    }
+
+    #[test]
+    fn deny_oneof_value_not_array() {
+        assert!(args_schema_to_nu(&obj(r#"{"x":{"oneof<>":"int"}}"#)).is_err());
+    }
+
+    #[test]
+    fn deny_bool_and_number_nodes() {
+        assert!(args_schema_to_nu(&obj(r#"{"x":true}"#)).is_err());
+        assert!(args_schema_to_nu(&obj(r#"{"x":3}"#)).is_err());
+    }
+
+    // ---- all 14 scalars, both directions ----
+
+    #[test]
+    fn all_scalars_roundtrip_both_ways() {
+        let names = [
+            "int", "float", "string", "bool", "datetime", "duration",
+            "filesize", "binary", "range", "number", "glob", "cell-path",
+            "path", "directory",
+        ];
+        for n in names {
+            let json = obj(&format!(r#"{{"f":"{n}"}}"#));
+            let nu = format!("record<f: {n}>");
+            assert_eq!(args_schema_to_nu(&json).unwrap(), nu, "j2n {n}");
+            assert_eq!(nu_to_args_schema(&nu).unwrap(), json, "n2j {n}");
+        }
+    }
+
+    // ---- the live migration shapes (regression locks) ----
+
+    #[test]
+    fn roundtrip_symbols_result_shape() {
+        let s = r#"{"suspect_count":"int","suspects":[{"files":["string"],"id":"string"}]}"#;
+        let nu = result_schema_to_nu(&obj(s)).unwrap();
+        assert_eq!(
+            nu,
+            "record<suspect_count: int, suspects: table<files: list<string>, id: string>>");
+        assert_eq!(nu_to_result_schema(&nu).unwrap(), obj(s));
+    }
+
+    #[test]
+    fn roundtrip_measure_result_shape() {
+        let s = r#"{"failed_picks":"int","per_group":[{"count":"int","group":"string","kp_chars":"int"}],"per_set":[{"count":"int","kp_chars":"int","set":"string"}],"total_kp_chars":"int","valid_picks":"int"}"#;
+        let nu = result_schema_to_nu(&obj(s)).unwrap();
+        assert_eq!(nu_to_result_schema(&nu).unwrap(), obj(s));
+    }
+
+    #[test]
+    fn roundtrip_integrity_nested_record_shape() {
+        let s = r#"{"counts":{"indexed":"int","memories":"int"},"p1_frontmatter":{"name_mismatch":[{"file":"string","name":"string","slug":"string"}]},"p5_sizes":{"memory_md_bytes":"int","over_cap":"bool"}}"#;
+        let nu = result_schema_to_nu(&obj(s)).unwrap();
+        assert_eq!(nu_to_result_schema(&nu).unwrap(), obj(s));
+    }
+
+    #[test]
+    fn args_void_and_validate_result_shape() {
+        // memories' migrated shape: void args + a list<string> result.
+        assert_eq!(args_schema_to_nu(&obj("{}")).unwrap(), "nothing");
+        let s = r#"{"failed_details":[{"bytes":"int","pattern":"string","reason":"string"}],"failed_patterns":["string"]}"#;
+        let nu = result_schema_to_nu(&obj(s)).unwrap();
+        assert_eq!(nu_to_result_schema(&nu).unwrap(), obj(s));
+    }
 }

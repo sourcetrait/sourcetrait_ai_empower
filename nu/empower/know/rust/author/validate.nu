@@ -46,6 +46,6 @@ export def main [args: record<out_dir: string, picks_batch_path: string>] {
     }
 }
 
-export def resolve [args: record<valid_count: int, failed_count: int, valid_patterns: list<string>, failed_patterns: list<string>, failed_details: list<record>>] {
+export def resolve [args: record<valid_count: int, failed_count: int, valid_patterns: list<string>, failed_patterns: list<string>, failed_details: table<pattern: string, reason: string, bytes: int>>] {
     $args
 }

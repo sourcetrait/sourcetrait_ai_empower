@@ -13,7 +13,29 @@
 - [`reimport_library()`](#reimport_library) Re-import a library from its saved source path.
 - [`processes()`](#processes) Snapshot every in-flight tool call on the host.
 - [`kill()`](#kill) Cancel an in-flight call by its nonce.
-- [`info()`](#info) Name, version, nu version, and nu plugins.
+- [`info()`](#info) Name, version, nu version, nu plugins, and the registered library hierarchy.
+
+## Schemas
+
+`args_schema` and `result_schema` are structured JSON objects mapping
+each field name to its type. The type vocabulary:
+
+- scalar: a type-name string - one of `int`, `float`, `string`, `bool`,
+  `datetime`, `duration`, `filesize`, `binary`, `range`, `number`,
+  `glob`, `cell-path`, `path`, `directory`.
+- record: a nested object, e.g. `{ "point": { "x": "int", "y": "int" } }`.
+- table: an array holding one record, e.g.
+  `[{ "name": "string", "age": "int" }]`.
+- list: an array holding one element type, e.g. `["string"]`.
+- oneof (type union): the reserved-key object
+  `{ "oneof<>": [ <type>, ... ] }`; the everyday case is value
+  nullability, `{ "oneof<>": ["int", null] }`.
+- nothing: the JSON `null` literal (only as a `oneof<>` member).
+- void: an empty object `{}` as the entire `args_schema` (a no-args
+  function) or the entire `result_schema` (a no-value return).
+
+Records and tables are open - extra fields are accepted - and every
+declared field is required and is type-checked to its full depth.
 
 ## `run()`
 *Evaluate a typed nushell body on a stateless worker.*
@@ -24,8 +46,8 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "args_schema":   { "type": "string" },
-    "result_schema": { "type": "string" },
+    "args_schema":   { "type": "object", "additionalProperties": true },
+    "result_schema": { "type": "object", "additionalProperties": true },
     "args":          { "type": "object", "additionalProperties": true },
     "body":          { "type": "string" },
     "timeout_ms":    { "type": ["integer", "null"], "format": "uint64", "minimum": 0 }
@@ -60,8 +82,8 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "args_schema": "eldest: bool, tabs: table<name: string, age: int, ratio: float>",
-    "result_schema": "count: int, first: record<name: string, ratio: float>",
+    "args_schema": { "eldest": "bool", "tabs": [{ "name": "string", "age": "int", "ratio": "float" }] },
+    "result_schema": { "count": "int", "first": { "name": "string", "ratio": "float" } },
     "args": {
       "eldest": true,
       "tabs": [
@@ -100,8 +122,8 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "args_schema":   { "type": "string" },
-    "result_schema": { "type": "string" },
+    "args_schema":   { "type": "object", "additionalProperties": true },
+    "result_schema": { "type": "object", "additionalProperties": true },
     "args":          { "type": "object", "additionalProperties": true },
     "body":          { "type": "string" },
     "timeout_ms":    { "type": ["integer", "null"], "format": "uint64", "minimum": 0 }
@@ -125,8 +147,8 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "args_schema": "value: int",
-    "result_schema": "seeded: int",
+    "args_schema": { "value": "int" },
+    "result_schema": { "seeded": "int" },
     "args": { "value": 10 },
     "body": "$env.COUNTER = $args.value\n{ seeded: $args.value }"
   }
@@ -322,8 +344,8 @@ Schema (partial):
     "library":       { "type": "string" },
     "module_path":   { "type": "string" },
     "name":          { "type": "string" },
-    "args_schema":   { "type": "string" },
-    "result_schema": { "type": "string" },
+    "args_schema":   { "type": "object", "additionalProperties": true },
+    "result_schema": { "type": "object", "additionalProperties": true },
     "body":          { "type": "string" }
   },
   "required": ["library", "module_path", "name", "args_schema", "result_schema", "body"]
@@ -347,8 +369,8 @@ MCP (partial):
     "library": "math",
     "module_path": "ops",
     "name": "double",
-    "args_schema": "x: int",
-    "result_schema": "out: int",
+    "args_schema": { "x": "int" },
+    "result_schema": { "out": "int" },
     "body": "{ out: ($args.x * 2) }"
   }
 }
@@ -550,7 +572,7 @@ Output (partial):
 ```
 
 ## `info()`
-*Name, version, nu version, and nu plugins.*
+*Name, version, nu version, nu plugins, and the registered library hierarchy.*
 
 ### arguments
 
@@ -576,12 +598,32 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "name": "nu_sh_mcp",
-      "version": "0.0.33",
+      "name": "nushell_mcp",
+      "version": "0.0.40",
       "nu_version": "0.113.1",
       "plugins": [
-        { "name": "query", "version": "0.117.0" },
+        { "name": "query", "version": "0.112.2" },
         { "name": "polars" }
+      ],
+      "libraries": [
+        {
+          "name": "math",
+          "path": "/your/local/math",
+          "modules": [
+            {
+              "name": "ops",
+              "submodules": [],
+              "functions": [
+                {
+                  "name": "double",
+                  "args_schema": { "x": "int" },
+                  "result_schema": { "out": "int" }
+                }
+              ]
+            }
+          ],
+          "functions": []
+        }
       ]
     },
     "content": []

@@ -49,7 +49,11 @@ impl Host {
     }
 
     fn libraries_dir(&self) -> PathBuf {
-        self.data_dir.path().join("nushell_mcp").join("libraries")
+        self.data_dir
+            .path()
+            .join("sourcetrait")
+            .join("nushell_mcp")
+            .join("libraries")
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {

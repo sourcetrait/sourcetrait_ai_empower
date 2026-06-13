@@ -53,14 +53,17 @@ impl CacheKind {
 pub(crate) static BASE_DIRS: LazyLock<dirs::BaseDirs> =
     LazyLock::new(|| dirs::BaseDirs::new().expect("BaseDirs::new failed"));
 
-/// What: returns `$XDG_CACHE_HOME/<target_name>/`, the per-app cache
-/// root where per-call stdout/stderr logs (runs/interacts/calls) and
-/// the content-addressed closure cache (closures) live. The target
-/// name is `"nushell_mcp"` on Main and `"nushell_mcp_test"` on Test, per
+/// What: returns `$XDG_CACHE_HOME/sourcetrait/<target_name>/`, the
+/// per-app cache root where per-call stdout/stderr logs
+/// (runs/interacts/calls) and the content-addressed closure cache
+/// (closures) live. The vendor segment is
+/// `lib_empower::consts::SOURCETRAIT`; the target name is
+/// `"nushell_mcp"` on Main and `"nushell_mcp_test"` on Test, per
 /// `build_target().name()`.
 ///
 /// Why: XDG cache is the platform-correct location for regenerable
-/// artifacts; namespacing the per-app subdir by `BuildTarget` keeps
+/// artifacts; the `sourcetrait/` vendor segment namespaces every
+/// sourcetrait app under one parent, and the `BuildTarget` leaf keeps
 /// the test sandbox completely isolated from the production cache so
 /// a `_test` host can run live alongside the production host without
 /// touching the same files.
@@ -71,19 +74,23 @@ pub(crate) static BASE_DIRS: LazyLock<dirs::BaseDirs> =
 pub(crate) fn cache_base_dir() -> PathBuf {
     BASE_DIRS
         .cache_dir()
+        .join(lib_empower::consts::SOURCETRAIT)
         .join(build_target().name())
 }
 
-/// What: returns `$XDG_DATA_HOME/<target_name>/`, the per-app data
-/// root where the signing keypair and the libraries git repo live
-/// (slice 3 substrate). The target name is `"nushell_mcp"` on Main and
-/// `"nushell_mcp_test"` on Test, per `build_target().name()`.
+/// What: returns `$XDG_DATA_HOME/sourcetrait/<target_name>/`, the
+/// per-app data root where the signing keypair and the libraries git
+/// repo live (slice 3 substrate). The vendor segment is
+/// `lib_empower::consts::SOURCETRAIT`; the target name is
+/// `"nushell_mcp"` on Main and `"nushell_mcp_test"` on Test, per
+/// `build_target().name()`.
 ///
 /// Why: XDG data is the platform-correct location for non-regenerable
 /// content; losing it would mean losing library registrations and
-/// the signing keypair. Namespacing by `BuildTarget` keeps the test
-/// sandbox's libraries / keypair completely isolated from the
-/// production ones.
+/// the signing keypair. The `sourcetrait/` vendor segment namespaces
+/// every sourcetrait app under one parent; the `BuildTarget` leaf
+/// keeps the test sandbox's libraries / keypair completely isolated
+/// from the production ones.
 ///
 /// Where: called by `server::library` path helpers (`keypair_dir`,
 /// `libraries_dir`, `library_dir`, `library_meta_path`,
@@ -91,11 +98,12 @@ pub(crate) fn cache_base_dir() -> PathBuf {
 pub(crate) fn data_base_dir() -> PathBuf {
     BASE_DIRS
         .data_dir()
+        .join(lib_empower::consts::SOURCETRAIT)
         .join(build_target().name())
 }
 
 /// What: returns the `<cache_base>/<kind>/` directory for the given
-/// `CacheKind`, e.g. `$XDG_CACHE_HOME/nushell_mcp/runs/`.
+/// `CacheKind`, e.g. `$XDG_CACHE_HOME/sourcetrait/nushell_mcp/runs/`.
 ///
 /// Why: per-kind subdir partitioning keeps run/interact/call logs
 /// from colliding on the per-call nonce and gives the agent a
@@ -108,7 +116,8 @@ pub(crate) fn cache_kind_dir(kind: CacheKind) -> PathBuf {
 }
 
 /// What: returns the per-call log dir for a specific `(CacheKind,
-/// Nonce)` pair, e.g. `$XDG_CACHE_HOME/nushell_mcp/runs/<nonce>/`. The
+/// Nonce)` pair, e.g.
+/// `$XDG_CACHE_HOME/sourcetrait/nushell_mcp/runs/<nonce>/`. The
 /// dir is NOT created by this function; callers handle
 /// `fs::create_dir_all`.
 ///

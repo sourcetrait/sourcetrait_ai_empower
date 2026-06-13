@@ -55,7 +55,7 @@ pub struct RunParams {
 pub struct RerunParams {
     /// base62 rerun_id returned by a prior `run()` invocation. Names a
     /// `closures/<rerun_id>.json` cache file under
-    /// `$XDG_CACHE_HOME/nushell_mcp/`.
+    /// `$XDG_CACHE_HOME/sourcetrait/nushell_mcp/`.
     pub rerun_id: String,
     /// Per-call args. The args_schema baked into the cached closure
     /// gates this at parse time inside the worker.
@@ -178,7 +178,7 @@ struct ClosureCacheBody {
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct RegisterLibraryParams {
     /// Library name (top-level identifier). Becomes the directory name
-    /// in the MCP repo under `$XDG_DATA_HOME/nushell_mcp/libraries/`.
+    /// in the MCP repo under `$XDG_DATA_HOME/sourcetrait/nushell_mcp/libraries/`.
     pub name: String,
     /// Client-side path where the MCP mirrors the library's files.
     /// Created if absent. Subsequent define_function calls write here
@@ -1138,7 +1138,7 @@ struct DispatchOutcome {
 /// What: error-side return value from `dispatch_pooled` /
 /// `dispatch_interact`. Pairs the typed `Error` with an optional
 /// `Nonce` -- present when a worker-side log dir at
-/// `$XDG_CACHE_HOME/nushell_mcp/<x>/<nonce>/` was created (the agent
+/// `$XDG_CACHE_HOME/sourcetrait/nushell_mcp/<x>/<nonce>/` was created (the agent
 /// can fetch stdout/stderr by that nonce).
 ///
 /// Why: the dispatch helpers may fail BEFORE or AFTER allocating a
@@ -1484,11 +1484,11 @@ impl mcp::ServerHandler for NuSh {
         });
         info.instructions = Some(
             "Evaluation artifacts are cached at \
-             $XDG_CACHE_HOME/nushell_mcp/{runs,interacts,calls}/<nonce>/{stdout,stderr}; \
-             closures cached at $XDG_CACHE_HOME/nushell_mcp/closures/<rerun_id>.json. \
+             $XDG_CACHE_HOME/sourcetrait/nushell_mcp/{runs,interacts,calls}/<nonce>/{stdout,stderr}; \
+             closures cached at $XDG_CACHE_HOME/sourcetrait/nushell_mcp/closures/<rerun_id>.json. \
              Registered libraries live in a signed git repo at \
-             $XDG_DATA_HOME/nushell_mcp/libraries/; signing keypair at \
-             $XDG_DATA_HOME/nushell_mcp/keypair/."
+             $XDG_DATA_HOME/sourcetrait/nushell_mcp/libraries/; signing keypair at \
+             $XDG_DATA_HOME/sourcetrait/nushell_mcp/keypair/."
                 .to_string(),
         );
         info

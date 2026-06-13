@@ -9,7 +9,7 @@ use crate::*;
 /// workers (stateless pool + stateful) in parallel, constructs the
 /// `NuSh` rmcp server, and blocks on `service.waiting()` until the
 /// rmcp connection closes. Side effects: writes
-/// `$XDG_DATA_HOME/<target_name>/{keypair,libraries}` on first
+/// `$XDG_DATA_HOME/sourcetrait/<target_name>/{keypair,libraries}` on first
 /// startup; binds stdin/stdout for MCP JSON-RPC framing via
 /// `mcp::stdio()`.
 ///

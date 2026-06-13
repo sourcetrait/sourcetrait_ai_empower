@@ -1,9 +1,9 @@
 //! Library substrate tests for 0.0.10.
 //!
 //! Verifies:
-//!   - First startup creates `<XDG_DATA_HOME>/nushell_mcp/keypair/{id_nushell_mcp,
-//!     id_nushell_mcp.pub, allowed_signers}` and the git repo at
-//!     `<XDG_DATA_HOME>/nushell_mcp/libraries/` with a signed initial commit.
+//!   - First startup creates `<XDG_DATA_HOME>/sourcetrait/nushell_mcp/keypair/
+//!     {id_nushell_mcp, id_nushell_mcp.pub, allowed_signers}` and the git repo at
+//!     `<XDG_DATA_HOME>/sourcetrait/nushell_mcp/libraries/` with a signed initial commit.
 //!   - `register_library(name, path)` writes the library subtree in the
 //!     MCP repo + mirrors at the client `path`; commits.
 //!   - Duplicate `register_library` errors.
@@ -61,7 +61,7 @@ impl Host {
     }
 
     fn nushell_mcp_data_dir(&self) -> PathBuf {
-        self.data_dir.path().join("nushell_mcp")
+        self.data_dir.path().join("sourcetrait").join("nushell_mcp")
     }
 
     fn libraries_dir(&self) -> PathBuf {

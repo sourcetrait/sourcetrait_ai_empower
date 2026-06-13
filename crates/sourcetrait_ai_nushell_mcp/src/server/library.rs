@@ -31,8 +31,8 @@ pub(crate) const META_FILE: &str = ".nushell_mcp_meta.json";
 // Path helpers
 // ============================================================================
 
-/// What: returns `$XDG_DATA_HOME/nushell_mcp/keypair/`, the directory
-/// holding the MCP's git-signing keypair.
+/// What: returns `$XDG_DATA_HOME/sourcetrait/nushell_mcp/keypair/`,
+/// the directory holding the MCP's git-signing keypair.
 ///
 /// Why: keypair lives in data_dir (not cache) because losing it would
 /// orphan the git history's signatures; centralizing the path keeps
@@ -84,8 +84,9 @@ pub(crate) fn allowed_signers_path() -> PathBuf {
     keypair_dir().join("allowed_signers")
 }
 
-/// What: returns `$XDG_DATA_HOME/nushell_mcp/libraries/`, the root of
-/// the MCP-managed git repo holding every registered library.
+/// What: returns `$XDG_DATA_HOME/sourcetrait/nushell_mcp/libraries/`,
+/// the root of the MCP-managed git repo holding every registered
+/// library.
 ///
 /// Why: one git repo for all libraries gives us a single audit log
 /// across slice-3 lifecycle ops (register / define / undefine /

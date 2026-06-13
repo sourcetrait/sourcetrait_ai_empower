@@ -3,9 +3,9 @@
 //!
 //! Verifies that on the test variant:
 //!   1. `info()` reports the `nushell_mcp_test` name (not `nushell_mcp`).
-//!   2. XDG paths are namespaced under `nushell_mcp_test/` (not
-//!      `nushell_mcp/`), so the test sandbox shares no on-disk state
-//!      with a co-running production host.
+//!   2. XDG paths are namespaced under `sourcetrait/nushell_mcp_test/`
+//!      (not `sourcetrait/nushell_mcp/`), so the test sandbox shares no
+//!      on-disk state with a co-running production host.
 //!   3. `register_library` rejects names that don't end with `_test`
 //!      (defense-in-depth against corrupting production-named
 //!      libraries from a misconfigured test sandbox).
@@ -67,6 +67,7 @@ impl Host {
     fn libraries_dir(&self) -> PathBuf {
         self.data_dir
             .path()
+            .join("sourcetrait")
             .join("nushell_mcp_test")
             .join("libraries")
     }
@@ -206,7 +207,7 @@ fn test_variant_xdg_paths_isolated() {
     let lib_dir = host.libraries_dir().join("foo_test");
     assert!(
         lib_dir.exists(),
-        "library dir should land under <XDG_DATA_HOME>/nushell_mcp_test/libraries/; \
+        "library dir should land under <XDG_DATA_HOME>/sourcetrait/nushell_mcp_test/libraries/; \
          expected {} to exist",
         lib_dir.display(),
     );

@@ -875,7 +875,7 @@ pub struct FunctionInfo {
 }
 
 /// What: one module node in the info() hierarchy. `name` is the
-/// single path segment; `modules` nests recursively; `functions`
+/// single path segment; `submodules` nests recursively; `functions`
 /// holds this level's callables. Pure-namespace modules (no
 /// functions, only submodules) appear as nodes.
 ///
@@ -883,14 +883,17 @@ pub struct FunctionInfo {
 /// hierarchy regardless of internal storage (the_user design lock),
 /// and every level is a uniform node so the one-liner-docs followup
 /// can attach documentation to libraries, modules, and functions
-/// alike.
+/// alike. The field reads `submodules` (vs `LibraryInfo::modules`)
+/// because the relation differs: a library HAS modules, a module
+/// HAS submodules; recursion below the library seam stays
+/// single-field either way.
 ///
 /// Where: built recursively by `build_module_tree`; carried in
 /// `LibraryInfo::modules`.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct ModuleInfo {
     pub name: String,
-    pub modules: Vec<ModuleInfo>,
+    pub submodules: Vec<ModuleInfo>,
     pub functions: Vec<FunctionInfo>,
 }
 
@@ -1006,7 +1009,7 @@ fn build_module_tree(
             let (m, f) = build_module_tree(&dir.join(&name))?;
             modules.push(ModuleInfo {
                 name,
-                modules: m,
+                submodules: m,
                 functions: f,
             });
         } else {

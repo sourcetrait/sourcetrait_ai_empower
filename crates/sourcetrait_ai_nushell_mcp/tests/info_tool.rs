@@ -294,7 +294,7 @@ fn info_lists_registered_library_hierarchy() {
     assert_eq!(root_fns[0]["args_schema"].as_str(), Some("x: int"));
     assert_eq!(root_fns[0]["result_schema"].as_str(), Some("out: int"));
 
-    // alpha -> { functions: [a1], modules: [beta -> { functions: [b1] }] }
+    // alpha -> { functions: [a1], submodules: [beta -> { functions: [b1] }] }
     let modules = lib["modules"].as_array().expect("library modules");
     assert_eq!(modules.len(), 1, "got {modules:?}");
     let alpha = &modules[0];
@@ -302,11 +302,11 @@ fn info_lists_registered_library_hierarchy() {
     let alpha_fns = alpha["functions"].as_array().expect("alpha functions");
     assert_eq!(alpha_fns.len(), 1);
     assert_eq!(alpha_fns[0]["name"].as_str(), Some("a1"));
-    let alpha_mods = alpha["modules"].as_array().expect("alpha modules");
-    assert_eq!(alpha_mods.len(), 1, "got {alpha_mods:?}");
-    let beta = &alpha_mods[0];
+    let alpha_subs = alpha["submodules"].as_array().expect("alpha submodules");
+    assert_eq!(alpha_subs.len(), 1, "got {alpha_subs:?}");
+    let beta = &alpha_subs[0];
     assert_eq!(beta["name"].as_str(), Some("beta"));
-    assert!(beta["modules"].as_array().expect("beta modules").is_empty());
+    assert!(beta["submodules"].as_array().expect("beta submodules").is_empty());
     let beta_fns = beta["functions"].as_array().expect("beta functions");
     assert_eq!(beta_fns.len(), 1);
     assert_eq!(beta_fns[0]["name"].as_str(), Some("b1"));
@@ -364,6 +364,9 @@ fn info_lists_imported_library_hierarchy() {
     let modules = lib["modules"].as_array().expect("modules");
     assert_eq!(modules.len(), 1);
     assert_eq!(modules[0]["name"].as_str(), Some("math"));
+    assert!(
+        modules[0]["submodules"].as_array().expect("math submodules").is_empty(),
+    );
     let math_fns = modules[0]["functions"].as_array().expect("math fns");
     assert_eq!(math_fns.len(), 1);
     assert_eq!(math_fns[0]["name"].as_str(), Some("double"));

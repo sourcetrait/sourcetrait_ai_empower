@@ -180,8 +180,10 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
 }
 
 fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
+    // leg 1: the call / resolve / main contract -- `body` is the raw logic
+    // (now in `call`); main is the AST-locked sugar.
     format!(
-        "export def main [args: record<{args_schema}>] {{\n{body}\n}}\n\nexport def resolve [args: record<{result_schema}>] {{\n    $args\n}}\n",
+        "export def call [args: record<{args_schema}>] {{\n{body}\n}}\n\nexport def resolve [args: record<{result_schema}>] {{\n    $args\n}}\n\nexport def main [args: record<{args_schema}>] {{\n    resolve (call $args)\n}}\n",
     )
 }
 
@@ -278,7 +280,7 @@ fn import_accepts_multiline_def_signature() {
     write_source(
         &src,
         "thing.nu",
-        "export def main [\n    args: record<x: int>\n] {\n    { out: ($args.x * 2) }\n}\n\nexport def resolve [\n    args: record<out: int>\n] {\n    $args\n}\n",
+        "export def call [\n    args: record<x: int>\n] {\n    { out: ($args.x * 2) }\n}\n\nexport def resolve [\n    args: record<out: int>\n] {\n    $args\n}\n\nexport def main [args: record<x: int>] {\n    resolve (call $args)\n}\n",
     );
     let resp = host.call(
         "import_library",
@@ -318,7 +320,9 @@ fn import_rejects_function_with_syntax_error() {
 }
 
 #[test]
-fn import_rejects_function_missing_resolve() {
+fn import_rejects_call_target_missing_resolve() {
+    // A file exporting `call` is a call-target; it must complete the
+    // contract. Missing `resolve` -> reject. (leg 1)
     let mut host = Host::spawn();
     let src = host.source_dir("badlib1");
     std::fs::create_dir_all(&src).unwrap();
@@ -326,7 +330,7 @@ fn import_rejects_function_missing_resolve() {
     write_source(
         &src,
         "thing.nu",
-        "export def main [args: record<x: int>] { { out: $args.x } }\n",
+        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
     );
 
     let resp = host.call(
@@ -339,13 +343,13 @@ fn import_rejects_function_missing_resolve() {
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
     assert!(
-        msg.contains("export def resolve"),
+        msg.contains("must export `resolve`"),
         "expected missing-resolve violation; got {msg:?}",
     );
 }
 
 #[test]
-fn import_rejects_function_extra_exports() {
+fn import_rejects_call_target_extra_export() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib2");
     std::fs::create_dir_all(&src).unwrap();
@@ -353,7 +357,7 @@ fn import_rejects_function_extra_exports() {
     write_source(
         &src,
         "thing.nu",
-        "export def main [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\nexport def helper [args: record<x: int>] { $args.x }\n",
+        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\nexport def helper [args: record<x: int>] { $args.x }\n",
     );
 
     let resp = host.call(
@@ -366,7 +370,7 @@ fn import_rejects_function_extra_exports() {
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
     assert!(
-        msg.contains("may only export `main` and `resolve`"),
+        msg.contains("exports only `call`, `resolve`, and `main`"),
         "expected extra-export violation; got {msg:?}",
     );
 }
@@ -380,7 +384,7 @@ fn import_rejects_non_passthrough_resolve_body() {
     write_source(
         &src,
         "thing.nu",
-        "export def main [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { print $args; $args }\n",
+        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { print $args; $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
     );
 
     let resp = host.call(
@@ -511,14 +515,13 @@ fn import_aggregates_multiple_violations() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib5");
     std::fs::create_dir_all(&src).unwrap();
-    // 0.0.16: `let` at module body level triggers a parse error
-    // (caught by the AST validator's syntax pass). Use `def helper []`
-    // instead -- nu_parser accepts that syntactically but our
-    // structural rule rejects any decl beyond export use / export module.
+    // leg 1: a bare `def` in mod.nu (only export forms allowed), a
+    // call-target missing `call`, and a call-target whose `main` body is
+    // wrong -- three distinct violations across the tree.
     write_source(&src, "mod.nu", "export module a\ndef helper [] { 1 }\n");
     write_source(&src, "a/mod.nu", "");
-    write_source(&src, "a/no_main.nu", "export def resolve [args: record<x: int>] { $args }\n");
-    write_source(&src, "a/no_resolve.nu", "export def main [args: record<x: int>] { { out: $args.x } }\n");
+    write_source(&src, "a/no_call.nu", "export def resolve [args: record<x: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n");
+    write_source(&src, "a/bad_main.nu", "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { call $args }\n");
 
     let resp = host.call(
         "import_library",
@@ -533,9 +536,9 @@ fn import_aggregates_multiple_violations() {
     // structural section.
     assert!(messages.iter().any(|m| m.contains("mod.nu may only contain")),
         "got {messages:?}");
-    assert!(messages.iter().any(|m| m.contains("export def main")),
+    assert!(messages.iter().any(|m| m.contains("must export `call`")),
         "got {messages:?}");
-    assert!(messages.iter().any(|m| m.contains("export def resolve")),
+    assert!(messages.iter().any(|m| m.contains("main's body must be exactly")),
         "got {messages:?}");
 }
 
@@ -660,5 +663,72 @@ fn imported_library_invokable_via_standalone_driver() {
     assert!(
         stdout.contains("12"),
         "expected out: 12; got {stdout:?}",
+    );
+}
+
+#[test]
+fn import_accepts_organizational_file() {
+    // A file with no call/resolve sentinel is ORGANIZATIONAL: helper defs
+    // + export const, unconstrained signatures, no contract. (leg 1)
+    let mut host = Host::spawn();
+    let src = host.source_dir("orglib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "export use ./util.nu\n");
+    write_source(
+        &src,
+        "util.nu",
+        "export const LIMIT = 10\nexport def helper [n: int] { $n * 2 }\n",
+    );
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "orglib", "path": src.to_str().unwrap()}),
+    );
+    assert!(!has_error_path(&resp), "organizational file should import; got {resp}");
+}
+
+#[test]
+fn import_accepts_mod_nu_with_export_const_and_def() {
+    // mod.nu carries module-level utils/consts alongside the cascade. (leg 1)
+    let mut host = Host::spawn();
+    let src = host.source_dir("modutillib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(
+        &src,
+        "mod.nu",
+        "export const VERSION = 1\nexport def shared [] { 42 }\nexport use ./thing.nu\n",
+    );
+    write_source(
+        &src,
+        "thing.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "modutillib", "path": src.to_str().unwrap()}),
+    );
+    assert!(!has_error_path(&resp), "mod.nu with export const/def should import; got {resp}");
+}
+
+#[test]
+fn import_rejects_empty_record_skeleton() {
+    // An empty `record<>` positional is the unfleshed-skeleton marker. (leg 1)
+    let mut host = Host::spawn();
+    let src = host.source_dir("skellib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "");
+    write_source(
+        &src,
+        "thing.nu",
+        "export def call [args: record<>] { {} }\nexport def resolve [args: record<n: int>] { $args }\nexport def main [args: record<>] { resolve (call $args) }\n",
+    );
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "skellib", "path": src.to_str().unwrap()}),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(
+        msg.contains("unfleshed skeleton") || msg.contains("real fields"),
+        "expected skeleton-rejection violation; got {msg:?}",
     );
 }

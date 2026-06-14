@@ -210,7 +210,7 @@ fn call_after_import_returns_result() {
     write_source(
         &src,
         "triple.nu",
-        "export def main [args: record<x: int>] {\n    { out: ($args.x * 3) }\n}\n\nexport def resolve [args: record<out: int>] {\n    $args\n}\n",
+        "export def call [args: record<x: int>] {\n    { out: ($args.x * 3) }\n}\n\nexport def resolve [args: record<out: int>] {\n    $args\n}\n\nexport def main [args: record<x: int>] {\n    resolve (call $args)\n}\n",
     );
     let _ = host.call_tool(
         "import_library",

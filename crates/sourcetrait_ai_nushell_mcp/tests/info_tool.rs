@@ -342,7 +342,7 @@ fn info_lists_imported_library_hierarchy() {
         .expect("write math/mod.nu");
     std::fs::write(
         src.join("math").join("double.nu"),
-        "export def main [args: record<x: int>] {\n    { out: ($args.x * 2) }\n}\n\nexport def resolve [args: record<out: int>] {\n    $args\n}\n",
+        "export def call [args: record<x: int>] {\n    { out: ($args.x * 2) }\n}\n\nexport def resolve [args: record<out: int>] {\n    $args\n}\n\nexport def main [args: record<x: int>] {\n    resolve (call $args)\n}\n",
     )
     .expect("write double.nu");
 

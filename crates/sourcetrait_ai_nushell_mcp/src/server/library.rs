@@ -1306,14 +1306,17 @@ fn check_mod_nu_pipeline_element(
         nu::Expr::Call(call) => {
             let decl = working_set.get_decl(call.decl_id);
             let name = decl.name();
-            if name == "export use" || name == "export module" {
+            // leg 1: mod.nu carries the cascade (`export use`/`export
+            // module`) AND module-level shared utils/consts (`export
+            // const`/`export def`).
+            if matches!(name, "export use" | "export module" | "export const" | "export def") {
                 return;
             }
             violations.push(Violation {
                 path: rel.to_string(),
                 line,
                 message: format!(
-                    "mod.nu may only contain `export use ./<file>.nu` or `export module <name>` statements; got call to `{name}`",
+                    "mod.nu may only contain `export use`, `export module`, `export const`, or `export def` statements; got call to `{name}`",
                 ),
             });
         }
@@ -1325,7 +1328,7 @@ fn check_mod_nu_pipeline_element(
                 path: rel.to_string(),
                 line,
                 message: format!(
-                    "mod.nu may only contain `export use ./<file>.nu` or `export module <name>` statements; got `{}`",
+                    "mod.nu may only contain `export use`, `export module`, `export const`, or `export def` statements; got `{}`",
                     short_expr_label(other),
                 ),
             });
@@ -1416,72 +1419,103 @@ fn validate_function_file_ast(
     };
     let module: &nu::Module = working_set.get_module(module_id);
 
-    // 3. Enumerate the wrapper's exports. nu's Module type tracks `main`
-    //    as Option<DeclId> separately from the `decls` map (which holds
-    //    everything else). For the strict "exactly main + resolve" rule
-    //    we require BOTH to be set, and `decls` to contain exactly one
-    //    entry named "resolve" (plus `main` may or may not appear in
-    //    decls depending on parser version -- normalize).
+    // 3. Classify by the call / resolve sentinel. nu's Module tracks
+    //    `main` separately from `decls` (which holds call / resolve / any
+    //    extras). A file exporting `call` or `resolve` is a CALL-TARGET and
+    //    must satisfy the full call/resolve/main contract; a file with
+    //    neither sentinel is ORGANIZATIONAL (helper defs / export const /
+    //    export def) and is left to parse-correctness only. The reserved-
+    //    terms ban (leg 1b) makes the sentinel airtight. (leg 1)
     let main_decl = module.main;
-    let mut other_decls: Vec<(String, nu::DeclId)> = module
+    let mut export_names: Vec<(String, nu::DeclId)> = module
         .decls
         .iter()
         .filter(|(name_bytes, _)| name_bytes.as_slice() != b"main")
         .map(|(name_bytes, decl_id)| {
-            (
-                String::from_utf8_lossy(name_bytes).into_owned(),
-                *decl_id,
-            )
+            (String::from_utf8_lossy(name_bytes).into_owned(), *decl_id)
         })
         .collect();
-    other_decls.sort_by(|a, b| a.0.cmp(&b.0));
+    export_names.sort_by(|a, b| a.0.cmp(&b.0));
 
-    if main_decl.is_none() {
+    let call_decl = export_names.iter().find(|(n, _)| n == "call").map(|(_, id)| *id);
+    let resolve_decl = export_names.iter().find(|(n, _)| n == "resolve").map(|(_, id)| *id);
+
+    if call_decl.is_none() && resolve_decl.is_none() {
+        // Organizational file: a plain module (helper defs, export const,
+        // export def). No call/resolve sentinel -> no contract to enforce;
+        // parse-correctness (checked above) is sufficient here. (leg 1)
+        return;
+    }
+
+    // 4. Call-target: enforce the full call / resolve / main contract.
+    if call_decl.is_none() {
         violations.push(Violation {
             path: rel.to_string(),
             line: 0,
-            message: "function file must contain `export def main [args: record<...>]`"
+            message: "call-target function file must export `call` (the raw logic): `export def call [args: <T>] { ... }`"
                 .to_string(),
         });
     }
-    let resolve_decl = other_decls
-        .iter()
-        .find(|(name, _)| name == "resolve")
-        .map(|(_, id)| *id);
     if resolve_decl.is_none() {
         violations.push(Violation {
             path: rel.to_string(),
             line: 0,
-            message: "function file must contain `export def resolve [args: record<...>] { $args }`"
+            message: "call-target function file must export `resolve` (the result typecheck): `export def resolve [args: <R>] { $args }`"
                 .to_string(),
         });
     }
-    for (name, _) in &other_decls {
-        if name != "resolve" {
+    if main_decl.is_none() {
+        violations.push(Violation {
+            path: rel.to_string(),
+            line: 0,
+            message: "call-target function file must export `main` (the validated sugar): `export def main [args: <T>] { resolve (call $args) }`"
+                .to_string(),
+        });
+    }
+    for (name, _) in &export_names {
+        if name != "call" && name != "resolve" {
             violations.push(Violation {
                 path: rel.to_string(),
                 line: 0,
                 message: format!(
-                    "function file may only export `main` and `resolve`; saw `export def {name}`",
+                    "a call-target function file exports only `call`, `resolve`, and `main`; saw `export def {name}` (move helpers to an organizational file and `use ./<file>.nu`)",
                 ),
             });
         }
     }
 
-    // 4. Check signatures. Both main and resolve must have a single
-    //    typed positional named `args` of shape Record.
-    if let Some(id) = main_decl {
-        check_args_record_positional(rel, &working_set, id, "main", source, prefix_len, violations);
+    // 5. Signatures + bodies.
+    //    call: typed `args` positional (record<...> with real fields, or
+    //    nothing); body is the author's raw logic -- unchecked.
+    if let Some(id) = call_decl {
+        check_args_record_positional(rel, &working_set, id, "call", source, prefix_len, violations);
     }
+    //    resolve: typed `args` positional (the result schema); body exactly
+    //    `$args` (the passthrough that forces the runtime result check).
     if let Some(id) = resolve_decl {
         let resolve_args_var =
             check_args_record_positional(rel, &working_set, id, "resolve", source, prefix_len, violations);
-        // 5. resolve's body must be exactly `$args` (passthrough).
         check_resolve_body_is_args(
             rel,
             &working_set,
             id,
             resolve_args_var,
+            source,
+            prefix_len,
+            violations,
+        );
+    }
+    //    main: typed `args` positional mirroring call's; body AST-locked to
+    //    EXACTLY `resolve (call $args)` -- the generated sugar; the author
+    //    owns only main's doc comment, never its body.
+    if let Some(id) = main_decl {
+        let main_args_var =
+            check_args_record_positional(rel, &working_set, id, "main", source, prefix_len, violations);
+        check_main_body_is_resolve_call_args(
+            rel,
+            &working_set,
+            id,
+            main_args_var,
             source,
             prefix_len,
             violations,
@@ -1510,10 +1544,13 @@ fn check_args_record_positional(
             // Accept `record<...>` (normal) or `nothing` (void/no-arg)
             // -- item 21. to_type() maps the positional's SyntaxShape to
             // its value Type, so the check is robust to the exact shape.
-            let shape_ok = matches!(
-                p.shape.to_type(),
-                nu::Type::Record(_) | nu::Type::Nothing,
-            );
+            // An empty `record<>` is the unfleshed-skeleton marker --
+            // reject it to force real fields (or `nothing`). (leg 1)
+            let shape_ok = match p.shape.to_type() {
+                nu::Type::Record(fields) => !fields.is_empty(),
+                nu::Type::Nothing => true,
+                _ => false,
+            };
             ((p.name != "args" || !shape_ok), p.var_id)
         }
     };
@@ -1523,7 +1560,7 @@ fn check_args_record_positional(
             path: rel.to_string(),
             line,
             message: format!(
-                "{fn_name} must take a typed positional `args: record<...>` (or `args: nothing` for void)",
+                "{fn_name} must take a typed positional `args: record<...>` with real fields (or `args: nothing` for void); an empty `record<>` is the unfleshed skeleton",
             ),
         });
     }
@@ -1590,6 +1627,124 @@ fn is_args_var(expr: &nu::Expression, args_var_id: Option<nu::VarId>) -> bool {
         _ => return false,
     };
     var_id == expected
+}
+
+/// Confirm `main`'s body is exactly `resolve (call $args)` -- one
+/// pipeline, one element: a Call to `resolve` whose single positional is
+/// the parenthesized `(call $args)` (a Call to `call` taking the `args`
+/// positional). The shape is fixed because it is GENERATED and mirrors
+/// call()'s composition; the author owns only main's doc comment.
+fn check_main_body_is_resolve_call_args(
+    rel: &str,
+    working_set: &nu::StateWorkingSet,
+    decl_id: nu::DeclId,
+    main_args_var: Option<nu::VarId>,
+    source: &str,
+    prefix_len: usize,
+    violations: &mut Vec<Violation>,
+) {
+    let decl = working_set.get_decl(decl_id);
+    let line_of_decl = decl_line(working_set, decl_id, source, prefix_len);
+    let mut ok = false;
+    if let Some(block_id) = decl.block_id() {
+        let block = working_set.get_block(block_id);
+        if block.pipelines.len() == 1 && block.pipelines[0].elements.len() == 1 {
+            ok = is_resolve_of_call_args(
+                &block.pipelines[0].elements[0].expr,
+                working_set,
+                main_args_var,
+            );
+        }
+    }
+    if !ok {
+        violations.push(Violation {
+            path: rel.to_string(),
+            line: line_of_decl,
+            message: "main's body must be exactly `resolve (call $args)`".to_string(),
+        });
+    }
+}
+
+/// Match `resolve (call $args)`: a Call to `resolve` with one positional
+/// argument that is `(call $args)`.
+fn is_resolve_of_call_args(
+    expr: &nu::Expression,
+    working_set: &nu::StateWorkingSet,
+    args_var: Option<nu::VarId>,
+) -> bool {
+    let nu::Expr::Call(outer) = &expr.expr else {
+        return false;
+    };
+    if working_set.get_decl(outer.decl_id).name() != "resolve" {
+        return false;
+    }
+    let mut pos = outer.arguments.iter().filter_map(|a| match a {
+        nu::Argument::Positional(e) => Some(e),
+        _ => None,
+    });
+    let (Some(arg), None) = (pos.next(), pos.next()) else {
+        return false;
+    };
+    inner_is_call_args(arg, working_set, args_var)
+}
+
+/// Match the `(call $args)` argument: a parenthesized subexpression (or a
+/// bare call) wrapping `call $args`.
+fn inner_is_call_args(
+    expr: &nu::Expression,
+    working_set: &nu::StateWorkingSet,
+    args_var: Option<nu::VarId>,
+) -> bool {
+    match &expr.expr {
+        nu::Expr::Subexpression(block_id) => {
+            block_is_call_args(*block_id, working_set, args_var)
+        }
+        nu::Expr::FullCellPath(fcp) if fcp.tail.is_empty() => match &fcp.head.expr {
+            nu::Expr::Subexpression(block_id) => {
+                block_is_call_args(*block_id, working_set, args_var)
+            }
+            nu::Expr::Call(_) => is_call_args_call(&fcp.head, working_set, args_var),
+            _ => false,
+        },
+        nu::Expr::Call(_) => is_call_args_call(expr, working_set, args_var),
+        _ => false,
+    }
+}
+
+/// A subexpression block holding exactly one `call $args` pipeline element.
+fn block_is_call_args(
+    block_id: nu::BlockId,
+    working_set: &nu::StateWorkingSet,
+    args_var: Option<nu::VarId>,
+) -> bool {
+    let block = working_set.get_block(block_id);
+    if block.pipelines.len() != 1 || block.pipelines[0].elements.len() != 1 {
+        return false;
+    }
+    is_call_args_call(&block.pipelines[0].elements[0].expr, working_set, args_var)
+}
+
+/// Match `call $args`: a Call to `call` whose one positional is `$args`
+/// (main's `args` positional VarId).
+fn is_call_args_call(
+    expr: &nu::Expression,
+    working_set: &nu::StateWorkingSet,
+    args_var: Option<nu::VarId>,
+) -> bool {
+    let nu::Expr::Call(inner) = &expr.expr else {
+        return false;
+    };
+    if working_set.get_decl(inner.decl_id).name() != "call" {
+        return false;
+    }
+    let mut pos = inner.arguments.iter().filter_map(|a| match a {
+        nu::Argument::Positional(e) => Some(e),
+        _ => None,
+    });
+    let (Some(arg), None) = (pos.next(), pos.next()) else {
+        return false;
+    };
+    is_args_var(arg, args_var)
 }
 
 /// Best-effort: locate the source line where a Decl's `def` lives via

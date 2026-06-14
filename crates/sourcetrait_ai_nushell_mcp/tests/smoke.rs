@@ -252,7 +252,6 @@ fn smoke_9_timeout_fires() {
         // template as the def body. `sleep 5sec` blocks the worker for
         // 5 seconds; the 200ms timeout fires first.
         "body": "sleep 5sec\n{ out: 0 }",
-        "functions": [],
         "timeout_ms": 200u64
     });
     let resp = host.run(args);

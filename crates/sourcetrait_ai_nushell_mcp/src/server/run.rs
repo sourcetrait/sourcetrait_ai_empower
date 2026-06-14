@@ -5,8 +5,9 @@ use crate::*;
 /// `nushell_mcp_test`). Sets `BUILD_TARGET` first so every downstream
 /// path helper / serverInfo / validator sees the target. Then builds
 /// a fresh tokio runtime, runs the slice-3 substrate (keypair +
-/// libraries repo + lock registry) to completion, spawns both
-/// workers (stateless pool + stateful) in parallel, constructs the
+/// libraries repo + lock registry) to completion, builds the
+/// stateless runs pool (workers spawn lazily on first acquire) +
+/// eagerly spawns the single stateful interact worker, constructs the
 /// `NuSh` rmcp server, and blocks on `service.waiting()` until the
 /// rmcp connection closes. Side effects: writes
 /// `$XDG_DATA_HOME/sourcetrait/<target_name>/{keypair,libraries}` on first
@@ -37,11 +38,11 @@ pub fn run_server(target: BuildTarget) {
         // spawn so a substrate failure surfaces cleanly without leaving
         // worker processes orphaned.
         let library_locks = ensure_substrate().await.expect("ensure_substrate");
-        // Spawn the stateless and stateful workers in parallel; tk::try_join!
-        // gives fail-together semantics -- if either spawn (or its Hello
-        // handshake) errors, the server refuses to start. Both worker
-        // processes are needed: the stateless one drives run(), the
-        // stateful one drives interact().
+        // Build the stateless runs pool (lazy: no worker spawns at
+        // construction; each spawns on first acquire) and eagerly spawn
+        // the single stateful interact worker. Both substrates are
+        // needed: the pool drives run() / rerun() / call(), the interact
+        // worker drives interact().
         // Slice 5.8 substrate: pool the stateless `runs` workers. Cap
         // = max(1, available_parallelism - 3) matches the_user
         // 2026-06-01 lock (warm parity); min 1 always available; idle

@@ -1,16 +1,17 @@
 use crate::*;
 
-/// What: reusable parsing context that wraps an `EngineState` loaded
-/// with the language keywords from `nu_cmd_lang` (def, let, const,
-/// use, module, export, ...). Cloned per-file via
-/// `engine_state_for_file` to layer a per-file `$env.PWD` without
-/// disturbing the base.
+/// What: reusable parsing context that wraps a full-shell
+/// `EngineState` (`create_default_context` +
+/// `add_shell_command_context`, is_interactive=false, is_mcp=true).
+/// Cloned per-file via `engine_state_for_file` to layer a per-file
+/// `$env.PWD` without disturbing the base.
 ///
 /// Why: building an EngineState is millisecond-scale; reusing one
 /// across every file in a `validate_library_source` walk amortizes
-/// that cost. The lang context alone is sufficient for the
-/// validator because we never eval -- only parse. The body linter
-/// (slice 5) will reuse the same substrate.
+/// that cost. The full shell context (not lang-only) is required so
+/// the body lint can resolve regex-receiver decls (e.g. `str replace
+/// --regex`) as Calls rather than ExternalCalls; see `new_full`'s
+/// docstring. The body linter shares the same substrate.
 ///
 /// Where: instantiated by `library::validate_library_source` once
 /// per invocation; passed by reference into the per-file walkers
@@ -31,7 +32,7 @@ impl ParseEngine {
     /// Without the full shell context, the parser cannot identify the
     /// regex-receiver decl names (the named `--regex` flag flattens to
     /// a plain ext arg and becomes indistinguishable from a path-shape
-    /// positional). Slice 5.0 probe `notes/nushell_mcp/
+    /// positional). Slice 5.0 probe `iter/nushell_mcp/
     /// slice_5_0_probe_findings.md` confirmed this trade-off.
     ///
     /// Where: called once in `server::run::run_server` to construct

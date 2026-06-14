@@ -132,8 +132,8 @@ fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Val
 
 #[test]
 fn interact_lists_both_run_and_interact_tools() {
-    // Sanity check on the tool surface: tools/list should show exactly the
-    // two tool names (`run` and `interact`) registered by `#[tool_router]`.
+    // Sanity check on the tool surface: tools/list should show all 13
+    // tools registered by `#[tool_router]` (membership-checked below).
     let mut host = Host::spawn();
     let id = host.next_id();
     let req = serde_json::json!({

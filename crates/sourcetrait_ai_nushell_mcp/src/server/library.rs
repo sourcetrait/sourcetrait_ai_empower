@@ -222,8 +222,8 @@ impl LibraryLocks {
     }
 
     /// Look up an existing lock; None if the library isn't registered.
-    /// Unused in 0.0.10; lands when `define_function` arrives in slice 2.
-    #[allow(dead_code)]
+    /// Used by the call / define / undefine / reimport handlers and by
+    /// `enumerate_libraries` to take the per-library guard.
     pub(crate) async fn lookup(
         &self,
         name: &str,

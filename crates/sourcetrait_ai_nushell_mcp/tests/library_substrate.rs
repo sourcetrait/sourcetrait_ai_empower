@@ -9,8 +9,7 @@
 //!   - Duplicate `register_library` errors.
 //!   - `unregister_library` removes from the MCP repo; commits.
 //!   - `unregister_library` on a missing name errors.
-//!   - `tools/list` returns 5 tools (run + interact + rerun + register_library +
-//!     unregister_library).
+//!   - `tools/list` returns all 13 tools (membership-checked).
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -206,7 +205,7 @@ fn substrate_initializes_on_first_startup() {
 }
 
 #[test]
-fn tools_list_has_five() {
+fn tools_list_has_thirteen() {
     let mut host = Host::spawn();
     let resp = host.list_tools();
     let tools = resp["result"]["tools"]

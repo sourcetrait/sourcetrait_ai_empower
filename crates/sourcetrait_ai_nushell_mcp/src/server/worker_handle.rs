@@ -10,10 +10,11 @@ use crate::*;
 /// per-channel; on Drop the child is killed so a dropped NuSh
 /// doesn't leak workers.
 ///
-/// Where: two instances live in `server::tool::NuSh` (`runs_worker`
-/// + `interact_worker`), each guarded by `tokio::sync::Mutex` for
-/// serialized access. Constructed by `spawn`; used by `send_request`
-/// for every tool round-trip.
+/// Where: the stateless run/rerun/call substrate is `NuSh.runs_pool:
+/// Arc<Pool>` (a pool of these handles, server::pool); the stateful
+/// interact worker is `NuSh.interact_worker:
+/// Arc<Mutex<Option<WorkerHandle>>>`. Constructed by `spawn`; used by
+/// `send_request` for every tool round-trip.
 pub(crate) struct WorkerHandle {
     #[allow(dead_code)]
     child: tk::Child,

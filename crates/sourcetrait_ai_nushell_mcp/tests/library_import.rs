@@ -972,3 +972,41 @@ fn commit_rejects_unfleshed_skeleton() {
     let resp = host.call("commit", serde_json::json!({"library": "sklib"}));
     assert!(has_error_path(&resp), "committing an unfleshed skeleton should reject; got {resp}");
 }
+
+#[test]
+fn delete_removes_mcp_and_source() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("dlib");
+    let _ = host.call("new", serde_json::json!({"library": "dlib", "source_path": src.to_str().unwrap()}));
+    let _ = host.call("new", serde_json::json!({"library": "dlib", "module_path": "", "name": "f"}));
+    std::fs::write(src.join("f.nu"), valid_function_source("x: int", "out: int", "{ out: $args.x }")).unwrap();
+    let _ = host.call("commit", serde_json::json!({"library": "dlib"}));
+    assert!(host.library_dir("dlib").exists(), "canonical should exist before delete");
+    assert!(src.exists(), "source should exist before delete");
+    let resp = host.call("delete", serde_json::json!({"library": "dlib", "source_path": src.to_str().unwrap()}));
+    assert!(!has_error_path(&resp), "delete should succeed; got {resp}");
+    assert!(!host.library_dir("dlib").exists(), "canonical should be gone");
+    assert!(!src.exists(), "source should be gone (default delete removes it)");
+}
+
+#[test]
+fn delete_rejects_source_path_mismatch() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("mlib");
+    let _ = host.call("new", serde_json::json!({"library": "mlib", "source_path": src.to_str().unwrap()}));
+    let resp = host.call("delete", serde_json::json!({"library": "mlib", "source_path": "/some/other/path"}));
+    assert!(has_error_path(&resp), "mismatched source_path should reject; got {resp}");
+    assert_eq!(envelope_error_kind(&resp), Some("library::source_path_mismatch"), "got {resp}");
+    assert!(host.library_dir("mlib").exists(), "canonical should survive a rejected delete");
+}
+
+#[test]
+fn delete_mcp_only_keeps_source() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("olib");
+    let _ = host.call("new", serde_json::json!({"library": "olib", "source_path": src.to_str().unwrap()}));
+    let resp = host.call("delete", serde_json::json!({"library": "olib", "source_path": src.to_str().unwrap(), "mcp_only": true}));
+    assert!(!has_error_path(&resp), "mcp_only delete should succeed; got {resp}");
+    assert!(!host.library_dir("olib").exists(), "canonical should be gone");
+    assert!(src.exists(), "source should remain (mcp_only)");
+}

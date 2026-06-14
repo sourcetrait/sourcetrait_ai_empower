@@ -2535,6 +2535,96 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
     Ok(CommitResult { changed })
 }
 
+// ============================================================================
+// leg 3: delete() - the guarded drop
+// ============================================================================
+
+/// One path removed by delete(): side is mcp | source.
+#[derive(Debug, ser::Serialize)]
+pub(crate) struct Removed {
+    pub path: String,
+    pub side: String,
+}
+
+/// Result of delete(): the paths removed.
+#[derive(Debug, ser::Serialize)]
+pub(crate) struct DeleteResult {
+    pub removed: Vec<Removed>,
+}
+
+/// Implementation for `delete(library, source_path, mcp_only)` - the
+/// guarded full drop (leg 3). SANITY: the passed source_path must equal
+/// the meta's source_path by PLAIN STRING EQUALITY (never canonicalized -
+/// a realpath compare could follow a symlink). Removes the canonical
+/// (MCP) subtree always; the agent's source too unless mcp_only. Source
+/// removal is lstat-guarded: a symlink source_path is unlinked (the
+/// install link, not the project tree); a real dir is removed with a
+/// symlink-aware recursive walk (inner symlinks are not followed out).
+/// Idempotent: a side already gone is skipped, not an error.
+pub(crate) fn delete_impl(
+    name: &str,
+    source_path: &str,
+    mcp_only: bool,
+) -> Result<DeleteResult, Error> {
+    if !is_valid_ident(name) {
+        return Err(Error::LibraryInvalidName {
+            library: name.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
+    }
+    let lib_root = library_dir(name);
+    if !lib_root.exists() {
+        return Err(Error::LibraryNotRegistered {
+            library: name.to_string(),
+        });
+    }
+    let meta = load_meta(name)?;
+    let registered = meta.source_path.to_string_lossy().into_owned();
+    if registered != source_path {
+        return Err(Error::LibrarySourcePathMismatch {
+            library: name.to_string(),
+            passed: source_path.to_string(),
+            registered,
+        });
+    }
+    let mut removed: Vec<Removed> = Vec::new();
+
+    // MCP side: drop the canonical subtree + commit.
+    if lib_root.exists() {
+        fs::remove_dir_all(&lib_root)?;
+        run_git(&libraries_dir(), &["add", "--", name])?;
+        run_git(&libraries_dir(), &["commit", "-m", &format!("delete library {name}")])?;
+        removed.push(Removed {
+            path: lib_root.to_string_lossy().into_owned(),
+            side: "mcp".to_string(),
+        });
+    }
+
+    // Source side (unless mcp_only): lstat-guarded removal.
+    if !mcp_only {
+        let sp = std::path::Path::new(source_path);
+        match std::fs::symlink_metadata(sp) {
+            Ok(m) if m.file_type().is_symlink() => {
+                std::fs::remove_file(sp)?;
+                removed.push(Removed { path: source_path.to_string(), side: "source".to_string() });
+            }
+            Ok(m) if m.is_dir() => {
+                std::fs::remove_dir_all(sp)?;
+                removed.push(Removed { path: source_path.to_string(), side: "source".to_string() });
+            }
+            Ok(_) => {
+                std::fs::remove_file(sp)?;
+                removed.push(Removed { path: source_path.to_string(), side: "source".to_string() });
+            }
+            Err(_) => {
+                // Already gone -> idempotent.
+            }
+        }
+    }
+
+    Ok(DeleteResult { removed })
+}
+
 /// What: copies a directory tree recursively. Skips dotfile entries
 /// at every level (so a client `.git` doesn't bleed into the MCP
 /// repo). Creates `dst` and all parents if needed.

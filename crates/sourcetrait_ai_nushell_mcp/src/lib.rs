@@ -26,6 +26,7 @@ pub(crate) mod server {
         pub(crate) mod learn;
         pub(crate) mod new;
         pub(crate) mod commit;
+        pub(crate) mod delete;
     }
     pub(crate) mod worker_handle;
 }
@@ -77,6 +78,7 @@ pub(crate) use crate::{
             call_file_path,
             commit_impl,
             define_function_impl,
+            delete_impl,
             ensure_substrate,
             enumerate_libraries,
             import_library_impl,

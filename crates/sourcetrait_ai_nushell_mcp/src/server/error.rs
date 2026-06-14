@@ -19,6 +19,7 @@ pub enum ErrorKind {
     #[serde(rename = "library::invalid_module_path")]  LibraryInvalidModulePath,
     #[serde(rename = "library::test_suffix_required")] LibraryTestSuffixRequired,
     #[serde(rename = "library::source_missing")]       LibrarySourceMissing,
+    #[serde(rename = "library::source_path_mismatch")] LibrarySourcePathMismatch,
     #[serde(rename = "library::wrong_kind")]           LibraryWrongKind,
     #[serde(rename = "library::violations")]           LibraryViolations,
     #[serde(rename = "function::not_defined")]         FunctionNotDefined,
@@ -66,6 +67,13 @@ pub enum Error {
 
     #[serde(rename = "library::source_missing")]
     LibrarySourceMissing { path: String },
+
+    #[serde(rename = "library::source_path_mismatch")]
+    LibrarySourcePathMismatch {
+        library: String,
+        passed: String,
+        registered: String,
+    },
 
     #[serde(rename = "library::wrong_kind")]
     LibraryWrongKind { library: String },
@@ -130,6 +138,7 @@ impl Error {
             Self::LibraryInvalidModulePath { .. } => K::LibraryInvalidModulePath,
             Self::LibraryTestSuffixRequired { .. } => K::LibraryTestSuffixRequired,
             Self::LibrarySourceMissing { .. } => K::LibrarySourceMissing,
+            Self::LibrarySourcePathMismatch { .. } => K::LibrarySourcePathMismatch,
             Self::LibraryWrongKind { .. } => K::LibraryWrongKind,
             Self::LibraryViolations { .. } => K::LibraryViolations,
             Self::FunctionNotDefined { .. } => K::FunctionNotDefined,

@@ -139,7 +139,7 @@ fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Val
 
 #[test]
 fn interact_lists_both_run_and_interact_tools() {
-    // Sanity check on the tool surface: tools/list should show all 17
+    // Sanity check on the tool surface: tools/list should show all 11
     // tools registered by `#[tool_router]` (membership-checked below).
     let mut host = Host::spawn();
     let id = host.next_id();
@@ -155,19 +155,19 @@ fn interact_lists_both_run_and_interact_tools() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 17, "expected 17 tools; got {names:?}");
+    assert_eq!(names.len(), 11, "expected 11 tools; got {names:?}");
     for expected in [
         "run",
         "interact",
         "rerun",
-        "register_library",
-        "unregister_library",
-        "define_function",
-        "undefine_function",
-        "import_library",
-        "reimport_library",
         "call",
+        "processes",
+        "kill",
+        "info",
         "learn",
+        "new",
+        "commit",
+        "delete",
     ] {
         assert!(
             names.contains(&expected),

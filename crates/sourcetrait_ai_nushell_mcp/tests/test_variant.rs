@@ -6,12 +6,10 @@
 //!   2. XDG paths are namespaced under `sourcetrait/nushell_mcp_test/`
 //!      (not `sourcetrait/nushell_mcp/`), so the test sandbox shares no
 //!      on-disk state with a co-running production host.
-//!   3. `register_library` rejects names that don't end with `_test`
+//!   3. `new` rejects library names that don't end with `_test`
 //!      (defense-in-depth against corrupting production-named
 //!      libraries from a misconfigured test sandbox).
-//!   4. `register_library` accepts names that DO end with `_test`.
-//!   5. `import_library` rejects names that don't end with `_test`
-//!      (same gate as register, different entry point).
+//!   4. `new` accepts names that DO end with `_test`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -27,7 +25,6 @@ struct Host {
     data_dir: tempfile::TempDir,
     #[allow(dead_code)]
     cache_dir: tempfile::TempDir,
-    client_mirror_root: tempfile::TempDir,
     source_root: tempfile::TempDir,
 }
 
@@ -37,7 +34,6 @@ impl Host {
         let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_test_worker");
         let data_dir = tempfile::tempdir().expect("data tempdir");
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
-        let client_mirror_root = tempfile::tempdir().expect("client mirror tempdir");
         let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
@@ -57,7 +53,6 @@ impl Host {
             next_id: 1,
             data_dir,
             cache_dir,
-            client_mirror_root,
             source_root,
         };
         host.initialize();
@@ -70,10 +65,6 @@ impl Host {
             .join("sourcetrait")
             .join("nushell_mcp_test")
             .join("libraries")
-    }
-
-    fn client_dir(&self, name: &str) -> PathBuf {
-        self.client_mirror_root.path().join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {
@@ -164,12 +155,12 @@ fn has_error_path(resp: &serde_json::Value) -> bool {
         .is_some()
 }
 
-fn write_source(dir: &std::path::Path, rel: &str, contents: &str) {
-    let target = dir.join(rel);
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).expect("mkdir");
-    }
-    std::fs::write(&target, contents).expect("write source");
+fn envelope_error_kind(resp: &serde_json::Value) -> Option<&str> {
+    resp.get("result")?
+        .get("structuredContent")?
+        .get("error")?
+        .get("kind")?
+        .as_str()
 }
 
 #[test]
@@ -192,17 +183,17 @@ fn test_variant_info_returns_test_name() {
 #[test]
 fn test_variant_xdg_paths_isolated() {
     let mut host = Host::spawn();
-    let mirror = host.client_dir("foo_test");
+    let src = host.source_dir("foo_test");
     let resp = host.call_tool(
-        "register_library",
+        "new",
         serde_json::json!({
-            "name": "foo_test",
-            "path": mirror.to_str().unwrap(),
+            "library": "foo_test",
+            "source_path": src.to_str().unwrap(),
         }),
     );
     assert!(
         !has_error_path(&resp),
-        "register with _test-suffix name should succeed; got {resp}",
+        "new with _test-suffix name should succeed; got {resp}",
     );
     let lib_dir = host.libraries_dir().join("foo_test");
     assert!(
@@ -214,54 +205,40 @@ fn test_variant_xdg_paths_isolated() {
 }
 
 #[test]
-fn test_variant_register_rejects_non_test_suffix() {
+fn test_variant_new_rejects_non_test_suffix() {
     let mut host = Host::spawn();
-    let mirror = host.client_dir("not_suffixed");
+    let src = host.source_dir("not_suffixed");
     let resp = host.call_tool(
-        "register_library",
+        "new",
         serde_json::json!({
-            "name": "not_suffixed",
-            "path": mirror.to_str().unwrap(),
+            "library": "not_suffixed",
+            "source_path": src.to_str().unwrap(),
         }),
     );
     assert!(
         has_error_path(&resp),
-        "register on _test variant should reject non-_test-suffix names; got {resp}",
+        "new on _test variant should reject non-_test-suffix names; got {resp}",
+    );
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("library::test_suffix_required"),
+        "expected test_suffix_required; got {resp}",
     );
 }
 
 #[test]
-fn test_variant_register_accepts_test_suffix() {
+fn test_variant_new_accepts_test_suffix() {
     let mut host = Host::spawn();
-    let mirror = host.client_dir("hello_test");
+    let src = host.source_dir("hello_test");
     let resp = host.call_tool(
-        "register_library",
+        "new",
         serde_json::json!({
-            "name": "hello_test",
-            "path": mirror.to_str().unwrap(),
+            "library": "hello_test",
+            "source_path": src.to_str().unwrap(),
         }),
     );
     assert!(
         !has_error_path(&resp),
-        "register with _test-suffix name should succeed on _test variant; got {resp}",
-    );
-}
-
-#[test]
-fn test_variant_import_rejects_non_test_suffix() {
-    let mut host = Host::spawn();
-    let src = host.source_dir("imp_unsuffixed");
-    std::fs::create_dir_all(&src).expect("mkdir src");
-    write_source(&src, "mod.nu", "");
-    let resp = host.call_tool(
-        "import_library",
-        serde_json::json!({
-            "name": "imp_unsuffixed",
-            "path": src.to_str().unwrap(),
-        }),
-    );
-    assert!(
-        has_error_path(&resp),
-        "import on _test variant should reject non-_test-suffix names; got {resp}",
+        "new with _test-suffix name should succeed on _test variant; got {resp}",
     );
 }

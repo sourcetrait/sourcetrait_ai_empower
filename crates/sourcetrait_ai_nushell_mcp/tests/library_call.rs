@@ -14,7 +14,6 @@ struct Host {
     data_dir: tempfile::TempDir,
     #[allow(dead_code)]
     cache_dir: tempfile::TempDir,
-    client_mirror_root: tempfile::TempDir,
     source_root: tempfile::TempDir,
 }
 
@@ -24,7 +23,6 @@ impl Host {
         let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
         let data_dir = tempfile::tempdir().expect("data tempdir");
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
-        let client_mirror_root = tempfile::tempdir().expect("client mirror tempdir");
         let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
@@ -44,15 +42,10 @@ impl Host {
             next_id: 1,
             data_dir,
             cache_dir,
-            client_mirror_root,
             source_root,
         };
         host.initialize();
         host
-    }
-
-    fn client_dir(&self, name: &str) -> PathBuf {
-        self.client_mirror_root.path().join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {
@@ -163,28 +156,30 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
     std::fs::write(target, contents).unwrap();
 }
 
+fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
+    format!(
+        "export def call [args: record<{args_schema}>] {{\n{body}\n}}\n\nexport def resolve [args: record<{result_schema}>] {{\n    $args\n}}\n\nexport def main [args: record<{args_schema}>] {{\n    resolve (call $args)\n}}\n",
+    )
+}
+
 #[test]
-fn call_after_define_returns_result() {
+fn call_after_commit_returns_result() {
     let mut host = Host::spawn();
-    let mirror = host.client_dir("calc");
+    let src = host.source_dir("calc");
     let _ = host.call_tool(
-        "register_library",
-        serde_json::json!({
-            "name": "calc",
-            "path": mirror.to_str().unwrap(),
-        }),
+        "new",
+        serde_json::json!({"library": "calc", "source_path": src.to_str().unwrap()}),
     );
     let _ = host.call_tool(
-        "define_function",
-        serde_json::json!({
-            "library": "calc",
-            "module_path": "math",
-            "name": "double",
-            "args_schema": {"x": "int"},
-            "result_schema": {"out": "int"},
-            "body": "{ out: ($args.x * 2) }",
-        }),
+        "new",
+        serde_json::json!({"library": "calc", "module_path": "math", "name": "double"}),
     );
+    write_source(
+        &src,
+        "math/double.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+    let _ = host.call_tool("commit", serde_json::json!({"library": "calc"}));
     let resp = host.call_tool(
         "call",
         serde_json::json!({
@@ -208,23 +203,23 @@ fn call_after_define_returns_result() {
 }
 
 #[test]
-fn call_after_import_returns_result() {
+fn call_after_root_commit_returns_result() {
     let mut host = Host::spawn();
     let src = host.source_dir("importable");
-    std::fs::create_dir_all(&src).unwrap();
-    write_source(&src, "mod.nu", "");
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "importable", "source_path": src.to_str().unwrap()}),
+    );
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "importable", "module_path": "", "name": "triple"}),
+    );
     write_source(
         &src,
         "triple.nu",
-        "export def call [args: record<x: int>] {\n    { out: ($args.x * 3) }\n}\n\nexport def resolve [args: record<out: int>] {\n    $args\n}\n\nexport def main [args: record<x: int>] {\n    resolve (call $args)\n}\n",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 3) }"),
     );
-    let _ = host.call_tool(
-        "import_library",
-        serde_json::json!({
-            "name": "importable",
-            "path": src.to_str().unwrap(),
-        }),
-    );
+    let _ = host.call_tool("commit", serde_json::json!({"library": "importable"}));
     let resp = host.call_tool(
         "call",
         serde_json::json!({
@@ -256,13 +251,10 @@ fn call_unknown_library_errors() {
 #[test]
 fn call_missing_function_errors() {
     let mut host = Host::spawn();
-    let mirror = host.client_dir("partlib");
+    let src = host.source_dir("partlib");
     let _ = host.call_tool(
-        "register_library",
-        serde_json::json!({
-            "name": "partlib",
-            "path": mirror.to_str().unwrap(),
-        }),
+        "new",
+        serde_json::json!({"library": "partlib", "source_path": src.to_str().unwrap()}),
     );
     let resp = host.call_tool(
         "call",
@@ -279,13 +271,10 @@ fn call_missing_function_errors() {
 #[test]
 fn call_bad_module_path_errors() {
     let mut host = Host::spawn();
-    let mirror = host.client_dir("safelib");
+    let src = host.source_dir("safelib");
     let _ = host.call_tool(
-        "register_library",
-        serde_json::json!({
-            "name": "safelib",
-            "path": mirror.to_str().unwrap(),
-        }),
+        "new",
+        serde_json::json!({"library": "safelib", "source_path": src.to_str().unwrap()}),
     );
     for bad in ["../etc", "a/../b", "/abs"] {
         let resp = host.call_tool(
@@ -307,25 +296,21 @@ fn call_bad_module_path_errors() {
 #[test]
 fn call_args_typecheck_failure_surfaces() {
     let mut host = Host::spawn();
-    let mirror = host.client_dir("strictlib");
+    let src = host.source_dir("strictlib");
     let _ = host.call_tool(
-        "register_library",
-        serde_json::json!({
-            "name": "strictlib",
-            "path": mirror.to_str().unwrap(),
-        }),
+        "new",
+        serde_json::json!({"library": "strictlib", "source_path": src.to_str().unwrap()}),
     );
     let _ = host.call_tool(
-        "define_function",
-        serde_json::json!({
-            "library": "strictlib",
-            "module_path": "",
-            "name": "needs_int",
-            "args_schema": {"x": "int"},
-            "result_schema": {"out": "int"},
-            "body": "{ out: $args.x }",
-        }),
+        "new",
+        serde_json::json!({"library": "strictlib", "module_path": "", "name": "needs_int"}),
     );
+    write_source(
+        &src,
+        "needs_int.nu",
+        &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+    );
+    let _ = host.call_tool("commit", serde_json::json!({"library": "strictlib"}));
     // Send a string where int is expected; worker should reject at parse time.
     let resp = host.call_tool(
         "call",

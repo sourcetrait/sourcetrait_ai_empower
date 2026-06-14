@@ -7,11 +7,11 @@
 //!   plugins is a list of positional [name, version] pairs,
 //!   libraries is the recursive library -> module -> function
 //!   hierarchy (empty on a fresh host).
-//! - the hierarchy for a registered library: root functions on the
+//! - the hierarchy for a committed library: root functions on the
 //!   library node, nested module nodes, verbatim schema round-trip
 //!   (including nested record<...> typedefs).
-//! - the hierarchy for an imported library, with `path` carrying the
-//!   import source directory.
+//! - the hierarchy for a hand-authored library, with `path` carrying
+//!   the source directory.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -27,7 +27,6 @@ struct Host {
     data_dir: tempfile::TempDir,
     #[allow(dead_code)]
     cache_dir: tempfile::TempDir,
-    client_mirror_root: tempfile::TempDir,
     source_root: tempfile::TempDir,
 }
 
@@ -37,7 +36,6 @@ impl Host {
         let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
         let data_dir = tempfile::tempdir().expect("data tempdir");
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
-        let client_mirror_root = tempfile::tempdir().expect("client mirror tempdir");
         let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
@@ -57,15 +55,10 @@ impl Host {
             next_id: 1,
             data_dir,
             cache_dir,
-            client_mirror_root,
             source_root,
         };
         host.initialize();
         host
-    }
-
-    fn client_dir(&self, name: &str) -> PathBuf {
-        self.client_mirror_root.path().join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {
@@ -160,6 +153,20 @@ impl Drop for Host {
     }
 }
 
+fn write_source(dir: &std::path::Path, rel: &str, contents: &str) {
+    let target = dir.join(rel);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).expect("mkdir");
+    }
+    std::fs::write(&target, contents).expect("write source");
+}
+
+fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
+    format!(
+        "export def call [args: record<{args_schema}>] {{\n{body}\n}}\n\nexport def resolve [args: record<{result_schema}>] {{\n    $args\n}}\n\nexport def main [args: record<{args_schema}>] {{\n    resolve (call $args)\n}}\n",
+    )
+}
+
 #[test]
 fn info_tool_in_list() {
     let mut host = Host::spawn();
@@ -238,61 +245,72 @@ fn info_returns_static_server_state() {
 }
 
 #[test]
-fn info_lists_registered_library_hierarchy() {
+fn info_lists_committed_library_hierarchy() {
     let mut host = Host::spawn();
-    let mirror = host.client_dir("treelib");
-    let reg = host.call_tool(
-        "register_library",
-        serde_json::json!({
-            "name": "treelib",
-            "path": mirror.to_str().unwrap(),
-        }),
+    let src = host.source_dir("treelib");
+    let est = host.call_tool(
+        "new",
+        serde_json::json!({"library": "treelib", "source_path": src.to_str().unwrap()}),
     );
     assert!(
-        reg["result"]["structuredContent"].get("error").is_none(),
-        "register failed: {reg}",
+        est["result"]["structuredContent"].get("error").is_none(),
+        "establish failed: {est}",
     );
     // Root function (library node), one in `alpha`, one in `alpha/beta`.
     // b1 carries a NESTED record typedef to exercise balanced extraction.
-    for (module_path, name, args_schema, result_schema, body) in [
-        (
-            "",
-            "rootfn",
-            serde_json::json!({"x": "int"}),
-            serde_json::json!({"out": "int"}),
-            "{ out: ($args.x + 1) }",
-        ),
+    // info() reads args_schema from `main`'s positional and result_schema
+    // from `resolve`'s positional, so valid_function_source(args, result, ..)
+    // round-trips both. The nu record-inner forms below render to the JSON
+    // schemas asserted after commit.
+    for (module_path, name, args_inner, result_inner, body) in [
+        ("", "rootfn", "x: int", "out: int", "{ out: ($args.x + 1) }"),
         (
             "alpha",
             "a1",
-            serde_json::json!({"s": "string"}),
-            serde_json::json!({"len": "int"}),
+            "s: string",
+            "len: int",
             "{ len: ($args.s | str length) }",
         ),
         (
             "alpha/beta",
             "b1",
-            serde_json::json!({"x": "int", "t": {"y": "string", "n": ["int"]}}),
-            serde_json::json!({"out": {"y": "string"}}),
+            "x: int, t: record<y: string, n: list<int>>",
+            "out: record<y: string>",
             "{ out: { y: $args.t.y } }",
         ),
     ] {
-        let resp = host.call_tool(
-            "define_function",
+        let scaffold = host.call_tool(
+            "new",
             serde_json::json!({
                 "library": "treelib",
                 "module_path": module_path,
                 "name": name,
-                "args_schema": args_schema,
-                "result_schema": result_schema,
-                "body": body,
             }),
         );
         assert!(
-            resp["result"]["structuredContent"].get("error").is_none(),
-            "define {name} failed: {resp}",
+            scaffold["result"]["structuredContent"]
+                .get("error")
+                .is_none(),
+            "scaffold {name} failed: {scaffold}",
+        );
+        let rel = if module_path.is_empty() {
+            format!("{name}.nu")
+        } else {
+            format!("{module_path}/{name}.nu")
+        };
+        write_source(
+            &src,
+            &rel,
+            &valid_function_source(args_inner, result_inner, body),
         );
     }
+    let committed = host.call_tool("commit", serde_json::json!({"library": "treelib"}));
+    assert!(
+        committed["result"]["structuredContent"]
+            .get("error")
+            .is_none(),
+        "commit failed: {committed}",
+    );
 
     let resp = host.call_tool("info", serde_json::json!({}));
     let env = resp["result"]
@@ -304,8 +322,8 @@ fn info_lists_registered_library_hierarchy() {
     assert_eq!(lib["name"].as_str(), Some("treelib"));
     assert_eq!(
         lib["path"].as_str(),
-        mirror.to_str(),
-        "path should be the meta source_path (the client mirror)",
+        src.to_str(),
+        "path should be the meta source_path",
     );
 
     // Root function on the library node.
@@ -351,29 +369,33 @@ fn info_lists_registered_library_hierarchy() {
 }
 
 #[test]
-fn info_lists_imported_library_hierarchy() {
+fn info_lists_hand_authored_library_hierarchy() {
     let mut host = Host::spawn();
     let src = host.source_dir("implib");
-    std::fs::create_dir_all(src.join("math")).expect("mkdir math");
-    std::fs::write(src.join("mod.nu"), "export module math\n").expect("write mod.nu");
-    std::fs::write(src.join("math").join("mod.nu"), "export use ./double.nu\n")
-        .expect("write math/mod.nu");
-    std::fs::write(
-        src.join("math").join("double.nu"),
-        "export def call [args: record<x: int>] {\n    { out: ($args.x * 2) }\n}\n\nexport def resolve [args: record<out: int>] {\n    $args\n}\n\nexport def main [args: record<x: int>] {\n    resolve (call $args)\n}\n",
-    )
-    .expect("write double.nu");
-
-    let imp = host.call_tool(
-        "import_library",
-        serde_json::json!({
-            "name": "implib",
-            "path": src.to_str().unwrap(),
-        }),
+    // Establish the library, then hand-author the full source tree and
+    // commit it (commit re-reads the recorded source_path).
+    let est = host.call_tool(
+        "new",
+        serde_json::json!({"library": "implib", "source_path": src.to_str().unwrap()}),
     );
     assert!(
-        imp["result"]["structuredContent"].get("error").is_none(),
-        "import failed: {imp}",
+        est["result"]["structuredContent"].get("error").is_none(),
+        "establish failed: {est}",
+    );
+    write_source(&src, "mod.nu", "export module math\n");
+    write_source(&src, "math/mod.nu", "export use ./double.nu\n");
+    write_source(
+        &src,
+        "math/double.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+
+    let committed = host.call_tool("commit", serde_json::json!({"library": "implib"}));
+    assert!(
+        committed["result"]["structuredContent"]
+            .get("error")
+            .is_none(),
+        "commit failed: {committed}",
     );
 
     let resp = host.call_tool("info", serde_json::json!({}));
@@ -387,7 +409,7 @@ fn info_lists_imported_library_hierarchy() {
     assert_eq!(
         lib["path"].as_str(),
         src.to_str(),
-        "path should be the import source directory",
+        "path should be the source directory",
     );
     assert!(lib["functions"].as_array().expect("root fns").is_empty());
     let modules = lib["modules"].as_array().expect("modules");

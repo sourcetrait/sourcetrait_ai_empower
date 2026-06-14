@@ -1,15 +1,15 @@
-//! Library substrate tests for 0.0.10.
+//! Library substrate tests.
 //!
 //! Verifies:
 //!   - First startup creates `<XDG_DATA_HOME>/sourcetrait/nushell_mcp/keypair/
 //!     {id_nushell_mcp, id_nushell_mcp.pub, allowed_signers}` and the git repo at
 //!     `<XDG_DATA_HOME>/sourcetrait/nushell_mcp/libraries/` with a signed initial commit.
-//!   - `register_library(name, path)` writes the library subtree in the
-//!     MCP repo + mirrors at the client `path`; commits.
-//!   - Duplicate `register_library` errors.
-//!   - `unregister_library` removes from the MCP repo; commits.
-//!   - `unregister_library` on a missing name errors.
-//!   - `tools/list` returns all 14 tools (membership-checked).
+//!   - `new(name, source_path)` writes the library subtree in the MCP repo
+//!     and lands a signed git commit in the repo log.
+//!   - `delete(name, source_path)` removes the subtree from the MCP repo and
+//!     lands a signed git commit in the repo log.
+//!   - `delete` on a missing name errors.
+//!   - `tools/list` returns all 11 tools (membership-checked).
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ struct Host {
     data_dir: tempfile::TempDir,
     #[allow(dead_code)]
     cache_dir: tempfile::TempDir,
-    client_mirror_root: tempfile::TempDir,
+    source_root: tempfile::TempDir,
 }
 
 impl Host {
@@ -34,7 +34,7 @@ impl Host {
         let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
         let data_dir = tempfile::tempdir().expect("data tempdir");
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
-        let client_mirror_root = tempfile::tempdir().expect("client mirror tempdir");
+        let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
@@ -53,7 +53,7 @@ impl Host {
             next_id: 1,
             data_dir,
             cache_dir,
-            client_mirror_root,
+            source_root,
         };
         host.initialize();
         host
@@ -75,8 +75,8 @@ impl Host {
         self.libraries_dir().join(name)
     }
 
-    fn client_dir(&self, name: &str) -> PathBuf {
-        self.client_mirror_root.path().join(name)
+    fn source_dir(&self, name: &str) -> PathBuf {
+        self.source_root.path().join(name)
     }
 
     fn initialize(&mut self) {
@@ -174,6 +174,20 @@ fn has_error_path(resp: &serde_json::Value) -> bool {
         .is_some()
 }
 
+fn write_source(dir: &Path, rel: &str, contents: &str) {
+    let target = dir.join(rel);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).expect("mkdir");
+    }
+    std::fs::write(&target, contents).expect("write source");
+}
+
+fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
+    format!(
+        "export def call [args: record<{args_schema}>] {{\n{body}\n}}\n\nexport def resolve [args: record<{result_schema}>] {{\n    $args\n}}\n\nexport def main [args: record<{args_schema}>] {{\n    resolve (call $args)\n}}\n",
+    )
+}
+
 #[test]
 fn substrate_initializes_on_first_startup() {
     let host = Host::spawn();
@@ -205,7 +219,7 @@ fn substrate_initializes_on_first_startup() {
 }
 
 #[test]
-fn tools_list_has_fourteen() {
+fn tools_list_has_eleven() {
     let mut host = Host::spawn();
     let resp = host.list_tools();
     let tools = resp["result"]["tools"].as_array().expect("tools array");
@@ -213,18 +227,15 @@ fn tools_list_has_fourteen() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 17, "expected 17 tools; got {names:?}");
+    assert_eq!(names.len(), 11, "expected 11 tools; got {names:?}");
     for expected in [
         "run",
         "interact",
         "rerun",
-        "register_library",
-        "unregister_library",
-        "define_function",
-        "undefine_function",
-        "import_library",
-        "reimport_library",
         "call",
+        "processes",
+        "kill",
+        "info",
         "learn",
         "new",
         "commit",
@@ -238,20 +249,17 @@ fn tools_list_has_fourteen() {
 }
 
 #[test]
-fn register_library_writes_repo_and_mirror() {
+fn new_writes_repo_and_records_meta() {
     let mut host = Host::spawn();
-    let client_dir = host.client_dir("mylib");
+    let src = host.source_dir("mylib");
     let resp = host.call(
-        "register_library",
+        "new",
         serde_json::json!({
-            "name": "mylib",
-            "path": client_dir.to_str().expect("client_dir to str"),
+            "library": "mylib",
+            "source_path": src.to_str().expect("src to str"),
         }),
     );
-    assert!(
-        !has_error_path(&resp),
-        "register_library should succeed; got {resp}",
-    );
+    assert!(!has_error_path(&resp), "new should succeed; got {resp}");
     // MCP-side files exist.
     let lib_dir = host.library_dir("mylib");
     assert!(
@@ -265,91 +273,102 @@ fn register_library_writes_repo_and_mirror() {
     let meta: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&meta_path).expect("read meta"))
             .expect("decode meta");
-    assert_eq!(meta["kind"].as_str(), Some("registered"));
-    assert_eq!(meta["source_path"].as_str(), client_dir.to_str(),);
-    // Client mirror exists.
-    assert!(client_dir.exists(), "client mirror dir should exist");
+    // The 0.0.44 meta holds ONLY source_path (no kind discriminant).
+    assert_eq!(meta["source_path"].as_str(), src.to_str(),);
     assert!(
-        client_dir.join("mod.nu").exists(),
-        "client mirror mod.nu should exist",
+        meta.get("kind").is_none(),
+        "meta should not carry a kind field; got {meta}",
     );
-    // Commit was made (HEAD shifted from initial empty commit).
+    // Agent source tree seeded with its root mod.nu.
+    assert!(src.exists(), "source dir should exist");
+    assert!(
+        src.join("mod.nu").exists(),
+        "source root mod.nu should be seeded",
+    );
+    // A signed commit landed in the repo log.
     let log = git_log_subjects(&host.libraries_dir());
     assert!(
-        log.iter().any(|s| s == "register library mylib"),
-        "expected register commit in log; got {log:?}",
+        log.iter().any(|s| s == "new library mylib"),
+        "expected new-library commit in log; got {log:?}",
     );
 }
 
 #[test]
-fn duplicate_register_errors() {
+fn new_reestablish_with_source_path_errors() {
     let mut host = Host::spawn();
-    let client_dir = host.client_dir("dup");
+    let src = host.source_dir("dup");
     let r1 = host.call(
-        "register_library",
+        "new",
         serde_json::json!({
-            "name": "dup",
-            "path": client_dir.to_str().expect("client_dir to str"),
+            "library": "dup",
+            "source_path": src.to_str().expect("src to str"),
         }),
     );
-    assert!(
-        !has_error_path(&r1),
-        "first register should succeed; got {r1}"
-    );
+    assert!(!has_error_path(&r1), "first new should succeed; got {r1}");
+    // Re-passing source_path on an already-established library is rejected.
     let r2 = host.call(
-        "register_library",
+        "new",
         serde_json::json!({
-            "name": "dup",
-            "path": client_dir.to_str().expect("client_dir to str"),
+            "library": "dup",
+            "source_path": src.to_str().expect("src to str"),
         }),
     );
     assert!(
         has_error_path(&r2),
-        "duplicate register should error; got {r2}",
+        "re-establishing with source_path should error; got {r2}",
     );
 }
 
 #[test]
-fn unregister_library_removes_subtree() {
+fn delete_removes_subtree() {
     let mut host = Host::spawn();
-    let client_dir = host.client_dir("droppable");
+    let src = host.source_dir("droppable");
     let _ = host.call(
-        "register_library",
+        "new",
         serde_json::json!({
-            "name": "droppable",
-            "path": client_dir.to_str().expect("client_dir to str"),
+            "library": "droppable",
+            "source_path": src.to_str().expect("src to str"),
         }),
     );
+    write_source(
+        &src,
+        "thing.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+    let _ = host.call("commit", serde_json::json!({"library": "droppable"}));
     assert!(host.library_dir("droppable").exists());
     let resp = host.call(
-        "unregister_library",
-        serde_json::json!({"name": "droppable"}),
+        "delete",
+        serde_json::json!({
+            "library": "droppable",
+            "source_path": src.to_str().expect("src to str"),
+        }),
     );
-    assert!(
-        !has_error_path(&resp),
-        "unregister_library should succeed; got {resp}",
-    );
+    assert!(!has_error_path(&resp), "delete should succeed; got {resp}",);
     assert!(
         !host.library_dir("droppable").exists(),
-        "lib dir should be gone after unregister",
+        "lib dir should be gone after delete",
     );
     let log = git_log_subjects(&host.libraries_dir());
     assert!(
-        log.iter().any(|s| s == "unregister library droppable"),
-        "expected unregister commit in log; got {log:?}",
+        log.iter().any(|s| s == "delete library droppable"),
+        "expected delete-library commit in log; got {log:?}",
     );
 }
 
 #[test]
-fn unregister_missing_errors() {
+fn delete_missing_errors() {
     let mut host = Host::spawn();
     let resp = host.call(
-        "unregister_library",
-        serde_json::json!({"name": "neverexisted"}),
+        "delete",
+        serde_json::json!({
+            "library": "neverexisted",
+            "source_path": "/some/path",
+        }),
     );
     assert!(
         has_error_path(&resp),
-        "unregister of unknown lib should error; got {resp}",
+        "delete of unknown lib should error; got {resp}",
     );
 }
 

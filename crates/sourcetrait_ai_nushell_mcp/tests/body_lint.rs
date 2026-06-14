@@ -1,13 +1,11 @@
-//! Slice 5.1 + 5.2 integration tests for the AST body linter. Each
-//! handler that accepts agent-authored body source short-circuits on
-//! lint violations with the agent-fixable `lint::<class> [L:C]`
-//! report shape (with optional ` mod <rel_path>` source tag for
-//! library import paths). Helper-function lint lands in slice 5.3 --
-//! not covered here. `rerun()` does NOT re-lint per the_user
-//! 2026-05-31 design call (trust the cache).
+//! Integration tests for the AST body linter on run() / interact().
+//! Each handler that accepts agent-authored body source short-circuits
+//! on lint violations with the agent-fixable `lint::<class> [L:C]`
+//! report shape. `rerun()` does NOT re-lint per the_user 2026-05-31
+//! design call (trust the cache). Library commit() does NOT lint
+//! authored bodies, so no define-time body-lint coverage lives here.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -20,7 +18,6 @@ struct Host {
     data_dir: tempfile::TempDir,
     #[allow(dead_code)]
     cache_dir: tempfile::TempDir,
-    source_root: tempfile::TempDir,
 }
 
 impl Host {
@@ -29,7 +26,6 @@ impl Host {
         let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
         let data_dir = tempfile::tempdir().expect("data tempdir");
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
-        let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
@@ -48,14 +44,9 @@ impl Host {
             next_id: 1,
             data_dir,
             cache_dir,
-            source_root,
         };
         host.initialize();
         host
-    }
-
-    fn source_dir(&self, name: &str) -> PathBuf {
-        self.source_root.path().join(name)
     }
 
     fn initialize(&mut self) {
@@ -134,20 +125,6 @@ impl Host {
     fn interact(&mut self, args: serde_json::Value) -> serde_json::Value {
         self.call_tool("interact", args)
     }
-
-    fn register(&mut self, name: &str, path: &str) -> serde_json::Value {
-        self.call_tool(
-            "register_library",
-            serde_json::json!({
-                "name": name,
-                "path": path,
-            }),
-        )
-    }
-
-    fn define_function(&mut self, args: serde_json::Value) -> serde_json::Value {
-        self.call_tool("define_function", args)
-    }
 }
 
 impl Drop for Host {
@@ -159,10 +136,6 @@ impl Drop for Host {
 
 fn envelope_error<'a>(resp: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
     resp.get("result")?.get("structuredContent")?.get("error")
-}
-
-fn has_envelope_error(resp: &serde_json::Value) -> bool {
-    envelope_error(resp).is_some()
 }
 
 fn envelope_error_kind(resp: &serde_json::Value) -> Option<&str> {
@@ -311,87 +284,4 @@ fn lint_interact_rejects_denied_external() {
     );
     let kinds = lint_violation_kinds(&resp);
     assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
-}
-
-// ----------------------------------------------------------------------------
-// Slice 5.2: define_function body lint
-// ----------------------------------------------------------------------------
-
-#[test]
-fn lint_define_function_rejects_hardcoded_path() {
-    let mut host = Host::spawn();
-    let mirror = host.source_dir("mirror");
-    std::fs::create_dir_all(&mirror).expect("mkdir mirror");
-    let reg = host.register("lib1", mirror.to_str().unwrap());
-    assert!(!has_envelope_error(&reg), "register failed: {reg}");
-    let resp = host.define_function(serde_json::json!({
-        "library": "lib1",
-        "module_path": "",
-        "name": "bad",
-        "args_schema": {"noop": "int"},
-        "result_schema": {"out": "int"},
-        "body": "{ p: \"/home/box/x\", out: 0 }"
-    }));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("lint::violations"),
-        "got {resp}"
-    );
-    let kinds = lint_violation_kinds(&resp);
-    assert!(
-        kinds.iter().any(|k| k == "hardcoded_variable"),
-        "got {kinds:?}"
-    );
-}
-
-#[test]
-fn lint_define_function_rejects_denied_external() {
-    let mut host = Host::spawn();
-    let mirror = host.source_dir("mirror2");
-    std::fs::create_dir_all(&mirror).expect("mkdir mirror");
-    let reg = host.register("lib2", mirror.to_str().unwrap());
-    assert!(!has_envelope_error(&reg), "register failed: {reg}");
-    let resp = host.define_function(serde_json::json!({
-        "library": "lib2",
-        "module_path": "",
-        "name": "bad",
-        "args_schema": {"noop": "int"},
-        "result_schema": {"out": "int"},
-        "body": "{ x: (^rm -rf /; 0) }"
-    }));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("lint::violations"),
-        "got {resp}"
-    );
-    let kinds = lint_violation_kinds(&resp);
-    assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
-}
-
-#[test]
-fn lint_define_function_passes_clean_body() {
-    let mut host = Host::spawn();
-    let mirror = host.source_dir("mirror3");
-    std::fs::create_dir_all(&mirror).expect("mkdir mirror");
-    let reg = host.register("lib3", mirror.to_str().unwrap());
-    assert!(reg.get("error").is_none(), "register failed: {reg}");
-    let resp = host.define_function(serde_json::json!({
-        "library": "lib3",
-        "module_path": "",
-        "name": "good",
-        "args_schema": {"x": "int"},
-        "result_schema": {"out": "int"},
-        "body": "{ out: ($args.x + 1) }"
-    }));
-    // Expect success: no envelope error, no structuredContent on the
-    // result (no-return tools omit structuredContent on success per the
-    // C6.1 / 0.0.34 design).
-    assert!(!has_envelope_error(&resp), "define rejected: {resp}");
-    let result = resp.get("result").unwrap_or_else(|| {
-        panic!("expected ok result; got {resp}");
-    });
-    assert!(
-        result.get("structuredContent").is_none(),
-        "no-return tools should not emit structuredContent; got {result}",
-    );
 }

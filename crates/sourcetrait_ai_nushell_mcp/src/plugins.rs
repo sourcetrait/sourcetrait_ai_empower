@@ -1,25 +1,24 @@
 use crate::*;
 
 /// What: the agent-facing record of one plugin in the canonical
-/// plugin registry. Carries the plugin's name (always present) and
-/// its self-reported version (often unset).
+/// plugin registry, as a positional `(name, version?)` pair. Field 0
+/// is the name (always present); field 1 is the self-reported version
+/// (often unset).
 ///
 /// Why: `info()`'s `plugins` field surfaces the registry view at the
-/// tool seam. `name` is required (every registry entry has one);
-/// `version` is `Option<String>` because not every plugin author
-/// chains `.with_version(...)` onto its metadata, and the `Invalid`
-/// data arm yields no version. `skip_serializing_if` omits the field
-/// from the wire when None, keeping JSON terse.
+/// tool seam. A plugin entry is name + version and both are inferrable
+/// from position, so it serializes as a 2-element array `[name,
+/// version]` rather than a named record (the_user 2026-06-14). The
+/// version is `Option<String>` because not every plugin author chains
+/// `.with_version(...)` onto its metadata and the `Invalid` data arm
+/// yields none; absent serializes as the `null` slot so the pair keeps
+/// its arity.
 ///
 /// Where: returned in a `Vec` from `plugins::list_registered_plugins`;
 /// embedded in `InfoEnvelope::plugins` and serialized through
 /// `envelope_to_structured` to the structured-content channel.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
-pub(crate) struct PluginInfo {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-}
+pub(crate) struct PluginInfo(pub String, pub Option<String>);
 
 /// What: canonical path of the plugin registry file
 /// (`<nu_config_dir>/plugin.msgpackz`). Returns None when no config
@@ -84,10 +83,7 @@ pub(crate) fn list_registered_plugins() -> Vec<PluginInfo> {
                         }
                         nu::PluginRegistryItemData::Invalid => None,
                     };
-                    PluginInfo {
-                        name: p.name.clone(),
-                        version,
-                    }
+                    PluginInfo(p.name.clone(), version)
                 })
                 .collect()
         })

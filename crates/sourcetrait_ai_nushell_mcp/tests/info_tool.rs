@@ -4,7 +4,7 @@
 //! - `info` appears in tools/list (count bumps with the new tool).
 //! - envelope shape: name == "nushell_mcp", version matches the crate's
 //!   CARGO_PKG_VERSION, nu_version is non-empty semver-shaped,
-//!   plugins is a list of records each carrying at least `name`,
+//!   plugins is a list of positional [name, version] pairs,
 //!   libraries is the recursive library -> module -> function
 //!   hierarchy (empty on a fresh host).
 //! - the hierarchy for a registered library: root functions on the
@@ -211,12 +211,23 @@ fn info_returns_static_server_state() {
         .as_array()
         .expect("plugins should be an array");
     for p in plugins {
-        let name = p["name"].as_str().expect("each plugin has name");
+        let entry = p
+            .as_array()
+            .expect("each plugin is a positional [name, version] pair");
+        assert_eq!(
+            entry.len(),
+            2,
+            "plugin entry is a 2-element [name, version]; got {entry:?}",
+        );
+        let name = entry[0].as_str().expect("plugin name is a string");
         assert!(!name.is_empty(), "plugin name should be non-empty");
-        // version is Option<String>; absent on the wire when None.
-        if let Some(v) = p.get("version") {
-            assert!(v.is_string(), "version (when present) should be a string");
-        }
+        // entry[1] is the version: a string when the plugin reports one,
+        // null otherwise (the positional slot is always present).
+        assert!(
+            entry[1].is_string() || entry[1].is_null(),
+            "plugin version slot should be string-or-null; got {:?}",
+            entry[1],
+        );
     }
 
     let libraries = env["libraries"]

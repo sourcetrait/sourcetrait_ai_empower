@@ -1202,7 +1202,176 @@ fn validate_one_file(
             &mut result.structural,
         );
     }
+    // leg 1b: the reserved-terms ban applies to EVERY .nu file -- `call`
+    // and `resolve` may appear only as a call-target's exported sentinel.
+    scan_reserved_terms(&rel, stem, &source, parent, engine, &mut result.structural);
     Ok(())
+}
+
+/// leg 1b: the reserved-terms ban. `call` and `resolve` may appear in a
+/// library ONLY as the exported call/resolve trie of a call-target (1a
+/// validates that contract). ANY OTHER occurrence as an identifier is a
+/// violation -- a private/nested def, a module/dir/file name, a const /
+/// alias / let / mut binding, a parameter, a record/table column key, or a
+/// cell-path member. Quoted string *values* and command references
+/// (`resolve (call $args)`) are not identifiers and pass.
+///
+/// `nu_parser::flatten_block` tags each token with a `FlatShape`:
+/// `call`/`resolve` flag at `VarDecl` (let/mut/const names) and `String`
+/// (def/module/alias names, record/table keys, cell-path members,
+/// barewords) -- except a `String` token immediately following an
+/// `export def` token, which is the call-target's valid sentinel export.
+/// Command references parse as `InternalCall`/`External` (skipped), and a
+/// quoted `"call"` keeps its quotes in the token content so it never
+/// matches `call`. Parameter names hide inside the `Signature` token, so
+/// they are walked separately (TODO leg 1b params); module/dir/file names
+/// are checked on the path.
+fn scan_reserved_terms(
+    rel: &str,
+    stem: &str,
+    source: &str,
+    parent: &std::path::Path,
+    engine: &ParseEngine,
+    violations: &mut Vec<Violation>,
+) {
+    // 1. Path components: no module / directory / file named call|resolve.
+    for comp in rel.split('/') {
+        let bare = comp.strip_suffix(".nu").unwrap_or(comp);
+        if is_reserved_term(bare) {
+            violations.push(Violation {
+                path: rel.to_string(),
+                line: 0,
+                message: format!(
+                    "`{bare}` is reserved (the call-target sentinel) and cannot name a module, directory, or file",
+                ),
+            });
+        }
+    }
+
+    // 2. Parse + flatten the token stream.
+    let wrapper_name = format!("__rt_{stem}");
+    let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
+    let engine_state = engine.engine_state_for_file(parent);
+    let mut working_set = nu::StateWorkingSet::new(&engine_state);
+    let block = nu::parse(&mut working_set, Some(rel), wrapped.as_bytes(), false);
+    if !working_set.parse_errors.is_empty() {
+        // Parse errors are surfaced by the structural validator; don't
+        // scan a half-parsed token stream.
+        return;
+    }
+
+    let mut prev_export_def = false;
+    for (span, shape) in nu::flatten_block(&working_set, &block) {
+        let content = wrapped.get(span.start..span.end).unwrap_or("");
+        let flag = is_reserved_term(content)
+            && match &shape {
+                nu::FlatShape::VarDecl(_) => true,
+                nu::FlatShape::String => !prev_export_def,
+                _ => false,
+            };
+        if flag {
+            let src_off = span.start.saturating_sub(prefix_len);
+            let (line, _col) = span_to_line_col(source, src_off);
+            violations.push(Violation {
+                path: rel.to_string(),
+                line,
+                message: format!(
+                    "`{content}` is reserved -- it may appear only as a call-target's exported `call`/`resolve`; rename this identifier",
+                ),
+            });
+        }
+        // Parameter names live inside a single Signature token (flatten
+        // does not tokenize them individually), so pull the top-level
+        // param names out of the signature text.
+        if matches!(&shape, nu::FlatShape::Signature) {
+            for pname in signature_param_names(content) {
+                if is_reserved_term(&pname) {
+                    let src_off = span.start.saturating_sub(prefix_len);
+                    let (line, _col) = span_to_line_col(source, src_off);
+                    violations.push(Violation {
+                        path: rel.to_string(),
+                        line,
+                        message: format!(
+                            "`{pname}` is reserved and cannot be a parameter name; rename it",
+                        ),
+                    });
+                }
+            }
+        }
+        prev_export_def =
+            matches!(&shape, nu::FlatShape::InternalCall(_)) && content == "export def";
+    }
+}
+
+/// `call` and `resolve` are the reserved call-target sentinel names.
+fn is_reserved_term(s: &str) -> bool {
+    s == "call" || s == "resolve"
+}
+
+/// Extract the top-level parameter names from a flattened `Signature`
+/// token (`[call: int, --flag: string, ...rest]`, or a closure `|call|`),
+/// skipping names nested inside type annotations (`record<resolve: int>`)
+/// and stripping flag / rest sigils so `--call` and `...call` surface as
+/// `call`. A name slot opens at signature start and after each depth<=1
+/// comma; `:` and any nested `<([{` close it.
+fn signature_param_names(sig: &str) -> Vec<String> {
+    let chars: Vec<char> = sig.chars().collect();
+    let n = chars.len();
+    let mut names = Vec::new();
+    let mut depth: i32 = 0;
+    let mut at_slot_start = true;
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        match c {
+            '[' | '<' | '(' | '{' => {
+                if depth > 0 {
+                    at_slot_start = false;
+                }
+                depth += 1;
+                i += 1;
+            }
+            ']' | '>' | ')' | '}' => {
+                depth -= 1;
+                i += 1;
+            }
+            ',' if depth <= 1 => {
+                at_slot_start = true;
+                i += 1;
+            }
+            ':' => {
+                at_slot_start = false;
+                i += 1;
+            }
+            c if c.is_whitespace() => {
+                i += 1;
+            }
+            _ if at_slot_start && depth <= 1 => {
+                let start = i;
+                while i < n {
+                    let cc = chars[i];
+                    if cc.is_alphanumeric() || cc == '_' || cc == '-' || cc == '.' {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let raw: String = chars[start..i].iter().collect();
+                let name = raw
+                    .trim_start_matches("...")
+                    .trim_start_matches("--")
+                    .trim_start_matches('-');
+                if !name.is_empty() {
+                    names.push(name.to_string());
+                }
+                at_slot_start = false;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    names
 }
 
 /// Pure-AST mod.nu validator. Parses the source in a

@@ -732,3 +732,136 @@ fn import_rejects_empty_record_skeleton() {
         "expected skeleton-rejection violation; got {msg:?}",
     );
 }
+
+// ---- leg 1b: the reserved-terms ban ----
+
+#[test]
+fn import_rejects_private_def_named_reserved() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("pdeflib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "export use ./util.nu\n");
+    write_source(&src, "util.nu", "export const LIMIT = 5\ndef call [] { 1 }\n");
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "pdeflib", "path": src.to_str().unwrap()}),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(msg.contains("reserved"), "expected reserved-term violation; got {msg:?}");
+}
+
+#[test]
+fn import_rejects_module_named_reserved() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("modreslib");
+    std::fs::create_dir_all(src.join("resolve")).unwrap();
+    write_source(&src, "mod.nu", "export module resolve\n");
+    write_source(&src, "resolve/mod.nu", "");
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "modreslib", "path": src.to_str().unwrap()}),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(msg.contains("reserved"), "expected reserved-name violation; got {msg:?}");
+}
+
+#[test]
+fn import_rejects_const_named_reserved() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("constreslib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "export const call = 5\nexport use ./thing.nu\n");
+    write_source(
+        &src,
+        "thing.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "constreslib", "path": src.to_str().unwrap()}),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(msg.contains("reserved"), "expected reserved-const violation; got {msg:?}");
+}
+
+#[test]
+fn import_rejects_record_key_reserved() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("rkeylib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "");
+    write_source(
+        &src,
+        "thing.nu",
+        "export def call [args: record<x: int>] { { call: $args.x } }\nexport def resolve [args: record<n: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+    );
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "rkeylib", "path": src.to_str().unwrap()}),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(msg.contains("reserved"), "expected reserved record-key violation; got {msg:?}");
+}
+
+#[test]
+fn import_rejects_cellpath_member_reserved() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("cpathlib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "");
+    write_source(
+        &src,
+        "thing.nu",
+        "export def call [args: record<x: int>] { { out: $args.resolve } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+    );
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "cpathlib", "path": src.to_str().unwrap()}),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(msg.contains("reserved"), "expected reserved cell-path violation; got {msg:?}");
+}
+
+#[test]
+fn import_rejects_param_named_reserved() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("paramreslib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "export use ./util.nu\n");
+    write_source(&src, "util.nu", "export def helper [call: int] { $call }\n");
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "paramreslib", "path": src.to_str().unwrap()}),
+    );
+    assert!(has_error_path(&resp));
+    let msg = error_message(&resp);
+    assert!(
+        msg.contains("parameter") || msg.contains("reserved"),
+        "expected reserved-param violation; got {msg:?}",
+    );
+}
+
+#[test]
+fn import_accepts_reserved_as_quoted_string_value() {
+    // A quoted string value keeps its quotes in the token, so an exact
+    // `resolve` value never matches; command refs to the exports pass too.
+    let mut host = Host::spawn();
+    let src = host.source_dir("strvallib");
+    std::fs::create_dir_all(&src).unwrap();
+    write_source(&src, "mod.nu", "");
+    write_source(
+        &src,
+        "thing.nu",
+        "export def call [args: record<x: int>] { let note = \"resolve\"; { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+    );
+    let resp = host.call(
+        "import_library",
+        serde_json::json!({"name": "strvallib", "path": src.to_str().unwrap()}),
+    );
+    assert!(!has_error_path(&resp), "quoted string value should not trip the ban; got {resp}");
+}

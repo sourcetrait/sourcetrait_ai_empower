@@ -266,7 +266,7 @@ impl schema::JsonSchema for WhereSource {
 /// empty `content` array. Domain error path; deviates from MCP
 /// 2025-11-25 `server/tools.md` SHOULD identically to
 /// `envelope_to_structured` -- see the "Content::text omission
-/// deviation note" block in `server/tool.rs` for the policy.
+/// deviation note" block in `server/tool/common.rs` for the policy.
 ///
 /// Why: pairs with `envelope_to_structured` to give one uniform
 /// `structured_content`-only wire shape across success and error

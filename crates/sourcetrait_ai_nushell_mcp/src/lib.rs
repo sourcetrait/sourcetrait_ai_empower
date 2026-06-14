@@ -7,7 +7,23 @@ pub(crate) mod server {
     pub(crate) mod pool;
     pub(crate) mod run;
     pub(crate) mod schema;
-    pub(crate) mod tool;
+    pub(crate) mod tool {
+        pub(crate) mod common;
+        pub(crate) mod handler;
+        pub(crate) mod run;
+        pub(crate) mod interact;
+        pub(crate) mod rerun;
+        pub(crate) mod call;
+        pub(crate) mod register_library;
+        pub(crate) mod unregister_library;
+        pub(crate) mod define_function;
+        pub(crate) mod undefine_function;
+        pub(crate) mod import_library;
+        pub(crate) mod reimport_library;
+        pub(crate) mod processes;
+        pub(crate) mod kill;
+        pub(crate) mod info;
+    }
     pub(crate) mod worker_handle;
 }
 pub(crate) mod worker {
@@ -84,8 +100,16 @@ pub(crate) use crate::{
             nu_to_result_schema,
             result_schema_to_nu,
         },
-        tool::{
+        tool::common::{
+            ClosureCacheBody,
+            InFlightKind,
             NuSh,
+            RunParams,
+            convert_schemas,
+            dispatch_interact,
+            dispatch_pooled,
+            envelope_to_structured,
+            lint_run_params,
         },
         worker_handle::{
             WorkerHandle,

@@ -40,8 +40,7 @@ pub(crate) struct LearnEnvelope {
 /// for the skill body lives here (the harness `skills/nu/SKILL.md` is
 /// a generated artifact). Only `{{ version }}` / `{{ nu_version }}` in
 /// the stamp line interpolate; the rest is verbatim.
-const NU_SKILL_TEMPLATE: &str =
-    include_str!("../../../assets/templates/nu_skill.md.liquid");
+const NU_SKILL_TEMPLATE: &str = include_str!("../../../assets/templates/nu_skill.md.liquid");
 
 /// Skill name in the Claude-Code layout `<harness_dir>/skills/<name>/SKILL.md`.
 const SKILL_NAME: &str = "nu";
@@ -82,10 +81,12 @@ pub(crate) fn generate_skill(
             phase: "learn::parser".to_string(),
             reason: e.to_string(),
         })?;
-    let template = parser.parse(NU_SKILL_TEMPLATE).map_err(|e| Error::Internal {
-        phase: "learn::parse".to_string(),
-        reason: e.to_string(),
-    })?;
+    let template = parser
+        .parse(NU_SKILL_TEMPLATE)
+        .map_err(|e| Error::Internal {
+            phase: "learn::parse".to_string(),
+            reason: e.to_string(),
+        })?;
     let globals = liquid::to_object(&LearnContext {
         version: version.to_string(),
         nu_version: nu_version.to_string(),

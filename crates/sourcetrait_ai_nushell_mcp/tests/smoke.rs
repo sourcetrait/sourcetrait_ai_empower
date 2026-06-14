@@ -36,7 +36,14 @@ impl Host {
             .expect("spawn host");
         let stdin = child.stdin.take().expect("host stdin");
         let stdout = BufReader::new(child.stdout.take().expect("host stdout"));
-        let mut host = Self { child, stdin, stdout, next_id: 1, data_dir, cache_dir };
+        let mut host = Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+            data_dir,
+            cache_dir,
+        };
         host.initialize();
         host
     }
@@ -156,7 +163,8 @@ fn smoke_2_runtime_arg_typecheck_error() {
     let resp = host.run(args);
     // We expect either an error result (rmcp's CallToolResult with is_error=true)
     // OR a JSON-RPC error object. Both are valid representations.
-    let has_error_path = resp.get("result")
+    let has_error_path = resp
+        .get("result")
         .and_then(|r| r.get("structuredContent"))
         .and_then(|sc| sc.get("error"))
         .is_some();
@@ -179,7 +187,8 @@ fn smoke_3_runtime_result_typecheck_error() {
         "body": "{ out: \"five\" }",
     });
     let resp = host.run(args);
-    let has_error_path = resp.get("result")
+    let has_error_path = resp
+        .get("result")
         .and_then(|r| r.get("structuredContent"))
         .and_then(|sc| sc.get("error"))
         .is_some();
@@ -203,8 +212,8 @@ fn smoke_5_external_command() {
         "body": "{ out: (^printf hello | str trim) }",
     });
     let resp = host.run(args);
-    let envelope = extract_envelope(&resp)
-        .unwrap_or_else(|| panic!("expected envelope; got {resp}"));
+    let envelope =
+        extract_envelope(&resp).unwrap_or_else(|| panic!("expected envelope; got {resp}"));
     assert_eq!(
         envelope["result"]["out"].as_str(),
         Some("hello"),
@@ -227,7 +236,8 @@ fn smoke_6_worker_death_via_exit() {
         "body": "{ out: (exit 1; 0) }",
     });
     let resp = host.run(args);
-    let has_error_path = resp.get("result")
+    let has_error_path = resp
+        .get("result")
         .and_then(|r| r.get("structuredContent"))
         .and_then(|sc| sc.get("error"))
         .is_some();
@@ -256,7 +266,8 @@ fn smoke_9_timeout_fires() {
         "timeout_ms": 200u64
     });
     let resp = host.run(args);
-    let env = resp.get("result")
+    let env = resp
+        .get("result")
         .and_then(|r| r.get("structuredContent"))
         .and_then(|sc| sc.get("error"))
         .unwrap_or_else(|| panic!("expected error envelope; got {resp}"));
@@ -271,8 +282,7 @@ fn smoke_9_timeout_fires() {
         "body": "{ out: ($args.x + 1) }",
     });
     let resp2 = host.run(args2);
-    let env = extract_envelope(&resp2)
-        .unwrap_or_else(|| panic!("expected envelope; got {resp2}"));
+    let env = extract_envelope(&resp2).unwrap_or_else(|| panic!("expected envelope; got {resp2}"));
     assert_eq!(env["result"]["out"].as_i64(), Some(8), "got {env}");
 }
 
@@ -325,8 +335,8 @@ fn smoke_8_plugin_path_resolves() {
         "body": "{ path: $nu.plugin-path }",
     });
     let resp = host.run(args);
-    let envelope = extract_envelope(&resp)
-        .unwrap_or_else(|| panic!("expected envelope; got {resp}"));
+    let envelope =
+        extract_envelope(&resp).unwrap_or_else(|| panic!("expected envelope; got {resp}"));
     let path = envelope["result"]["path"]
         .as_str()
         .unwrap_or_else(|| panic!("expected string; got {:?}", envelope["result"]));
@@ -357,8 +367,8 @@ fn smoke_12_tls_crypto_provider_installed() {
         "body": "{ out: (try { http get 'https://127.0.0.1:9' | to text } catch {|e| $e.msg }) }",
     });
     let resp = host.run(args);
-    let envelope = extract_envelope(&resp)
-        .unwrap_or_else(|| panic!("expected envelope; got {resp}"));
+    let envelope =
+        extract_envelope(&resp).unwrap_or_else(|| panic!("expected envelope; got {resp}"));
     let out = envelope["result"]["out"].as_str().unwrap_or_default();
     assert!(
         !out.is_empty(),
@@ -386,9 +396,8 @@ fn smoke_7_multi_call_stability_and_scoping() {
             "body": "{ out: ($args.x + 100) }",
         });
         let resp = host.run(args);
-        let envelope = extract_envelope(&resp).unwrap_or_else(|| {
-            panic!("call {i}: expected envelope; got {resp}")
-        });
+        let envelope = extract_envelope(&resp)
+            .unwrap_or_else(|| panic!("call {i}: expected envelope; got {resp}"));
         let expected = (i + 100) as i64;
         assert_eq!(
             envelope["result"]["out"].as_i64(),
@@ -406,8 +415,8 @@ fn smoke_7_multi_call_stability_and_scoping() {
         "body": "{ leaked: (scope commands | where name == \"__exec\" | length) }",
     });
     let resp = host.run(intro);
-    let envelope = extract_envelope(&resp)
-        .unwrap_or_else(|| panic!("intro: expected envelope; got {resp}"));
+    let envelope =
+        extract_envelope(&resp).unwrap_or_else(|| panic!("intro: expected envelope; got {resp}"));
     assert_eq!(
         envelope["result"]["leaked"].as_i64(),
         Some(0),

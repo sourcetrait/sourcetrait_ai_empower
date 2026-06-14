@@ -51,11 +51,7 @@ impl NuSh {
         let entries: Vec<ProcessEntry> = map
             .iter()
             .map(|(nonce_str, entry)| {
-                let args_obj = entry
-                    .args
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
+                let args_obj = entry.args.as_object().cloned().unwrap_or_default();
                 let (rerun_id, path) = match &entry.kind {
                     InFlightKind::Run | InFlightKind::Interact => (None, None),
                     InFlightKind::Rerun { rerun_id } => (Some(rerun_id.clone()), None),

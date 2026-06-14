@@ -158,9 +158,15 @@ fn structural_messages(resp: &serde_json::Value) -> Vec<String> {
         .and_then(|e| e.get("data"))
         .and_then(|d| d.get("structural"))
         .and_then(|s| s.as_array())
-        .map(|arr| arr.iter()
-            .filter_map(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string))
-            .collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    v.get("message")
+                        .and_then(|m| m.as_str())
+                        .map(str::to_string)
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -168,7 +174,9 @@ fn structural_messages(resp: &serde_json::Value) -> Vec<String> {
 /// that match substrings against error messages. Returns the full
 /// response string when no envelope error is present.
 fn error_message(resp: &serde_json::Value) -> String {
-    envelope_error(resp).map(|e| e.to_string()).unwrap_or_else(|| resp.to_string())
+    envelope_error(resp)
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| resp.to_string())
 }
 
 fn write_source(dir: &Path, rel: &str, contents: &str) {
@@ -236,7 +244,10 @@ fn import_rejects_mod_nu_with_syntax_error() {
             "path": src.to_str().unwrap(),
         }),
     );
-    assert!(has_error_path(&resp), "syntax-error mod.nu should reject; got {resp}");
+    assert!(
+        has_error_path(&resp),
+        "syntax-error mod.nu should reject; got {resp}"
+    );
     let msg = error_message(&resp);
     assert!(
         msg.contains("parse error"),
@@ -258,7 +269,10 @@ fn import_rejects_mod_nu_referencing_missing_file() {
             "path": src.to_str().unwrap(),
         }),
     );
-    assert!(has_error_path(&resp), "missing-ref mod.nu should reject; got {resp}");
+    assert!(
+        has_error_path(&resp),
+        "missing-ref mod.nu should reject; got {resp}"
+    );
     let msg = error_message(&resp);
     assert!(
         msg.contains("ModuleNotFound") || msg.contains("does_not_exist"),
@@ -289,7 +303,10 @@ fn import_accepts_multiline_def_signature() {
             "path": src.to_str().unwrap(),
         }),
     );
-    assert!(!has_error_path(&resp), "multi-line signature should pass; got {resp}");
+    assert!(
+        !has_error_path(&resp),
+        "multi-line signature should pass; got {resp}"
+    );
 }
 
 #[test]
@@ -484,7 +501,10 @@ fn import_accepts_mod_nu_with_only_comments() {
             "path": src.to_str().unwrap(),
         }),
     );
-    assert!(!has_error_path(&resp), "empty mod.nu with comments should accept; got {resp}");
+    assert!(
+        !has_error_path(&resp),
+        "empty mod.nu with comments should accept; got {resp}"
+    );
 }
 
 #[test]
@@ -520,8 +540,16 @@ fn import_aggregates_multiple_violations() {
     // wrong -- three distinct violations across the tree.
     write_source(&src, "mod.nu", "export module a\ndef helper [] { 1 }\n");
     write_source(&src, "a/mod.nu", "");
-    write_source(&src, "a/no_call.nu", "export def resolve [args: record<x: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n");
-    write_source(&src, "a/bad_main.nu", "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { call $args }\n");
+    write_source(
+        &src,
+        "a/no_call.nu",
+        "export def resolve [args: record<x: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+    );
+    write_source(
+        &src,
+        "a/bad_main.nu",
+        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { call $args }\n",
+    );
 
     let resp = host.call(
         "import_library",
@@ -530,16 +558,30 @@ fn import_aggregates_multiple_violations() {
             "path": src.to_str().unwrap(),
         }),
     );
-    assert_eq!(envelope_error_kind(&resp), Some("library::violations"), "got {resp}");
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("library::violations"),
+        "got {resp}"
+    );
     let messages = structural_messages(&resp);
     // At least three distinct violation messages should appear in the
     // structural section.
-    assert!(messages.iter().any(|m| m.contains("mod.nu may only contain")),
-        "got {messages:?}");
-    assert!(messages.iter().any(|m| m.contains("must export `call`")),
-        "got {messages:?}");
-    assert!(messages.iter().any(|m| m.contains("main's body must be exactly")),
-        "got {messages:?}");
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("mod.nu may only contain")),
+        "got {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("must export `call`")),
+        "got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("main's body must be exactly")),
+        "got {messages:?}"
+    );
 }
 
 #[test]
@@ -555,7 +597,10 @@ fn import_duplicate_name_errors() {
             "path": src.to_str().unwrap(),
         }),
     );
-    assert!(!has_error_path(&r1), "first import should succeed; got {r1}");
+    assert!(
+        !has_error_path(&r1),
+        "first import should succeed; got {r1}"
+    );
     let r2 = host.call(
         "import_library",
         serde_json::json!({
@@ -563,7 +608,10 @@ fn import_duplicate_name_errors() {
             "path": src.to_str().unwrap(),
         }),
     );
-    assert!(has_error_path(&r2), "duplicate import should error; got {r2}");
+    assert!(
+        has_error_path(&r2),
+        "duplicate import should error; got {r2}"
+    );
 }
 
 #[test]
@@ -591,7 +639,10 @@ fn reimport_picks_up_changes() {
         &valid_function_source("x: int", "out: int", "{ out: ($args.x + 1000) }"),
     );
     let resp = host.call("reimport_library", serde_json::json!({"name": "livelib"}));
-    assert!(!has_error_path(&resp), "reimport should succeed; got {resp}");
+    assert!(
+        !has_error_path(&resp),
+        "reimport should succeed; got {resp}"
+    );
     let imported = std::fs::read_to_string(host.library_dir("livelib").join("thing.nu")).unwrap();
     assert!(
         imported.contains("+ 1000"),
@@ -614,17 +665,17 @@ fn reimport_rejects_when_kind_is_registered() {
         "reimport_library",
         serde_json::json!({"name": "registered_lib"}),
     );
-    assert_eq!(envelope_error_kind(&resp), Some("library::wrong_kind"),
-        "expected library::wrong_kind; got {resp}");
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("library::wrong_kind"),
+        "expected library::wrong_kind; got {resp}"
+    );
 }
 
 #[test]
 fn reimport_unknown_library_errors() {
     let mut host = Host::spawn();
-    let resp = host.call(
-        "reimport_library",
-        serde_json::json!({"name": "ghost"}),
-    );
+    let resp = host.call("reimport_library", serde_json::json!({"name": "ghost"}));
     assert!(has_error_path(&resp));
 }
 
@@ -660,10 +711,7 @@ fn imported_library_invokable_via_standalone_driver() {
         String::from_utf8_lossy(&out.stderr),
         stdout,
     );
-    assert!(
-        stdout.contains("12"),
-        "expected out: 12; got {stdout:?}",
-    );
+    assert!(stdout.contains("12"), "expected out: 12; got {stdout:?}",);
 }
 
 #[test]
@@ -683,7 +731,10 @@ fn import_accepts_organizational_file() {
         "import_library",
         serde_json::json!({"name": "orglib", "path": src.to_str().unwrap()}),
     );
-    assert!(!has_error_path(&resp), "organizational file should import; got {resp}");
+    assert!(
+        !has_error_path(&resp),
+        "organizational file should import; got {resp}"
+    );
 }
 
 #[test]
@@ -706,7 +757,10 @@ fn import_accepts_mod_nu_with_export_const_and_def() {
         "import_library",
         serde_json::json!({"name": "modutillib", "path": src.to_str().unwrap()}),
     );
-    assert!(!has_error_path(&resp), "mod.nu with export const/def should import; got {resp}");
+    assert!(
+        !has_error_path(&resp),
+        "mod.nu with export const/def should import; got {resp}"
+    );
 }
 
 #[test]
@@ -741,14 +795,21 @@ fn import_rejects_private_def_named_reserved() {
     let src = host.source_dir("pdeflib");
     std::fs::create_dir_all(&src).unwrap();
     write_source(&src, "mod.nu", "export use ./util.nu\n");
-    write_source(&src, "util.nu", "export const LIMIT = 5\ndef call [] { 1 }\n");
+    write_source(
+        &src,
+        "util.nu",
+        "export const LIMIT = 5\ndef call [] { 1 }\n",
+    );
     let resp = host.call(
         "import_library",
         serde_json::json!({"name": "pdeflib", "path": src.to_str().unwrap()}),
     );
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
-    assert!(msg.contains("reserved"), "expected reserved-term violation; got {msg:?}");
+    assert!(
+        msg.contains("reserved"),
+        "expected reserved-term violation; got {msg:?}"
+    );
 }
 
 #[test]
@@ -764,7 +825,10 @@ fn import_rejects_module_named_reserved() {
     );
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
-    assert!(msg.contains("reserved"), "expected reserved-name violation; got {msg:?}");
+    assert!(
+        msg.contains("reserved"),
+        "expected reserved-name violation; got {msg:?}"
+    );
 }
 
 #[test]
@@ -772,7 +836,11 @@ fn import_rejects_const_named_reserved() {
     let mut host = Host::spawn();
     let src = host.source_dir("constreslib");
     std::fs::create_dir_all(&src).unwrap();
-    write_source(&src, "mod.nu", "export const call = 5\nexport use ./thing.nu\n");
+    write_source(
+        &src,
+        "mod.nu",
+        "export const call = 5\nexport use ./thing.nu\n",
+    );
     write_source(
         &src,
         "thing.nu",
@@ -784,7 +852,10 @@ fn import_rejects_const_named_reserved() {
     );
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
-    assert!(msg.contains("reserved"), "expected reserved-const violation; got {msg:?}");
+    assert!(
+        msg.contains("reserved"),
+        "expected reserved-const violation; got {msg:?}"
+    );
 }
 
 #[test]
@@ -804,7 +875,10 @@ fn import_rejects_record_key_reserved() {
     );
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
-    assert!(msg.contains("reserved"), "expected reserved record-key violation; got {msg:?}");
+    assert!(
+        msg.contains("reserved"),
+        "expected reserved record-key violation; got {msg:?}"
+    );
 }
 
 #[test]
@@ -824,7 +898,10 @@ fn import_rejects_cellpath_member_reserved() {
     );
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
-    assert!(msg.contains("reserved"), "expected reserved cell-path violation; got {msg:?}");
+    assert!(
+        msg.contains("reserved"),
+        "expected reserved cell-path violation; got {msg:?}"
+    );
 }
 
 #[test]
@@ -863,7 +940,10 @@ fn import_accepts_reserved_as_quoted_string_value() {
         "import_library",
         serde_json::json!({"name": "strvallib", "path": src.to_str().unwrap()}),
     );
-    assert!(!has_error_path(&resp), "quoted string value should not trip the ban; got {resp}");
+    assert!(
+        !has_error_path(&resp),
+        "quoted string value should not trip the ban; got {resp}"
+    );
 }
 
 // ---- leg 3: new() scaffold ----
@@ -879,26 +959,42 @@ fn new_establishes_library_and_scaffolds_function() {
     );
     assert!(!has_error_path(&r1), "establish should succeed; got {r1}");
     let meta_text = std::fs::read_to_string(
-        host.library_dir("scaffolded").join(".nushell_mcp_meta.json"),
+        host.library_dir("scaffolded")
+            .join(".nushell_mcp_meta.json"),
     )
     .unwrap();
     assert!(
         meta_text.contains(src.to_str().unwrap()),
         "meta should record source_path; got {meta_text}",
     );
-    assert!(src.join("mod.nu").exists(), "source root mod.nu should be seeded");
+    assert!(
+        src.join("mod.nu").exists(),
+        "source root mod.nu should be seeded"
+    );
 
     // Scaffold a function (later call; source_path omitted).
     let r2 = host.call(
         "new",
         serde_json::json!({"library": "scaffolded", "module_path": "math", "name": "double"}),
     );
-    assert!(!has_error_path(&r2), "scaffold function should succeed; got {r2}");
+    assert!(
+        !has_error_path(&r2),
+        "scaffold function should succeed; got {r2}"
+    );
     let fn_src = std::fs::read_to_string(src.join("math").join("double.nu")).unwrap();
-    assert!(fn_src.contains("export def call"), "skeleton missing call; got {fn_src:?}");
-    assert!(fn_src.contains("export def resolve"), "skeleton missing resolve");
+    assert!(
+        fn_src.contains("export def call"),
+        "skeleton missing call; got {fn_src:?}"
+    );
+    assert!(
+        fn_src.contains("export def resolve"),
+        "skeleton missing resolve"
+    );
     assert!(fn_src.contains("export def main"), "skeleton missing main");
-    assert!(fn_src.contains("resolve (call $args)"), "skeleton main body wrong");
+    assert!(
+        fn_src.contains("resolve (call $args)"),
+        "skeleton main body wrong"
+    );
     // Additive cascade wiring (NOT regenerate).
     let math_mod = std::fs::read_to_string(src.join("math").join("mod.nu")).unwrap();
     assert!(
@@ -929,7 +1025,10 @@ fn new_leaf_guard_refuses_existing_function() {
         "new",
         serde_json::json!({"library": "guarded", "module_path": "m", "name": "f"}),
     );
-    assert!(has_error_path(&dup), "scaffolding over an existing function should reject; got {dup}");
+    assert!(
+        has_error_path(&dup),
+        "scaffolding over an existing function should reject; got {dup}"
+    );
 }
 
 #[test]
@@ -937,15 +1036,24 @@ fn new_requires_source_path_on_establish() {
     let mut host = Host::spawn();
     // First new() for a name with no source_path -> rejected.
     let resp = host.call("new", serde_json::json!({"library": "nopath"}));
-    assert!(has_error_path(&resp), "establishing new() without source_path should reject; got {resp}");
+    assert!(
+        has_error_path(&resp),
+        "establishing new() without source_path should reject; got {resp}"
+    );
 }
 
 #[test]
 fn commit_validates_and_upserts_source() {
     let mut host = Host::spawn();
     let src = host.source_dir("clib");
-    let _ = host.call("new", serde_json::json!({"library": "clib", "source_path": src.to_str().unwrap()}));
-    let _ = host.call("new", serde_json::json!({"library": "clib", "module_path": "math", "name": "double"}));
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "clib", "source_path": src.to_str().unwrap()}),
+    );
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "clib", "module_path": "math", "name": "double"}),
+    );
     std::fs::write(
         src.join("math").join("double.nu"),
         valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
@@ -954,59 +1062,126 @@ fn commit_validates_and_upserts_source() {
     let resp = host.call("commit", serde_json::json!({"library": "clib"}));
     assert!(!has_error_path(&resp), "commit should succeed; got {resp}");
     assert!(
-        host.library_dir("clib").join("math").join("double.nu").exists(),
+        host.library_dir("clib")
+            .join("math")
+            .join("double.nu")
+            .exists(),
         "canonical should have the committed function",
     );
     let resp2 = host.call("commit", serde_json::json!({"library": "clib"}));
-    assert!(!has_error_path(&resp2), "no-change commit should succeed; got {resp2}");
-    let changed = resp2["result"]["structuredContent"]["changed"].as_array().expect("changed array");
-    assert!(changed.is_empty(), "no-change commit should report no changes; got {changed:?}");
+    assert!(
+        !has_error_path(&resp2),
+        "no-change commit should succeed; got {resp2}"
+    );
+    let changed = resp2["result"]["structuredContent"]["changed"]
+        .as_array()
+        .expect("changed array");
+    assert!(
+        changed.is_empty(),
+        "no-change commit should report no changes; got {changed:?}"
+    );
 }
 
 #[test]
 fn commit_rejects_unfleshed_skeleton() {
     let mut host = Host::spawn();
     let src = host.source_dir("sklib");
-    let _ = host.call("new", serde_json::json!({"library": "sklib", "source_path": src.to_str().unwrap()}));
-    let _ = host.call("new", serde_json::json!({"library": "sklib", "module_path": "", "name": "raw"}));
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "sklib", "source_path": src.to_str().unwrap()}),
+    );
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "sklib", "module_path": "", "name": "raw"}),
+    );
     let resp = host.call("commit", serde_json::json!({"library": "sklib"}));
-    assert!(has_error_path(&resp), "committing an unfleshed skeleton should reject; got {resp}");
+    assert!(
+        has_error_path(&resp),
+        "committing an unfleshed skeleton should reject; got {resp}"
+    );
 }
 
 #[test]
 fn delete_removes_mcp_and_source() {
     let mut host = Host::spawn();
     let src = host.source_dir("dlib");
-    let _ = host.call("new", serde_json::json!({"library": "dlib", "source_path": src.to_str().unwrap()}));
-    let _ = host.call("new", serde_json::json!({"library": "dlib", "module_path": "", "name": "f"}));
-    std::fs::write(src.join("f.nu"), valid_function_source("x: int", "out: int", "{ out: $args.x }")).unwrap();
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "dlib", "source_path": src.to_str().unwrap()}),
+    );
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "dlib", "module_path": "", "name": "f"}),
+    );
+    std::fs::write(
+        src.join("f.nu"),
+        valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+    )
+    .unwrap();
     let _ = host.call("commit", serde_json::json!({"library": "dlib"}));
-    assert!(host.library_dir("dlib").exists(), "canonical should exist before delete");
+    assert!(
+        host.library_dir("dlib").exists(),
+        "canonical should exist before delete"
+    );
     assert!(src.exists(), "source should exist before delete");
-    let resp = host.call("delete", serde_json::json!({"library": "dlib", "source_path": src.to_str().unwrap()}));
+    let resp = host.call(
+        "delete",
+        serde_json::json!({"library": "dlib", "source_path": src.to_str().unwrap()}),
+    );
     assert!(!has_error_path(&resp), "delete should succeed; got {resp}");
-    assert!(!host.library_dir("dlib").exists(), "canonical should be gone");
-    assert!(!src.exists(), "source should be gone (default delete removes it)");
+    assert!(
+        !host.library_dir("dlib").exists(),
+        "canonical should be gone"
+    );
+    assert!(
+        !src.exists(),
+        "source should be gone (default delete removes it)"
+    );
 }
 
 #[test]
 fn delete_rejects_source_path_mismatch() {
     let mut host = Host::spawn();
     let src = host.source_dir("mlib");
-    let _ = host.call("new", serde_json::json!({"library": "mlib", "source_path": src.to_str().unwrap()}));
-    let resp = host.call("delete", serde_json::json!({"library": "mlib", "source_path": "/some/other/path"}));
-    assert!(has_error_path(&resp), "mismatched source_path should reject; got {resp}");
-    assert_eq!(envelope_error_kind(&resp), Some("library::source_path_mismatch"), "got {resp}");
-    assert!(host.library_dir("mlib").exists(), "canonical should survive a rejected delete");
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "mlib", "source_path": src.to_str().unwrap()}),
+    );
+    let resp = host.call(
+        "delete",
+        serde_json::json!({"library": "mlib", "source_path": "/some/other/path"}),
+    );
+    assert!(
+        has_error_path(&resp),
+        "mismatched source_path should reject; got {resp}"
+    );
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("library::source_path_mismatch"),
+        "got {resp}"
+    );
+    assert!(
+        host.library_dir("mlib").exists(),
+        "canonical should survive a rejected delete"
+    );
 }
 
 #[test]
 fn delete_mcp_only_keeps_source() {
     let mut host = Host::spawn();
     let src = host.source_dir("olib");
-    let _ = host.call("new", serde_json::json!({"library": "olib", "source_path": src.to_str().unwrap()}));
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "olib", "source_path": src.to_str().unwrap()}),
+    );
     let resp = host.call("delete", serde_json::json!({"library": "olib", "source_path": src.to_str().unwrap(), "mcp_only": true}));
-    assert!(!has_error_path(&resp), "mcp_only delete should succeed; got {resp}");
-    assert!(!host.library_dir("olib").exists(), "canonical should be gone");
+    assert!(
+        !has_error_path(&resp),
+        "mcp_only delete should succeed; got {resp}"
+    );
+    assert!(
+        !host.library_dir("olib").exists(),
+        "canonical should be gone"
+    );
     assert!(src.exists(), "source should remain (mcp_only)");
 }

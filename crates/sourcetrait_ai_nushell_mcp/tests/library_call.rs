@@ -197,8 +197,14 @@ fn call_after_define_returns_result() {
     let env = extract_envelope(&resp).unwrap_or_else(|| panic!("call envelope; got {resp}"));
     assert_eq!(env["result"]["out"].as_i64(), Some(14));
     // No rerun_id, no version_id (HEAD-only).
-    assert!(env.get("rerun_id").is_none(), "call envelope shouldn't echo rerun_id");
-    assert!(env.get("version_id").is_none(), "call envelope shouldn't echo version_id");
+    assert!(
+        env.get("rerun_id").is_none(),
+        "call envelope shouldn't echo rerun_id"
+    );
+    assert!(
+        env.get("version_id").is_none(),
+        "call envelope shouldn't echo version_id"
+    );
 }
 
 #[test]
@@ -291,7 +297,10 @@ fn call_bad_module_path_errors() {
                 "args": {"n": 0},
             }),
         );
-        assert!(has_error_path(&resp), "module_path {bad:?} should error; got {resp}");
+        assert!(
+            has_error_path(&resp),
+            "module_path {bad:?} should error; got {resp}"
+        );
     }
 }
 
@@ -327,5 +336,8 @@ fn call_args_typecheck_failure_surfaces() {
             "args": {"x": "five"},
         }),
     );
-    assert!(has_error_path(&resp), "type mismatch should surface as error; got {resp}");
+    assert!(
+        has_error_path(&resp),
+        "type mismatch should surface as error; got {resp}"
+    );
 }

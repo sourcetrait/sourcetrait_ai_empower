@@ -35,8 +35,7 @@ fn worker_handshake_and_stub_response() {
 
     let hello_frame = read_frame(&mut stdout);
     let hello_elapsed = spawn_start.elapsed();
-    let hello: serde_json::Value =
-        rmp_serde::from_slice(&hello_frame).expect("decode Hello");
+    let hello: serde_json::Value = rmp_serde::from_slice(&hello_frame).expect("decode Hello");
     assert_eq!(hello["protocol_version"].as_u64(), Some(1));
     eprintln!(
         "cold worker startup -> Hello: {:.3} ms",
@@ -50,8 +49,7 @@ fn worker_handshake_and_stub_response() {
         "log_dir": log_dir.to_str().expect("log_dir to utf-8"),
         "source": "1 + 1",
     });
-    let request_bytes = rmp_serde::to_vec_named(&request)
-        .expect("encode RunRequest");
+    let request_bytes = rmp_serde::to_vec_named(&request).expect("encode RunRequest");
     write_frame(&mut stdin, &request_bytes);
 
     let rt_start = Instant::now();
@@ -60,7 +58,12 @@ fn worker_handshake_and_stub_response() {
     let response: serde_json::Value =
         rmp_serde::from_slice(&response_frame).expect("decode RunResponse");
     assert_eq!(response["id"].as_u64(), Some(42));
-    assert_eq!(response["ok"].as_bool(), Some(true), "worker error: {:?}", response["error"]);
+    assert_eq!(
+        response["ok"].as_bool(),
+        Some(true),
+        "worker error: {:?}",
+        response["error"]
+    );
     assert!(response["error"].is_null());
     eprintln!(
         "IPC round-trip (RunRequest -> RunResponse, real eval `1 + 1`): {:.3} ms",
@@ -76,8 +79,8 @@ fn worker_handshake_and_stub_response() {
         .iter()
         .map(|v| v.as_u64().expect("byte") as u8)
         .collect();
-    let value_json: serde_json::Value = rmp_serde::from_slice(&value_bytes)
-        .expect("decode value as msgpack JSON value");
+    let value_json: serde_json::Value =
+        rmp_serde::from_slice(&value_bytes).expect("decode value as msgpack JSON value");
     assert_eq!(
         value_json.as_i64(),
         Some(2),

@@ -39,14 +39,10 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let (args_type, result_type) =
-            match convert_schemas(&p.args_schema, &p.result_schema) {
-                Ok(t) => t,
-                Err(reason) => return Ok(error_to_call_result(
-                    Error::SchemaInvalid { reason },
-                    None,
-                )),
-            };
+        let (args_type, result_type) = match convert_schemas(&p.args_schema, &p.result_schema) {
+            Ok(t) => t,
+            Err(reason) => return Ok(error_to_call_result(Error::SchemaInvalid { reason }, None)),
+        };
         let violations = lint_run_params(&self.lint_engine, &args_type, &p.body);
         if !violations.is_empty() {
             return Ok(error_to_call_result(
@@ -57,13 +53,15 @@ impl NuSh {
         let source = build_run_source(&args_type, &result_type, &p.args, &p.body);
         let payload_bytes = match json::to_vec(&p) {
             Ok(b) => b,
-            Err(e) => return Ok(error_to_call_result(
-                Error::Internal {
-                    phase: "run::serialize_payload".to_string(),
-                    reason: e.to_string(),
-                },
-                None,
-            )),
+            Err(e) => {
+                return Ok(error_to_call_result(
+                    Error::Internal {
+                        phase: "run::serialize_payload".to_string(),
+                        reason: e.to_string(),
+                    },
+                    None,
+                ));
+            }
         };
         let args_json = serde_json::Value::Object(p.args.clone());
         let timeout_ms = p.timeout_ms;
@@ -90,25 +88,17 @@ impl NuSh {
             p.body.as_str(),
         ))
         .to_string();
-        let rerun_id_opt = match write_closure_cache(
-            &computed_rerun_id,
-            &args_type,
-            &result_type,
-            &p.body,
-        ) {
-            Ok(()) => Some(computed_rerun_id),
-            Err(e) => {
-                eprintln!(
-                    "nushell_mcp: write_closure_cache failed for {computed_rerun_id}: {e}",
-                );
-                None
-            }
-        };
-        let result_obj = outcome
-            .result
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
+        let rerun_id_opt =
+            match write_closure_cache(&computed_rerun_id, &args_type, &result_type, &p.body) {
+                Ok(()) => Some(computed_rerun_id),
+                Err(e) => {
+                    eprintln!(
+                        "nushell_mcp: write_closure_cache failed for {computed_rerun_id}: {e}",
+                    );
+                    None
+                }
+            };
+        let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
         let envelope = RunEnvelope {
             result: result_obj,
             nonce: outcome.nonce.to_string(),
@@ -150,9 +140,8 @@ fn write_closure_cache(
         result_type: result_type.to_string(),
         body: body.to_string(),
     };
-    let bytes = json::to_vec(&cache).map_err(|e| {
-        io::Error::other(format!("serialize ClosureCacheBody: {e}"))
-    })?;
+    let bytes = json::to_vec(&cache)
+        .map_err(|e| io::Error::other(format!("serialize ClosureCacheBody: {e}")))?;
     fs::write(&path, &bytes)?;
     Ok(())
 }

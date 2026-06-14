@@ -11,28 +11,46 @@ use crate::*;
 /// Where: returned by `Error::kind()`; useful in match arms that
 /// don't bind the data fields, in logging, and in tests.
 #[allow(dead_code)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ser::Serialize, ser::Deserialize, schema::JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, ser::Serialize, ser::Deserialize, schema::JsonSchema,
+)]
 pub enum ErrorKind {
-    #[serde(rename = "library::not_registered")]       LibraryNotRegistered,
-    #[serde(rename = "library::already_registered")]   LibraryAlreadyRegistered,
-    #[serde(rename = "library::invalid_name")]         LibraryInvalidName,
-    #[serde(rename = "library::invalid_module_path")]  LibraryInvalidModulePath,
-    #[serde(rename = "library::test_suffix_required")] LibraryTestSuffixRequired,
-    #[serde(rename = "library::source_missing")]       LibrarySourceMissing,
-    #[serde(rename = "library::source_path_mismatch")] LibrarySourcePathMismatch,
-    #[serde(rename = "library::wrong_kind")]           LibraryWrongKind,
-    #[serde(rename = "library::violations")]           LibraryViolations,
-    #[serde(rename = "function::not_defined")]         FunctionNotDefined,
-    #[serde(rename = "function::invalid_name")]        FunctionInvalidName,
-    #[serde(rename = "lint::violations")]              LintViolations,
-    #[serde(rename = "schema::invalid")]               SchemaInvalid,
-    #[serde(rename = "closure::invalid_rerun_id")]     ClosureInvalidRerunId,
-    #[serde(rename = "closure::cache_missing")]        ClosureCacheMissing,
-    #[serde(rename = "closure::cache_decode")]         ClosureCacheDecode,
-    #[serde(rename = "worker::dispatch")]              WorkerDispatch,
-    #[serde(rename = "worker::timeout")]               WorkerTimeout,
-    #[serde(rename = "worker::returned_error")]        WorkerReturnedError,
-    #[serde(rename = "internal")]                      Internal,
+    #[serde(rename = "library::not_registered")]
+    LibraryNotRegistered,
+    #[serde(rename = "library::already_registered")]
+    LibraryAlreadyRegistered,
+    #[serde(rename = "library::invalid_name")]
+    LibraryInvalidName,
+    #[serde(rename = "library::invalid_module_path")]
+    LibraryInvalidModulePath,
+    #[serde(rename = "library::test_suffix_required")]
+    LibraryTestSuffixRequired,
+    #[serde(rename = "library::source_missing")]
+    LibrarySourceMissing,
+    #[serde(rename = "library::source_path_mismatch")]
+    LibrarySourcePathMismatch,
+    #[serde(rename = "library::violations")]
+    LibraryViolations,
+    #[serde(rename = "function::not_defined")]
+    FunctionNotDefined,
+    #[serde(rename = "lint::violations")]
+    LintViolations,
+    #[serde(rename = "schema::invalid")]
+    SchemaInvalid,
+    #[serde(rename = "closure::invalid_rerun_id")]
+    ClosureInvalidRerunId,
+    #[serde(rename = "closure::cache_missing")]
+    ClosureCacheMissing,
+    #[serde(rename = "closure::cache_decode")]
+    ClosureCacheDecode,
+    #[serde(rename = "worker::dispatch")]
+    WorkerDispatch,
+    #[serde(rename = "worker::timeout")]
+    WorkerTimeout,
+    #[serde(rename = "worker::returned_error")]
+    WorkerReturnedError,
+    #[serde(rename = "internal")]
+    Internal,
 }
 
 /// What: fieldful error enum carrying the typed per-variant data
@@ -75,9 +93,6 @@ pub enum Error {
         registered: String,
     },
 
-    #[serde(rename = "library::wrong_kind")]
-    LibraryWrongKind { library: String },
-
     #[serde(rename = "library::violations")]
     LibraryViolations {
         structural: Vec<Violation>,
@@ -85,10 +100,11 @@ pub enum Error {
     },
 
     #[serde(rename = "function::not_defined")]
-    FunctionNotDefined { library: String, module_path: String, name: String },
-
-    #[serde(rename = "function::invalid_name")]
-    FunctionInvalidName { name: String, reason: String },
+    FunctionNotDefined {
+        library: String,
+        module_path: String,
+        name: String,
+    },
 
     #[serde(rename = "lint::violations")]
     LintViolations { violations: Vec<LintViolation> },
@@ -139,10 +155,8 @@ impl Error {
             Self::LibraryTestSuffixRequired { .. } => K::LibraryTestSuffixRequired,
             Self::LibrarySourceMissing { .. } => K::LibrarySourceMissing,
             Self::LibrarySourcePathMismatch { .. } => K::LibrarySourcePathMismatch,
-            Self::LibraryWrongKind { .. } => K::LibraryWrongKind,
             Self::LibraryViolations { .. } => K::LibraryViolations,
             Self::FunctionNotDefined { .. } => K::FunctionNotDefined,
-            Self::FunctionInvalidName { .. } => K::FunctionInvalidName,
             Self::LintViolations { .. } => K::LintViolations,
             Self::SchemaInvalid { .. } => K::SchemaInvalid,
             Self::ClosureInvalidRerunId { .. } => K::ClosureInvalidRerunId,

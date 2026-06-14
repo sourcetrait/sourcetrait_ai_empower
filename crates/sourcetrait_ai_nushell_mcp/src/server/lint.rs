@@ -88,32 +88,13 @@ impl LintViolation {
 /// intentionally NOT here -- runtime sockets/state live under
 /// `$XDG_RUNTIME_DIR` which the agent should lift to args (the_user
 /// 2026-05-31).
-const ALLOWLIST_PATH_PREFIXES: &[&str] = &[
-    "/dev/",
-    "/etc/",
-    "/proc/",
-    "/sys/",
-];
+const ALLOWLIST_PATH_PREFIXES: &[&str] = &["/dev/", "/etc/", "/proc/", "/sys/"];
 
 /// External commands the agent should not invoke. The fix is to use
 /// idiomatic nushell or lift the work to typed args/helpers.
 const DENYLIST_EXTERNALS: &[&str] = &[
-    "awk",
-    "bash",
-    "cp",
-    "date",
-    "echo",
-    "find",
-    "grep",
-    "jq",
-    "ls",
-    "nu",
-    "rg",
-    "rm",
-    "sed",
-    "sh",
-    "sort",
-    "which",
+    "awk", "bash", "cp", "date", "echo", "find", "grep", "jq", "ls", "nu", "rg", "rm", "sed", "sh",
+    "sort", "which",
 ];
 
 /// Internal-decl names that accept a `--regex` named flag. Presence of
@@ -189,7 +170,14 @@ pub(crate) fn lint_body(
 
     let mut violations = Vec::new();
     let body_block = ws.get_block(body_block_id);
-    let _ = walk_block(body_block, &ws, body, prefix_len, source.as_ref(), &mut violations);
+    let _ = walk_block(
+        body_block,
+        &ws,
+        body,
+        prefix_len,
+        source.as_ref(),
+        &mut violations,
+    );
     violations
 }
 
@@ -269,9 +257,7 @@ fn walk_expr(
     match &e.expr {
         // Value-shape variants the parser classified as path-likely: the
         // path-rule fires uniformly on the carried literal.
-        nu::Expr::Directory(s, _)
-        | nu::Expr::Filepath(s, _)
-        | nu::Expr::GlobPattern(s, _) => {
+        nu::Expr::Directory(s, _) | nu::Expr::Filepath(s, _) | nu::Expr::GlobPattern(s, _) => {
             check_path(s, e.span.start, body, prefix_len, source, violations)?;
         }
         // String / RawString in any position: lint-everything-stringy.
@@ -292,9 +278,10 @@ fn walk_expr(
             let decl = ws.get_decl(call.decl_id);
             let name = decl.name();
             let regex_skip = REGEX_RECEIVERS.contains(&name)
-                && call.arguments.iter().any(|a| {
-                    matches!(a, nu::Argument::Named((n, _, _)) if n.item == "regex")
-                });
+                && call
+                    .arguments
+                    .iter()
+                    .any(|a| matches!(a, nu::Argument::Named((n, _, _)) if n.item == "regex"));
             // use/overlay use/source/source-env: positional[0] is a
             // parse-time-const path; exempt it (the_user 2026-06-14). A
             // resolved use/overlay is Expr::ImportPattern/Overlay
@@ -760,7 +747,10 @@ mod tests {
     fn flags_interpolation_literal_parts() {
         let v = lint("cd $\"/home/($env.USER)/proj/x\"; { out: 0 }");
         assert_eq!(v.len(), 2, "got {v:?}");
-        assert!(v.iter().all(|x| matches!(x, LintViolation::HardcodedVariable { .. })));
+        assert!(
+            v.iter()
+                .all(|x| matches!(x, LintViolation::HardcodedVariable { .. }))
+        );
     }
 
     #[test]
@@ -774,12 +764,15 @@ cd ~/y
 { out: 0 }";
         let v = lint(body);
         assert_eq!(v.len(), 4, "got {v:?}");
-        assert_eq!(kinds(&v), vec![
-            "denied_command",
-            "hardcoded_variable",
-            "denied_command",
-            "more",
-        ]);
+        assert_eq!(
+            kinds(&v),
+            vec![
+                "denied_command",
+                "hardcoded_variable",
+                "denied_command",
+                "more",
+            ]
+        );
     }
 
     #[test]
@@ -820,7 +813,10 @@ cd \"/a/b\"
         let v = lint("cd \"/a/b\"; { out: 0 }");
         assert_eq!(v.len(), 1, "got {v:?}");
         match &v[0] {
-            LintViolation::HardcodedVariable { position: [line, col], .. } => {
+            LintViolation::HardcodedVariable {
+                position: [line, col],
+                ..
+            } => {
                 assert_eq!(*line, 1);
                 assert_eq!(*col, 4);
             }
@@ -855,17 +851,22 @@ cd \"/a/b\"
         // ^/usr/bin/awk fires both DeniedCommand (basename = awk) AND
         // HardcodedVariable (absolute path). Both surface independently.
         let v = lint("^/usr/bin/awk 'x'; { out: 0 }");
-        let denylist_count = v.iter().filter(|x| matches!(x, LintViolation::DeniedCommand { .. })).count();
-        let path_count = v.iter().filter(|x| matches!(x, LintViolation::HardcodedVariable { .. })).count();
+        let denylist_count = v
+            .iter()
+            .filter(|x| matches!(x, LintViolation::DeniedCommand { .. }))
+            .count();
+        let path_count = v
+            .iter()
+            .filter(|x| matches!(x, LintViolation::HardcodedVariable { .. }))
+            .count();
         assert!(denylist_count >= 1, "no denylist fired; got {v:?}");
         assert!(path_count >= 1, "no path fired; got {v:?}");
     }
 
     #[test]
     fn flags_replacement_in_str_replace_regex() {
-        let v = lint(
-            "let x = (\"abc\" | str replace --regex '/x/' '/replacement/path'); { out: 0 }",
-        );
+        let v =
+            lint("let x = (\"abc\" | str replace --regex '/x/' '/replacement/path'); { out: 0 }");
         assert_eq!(v.len(), 1, "got {v:?}");
         assert_eq!(kinds(&v), vec!["hardcoded_variable"]);
     }
@@ -874,14 +875,15 @@ cd \"/a/b\"
     fn walks_table_cell_paths() {
         let v = lint("[[c1 c2]; [\"/a/b\" 1] [2 \"/c/d\"]]; { out: 0 }");
         assert_eq!(v.len(), 2, "got {v:?}");
-        assert!(v.iter().all(|x| matches!(x, LintViolation::HardcodedVariable { .. })));
+        assert!(
+            v.iter()
+                .all(|x| matches!(x, LintViolation::HardcodedVariable { .. }))
+        );
     }
 
     #[test]
     fn walks_match_arm_body_paths() {
-        let v = lint(
-            "match $args.noop { 0 => { cd \"/a/b\" } _ => { 0 } }; { out: 0 }",
-        );
+        let v = lint("match $args.noop { 0 => { cd \"/a/b\" } _ => { 0 } }; { out: 0 }");
         assert_eq!(v.len(), 1, "got {v:?}");
         assert_eq!(kinds(&v), vec!["hardcoded_variable"]);
     }
@@ -890,7 +892,8 @@ cd \"/a/b\"
     fn walks_where_row_condition_paths() {
         let v = lint("[{p: \"x\"}] | where p == \"/a/b\"; { out: 0 }");
         assert!(
-            v.iter().any(|x| matches!(x, LintViolation::HardcodedVariable { .. })),
+            v.iter()
+                .any(|x| matches!(x, LintViolation::HardcodedVariable { .. })),
             "got {v:?}",
         );
     }
@@ -899,7 +902,8 @@ cd \"/a/b\"
     fn walks_range_bounds() {
         let v = lint("let r = (cd \"/a/b\"; 1)..5; { out: 0 }");
         assert!(
-            v.iter().any(|x| matches!(x, LintViolation::HardcodedVariable { .. })),
+            v.iter()
+                .any(|x| matches!(x, LintViolation::HardcodedVariable { .. })),
             "got {v:?}",
         );
     }
@@ -927,7 +931,8 @@ cd \"/a/b\"
     fn flags_split_list_without_regex() {
         let v = lint("let xs = ([\"x\"] | split list \"/a/b\"); { out: 0 }");
         assert!(
-            v.iter().any(|x| matches!(x, LintViolation::HardcodedVariable { .. })),
+            v.iter()
+                .any(|x| matches!(x, LintViolation::HardcodedVariable { .. })),
             "got {v:?}",
         );
     }

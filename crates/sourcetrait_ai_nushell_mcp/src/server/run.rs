@@ -51,12 +51,7 @@ pub fn run_server(target: BuildTarget) {
         let cap = std::thread::available_parallelism()
             .map(|n| n.get().saturating_sub(3).max(1))
             .unwrap_or(1);
-        let runs_pool = Pool::new(
-            Mode::Stateless,
-            cap,
-            1,
-            tk::TkDuration::from_secs(60),
-        );
+        let runs_pool = Pool::new(Mode::Stateless, cap, 1, tk::TkDuration::from_secs(60));
         let interact_worker = WorkerHandle::spawn(Mode::Stateful)
             .await
             .expect("spawn interact worker");

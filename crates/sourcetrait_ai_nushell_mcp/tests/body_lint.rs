@@ -136,10 +136,13 @@ impl Host {
     }
 
     fn register(&mut self, name: &str, path: &str) -> serde_json::Value {
-        self.call_tool("register_library", serde_json::json!({
-            "name": name,
-            "path": path,
-        }))
+        self.call_tool(
+            "register_library",
+            serde_json::json!({
+                "name": name,
+                "path": path,
+            }),
+        )
     }
 
     fn define_function(&mut self, args: serde_json::Value) -> serde_json::Value {
@@ -171,9 +174,11 @@ fn lint_violation_kinds(resp: &serde_json::Value) -> Vec<String> {
         .and_then(|e| e.get("data"))
         .and_then(|d| d.get("violations"))
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter()
-            .filter_map(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_string))
-            .collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -186,10 +191,16 @@ fn lint_rejects_closure_with_hardcoded_path() {
         "args": {"noop": 0},
         "body": "{ p: \"/home/box/proj/x\", out: 0 }",
     }));
-    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("lint::violations"),
+        "got {resp}"
+    );
     let kinds = lint_violation_kinds(&resp);
-    assert!(kinds.iter().any(|k| k == "hardcoded_variable"),
-        "expected hardcoded_variable in violations; got {kinds:?}");
+    assert!(
+        kinds.iter().any(|k| k == "hardcoded_variable"),
+        "expected hardcoded_variable in violations; got {kinds:?}"
+    );
 }
 
 #[test]
@@ -201,10 +212,16 @@ fn lint_rejects_closure_with_denied_external() {
         "args": {"noop": 0},
         "body": "{ x: (^awk '{print $1}' | str trim), out: 0 }",
     }));
-    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("lint::violations"),
+        "got {resp}"
+    );
     let kinds = lint_violation_kinds(&resp);
-    assert!(kinds.iter().any(|k| k == "denied_command"),
-        "expected denied_command in violations; got {kinds:?}");
+    assert!(
+        kinds.iter().any(|k| k == "denied_command"),
+        "expected denied_command in violations; got {kinds:?}"
+    );
 }
 
 #[test]
@@ -240,10 +257,17 @@ fn lint_aggregates_multiple_violations() {
 cd \"/a/b\"
 { out: 0 }",
     }));
-    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("lint::violations"),
+        "got {resp}"
+    );
     let kinds = lint_violation_kinds(&resp);
     assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
-    assert!(kinds.iter().any(|k| k == "hardcoded_variable"), "got {kinds:?}");
+    assert!(
+        kinds.iter().any(|k| k == "hardcoded_variable"),
+        "got {kinds:?}"
+    );
 }
 
 // ----------------------------------------------------------------------------
@@ -259,9 +283,16 @@ fn lint_interact_rejects_hardcoded_path() {
         "args": {"noop": 0},
         "body": "{ p: \"/home/box/x\", out: 0 }",
     }));
-    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("lint::violations"),
+        "got {resp}"
+    );
     let kinds = lint_violation_kinds(&resp);
-    assert!(kinds.iter().any(|k| k == "hardcoded_variable"), "got {kinds:?}");
+    assert!(
+        kinds.iter().any(|k| k == "hardcoded_variable"),
+        "got {kinds:?}"
+    );
 }
 
 #[test]
@@ -273,7 +304,11 @@ fn lint_interact_rejects_denied_external() {
         "args": {"noop": 0},
         "body": "{ x: (^awk 'x' | str trim), out: 0 }",
     }));
-    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("lint::violations"),
+        "got {resp}"
+    );
     let kinds = lint_violation_kinds(&resp);
     assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
 }
@@ -297,9 +332,16 @@ fn lint_define_function_rejects_hardcoded_path() {
         "result_schema": {"out": "int"},
         "body": "{ p: \"/home/box/x\", out: 0 }"
     }));
-    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("lint::violations"),
+        "got {resp}"
+    );
     let kinds = lint_violation_kinds(&resp);
-    assert!(kinds.iter().any(|k| k == "hardcoded_variable"), "got {kinds:?}");
+    assert!(
+        kinds.iter().any(|k| k == "hardcoded_variable"),
+        "got {kinds:?}"
+    );
 }
 
 #[test]
@@ -317,7 +359,11 @@ fn lint_define_function_rejects_denied_external() {
         "result_schema": {"out": "int"},
         "body": "{ x: (^rm -rf /; 0) }"
     }));
-    assert_eq!(envelope_error_kind(&resp), Some("lint::violations"), "got {resp}");
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("lint::violations"),
+        "got {resp}"
+    );
     let kinds = lint_violation_kinds(&resp);
     assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
 }

@@ -59,22 +59,26 @@ impl NuSh {
         let path = closure_cache_file(&p.rerun_id);
         let cached_bytes = match fs::read(&path) {
             Ok(b) => b,
-            Err(_) => return Ok(error_to_call_result(
-                Error::ClosureCacheMissing {
-                    rerun_id: p.rerun_id.clone(),
-                },
-                None,
-            )),
+            Err(_) => {
+                return Ok(error_to_call_result(
+                    Error::ClosureCacheMissing {
+                        rerun_id: p.rerun_id.clone(),
+                    },
+                    None,
+                ));
+            }
         };
         let cached: ClosureCacheBody = match json::from_slice(&cached_bytes) {
             Ok(c) => c,
-            Err(e) => return Ok(error_to_call_result(
-                Error::ClosureCacheDecode {
-                    rerun_id: p.rerun_id.clone(),
-                    reason: e.to_string(),
-                },
-                None,
-            )),
+            Err(e) => {
+                return Ok(error_to_call_result(
+                    Error::ClosureCacheDecode {
+                        rerun_id: p.rerun_id.clone(),
+                        reason: e.to_string(),
+                    },
+                    None,
+                ));
+            }
         };
         // Touch mtime for the LRU signal future pruning will use.
         // Idempotent overwrite -- content is deterministic.
@@ -95,7 +99,9 @@ impl NuSh {
             source,
             "rerun",
             args_json,
-            InFlightKind::Rerun { rerun_id: p.rerun_id.clone() },
+            InFlightKind::Rerun {
+                rerun_id: p.rerun_id.clone(),
+            },
             p.timeout_ms,
         )
         .await

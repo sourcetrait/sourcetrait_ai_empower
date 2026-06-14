@@ -134,9 +134,6 @@ fn seed_env(engine_state: &mut nu::EngineState) {
         if key == "PWD" {
             continue;
         }
-        engine_state.add_env_var(
-            key,
-            nu::Value::string(val, nu::Span::unknown()),
-        );
+        engine_state.add_env_var(key, nu::Value::string(val, nu::Span::unknown()));
     }
 }

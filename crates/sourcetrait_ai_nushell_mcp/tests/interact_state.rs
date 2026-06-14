@@ -36,7 +36,14 @@ impl Host {
             .expect("spawn host");
         let stdin = child.stdin.take().expect("host stdin");
         let stdout = BufReader::new(child.stdout.take().expect("host stdout"));
-        let mut host = Self { child, stdin, stdout, next_id: 1, data_dir, cache_dir };
+        let mut host = Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+            data_dir,
+            cache_dir,
+        };
         host.initialize();
         host
     }
@@ -143,9 +150,7 @@ fn interact_lists_both_run_and_interact_tools() {
     });
     host.send(&req);
     let resp = host.read_id(id);
-    let tools = resp["result"]["tools"]
-        .as_array()
-        .expect("tools array");
+    let tools = resp["result"]["tools"].as_array().expect("tools array");
     let names: Vec<&str> = tools
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
@@ -170,4 +175,3 @@ fn interact_lists_both_run_and_interact_tools() {
         );
     }
 }
-

@@ -36,10 +36,14 @@ impl NuSh {
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let lock = match self.library_locks.lookup(&p.library).await {
             Some(l) => l,
-            None => return Ok(error_to_call_result(
-                Error::LibraryNotRegistered { library: p.library.clone() },
-                None,
-            )),
+            None => {
+                return Ok(error_to_call_result(
+                    Error::LibraryNotRegistered {
+                        library: p.library.clone(),
+                    },
+                    None,
+                ));
+            }
         };
         let _guard = lock.write().await;
         match commit_impl(&p.library, &self.lint_engine) {
@@ -47,7 +51,10 @@ impl NuSh {
                 changed: result
                     .changed
                     .into_iter()
-                    .map(|c| ChangedEntry { path: c.path, kind: c.kind })
+                    .map(|c| ChangedEntry {
+                        path: c.path,
+                        kind: c.kind,
+                    })
                     .collect(),
             }),
             Err(error) => Ok(error_to_call_result(error, None)),

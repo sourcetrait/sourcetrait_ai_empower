@@ -36,8 +36,7 @@ pub(crate) fn serve(warm_base: &mut WarmBase) -> io::Result<()> {
                     value: Vec::new(),
                     error: Some(format!("malformed RunRequest: {e}")),
                 };
-                let bytes = msgpack::to_vec_named(&resp)
-                    .expect("RunResponse always serializes");
+                let bytes = msgpack::to_vec_named(&resp).expect("RunResponse always serializes");
                 write_frame(&mut stdout_lock, &bytes)?;
                 continue;
             }
@@ -65,8 +64,7 @@ pub(crate) fn serve(warm_base: &mut WarmBase) -> io::Result<()> {
                 error: Some("worker panic during eval (caught)".to_string()),
             },
         };
-        let bytes = msgpack::to_vec_named(&resp)
-            .expect("RunResponse always serializes");
+        let bytes = msgpack::to_vec_named(&resp).expect("RunResponse always serializes");
         write_frame(&mut stdout_lock, &bytes)?;
     }
 }
@@ -142,7 +140,9 @@ fn eval_source(
         return Err(format!("compile errors: {}", msgs.join("; ")));
     }
     let delta = working_set.render();
-    engine_state.merge_delta(delta).map_err(|e| format!("merge_delta: {e}"))?;
+    engine_state
+        .merge_delta(delta)
+        .map_err(|e| format!("merge_delta: {e}"))?;
     let pipeline = nu::eval_block::<nu::WithoutDebug>(
         engine_state,
         &mut stack,
@@ -170,8 +170,6 @@ fn eval_source(
     // types we'd otherwise need NUON to preserve are out of contract.
     // Structured JSON in the envelope's `result` field beats a quoted
     // NUON string for agent ergonomics.
-    let json_value = nu::JsonValue::from_value(value)
-        .map_err(|e| format!("Value to JSON: {e}"))?;
-    msgpack::to_vec_named(&json_value)
-        .map_err(|e| format!("msgpack value: {e}"))
+    let json_value = nu::JsonValue::from_value(value).map_err(|e| format!("Value to JSON: {e}"))?;
+    msgpack::to_vec_named(&json_value).map_err(|e| format!("msgpack value: {e}"))
 }

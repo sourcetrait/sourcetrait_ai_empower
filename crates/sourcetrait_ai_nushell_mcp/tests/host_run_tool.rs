@@ -177,10 +177,7 @@ fn host_tools_list_and_run_stub() {
     let _ = wait_with_timeout(&mut host, Duration::from_secs(5));
 }
 
-fn wait_with_timeout(
-    child: &mut std::process::Child,
-    timeout: Duration,
-) -> std::io::Result<()> {
+fn wait_with_timeout(child: &mut std::process::Child, timeout: Duration) -> std::io::Result<()> {
     let start = Instant::now();
     loop {
         match child.try_wait()? {

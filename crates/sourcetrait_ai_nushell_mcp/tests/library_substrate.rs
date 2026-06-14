@@ -208,9 +208,7 @@ fn substrate_initializes_on_first_startup() {
 fn tools_list_has_fourteen() {
     let mut host = Host::spawn();
     let resp = host.list_tools();
-    let tools = resp["result"]["tools"]
-        .as_array()
-        .expect("tools array");
+    let tools = resp["result"]["tools"].as_array().expect("tools array");
     let names: Vec<&str> = tools
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
@@ -256,21 +254,19 @@ fn register_library_writes_repo_and_mirror() {
     );
     // MCP-side files exist.
     let lib_dir = host.library_dir("mylib");
-    assert!(lib_dir.exists(), "lib dir should exist at {}", lib_dir.display());
     assert!(
-        lib_dir.join("mod.nu").exists(),
-        "lib mod.nu should exist",
+        lib_dir.exists(),
+        "lib dir should exist at {}",
+        lib_dir.display()
     );
+    assert!(lib_dir.join("mod.nu").exists(), "lib mod.nu should exist",);
     let meta_path = lib_dir.join(".nushell_mcp_meta.json");
     assert!(meta_path.exists(), "meta sidecar should exist");
     let meta: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&meta_path).expect("read meta"))
             .expect("decode meta");
     assert_eq!(meta["kind"].as_str(), Some("registered"));
-    assert_eq!(
-        meta["source_path"].as_str(),
-        client_dir.to_str(),
-    );
+    assert_eq!(meta["source_path"].as_str(), client_dir.to_str(),);
     // Client mirror exists.
     assert!(client_dir.exists(), "client mirror dir should exist");
     assert!(
@@ -296,7 +292,10 @@ fn duplicate_register_errors() {
             "path": client_dir.to_str().expect("client_dir to str"),
         }),
     );
-    assert!(!has_error_path(&r1), "first register should succeed; got {r1}");
+    assert!(
+        !has_error_path(&r1),
+        "first register should succeed; got {r1}"
+    );
     let r2 = host.call(
         "register_library",
         serde_json::json!({

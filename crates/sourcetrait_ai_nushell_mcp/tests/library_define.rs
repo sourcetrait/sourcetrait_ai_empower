@@ -173,7 +173,11 @@ fn define_writes_file_cascade_and_mirror() {
     assert!(!has_error_path(&resp), "define should succeed; got {resp}");
     let lib = host.library_dir("mathlib");
     let target = lib.join("math").join("double.nu");
-    assert!(target.exists(), "function file should exist at {}", target.display());
+    assert!(
+        target.exists(),
+        "function file should exist at {}",
+        target.display()
+    );
     let src = std::fs::read_to_string(&target).expect("read func");
     assert!(src.contains("export def main"), "main not in {src:?}");
     assert!(src.contains("export def resolve"), "resolve not in {src:?}");
@@ -184,8 +188,8 @@ fn define_writes_file_cascade_and_mirror() {
         root_mod.contains("export module math"),
         "root mod.nu should re-export math; got {root_mod:?}",
     );
-    let math_mod = std::fs::read_to_string(lib.join("math").join("mod.nu"))
-        .expect("read math mod.nu");
+    let math_mod =
+        std::fs::read_to_string(lib.join("math").join("mod.nu")).expect("read math mod.nu");
     assert!(
         math_mod.contains("export use ./double.nu"),
         "math mod.nu should export double; got {math_mod:?}",
@@ -194,7 +198,10 @@ fn define_writes_file_cascade_and_mirror() {
     let mirror_target = client_dir.join("math").join("double.nu");
     assert!(mirror_target.exists(), "mirror function should exist");
     let mirror_root = std::fs::read_to_string(client_dir.join("mod.nu")).expect("read mirror root");
-    assert!(mirror_root.contains("export module math"), "mirror cascade missing");
+    assert!(
+        mirror_root.contains("export module math"),
+        "mirror cascade missing"
+    );
 }
 
 #[test]
@@ -229,7 +236,10 @@ fn undefine_removes_and_prunes() {
             "name": "victim",
         }),
     );
-    assert!(!has_error_path(&resp), "undefine should succeed; got {resp}");
+    assert!(
+        !has_error_path(&resp),
+        "undefine should succeed; got {resp}"
+    );
     // File gone.
     assert!(!lib.join("deep").join("path").join("victim.nu").exists());
     // Empty intermediate dirs pruned all the way back.
@@ -241,7 +251,10 @@ fn undefine_removes_and_prunes() {
         "root mod.nu should not reference deep anymore; got {root_mod:?}",
     );
     // Mirror followed.
-    assert!(!client_dir.join("deep").exists(), "mirror deep should be pruned");
+    assert!(
+        !client_dir.join("deep").exists(),
+        "mirror deep should be pruned"
+    );
 }
 
 #[test]
@@ -277,9 +290,12 @@ fn define_overwrites_existing() {
             "body": "{ out: 2 }",
         }),
     );
-    let src = std::fs::read_to_string(host.library_dir("overlib").join("thing.nu"))
-        .expect("read func");
-    assert!(src.contains("{ out: 2 }"), "should have second body; got {src:?}");
+    let src =
+        std::fs::read_to_string(host.library_dir("overlib").join("thing.nu")).expect("read func");
+    assert!(
+        src.contains("{ out: 2 }"),
+        "should have second body; got {src:?}"
+    );
 }
 
 #[test]
@@ -306,10 +322,8 @@ fn multi_function_same_dir_updates_cascade() {
             }),
         );
     }
-    let ops_mod = std::fs::read_to_string(
-        host.library_dir("multilib").join("ops").join("mod.nu"),
-    )
-    .expect("read ops mod.nu");
+    let ops_mod = std::fs::read_to_string(host.library_dir("multilib").join("ops").join("mod.nu"))
+        .expect("read ops mod.nu");
     for fname in ["alpha", "beta", "gamma"] {
         assert!(
             ops_mod.contains(&format!("export use ./{fname}.nu")),
@@ -332,7 +346,10 @@ fn define_unknown_library_errors() {
             "body": "{ out: 0 }",
         }),
     );
-    assert!(has_error_path(&resp), "unknown library should error; got {resp}");
+    assert!(
+        has_error_path(&resp),
+        "unknown library should error; got {resp}"
+    );
 }
 
 #[test]
@@ -354,7 +371,10 @@ fn undefine_missing_function_errors() {
             "name": "ghost",
         }),
     );
-    assert!(has_error_path(&resp), "missing func should error; got {resp}");
+    assert!(
+        has_error_path(&resp),
+        "missing func should error; got {resp}"
+    );
 }
 
 #[test]
@@ -418,7 +438,10 @@ fn define_rejects_syntactically_broken_body() {
             "body": "let z =",
         }),
     );
-    assert!(has_error_path(&resp), "broken body should error; got {resp}");
+    assert!(
+        has_error_path(&resp),
+        "broken body should error; got {resp}"
+    );
     let msg = resp.to_string();
     assert!(
         msg.contains("parse error"),

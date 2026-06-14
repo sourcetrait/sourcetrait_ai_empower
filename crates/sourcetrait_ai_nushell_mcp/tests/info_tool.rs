@@ -164,9 +164,7 @@ impl Drop for Host {
 fn info_tool_in_list() {
     let mut host = Host::spawn();
     let resp = host.list_tools();
-    let tools = resp["result"]["tools"]
-        .as_array()
-        .expect("tools array");
+    let tools = resp["result"]["tools"].as_array().expect("tools array");
     let names: Vec<&str> = tools
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
@@ -181,9 +179,9 @@ fn info_tool_in_list() {
 fn info_returns_static_server_state() {
     let mut host = Host::spawn();
     let resp = host.call_tool("info", serde_json::json!({}));
-    let result = resp.get("result").unwrap_or_else(|| {
-        panic!("expected ok result; got {resp}")
-    });
+    let result = resp
+        .get("result")
+        .unwrap_or_else(|| panic!("expected ok result; got {resp}"));
     let env = result
         .get("structuredContent")
         .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
@@ -257,8 +255,20 @@ fn info_lists_registered_library_hierarchy() {
     // Root function (library node), one in `alpha`, one in `alpha/beta`.
     // b1 carries a NESTED record typedef to exercise balanced extraction.
     for (module_path, name, args_schema, result_schema, body) in [
-        ("", "rootfn", serde_json::json!({"x": "int"}), serde_json::json!({"out": "int"}), "{ out: ($args.x + 1) }"),
-        ("alpha", "a1", serde_json::json!({"s": "string"}), serde_json::json!({"len": "int"}), "{ len: ($args.s | str length) }"),
+        (
+            "",
+            "rootfn",
+            serde_json::json!({"x": "int"}),
+            serde_json::json!({"out": "int"}),
+            "{ out: ($args.x + 1) }",
+        ),
+        (
+            "alpha",
+            "a1",
+            serde_json::json!({"s": "string"}),
+            serde_json::json!({"len": "int"}),
+            "{ len: ($args.s | str length) }",
+        ),
         (
             "alpha/beta",
             "b1",
@@ -303,7 +313,10 @@ fn info_lists_registered_library_hierarchy() {
     assert_eq!(root_fns.len(), 1, "got {root_fns:?}");
     assert_eq!(root_fns[0]["name"].as_str(), Some("rootfn"));
     assert_eq!(root_fns[0]["args_schema"], serde_json::json!({"x": "int"}));
-    assert_eq!(root_fns[0]["result_schema"], serde_json::json!({"out": "int"}));
+    assert_eq!(
+        root_fns[0]["result_schema"],
+        serde_json::json!({"out": "int"})
+    );
 
     // alpha -> { functions: [a1], submodules: [beta -> { functions: [b1] }] }
     let modules = lib["modules"].as_array().expect("library modules");
@@ -317,7 +330,12 @@ fn info_lists_registered_library_hierarchy() {
     assert_eq!(alpha_subs.len(), 1, "got {alpha_subs:?}");
     let beta = &alpha_subs[0];
     assert_eq!(beta["name"].as_str(), Some("beta"));
-    assert!(beta["submodules"].as_array().expect("beta submodules").is_empty());
+    assert!(
+        beta["submodules"]
+            .as_array()
+            .expect("beta submodules")
+            .is_empty()
+    );
     let beta_fns = beta["functions"].as_array().expect("beta functions");
     assert_eq!(beta_fns.len(), 1);
     assert_eq!(beta_fns[0]["name"].as_str(), Some("b1"));
@@ -376,11 +394,17 @@ fn info_lists_imported_library_hierarchy() {
     assert_eq!(modules.len(), 1);
     assert_eq!(modules[0]["name"].as_str(), Some("math"));
     assert!(
-        modules[0]["submodules"].as_array().expect("math submodules").is_empty(),
+        modules[0]["submodules"]
+            .as_array()
+            .expect("math submodules")
+            .is_empty(),
     );
     let math_fns = modules[0]["functions"].as_array().expect("math fns");
     assert_eq!(math_fns.len(), 1);
     assert_eq!(math_fns[0]["name"].as_str(), Some("double"));
     assert_eq!(math_fns[0]["args_schema"], serde_json::json!({"x": "int"}));
-    assert_eq!(math_fns[0]["result_schema"], serde_json::json!({"out": "int"}));
+    assert_eq!(
+        math_fns[0]["result_schema"],
+        serde_json::json!({"out": "int"})
+    );
 }

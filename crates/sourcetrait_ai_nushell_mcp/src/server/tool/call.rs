@@ -49,21 +49,28 @@ impl NuSh {
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let lock = match self.library_locks.lookup(&p.library).await {
             Some(l) => l,
-            None => return Ok(error_to_call_result(
-                Error::LibraryNotRegistered { library: p.library.clone() },
-                None,
-            )),
+            None => {
+                return Ok(error_to_call_result(
+                    Error::LibraryNotRegistered {
+                        library: p.library.clone(),
+                    },
+                    None,
+                ));
+            }
         };
         let _guard = lock.read().await;
         let file_path = match call_file_path(&p.library, &p.module_path, &p.name) {
             Some(p) => p,
-            None => return Ok(error_to_call_result(
-                Error::LibraryInvalidModulePath {
-                    module_path: p.module_path.clone(),
-                    reason: "library / module_path / name must satisfy identifier rules".to_string(),
-                },
-                None,
-            )),
+            None => {
+                return Ok(error_to_call_result(
+                    Error::LibraryInvalidModulePath {
+                        module_path: p.module_path.clone(),
+                        reason: "library / module_path / name must satisfy identifier rules"
+                            .to_string(),
+                    },
+                    None,
+                ));
+            }
         };
         if !file_path.exists() {
             return Ok(error_to_call_result(
@@ -89,13 +96,15 @@ impl NuSh {
         );
         let payload_bytes = match json::to_vec(&p) {
             Ok(b) => b,
-            Err(e) => return Ok(error_to_call_result(
-                Error::Internal {
-                    phase: "call::serialize_payload".to_string(),
-                    reason: e.to_string(),
-                },
-                None,
-            )),
+            Err(e) => {
+                return Ok(error_to_call_result(
+                    Error::Internal {
+                        phase: "call::serialize_payload".to_string(),
+                        reason: e.to_string(),
+                    },
+                    None,
+                ));
+            }
         };
         let path_str = if p.module_path.is_empty() {
             format!("{}::{}", p.library, p.name)

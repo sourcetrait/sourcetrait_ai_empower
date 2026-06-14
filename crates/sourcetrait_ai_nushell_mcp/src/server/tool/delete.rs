@@ -41,10 +41,14 @@ impl NuSh {
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let lock = match self.library_locks.lookup(&p.library).await {
             Some(l) => l,
-            None => return Ok(error_to_call_result(
-                Error::LibraryNotRegistered { library: p.library.clone() },
-                None,
-            )),
+            None => {
+                return Ok(error_to_call_result(
+                    Error::LibraryNotRegistered {
+                        library: p.library.clone(),
+                    },
+                    None,
+                ));
+            }
         };
         let _guard = lock.write().await;
         match delete_impl(&p.library, &p.source_path, p.mcp_only) {
@@ -52,7 +56,10 @@ impl NuSh {
                 removed: result
                     .removed
                     .into_iter()
-                    .map(|r| RemovedEntry { path: r.path, side: r.side })
+                    .map(|r| RemovedEntry {
+                        path: r.path,
+                        side: r.side,
+                    })
                     .collect(),
             }),
             Err(error) => Ok(error_to_call_result(error, None)),

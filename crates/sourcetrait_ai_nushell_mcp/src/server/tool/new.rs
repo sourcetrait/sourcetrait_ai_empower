@@ -42,13 +42,15 @@ impl NuSh {
             Ok(l) => l,
             Err(_) => match self.library_locks.lookup(&p.library).await {
                 Some(l) => l,
-                None => return Ok(error_to_call_result(
-                    Error::Internal {
-                        phase: "new::lock".to_string(),
-                        reason: format!("could not acquire the write lock for `{}`", p.library),
-                    },
-                    None,
-                )),
+                None => {
+                    return Ok(error_to_call_result(
+                        Error::Internal {
+                            phase: "new::lock".to_string(),
+                            reason: format!("could not acquire the write lock for `{}`", p.library),
+                        },
+                        None,
+                    ));
+                }
             },
         };
         let _guard = lock.write().await;

@@ -68,10 +68,7 @@ impl ParseEngine {
     /// `ModuleNotFound` diagnostics for files that DO exist on disk
     /// (slice 4.5 experiment: probe_modnu_parse confirmed). Clone is
     /// cheap-ish because EngineState's data shares via Arc internally.
-    pub(crate) fn engine_state_for_file(
-        &self,
-        file_parent: &std::path::Path,
-    ) -> nu::EngineState {
+    pub(crate) fn engine_state_for_file(&self, file_parent: &std::path::Path) -> nu::EngineState {
         let mut clone = self.engine_state.clone();
         clone.add_env_var(
             "PWD".to_string(),

@@ -10,16 +10,15 @@ use std::path::PathBuf;
 /// `cargo:rerun-if-changed=Cargo.lock` keeps the env var in sync with
 /// any future pin bump.
 fn main() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR set by cargo");
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let lockfile = PathBuf::from(manifest_dir)
         .join("..")
         .join("..")
         .join("Cargo.lock");
     let content = std::fs::read_to_string(&lockfile)
         .unwrap_or_else(|e| panic!("read {}: {e}", lockfile.display()));
-    let parsed: toml::Value = toml::from_str(&content)
-        .unwrap_or_else(|e| panic!("parse {}: {e}", lockfile.display()));
+    let parsed: toml::Value =
+        toml::from_str(&content).unwrap_or_else(|e| panic!("parse {}: {e}", lockfile.display()));
     let nu_version = parsed["package"]
         .as_array()
         .expect("Cargo.lock has [[package]] array")

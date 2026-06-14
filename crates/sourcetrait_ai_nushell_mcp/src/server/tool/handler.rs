@@ -18,13 +18,7 @@ impl NuSh {
     pub(crate) fn tool_router() -> mcp::ToolRouter<Self> {
         Self::run_router()
             + Self::interact_router()
-            + Self::register_library_router()
-            + Self::define_function_router()
-            + Self::undefine_function_router()
             + Self::call_router()
-            + Self::import_library_router()
-            + Self::reimport_library_router()
-            + Self::unregister_library_router()
             + Self::rerun_router()
             + Self::processes_router()
             + Self::kill_router()
@@ -49,17 +43,14 @@ impl mcp::ServerHandler for NuSh {
         // advertised no tool capability. Explicit `.enable_tools()` is
         // required for the client to discover our tool surface.
         let mut info = mcp::ServerInfo::default();
-        info.capabilities = mcp::ServerCapabilities::builder()
-            .enable_tools()
-            .build();
-        info.server_info = mcp::Implementation::new(
-            build_target().name(),
-            env!("CARGO_PKG_VERSION"),
-        )
-        .with_title(match build_target() {
-            BuildTarget::Main => "nushell",
-            BuildTarget::Test => "nushell (test)",
-        });
+        info.capabilities = mcp::ServerCapabilities::builder().enable_tools().build();
+        info.server_info =
+            mcp::Implementation::new(build_target().name(), env!("CARGO_PKG_VERSION")).with_title(
+                match build_target() {
+                    BuildTarget::Main => "nushell",
+                    BuildTarget::Test => "nushell (test)",
+                },
+            );
         info.instructions = Some(
             "Evaluation artifacts are cached at \
              $XDG_CACHE_HOME/sourcetrait/nushell_mcp/{runs,interacts,calls}/<nonce>/{stdout,stderr}; \

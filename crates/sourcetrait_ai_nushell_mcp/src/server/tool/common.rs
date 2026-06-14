@@ -252,13 +252,11 @@ impl NuSh {
 /// Where: called by every `#[mcp::tool]` handler across the
 /// `server::tool::*` modules on the success path (run, interact,
 /// rerun, call, info, processes, ...).
-pub(crate) fn envelope_to_structured<T: ser::Serialize>(envelope: &T) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-    let value = json::to_value(envelope).map_err(|e| {
-        mcp::ErrorData::internal_error(
-            format!("envelope serialize: {e}"),
-            None,
-        )
-    })?;
+pub(crate) fn envelope_to_structured<T: ser::Serialize>(
+    envelope: &T,
+) -> Result<mcp::CallToolResult, mcp::ErrorData> {
+    let value = json::to_value(envelope)
+        .map_err(|e| mcp::ErrorData::internal_error(format!("envelope serialize: {e}"), None))?;
     let mut result = mcp::CallToolResult::default();
     result.structured_content = Some(value);
     Ok(result)
@@ -295,7 +293,11 @@ pub(crate) fn convert_schemas(
 ///
 /// Where: called by `NuSh::run` and `NuSh::interact` before any
 /// template synthesis.
-pub(crate) fn lint_run_params(engine: &ParseEngine, args_type: &str, body: &str) -> Vec<LintViolation> {
+pub(crate) fn lint_run_params(
+    engine: &ParseEngine,
+    args_type: &str,
+    body: &str,
+) -> Vec<LintViolation> {
     lint_body(engine, args_type, body, None)
 }
 
@@ -395,11 +397,7 @@ pub(crate) async fn dispatch_pooled(
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
     let send_fut = guard.send_request(log_dir, source);
-    let timed = tk::timeout(
-        tk::TkDuration::from_millis(effective_timeout),
-        send_fut,
-    )
-    .await;
+    let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), send_fut).await;
     let response = match timed {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => {
@@ -426,15 +424,14 @@ pub(crate) async fn dispatch_pooled(
     if !response.ok {
         return Err(DispatchError {
             error: Error::WorkerReturnedError {
-                reason: response.error.unwrap_or_else(|| {
-                    "worker returned ok=false with no error".to_string()
-                }),
+                reason: response
+                    .error
+                    .unwrap_or_else(|| "worker returned ok=false with no error".to_string()),
             },
             nonce: Some(nonce),
         });
     }
-    let result: json::Value = msgpack::from_slice(&response.value)
-        .unwrap_or(json::Value::Null);
+    let result: json::Value = msgpack::from_slice(&response.value).unwrap_or(json::Value::Null);
     Ok(DispatchOutcome { nonce, result })
 }
 
@@ -472,14 +469,14 @@ pub(crate) async fn dispatch_interact(
     })?;
     let mut worker_lock = interact.lock().await;
     if worker_lock.is_none() {
-        let spawned = WorkerHandle::spawn(Mode::Stateful).await.map_err(|e| {
-            DispatchError {
+        let spawned = WorkerHandle::spawn(Mode::Stateful)
+            .await
+            .map_err(|e| DispatchError {
                 error: Error::WorkerDispatch {
                     reason: format!("interact respawn: {e}"),
                 },
                 nonce: None,
-            }
-        })?;
+            })?;
         *worker_lock = Some(spawned);
     }
     let pid = worker_lock
@@ -504,11 +501,7 @@ pub(crate) async fn dispatch_interact(
         .as_mut()
         .expect("interact handle present after spawn");
     let send_fut = handle.send_request(log_dir, source);
-    let timed = tk::timeout(
-        tk::TkDuration::from_millis(effective_timeout),
-        send_fut,
-    )
-    .await;
+    let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), send_fut).await;
     let response = match timed {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => {
@@ -535,15 +528,14 @@ pub(crate) async fn dispatch_interact(
     if !response.ok {
         return Err(DispatchError {
             error: Error::WorkerReturnedError {
-                reason: response.error.unwrap_or_else(|| {
-                    "worker returned ok=false with no error".to_string()
-                }),
+                reason: response
+                    .error
+                    .unwrap_or_else(|| "worker returned ok=false with no error".to_string()),
             },
             nonce: Some(nonce),
         });
     }
-    let result: json::Value = msgpack::from_slice(&response.value)
-        .unwrap_or(json::Value::Null);
+    let result: json::Value = msgpack::from_slice(&response.value).unwrap_or(json::Value::Null);
     Ok(DispatchOutcome { nonce, result })
 }
 

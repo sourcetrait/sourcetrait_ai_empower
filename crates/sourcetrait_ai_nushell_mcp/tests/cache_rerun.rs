@@ -43,7 +43,14 @@ impl Host {
             .expect("spawn host");
         let stdin = child.stdin.take().expect("host stdin");
         let stdout = BufReader::new(child.stdout.take().expect("host stdout"));
-        let mut host = Self { child, stdin, stdout, next_id: 1, data_dir, cache_dir };
+        let mut host = Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+            data_dir,
+            cache_dir,
+        };
         host.initialize();
         host
     }
@@ -156,7 +163,10 @@ fn run_returns_deterministic_rerun_id() {
     let r1 = extract_rerun_id(&host.call("run", closure_a.clone()));
     let r2 = extract_rerun_id(&host.call("run", closure_a));
     assert_eq!(r1, r2, "same closure -> same rerun_id; got {r1} vs {r2}");
-    assert_ne!(r1, "0", "rerun_id should be content-derived, not the placeholder \"0\"");
+    assert_ne!(
+        r1, "0",
+        "rerun_id should be content-derived, not the placeholder \"0\""
+    );
     assert!(
         !r1.is_empty() && r1.chars().all(|c| c.is_ascii_alphanumeric()),
         "rerun_id should be non-empty base62; got {r1:?}",
@@ -176,7 +186,10 @@ fn rerun_id_differs_when_closure_changes() {
     altered["body"] = serde_json::json!("{ out: ($args.x + 200) }");
     let r_base = extract_rerun_id(&host.call("run", base));
     let r_alt = extract_rerun_id(&host.call("run", altered));
-    assert_ne!(r_base, r_alt, "different closure body -> different rerun_id");
+    assert_ne!(
+        r_base, r_alt,
+        "different closure body -> different rerun_id"
+    );
 }
 
 #[test]
@@ -191,10 +204,13 @@ fn rerun_roundtrip_with_new_args() {
             "body": "{ out: ($args.x * 3) }",
         }),
     );
-    let first_env = extract_envelope(&first)
-        .unwrap_or_else(|| panic!("call 1 envelope; got {first}"));
+    let first_env =
+        extract_envelope(&first).unwrap_or_else(|| panic!("call 1 envelope; got {first}"));
     assert_eq!(first_env["result"]["out"].as_i64(), Some(15));
-    let rerun_id = first_env["rerun_id"].as_str().expect("rerun_id present").to_string();
+    let rerun_id = first_env["rerun_id"]
+        .as_str()
+        .expect("rerun_id present")
+        .to_string();
 
     let second = host.call(
         "rerun",
@@ -203,8 +219,8 @@ fn rerun_roundtrip_with_new_args() {
             "args": {"x": 7}
         }),
     );
-    let second_env = extract_envelope(&second)
-        .unwrap_or_else(|| panic!("rerun envelope; got {second}"));
+    let second_env =
+        extract_envelope(&second).unwrap_or_else(|| panic!("rerun envelope; got {second}"));
     assert_eq!(
         second_env["result"]["out"].as_i64(),
         Some(21),
@@ -228,7 +244,8 @@ fn rerun_unknown_id_errors() {
             "args": {"x": 0}
         }),
     );
-    let has_error = resp.get("result")
+    let has_error = resp
+        .get("result")
         .and_then(|r| r.get("structuredContent"))
         .and_then(|sc| sc.get("error"))
         .is_some();
@@ -245,11 +262,15 @@ fn rerun_rejects_non_base62_id() {
             "args": {"x": 0}
         }),
     );
-    let has_error = resp.get("result")
+    let has_error = resp
+        .get("result")
         .and_then(|r| r.get("structuredContent"))
         .and_then(|sc| sc.get("error"))
         .is_some();
-    assert!(has_error, "expected error for non-base62 rerun_id; got {resp}");
+    assert!(
+        has_error,
+        "expected error for non-base62 rerun_id; got {resp}"
+    );
 }
 
 #[test]
@@ -264,8 +285,7 @@ fn interact_envelope_has_no_rerun_id() {
             "body": "{ out: ($args.x * 2) }",
         }),
     );
-    let env = extract_envelope(&resp)
-        .unwrap_or_else(|| panic!("interact envelope; got {resp}"));
+    let env = extract_envelope(&resp).unwrap_or_else(|| panic!("interact envelope; got {resp}"));
     assert_eq!(env["result"]["out"].as_i64(), Some(8));
     assert!(
         env.get("rerun_id").is_none(),

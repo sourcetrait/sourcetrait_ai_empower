@@ -1,26 +1,18 @@
 use crate::*;
 
 // ============================================================================
-// Library kind + metadata
+// Library metadata
 // ============================================================================
 
-/// How a library was originally registered. Determines whether
-/// `define_function`/`undefine_function` mirror writes happen
-/// (registered) and whether `reimport_library` is valid (imported).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ser::Serialize, ser::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum LibraryKind {
-    Registered,
-    Imported,
-}
-
-/// On-disk `<library>/.nushell_mcp_meta.json` shape. Git-tracked. Lives at
-/// the root of every registered/imported library and records both the
-/// authoring style and the client-side path the MCP either mirrors to
-/// (registered) or re-reads from on reimport (imported).
+/// On-disk `<library>/.nushell_mcp_meta.json` shape. Git-tracked. Lives at the
+/// root of every library and records the agent's `source_path` - the tree the
+/// MCP re-reads on `commit` and sanity-checks on `delete`. One authored library
+/// kind remains, so there is no discriminant; deserialization silently
+/// tolerates (and drops) the legacy `kind` field written by pre-0.0.44 sidecars
+/// (serde ignores unknown fields), so older test-channel libraries hydrate
+/// cleanly.
 #[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
 pub(crate) struct LibraryMeta {
-    pub kind: LibraryKind,
     pub source_path: PathBuf,
 }
 
@@ -196,7 +188,8 @@ impl LibraryLocks {
             };
             // Treat any subdir with a META_FILE as a library.
             if entry.path().join(META_FILE).exists() {
-                map.entry(name).or_insert_with(|| Arc::new(tk::AsyncRwLock::new(())));
+                map.entry(name)
+                    .or_insert_with(|| Arc::new(tk::AsyncRwLock::new(())));
             }
         }
         Ok(())
@@ -222,25 +215,11 @@ impl LibraryLocks {
     }
 
     /// Look up an existing lock; None if the library isn't registered.
-    /// Used by the call / define / undefine / reimport handlers and by
+    /// Used by the call / commit / delete handlers and by
     /// `enumerate_libraries` to take the per-library guard.
-    pub(crate) async fn lookup(
-        &self,
-        name: &str,
-    ) -> Option<Arc<tk::AsyncRwLock<()>>> {
+    pub(crate) async fn lookup(&self, name: &str) -> Option<Arc<tk::AsyncRwLock<()>>> {
         let map = self.map.lock().await;
         map.get(name).cloned()
-    }
-
-    /// Remove an existing lock entry. Returns the removed lock so the
-    /// caller can acquire the final exclusive guard for cleanup.
-    /// Errors if the library wasn't registered.
-    pub(crate) async fn unregister(
-        &self,
-        name: &str,
-    ) -> Result<Arc<tk::AsyncRwLock<()>>, NotRegistered> {
-        let mut map = self.map.lock().await;
-        map.remove(name).ok_or(NotRegistered)
     }
 }
 
@@ -256,17 +235,6 @@ impl LibraryLocks {
 /// `NuSh::register_library` and `NuSh::import_library` to surface
 /// `-32602 invalid_params` to the agent.
 pub(crate) struct AlreadyRegistered;
-
-/// What: marker error returned by `LibraryLocks::unregister` when
-/// the requested name is not present in the registry.
-///
-/// Why: unregister requires an existing entry to remove. Same
-/// rationale as `AlreadyRegistered` for the marker shape -- the
-/// tool handler builds the user-facing message.
-///
-/// Where: returned by `LibraryLocks::unregister`; matched by
-/// `NuSh::unregister_library` to surface `-32602 invalid_params`.
-pub(crate) struct NotRegistered;
 
 // ============================================================================
 // Substrate: keypair generation + libraries repo init
@@ -285,10 +253,14 @@ pub(crate) fn ensure_keypair() -> io::Result<()> {
     if !priv_path.exists() {
         let status = process::Command::new("ssh-keygen")
             .arg("-q")
-            .arg("-t").arg("ed25519")
-            .arg("-f").arg(&priv_path)
-            .arg("-N").arg("")
-            .arg("-C").arg(KEY_COMMENT)
+            .arg("-t")
+            .arg("ed25519")
+            .arg("-f")
+            .arg(&priv_path)
+            .arg("-N")
+            .arg("")
+            .arg("-C")
+            .arg(KEY_COMMENT)
             .status()
             .map_err(|e| io::Error::other(format!("ssh-keygen: {e}")))?;
         if !status.success() {
@@ -317,7 +289,10 @@ pub(crate) fn ensure_libraries_repo() -> io::Result<()> {
         run_git(&dir, &["init", "-b", "main"])?;
         configure_repo(&dir)?;
         // Initial commit so HEAD exists.
-        run_git(&dir, &["commit", "--allow-empty", "-m", "init libraries repo"])?;
+        run_git(
+            &dir,
+            &["commit", "--allow-empty", "-m", "init libraries repo"],
+        )?;
     } else {
         // Re-apply config in case paths moved.
         configure_repo(&dir)?;
@@ -361,10 +336,7 @@ fn configure_repo(dir: &std::path::Path) -> io::Result<()> {
 }
 
 /// Run `git` in `dir` with the given args; error if non-zero exit.
-pub(crate) fn run_git(
-    dir: &std::path::Path,
-    args: &[&str],
-) -> io::Result<()> {
+pub(crate) fn run_git(dir: &std::path::Path, args: &[&str]) -> io::Result<()> {
     let out = process::Command::new("git")
         .args(args)
         .current_dir(dir)
@@ -376,67 +348,6 @@ pub(crate) fn run_git(
             args.join(" "),
             String::from_utf8_lossy(&out.stderr),
         )));
-    }
-    Ok(())
-}
-
-// ============================================================================
-// register_library / unregister_library
-// ============================================================================
-
-/// Implementation for `register_library(name, path)`. Caller (the
-/// rmcp tool handler) holds the per-library write lock (just acquired
-/// at register time) and frames errors as `mcp::ErrorData`.
-pub(crate) fn register_library_impl(
-    name: &str,
-    client_path: &std::path::Path,
-) -> Result<(), Error> {
-    if !is_valid_ident(name) {
-        return Err(Error::LibraryInvalidName {
-            library: name.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
-        });
-    }
-    if build_target().is_test() && !name.ends_with("_test") {
-        return Err(Error::LibraryTestSuffixRequired {
-            library: name.to_string(),
-        });
-    }
-    let lib_dir = library_dir(name);
-    fs::create_dir_all(&lib_dir)?;
-    // Empty cascade -- mod.nu re-exports nothing until define_function
-    // populates it.
-    fs::write(library_root_modnu_path(name), b"")?;
-    let meta = LibraryMeta {
-        kind: LibraryKind::Registered,
-        source_path: client_path.to_path_buf(),
-    };
-    let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
-        phase: "register_library::serialize_meta".to_string(),
-        reason: e.to_string(),
-    })?;
-    fs::write(library_meta_path(name), &meta_bytes)?;
-    // Mirror the (empty) library at the client path.
-    fs::create_dir_all(client_path)?;
-    fs::write(client_path.join("mod.nu"), b"")?;
-    // Commit on the MCP side.
-    run_git(&libraries_dir(), &["add", "--", name])?;
-    let msg = format!("register library {name}");
-    run_git(&libraries_dir(), &["commit", "-m", &msg])?;
-    Ok(())
-}
-
-/// Implementation for `unregister_library(name)`. Removes the
-/// library subtree from the MCP repo and commits. Does NOT touch
-/// the client mirror (the_user 2026-05-31 design -- unregister is
-/// MCP-side only; client manages its own copies).
-pub(crate) fn unregister_library_impl(name: &str) -> Result<(), Error> {
-    let lib_dir = library_dir(name);
-    if lib_dir.exists() {
-        fs::remove_dir_all(&lib_dir)?;
-        run_git(&libraries_dir(), &["add", "--", name])?;
-        let msg = format!("unregister library {name}");
-        run_git(&libraries_dir(), &["commit", "-m", &msg])?;
     }
     Ok(())
 }
@@ -491,7 +402,8 @@ fn validate_new_coordinate(
     if !is_valid_ident(library) || is_reserved_term(library) {
         return Err(Error::LibraryInvalidName {
             library: library.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]* and not be the reserved `call`/`resolve`".to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]* and not be the reserved `call`/`resolve`"
+                .to_string(),
         });
     }
     if build_target().is_test() && !library.ends_with("_test") {
@@ -550,7 +462,6 @@ pub(crate) fn new_impl(
         fs::create_dir_all(&canonical)?;
         fs::write(library_root_modnu_path(library), b"")?;
         let meta = LibraryMeta {
-            kind: LibraryKind::Imported,
             source_path: sp.to_path_buf(),
         };
         let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
@@ -559,7 +470,10 @@ pub(crate) fn new_impl(
         })?;
         fs::write(library_meta_path(library), &meta_bytes)?;
         run_git(&libraries_dir(), &["add", "--", library])?;
-        run_git(&libraries_dir(), &["commit", "-m", &format!("new library {library}")])?;
+        run_git(
+            &libraries_dir(),
+            &["commit", "-m", &format!("new library {library}")],
+        )?;
         fs::create_dir_all(sp)?;
         let root_modnu = sp.join("mod.nu");
         if !root_modnu.exists() {
@@ -587,7 +501,8 @@ pub(crate) fn new_impl(
             if terminal_module && child.exists() {
                 return Err(Error::LibraryInvalidName {
                     library: module_path.to_string(),
-                    reason: "module already exists; edit it instead of scaffolding over it".to_string(),
+                    reason: "module already exists; edit it instead of scaffolding over it"
+                        .to_string(),
                 });
             }
             fs::create_dir_all(&child)?;
@@ -606,7 +521,8 @@ pub(crate) fn new_impl(
         if fn_file.exists() {
             return Err(Error::LibraryInvalidName {
                 library: fn_name.to_string(),
-                reason: "function already exists; edit it instead of scaffolding over it".to_string(),
+                reason: "function already exists; edit it instead of scaffolding over it"
+                    .to_string(),
             });
         }
         fs::write(&fn_file, skeleton_function_source())?;
@@ -657,79 +573,6 @@ pub(crate) fn is_valid_module_path(s: &str) -> bool {
 }
 
 // ============================================================================
-// Function source synthesis
-// ============================================================================
-
-/// Build the on-disk shape of a `<name>.nu` file: `export def main`
-/// (the function body) + `export def resolve` (passthrough typecheck).
-/// Matches the convention enforced by the strict validator and used by
-/// the standalone driver pattern.
-pub(crate) fn synthesize_function_source(
-    args_schema: &str,
-    result_schema: &str,
-    body: &str,
-) -> String {
-    let mut out = String::with_capacity(256);
-    out.push_str("export def main [args: ");
-    out.push_str(args_schema);
-    out.push_str("] {\n");
-    out.push_str(body);
-    if !body.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str("}\n\n");
-    out.push_str("export def resolve [args: ");
-    out.push_str(result_schema);
-    out.push_str("] {\n    $args\n}\n");
-    out
-}
-
-/// What: synthesizes the on-disk function source via
-/// `synthesize_function_source` and parse-checks it through the supplied
-/// `ParseEngine`, returning any parse errors as `Violation`s with
-/// source-relative line numbers.
-///
-/// Why: `lint_body` reports rule violations but silently returns an empty
-/// `Vec` when the wrapper parse fails (`find_def_body_id` early-return).
-/// For `define_function` no downstream worker eval runs before disk write,
-/// so a syntactically broken body would otherwise be committed to the
-/// canonical libraries repo + mirror + signed commit, with the error only
-/// surfacing at `call()` time. This helper closes the gap by surfacing
-/// parse errors at the agent-facing seam. Mirrors the parse-correctness
-/// check `validate_function_file_ast` already performs for
-/// `import_library` / `reimport_library`.
-///
-/// Where: called by `server::tool::NuSh::define_function` after
-/// `lint_body` passes but before `library_locks.lookup`. Non-empty result
-/// triggers `-32602 invalid_params` with `format_violations`.
-pub(crate) fn parse_check_function_source(
-    engine: &ParseEngine,
-    name: &str,
-    args_schema: &str,
-    result_schema: &str,
-    body: &str,
-) -> Vec<Violation> {
-    let source = synthesize_function_source(args_schema, result_schema, body);
-    let wrapper_name = format!("__pc_{name}");
-    let (wrapped, prefix_len) = wrap_as_module(&source, &wrapper_name);
-    let engine_state = engine.engine_state();
-    let mut working_set = nu::StateWorkingSet::new(engine_state);
-    let virtual_name = format!("{name}.nu");
-    let _ = nu::parse(&mut working_set, Some(&virtual_name), wrapped.as_bytes(), false);
-    let mut violations = Vec::new();
-    for err in &working_set.parse_errors {
-        let span_start = err.span().start.saturating_sub(prefix_len);
-        let (line, _col) = span_to_line_col(&source, span_start);
-        violations.push(Violation {
-            path: virtual_name.clone(),
-            line,
-            message: format!("parse error: {err:?}"),
-        });
-    }
-    violations
-}
-
-// ============================================================================
 // LibraryMeta load helper
 // ============================================================================
 
@@ -748,271 +591,19 @@ pub(crate) fn parse_check_function_source(
 /// recover the source_path).
 pub(crate) fn load_meta(library: &str) -> io::Result<LibraryMeta> {
     let bytes = fs::read(library_meta_path(library))?;
-    json::from_slice(&bytes).map_err(|e| {
-        io::Error::other(format!("decode meta for {library}: {e}"))
-    })
+    json::from_slice(&bytes)
+        .map_err(|e| io::Error::other(format!("decode meta for {library}: {e}")))
 }
 
 // ============================================================================
-// mod.nu cascade regeneration
+// (define_function / undefine_function retired in 0.0.44 - new/commit/delete)
 // ============================================================================
-
-/// Re-derive `<dir>/mod.nu` from the directory's current children:
-/// - `<subdir>` with its own `mod.nu` -> `export module <subdir>`
-/// - `<file>.nu` (excluding mod.nu) -> `export use ./<file>.nu`
-/// Sorted for stable output. Idempotent.
-pub(crate) fn regenerate_mod_nu(dir: &std::path::Path) -> io::Result<()> {
-    let mut lines = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name == "mod.nu" || name == META_FILE {
-            continue;
-        }
-        let ft = entry.file_type()?;
-        if ft.is_dir() {
-            if entry.path().join("mod.nu").exists() {
-                lines.push(format!("export module {name}"));
-            }
-        } else if ft.is_file() && name.ends_with(".nu") {
-            lines.push(format!("export use ./{name}"));
-        }
-    }
-    lines.sort();
-    let mut content = lines.join("\n");
-    if !content.is_empty() {
-        content.push('\n');
-    }
-    fs::write(dir.join("mod.nu"), content)?;
-    Ok(())
-}
-
-/// After writing a new function file, regenerate `mod.nu` from the
-/// target dir back to (and including) the library root. Caller passes
-/// the library root and a relative path to the dir holding the new
-/// file; the helper walks up the tree.
-fn cascade_up(
-    lib_root: &std::path::Path,
-    rel_dir: &std::path::Path,
-) -> io::Result<()> {
-    let mut current = rel_dir.to_path_buf();
-    loop {
-        let dir = lib_root.join(&current);
-        regenerate_mod_nu(&dir)?;
-        if current.as_os_str().is_empty() {
-            break;
-        }
-        match current.parent() {
-            Some(p) => current = p.to_path_buf(),
-            None => break,
-        }
-    }
-    Ok(())
-}
-
-/// After removing a function file, regenerate `mod.nu` and PRUNE any
-/// intermediate dir that is now an empty module (no `.nu` files and
-/// no submodule subdirs). Cascades up; never prunes the library root.
-fn cascade_up_and_prune(
-    lib_root: &std::path::Path,
-    rel_dir: &std::path::Path,
-) -> io::Result<()> {
-    let mut current = rel_dir.to_path_buf();
-    loop {
-        let dir = lib_root.join(&current);
-        if dir.exists() {
-            if !current.as_os_str().is_empty() && dir_is_empty_module(&dir)? {
-                fs::remove_dir_all(&dir)?;
-            } else {
-                regenerate_mod_nu(&dir)?;
-            }
-        }
-        if current.as_os_str().is_empty() {
-            break;
-        }
-        match current.parent() {
-            Some(p) => current = p.to_path_buf(),
-            None => break,
-        }
-    }
-    Ok(())
-}
-
-/// What: returns true if `dir` contains no `.nu` files and no
-/// subdirectories that themselves have a `mod.nu` -- i.e. nothing
-/// that justifies keeping the directory as a module.
-///
-/// Why: `cascade_up_and_prune` uses this to decide whether to prune
-/// an intermediate dir after undefine. Without the prune, undefine
-/// would leave empty dirs scattered through the tree.
-///
-/// Where: called only by `cascade_up_and_prune`; the library root is
-/// never pruned even if empty (caller-side guard).
-fn dir_is_empty_module(dir: &std::path::Path) -> io::Result<bool> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name == "mod.nu" || name == META_FILE {
-            continue;
-        }
-        let ft = entry.file_type()?;
-        if ft.is_file() && name.ends_with(".nu") {
-            return Ok(false);
-        }
-        if ft.is_dir() && entry.path().join("mod.nu").exists() {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-// ============================================================================
-// define_function / undefine_function
-// ============================================================================
-
-pub(crate) fn define_function_impl(
-    library: &str,
-    module_path: &str,
-    name: &str,
-    args_schema: &str,
-    result_schema: &str,
-    body: &str,
-) -> Result<(), Error> {
-    if !is_valid_ident(library) {
-        return Err(Error::LibraryInvalidName {
-            library: library.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
-        });
-    }
-    if !is_valid_module_path(module_path) {
-        return Err(Error::LibraryInvalidModulePath {
-            module_path: module_path.to_string(),
-            reason: "slash-separated identifier segments; no `..`, no leading/trailing/double slash".to_string(),
-        });
-    }
-    if !is_valid_ident(name) {
-        return Err(Error::FunctionInvalidName {
-            name: name.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
-        });
-    }
-    let lib_root = library_dir(library);
-    if !lib_root.exists() {
-        return Err(Error::LibraryNotRegistered {
-            library: library.to_string(),
-        });
-    }
-    let meta = load_meta(library)?;
-    let rel_dir = if module_path.is_empty() {
-        PathBuf::new()
-    } else {
-        PathBuf::from(module_path)
-    };
-    let file_name = format!("{name}.nu");
-    let mcp_target_dir = lib_root.join(&rel_dir);
-    fs::create_dir_all(&mcp_target_dir)?;
-    let source = synthesize_function_source(args_schema, result_schema, body);
-    fs::write(mcp_target_dir.join(&file_name), &source)?;
-    cascade_up(&lib_root, &rel_dir)?;
-    if matches!(meta.kind, LibraryKind::Registered) {
-        let mirror_dir = meta.source_path.join(&rel_dir);
-        fs::create_dir_all(&mirror_dir)?;
-        fs::write(mirror_dir.join(&file_name), &source)?;
-        cascade_up(&meta.source_path, &rel_dir)?;
-    }
-    run_git(&libraries_dir(), &["add", "--", library])?;
-    let id = function_id(library, module_path, name);
-    run_git(&libraries_dir(), &["commit", "-m", &format!("define {id}")])?;
-    Ok(())
-}
-
-pub(crate) fn undefine_function_impl(
-    library: &str,
-    module_path: &str,
-    name: &str,
-) -> Result<(), Error> {
-    if !is_valid_ident(library) {
-        return Err(Error::LibraryInvalidName {
-            library: library.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
-        });
-    }
-    if !is_valid_module_path(module_path) {
-        return Err(Error::LibraryInvalidModulePath {
-            module_path: module_path.to_string(),
-            reason: "slash-separated identifier segments; no `..`, no leading/trailing/double slash".to_string(),
-        });
-    }
-    if !is_valid_ident(name) {
-        return Err(Error::FunctionInvalidName {
-            name: name.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
-        });
-    }
-    let lib_root = library_dir(library);
-    if !lib_root.exists() {
-        return Err(Error::LibraryNotRegistered {
-            library: library.to_string(),
-        });
-    }
-    let meta = load_meta(library)?;
-    let rel_dir = if module_path.is_empty() {
-        PathBuf::new()
-    } else {
-        PathBuf::from(module_path)
-    };
-    let file_name = format!("{name}.nu");
-    let mcp_target_file = lib_root.join(&rel_dir).join(&file_name);
-    if !mcp_target_file.exists() {
-        return Err(Error::FunctionNotDefined {
-            library: library.to_string(),
-            module_path: module_path.to_string(),
-            name: name.to_string(),
-        });
-    }
-    fs::remove_file(&mcp_target_file)?;
-    cascade_up_and_prune(&lib_root, &rel_dir)?;
-    if matches!(meta.kind, LibraryKind::Registered) {
-        let mirror_file = meta.source_path.join(&rel_dir).join(&file_name);
-        if mirror_file.exists() {
-            fs::remove_file(&mirror_file)?;
-            cascade_up_and_prune(&meta.source_path, &rel_dir)?;
-        }
-    }
-    run_git(&libraries_dir(), &["add", "--", library])?;
-    let id = function_id(library, module_path, name);
-    run_git(&libraries_dir(), &["commit", "-m", &format!("undefine {id}")])?;
-    Ok(())
-}
-
-/// What: composes the coordinate `<library>/<module_path>/<name>` (or
-/// `<library>/<name>` when module_path is empty) into a single string
-/// for commit messages and error messages.
-///
-/// Why: keeps the empty-module_path branch out of every caller and
-/// gives consistent rendering of the function coordinate everywhere
-/// it appears.
-///
-/// Where: called by `define_function_impl` and `undefine_function_impl`
-/// for commit messages, and by the latter for the "function not
-/// defined" error.
-fn function_id(library: &str, module_path: &str, name: &str) -> String {
-    if module_path.is_empty() {
-        format!("{library}/{name}")
-    } else {
-        format!("{library}/{module_path}/{name}")
-    }
-}
 
 /// Resolve `<library>/<module_path>/<name>.nu` into an absolute path
 /// under the MCP libraries dir. Returns None if any name component is
 /// invalid (path traversal defense). Does NOT verify the file exists;
 /// caller checks.
-pub(crate) fn call_file_path(
-    library: &str,
-    module_path: &str,
-    name: &str,
-) -> Option<PathBuf> {
+pub(crate) fn call_file_path(library: &str, module_path: &str, name: &str) -> Option<PathBuf> {
     if !is_valid_ident(library) {
         return None;
     }
@@ -1147,9 +738,7 @@ fn extract_function_schemas(source: &str) -> (String, String) {
 ///
 /// Where: called by `enumerate_libraries` at each library root and
 /// by itself for nested modules.
-fn build_module_tree(
-    dir: &std::path::Path,
-) -> io::Result<(Vec<ModuleInfo>, Vec<FunctionInfo>)> {
+fn build_module_tree(dir: &std::path::Path) -> io::Result<(Vec<ModuleInfo>, Vec<FunctionInfo>)> {
     let mut entries: Vec<(String, bool)> = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -1342,9 +931,7 @@ fn validate_walk(
         let ft = entry.file_type()?;
         if ft.is_dir() {
             validate_walk(root, &path, engine, result)?;
-        } else if ft.is_file()
-            && path.extension().map(|e| e == "nu").unwrap_or(false)
-        {
+        } else if ft.is_file() && path.extension().map(|e| e == "nu").unwrap_or(false) {
             validate_one_file(root, &path, engine, result)?;
         }
     }
@@ -1372,14 +959,7 @@ fn validate_one_file(
     if is_mod {
         validate_mod_nu_ast(&rel, stem, &source, parent, engine, &mut result.structural);
     } else {
-        validate_function_file_ast(
-            &rel,
-            stem,
-            &source,
-            parent,
-            engine,
-            &mut result.structural,
-        );
+        validate_function_file_ast(&rel, stem, &source, parent, engine, &mut result.structural);
     }
     // leg 1b: the reserved-terms ban applies to EVERY .nu file -- `call`
     // and `resolve` may appear only as a call-target's exported sentinel.
@@ -1629,7 +1209,14 @@ fn validate_mod_nu_ast(
     let body = working_set.get_block(body_block_id);
     for pipeline in &body.pipelines {
         for elem in &pipeline.elements {
-            check_mod_nu_pipeline_element(rel, &elem.expr, &working_set, source, prefix_len, violations);
+            check_mod_nu_pipeline_element(
+                rel,
+                &elem.expr,
+                &working_set,
+                source,
+                prefix_len,
+                violations,
+            );
         }
     }
 }
@@ -1657,7 +1244,10 @@ fn check_mod_nu_pipeline_element(
             // leg 1: mod.nu carries the cascade (`export use`/`export
             // module`) AND module-level shared utils/consts (`export
             // const`/`export def`).
-            if matches!(name, "export use" | "export module" | "export const" | "export def") {
+            if matches!(
+                name,
+                "export use" | "export module" | "export const" | "export def"
+            ) {
                 return;
             }
             violations.push(Violation {
@@ -1779,14 +1369,18 @@ fn validate_function_file_ast(
         .decls
         .iter()
         .filter(|(name_bytes, _)| name_bytes.as_slice() != b"main")
-        .map(|(name_bytes, decl_id)| {
-            (String::from_utf8_lossy(name_bytes).into_owned(), *decl_id)
-        })
+        .map(|(name_bytes, decl_id)| (String::from_utf8_lossy(name_bytes).into_owned(), *decl_id))
         .collect();
     export_names.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let call_decl = export_names.iter().find(|(n, _)| n == "call").map(|(_, id)| *id);
-    let resolve_decl = export_names.iter().find(|(n, _)| n == "resolve").map(|(_, id)| *id);
+    let call_decl = export_names
+        .iter()
+        .find(|(n, _)| n == "call")
+        .map(|(_, id)| *id);
+    let resolve_decl = export_names
+        .iter()
+        .find(|(n, _)| n == "resolve")
+        .map(|(_, id)| *id);
 
     if call_decl.is_none() && resolve_decl.is_none() {
         // Organizational file: a plain module (helper defs, export const,
@@ -1836,13 +1430,28 @@ fn validate_function_file_ast(
     //    call: typed `args` positional (record<...> with real fields, or
     //    nothing); body is the author's raw logic -- unchecked.
     if let Some(id) = call_decl {
-        check_args_record_positional(rel, &working_set, id, "call", source, prefix_len, violations);
+        check_args_record_positional(
+            rel,
+            &working_set,
+            id,
+            "call",
+            source,
+            prefix_len,
+            violations,
+        );
     }
     //    resolve: typed `args` positional (the result schema); body exactly
     //    `$args` (the passthrough that forces the runtime result check).
     if let Some(id) = resolve_decl {
-        let resolve_args_var =
-            check_args_record_positional(rel, &working_set, id, "resolve", source, prefix_len, violations);
+        let resolve_args_var = check_args_record_positional(
+            rel,
+            &working_set,
+            id,
+            "resolve",
+            source,
+            prefix_len,
+            violations,
+        );
         check_resolve_body_is_args(
             rel,
             &working_set,
@@ -1857,8 +1466,15 @@ fn validate_function_file_ast(
     //    EXACTLY `resolve (call $args)` -- the generated sugar; the author
     //    owns only main's doc comment, never its body.
     if let Some(id) = main_decl {
-        let main_args_var =
-            check_args_record_positional(rel, &working_set, id, "main", source, prefix_len, violations);
+        let main_args_var = check_args_record_positional(
+            rel,
+            &working_set,
+            id,
+            "main",
+            source,
+            prefix_len,
+            violations,
+        );
         check_main_body_is_resolve_call_args(
             rel,
             &working_set,
@@ -2044,9 +1660,7 @@ fn inner_is_call_args(
     args_var: Option<nu::VarId>,
 ) -> bool {
     match &expr.expr {
-        nu::Expr::Subexpression(block_id) => {
-            block_is_call_args(*block_id, working_set, args_var)
-        }
+        nu::Expr::Subexpression(block_id) => block_is_call_args(*block_id, working_set, args_var),
         nu::Expr::FullCellPath(fcp) if fcp.tail.is_empty() => match &fcp.head.expr {
             nu::Expr::Subexpression(block_id) => {
                 block_is_call_args(*block_id, working_set, args_var)
@@ -2160,7 +1774,10 @@ fn validate_function_file(rel: &str, source: &str, violations: &mut Vec<Violatio
     }
 
     let main_line = exports.iter().find(|(_, n)| n == "main").map(|(l, _)| *l);
-    let resolve_line = exports.iter().find(|(_, n)| n == "resolve").map(|(l, _)| *l);
+    let resolve_line = exports
+        .iter()
+        .find(|(_, n)| n == "resolve")
+        .map(|(l, _)| *l);
 
     if main_line.is_none() {
         violations.push(Violation {
@@ -2173,7 +1790,9 @@ fn validate_function_file(rel: &str, source: &str, violations: &mut Vec<Violatio
         violations.push(Violation {
             path: rel.to_string(),
             line: 0,
-            message: "function file must contain `export def resolve [args: record<...>] { $args }`".to_string(),
+            message:
+                "function file must contain `export def resolve [args: record<...>] { $args }`"
+                    .to_string(),
         });
     }
     for (line, name) in &exports {
@@ -2225,7 +1844,8 @@ fn validate_function_file(rel: &str, source: &str, violations: &mut Vec<Violatio
                 violations.push(Violation {
                     path: rel.to_string(),
                     line,
-                    message: "resolve's body could not be located (parens/brackets imbalanced?)".to_string(),
+                    message: "resolve's body could not be located (parens/brackets imbalanced?)"
+                        .to_string(),
                 });
             }
         }
@@ -2288,139 +1908,6 @@ fn extract_def_body(source: &str, fn_name: &str) -> Option<String> {
         return None;
     }
     Some(source[body_start..i].to_string())
-}
-
-// ============================================================================
-// import_library / reimport_library
-// ============================================================================
-
-/// What: imports a pre-authored library from `source_path` into the
-/// canonical libraries repo under `<libraries>/<name>/`. Validates
-/// the source tree first; on success, removes any existing subtree
-/// for `name`, copies the source in (skipping dotfiles), writes the
-/// kind=imported meta sidecar, and creates a signed git commit.
-///
-/// Why: import is the agent-authored path -- the agent builds and
-/// tests the source locally, then asks the MCP to vendor it. The
-/// strict pre-copy validation enforces our convention before any
-/// disk mutation; failing fast keeps half-imported libraries from
-/// appearing in the repo.
-///
-/// Where: called by `NuSh::import_library` after acquiring the per-
-/// library write lock; the tool handler maps `ImportError` to
-/// `mcp::ErrorData` via `import_error_to_mcp_error`.
-pub(crate) fn import_library_impl(
-    name: &str,
-    source_path: &std::path::Path,
-    engine: &ParseEngine,
-) -> Result<(), Error> {
-    if !is_valid_ident(name) {
-        return Err(Error::LibraryInvalidName {
-            library: name.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
-        });
-    }
-    if build_target().is_test() && !name.ends_with("_test") {
-        return Err(Error::LibraryTestSuffixRequired {
-            library: name.to_string(),
-        });
-    }
-    if !source_path.exists() || !source_path.is_dir() {
-        return Err(Error::LibrarySourceMissing {
-            path: source_path.display().to_string(),
-        });
-    }
-    let result = validate_library_source(source_path, engine)?;
-    if !result.is_empty() {
-        return Err(Error::LibraryViolations {
-            structural: result.structural,
-            lint: vec![],
-        });
-    }
-    let dest = library_dir(name);
-    if dest.exists() {
-        fs::remove_dir_all(&dest)?;
-    }
-    copy_dir_recursive(source_path, &dest)?;
-    let meta = LibraryMeta {
-        kind: LibraryKind::Imported,
-        source_path: source_path.to_path_buf(),
-    };
-    let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
-        phase: "import_library::serialize_meta".to_string(),
-        reason: e.to_string(),
-    })?;
-    fs::write(library_meta_path(name), &meta_bytes)?;
-    run_git(&libraries_dir(), &["add", "--", name])?;
-    let msg = format!("import library {name} from {}", source_path.display());
-    run_git(&libraries_dir(), &["commit", "-m", &msg])?;
-    Ok(())
-}
-
-/// What: re-imports a library by re-reading the path recorded in its
-/// meta sidecar, re-validating, and replacing the canonical copy.
-/// Errors with `WrongKind` if the library was created via
-/// register_library (only imported libraries reimport).
-///
-/// Why: agents iterate their library source locally; reimport lets
-/// them publish a fresh snapshot without re-supplying the path.
-/// Reading the path from meta (instead of taking it as a parameter)
-/// prevents accidental redirection of the registration to a
-/// different source.
-///
-/// Where: called by `NuSh::reimport_library` under the per-library
-/// write lock; same error-mapping seam as import_library_impl.
-pub(crate) fn reimport_library_impl(
-    name: &str,
-    engine: &ParseEngine,
-) -> Result<(), Error> {
-    if !is_valid_ident(name) {
-        return Err(Error::LibraryInvalidName {
-            library: name.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
-        });
-    }
-    let lib_root = library_dir(name);
-    if !lib_root.exists() {
-        return Err(Error::LibraryNotRegistered {
-            library: name.to_string(),
-        });
-    }
-    let meta = load_meta(name)?;
-    match meta.kind {
-        LibraryKind::Imported => {}
-        LibraryKind::Registered => {
-            return Err(Error::LibraryWrongKind {
-                library: name.to_string(),
-            });
-        }
-    }
-    let source_path = meta.source_path.clone();
-    if !source_path.exists() || !source_path.is_dir() {
-        return Err(Error::LibrarySourceMissing {
-            path: source_path.display().to_string(),
-        });
-    }
-    let result = validate_library_source(&source_path, engine)?;
-    if !result.is_empty() {
-        return Err(Error::LibraryViolations {
-            structural: result.structural,
-            lint: vec![],
-        });
-    }
-    if lib_root.exists() {
-        fs::remove_dir_all(&lib_root)?;
-    }
-    copy_dir_recursive(&source_path, &lib_root)?;
-    let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
-        phase: "reimport_library::serialize_meta".to_string(),
-        reason: e.to_string(),
-    })?;
-    fs::write(library_meta_path(name), &meta_bytes)?;
-    run_git(&libraries_dir(), &["add", "--", name])?;
-    let msg = format!("reimport library {name} from {}", source_path.display());
-    run_git(&libraries_dir(), &["commit", "-m", &msg])?;
-    Ok(())
 }
 
 // ============================================================================
@@ -2531,7 +2018,10 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
     if changed.is_empty() {
         return Ok(CommitResult { changed: vec![] });
     }
-    run_git(&libraries_dir(), &["commit", "-m", &format!("commit library {name}")])?;
+    run_git(
+        &libraries_dir(),
+        &["commit", "-m", &format!("commit library {name}")],
+    )?;
     Ok(CommitResult { changed })
 }
 
@@ -2593,7 +2083,10 @@ pub(crate) fn delete_impl(
     if lib_root.exists() {
         fs::remove_dir_all(&lib_root)?;
         run_git(&libraries_dir(), &["add", "--", name])?;
-        run_git(&libraries_dir(), &["commit", "-m", &format!("delete library {name}")])?;
+        run_git(
+            &libraries_dir(),
+            &["commit", "-m", &format!("delete library {name}")],
+        )?;
         removed.push(Removed {
             path: lib_root.to_string_lossy().into_owned(),
             side: "mcp".to_string(),
@@ -2606,15 +2099,24 @@ pub(crate) fn delete_impl(
         match std::fs::symlink_metadata(sp) {
             Ok(m) if m.file_type().is_symlink() => {
                 std::fs::remove_file(sp)?;
-                removed.push(Removed { path: source_path.to_string(), side: "source".to_string() });
+                removed.push(Removed {
+                    path: source_path.to_string(),
+                    side: "source".to_string(),
+                });
             }
             Ok(m) if m.is_dir() => {
                 std::fs::remove_dir_all(sp)?;
-                removed.push(Removed { path: source_path.to_string(), side: "source".to_string() });
+                removed.push(Removed {
+                    path: source_path.to_string(),
+                    side: "source".to_string(),
+                });
             }
             Ok(_) => {
                 std::fs::remove_file(sp)?;
-                removed.push(Removed { path: source_path.to_string(), side: "source".to_string() });
+                removed.push(Removed {
+                    path: source_path.to_string(),
+                    side: "source".to_string(),
+                });
             }
             Err(_) => {
                 // Already gone -> idempotent.
@@ -2637,10 +2139,7 @@ pub(crate) fn delete_impl(
 /// Where: called by `import_library_impl` and `reimport_library_impl`
 /// after validation succeeds and any pre-existing subtree has been
 /// wiped.
-fn copy_dir_recursive(
-    src: &std::path::Path,
-    dst: &std::path::Path,
-) -> io::Result<()> {
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -2658,63 +2157,6 @@ fn copy_dir_recursive(
         }
     }
     Ok(())
-}
-
-// ============================================================================
-// Inline tests -- direct unit coverage of parse_check_function_source
-// against representative broken-body shapes. Integration coverage via
-// tests/library_define.rs exercises the rmcp handler wire-up end-to-end.
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn engine() -> ParseEngine {
-        ParseEngine::new_full()
-    }
-
-    fn pc(body: &str) -> Vec<Violation> {
-        parse_check_function_source(&engine(), "probe", "record<x: int>", "record<out: int>", body)
-    }
-
-    #[test]
-    fn clean_body_no_violations() {
-        let v = pc("{ out: ($args.x * 2) }");
-        assert!(v.is_empty(), "expected no violations, got {v:?}");
-    }
-
-    #[test]
-    fn flags_unclosed_string() {
-        let v = pc("\"unclosed");
-        assert!(!v.is_empty(), "unclosed string should be a parse error");
-    }
-
-    #[test]
-    fn flags_unbalanced_braces() {
-        let v = pc("}}}");
-        assert!(!v.is_empty(), "extra close braces should be a parse error");
-    }
-
-    #[test]
-    fn flags_shell_and_and() {
-        let v = pc("true && false");
-        assert!(!v.is_empty(), "&& should be rejected as shell_and_and");
-    }
-
-    #[test]
-    fn flags_trailing_assignment() {
-        let v = pc("let z =");
-        assert!(!v.is_empty(), "incomplete let assignment should parse error");
-    }
-
-    #[test]
-    fn let_without_eq() {
-        // Nushell may or may not accept this; document actual behavior.
-        let v = pc("let z");
-        // Whatever the result, log it.
-        eprintln!("let_without_eq: violations={v:?}");
-    }
 }
 
 // ============================================================================

@@ -161,8 +161,7 @@ fn env_mutation_persists_across_interact_calls() {
             "body": "$env.SHOT_DEMO = $args.value\n{ wrote: $args.value }",
         }),
     );
-    let env1 = extract_envelope(&first)
-        .unwrap_or_else(|| panic!("call 1 envelope; got {first}"));
+    let env1 = extract_envelope(&first).unwrap_or_else(|| panic!("call 1 envelope; got {first}"));
     assert_eq!(env1["result"]["wrote"].as_str(), Some("alpha"));
 
     let second = host.call(
@@ -174,8 +173,7 @@ fn env_mutation_persists_across_interact_calls() {
             "body": "{ saw: $env.SHOT_DEMO }",
         }),
     );
-    let env2 = extract_envelope(&second)
-        .unwrap_or_else(|| panic!("call 2 envelope; got {second}"));
+    let env2 = extract_envelope(&second).unwrap_or_else(|| panic!("call 2 envelope; got {second}"));
     assert_eq!(
         env2["result"]["saw"].as_str(),
         Some("alpha"),
@@ -205,8 +203,7 @@ fn cd_persists_across_interact_calls() {
             "body": "{ cwd: $env.PWD }",
         }),
     );
-    let env = extract_envelope(&second)
-        .unwrap_or_else(|| panic!("call 2 envelope; got {second}"));
+    let env = extract_envelope(&second).unwrap_or_else(|| panic!("call 2 envelope; got {second}"));
     assert_eq!(
         env["result"]["cwd"].as_str(),
         Some("/tmp"),
@@ -238,8 +235,7 @@ fn agent_def_persists_across_interact_calls() {
             "body": "{ value: (shot_helper $args.n) }",
         }),
     );
-    let env = extract_envelope(&second)
-        .unwrap_or_else(|| panic!("call 2 envelope; got {second}"));
+    let env = extract_envelope(&second).unwrap_or_else(|| panic!("call 2 envelope; got {second}"));
     assert_eq!(
         env["result"]["value"].as_i64(),
         Some(400),
@@ -273,7 +269,8 @@ fn interact_state_does_not_leak_into_run() {
             "body": "{ out: (leaked) }",
         }),
     );
-    let has_error_path = resp.get("result")
+    let has_error_path = resp
+        .get("result")
         .and_then(|r| r.get("structuredContent"))
         .and_then(|sc| sc.get("error"))
         .is_some();
@@ -299,8 +296,7 @@ fn multi_line_body_with_command_then_record_parses() {
             "body": "sleep 50ms\nlet doubled = ($args.x * 2)\n{ y: $doubled, slept_ms: 50 }",
         }),
     );
-    let env = extract_envelope(&resp)
-        .unwrap_or_else(|| panic!("call envelope; got {resp}"));
+    let env = extract_envelope(&resp).unwrap_or_else(|| panic!("call envelope; got {resp}"));
     assert_eq!(env["result"]["y"].as_i64(), Some(14));
     assert_eq!(env["result"]["slept_ms"].as_i64(), Some(50));
 }

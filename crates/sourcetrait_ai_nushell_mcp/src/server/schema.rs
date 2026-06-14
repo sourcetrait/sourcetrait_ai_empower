@@ -30,8 +30,20 @@ macro_rules! scalar_enum {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum $name {
-            Int, Float, String, Bool, Datetime, Duration, Filesize,
-            Binary, Range, Number, Glob, CellPath, Path, Directory,
+            Int,
+            Float,
+            String,
+            Bool,
+            Datetime,
+            Duration,
+            Filesize,
+            Binary,
+            Range,
+            Number,
+            Glob,
+            CellPath,
+            Path,
+            Directory,
         }
         impl $name {
             pub(crate) fn name(self) -> &'static str {
@@ -68,10 +80,8 @@ macro_rules! scalar_enum {
                     "cell-path" => Self::CellPath,
                     "path" => Self::Path,
                     "directory" => Self::Directory,
-                    "any" => return Err(
-                        "`any` is not a grammar type".to_string()),
-                    other => return Err(
-                        format!("unknown scalar type `{other}`")),
+                    "any" => return Err("`any` is not a grammar type".to_string()),
+                    other => return Err(format!("unknown scalar type `{other}`")),
                 })
             }
         }
@@ -98,22 +108,48 @@ pub(crate) struct ColumnName(pub String);
 // ============================================================================
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JsonTypedefKind { Scalar, Nothing, Record, Oneof, Table, List }
+pub(crate) enum JsonTypedefKind {
+    Scalar,
+    Nothing,
+    Record,
+    Oneof,
+    Table,
+    List,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NuTypedefKind { Scalar, Nothing, Record, Oneof, Table, List }
+pub(crate) enum NuTypedefKind {
+    Scalar,
+    Nothing,
+    Record,
+    Oneof,
+    Table,
+    List,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JsonArgsTypedefKind { Void, Record }
+pub(crate) enum JsonArgsTypedefKind {
+    Void,
+    Record,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NuArgsTypedefKind { Void, Record }
+pub(crate) enum NuArgsTypedefKind {
+    Void,
+    Record,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JsonResultTypedefKind { Void, Record }
+pub(crate) enum JsonResultTypedefKind {
+    Void,
+    Record,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NuResultTypedefKind { Void, Record }
+pub(crate) enum NuResultTypedefKind {
+    Void,
+    Record,
+}
 
 // ============================================================================
 // JSON-side structural AST
@@ -318,31 +354,27 @@ fn json_typedef_kind(v: &json::Value) -> Result<JsonTypedefKind, String> {
         }
         json::Value::Array(arr) => {
             if arr.is_empty() {
-                return Err(
-                    "[] is ambiguous (list vs table) and not allowed"
-                        .to_string());
+                return Err("[] is ambiguous (list vs table) and not allowed".to_string());
             }
             if arr.len() != 1 {
                 return Err(format!(
                     "array type must hold exactly one element, got {}",
-                    arr.len()));
+                    arr.len()
+                ));
             }
             // Table iff the single element is a non-oneof object.
             match &arr[0] {
-                json::Value::Object(m) if !m.contains_key(ONEOF_KEY) => {
-                    Ok(JsonTypedefKind::Table)
-                }
+                json::Value::Object(m) if !m.contains_key(ONEOF_KEY) => Ok(JsonTypedefKind::Table),
                 _ => Ok(JsonTypedefKind::List),
             }
         }
         json::Value::Bool(_) | json::Value::Number(_) => Err(format!(
-            "schema node must be a string/object/array/null, got {v}")),
+            "schema node must be a string/object/array/null, got {v}"
+        )),
     }
 }
 
-fn parse_json_record_fields(
-    map: &mcp::JsonObject,
-) -> Result<Vec<JsonRecordFieldTypedef>, String> {
+fn parse_json_record_fields(map: &mcp::JsonObject) -> Result<Vec<JsonRecordFieldTypedef>, String> {
     let mut fields = Vec::with_capacity(map.len());
     for (k, v) in map {
         fields.push(JsonRecordFieldTypedef {
@@ -364,14 +396,16 @@ fn parse_json_typedef(v: &json::Value) -> Result<JsonTypedef, String> {
         JsonTypedefKind::Oneof => {
             let map = v.as_object().expect("classified Oneof");
             let members_val = &map[ONEOF_KEY];
-            let arr = members_val.as_array().ok_or_else(|| format!(
-                "`{ONEOF_KEY}` value must be an array of types"))?;
+            let arr = members_val
+                .as_array()
+                .ok_or_else(|| format!("`{ONEOF_KEY}` value must be an array of types"))?;
             if arr.is_empty() {
                 return Err("empty oneof<> is not allowed".to_string());
             }
             if map.len() != 1 {
                 return Err(format!(
-                    "a oneof object must have only the `{ONEOF_KEY}` key"));
+                    "a oneof object must have only the `{ONEOF_KEY}` key"
+                ));
             }
             let mut members = Vec::with_capacity(arr.len());
             for m in arr {
@@ -389,8 +423,7 @@ fn parse_json_typedef(v: &json::Value) -> Result<JsonTypedef, String> {
             let arr = v.as_array().expect("classified Table");
             let map = arr[0].as_object().expect("classified Table elem");
             if map.is_empty() {
-                return Err(
-                    "[{}] (a table with no columns) is not allowed".to_string());
+                return Err("[{}] (a table with no columns) is not allowed".to_string());
             }
             let mut columns = Vec::with_capacity(map.len());
             for (k, cv) in map {
@@ -411,9 +444,7 @@ fn parse_json_typedef(v: &json::Value) -> Result<JsonTypedef, String> {
 }
 
 /// Parse a top-level args schema object: empty {} -> Void, else Record.
-fn parse_json_args(
-    map: &mcp::JsonObject,
-) -> Result<JsonArgsTypedef, String> {
+fn parse_json_args(map: &mcp::JsonObject) -> Result<JsonArgsTypedef, String> {
     if map.is_empty() {
         Ok(JsonArgsTypedef::Void)
     } else {
@@ -423,9 +454,7 @@ fn parse_json_args(
     }
 }
 
-fn parse_json_result(
-    map: &mcp::JsonObject,
-) -> Result<JsonResultTypedef, String> {
+fn parse_json_result(map: &mcp::JsonObject) -> Result<JsonResultTypedef, String> {
     if map.is_empty() {
         Ok(JsonResultTypedef::Void)
     } else {
@@ -441,8 +470,7 @@ fn render_json_typedef(t: &JsonTypedef) -> json::Value {
         JsonTypedef::Nothing => json::Value::Null,
         JsonTypedef::Record(r) => render_json_record(&r.fields),
         JsonTypedef::Oneof(o) => {
-            let arr: Vec<json::Value> =
-                o.members.iter().map(render_json_typedef).collect();
+            let arr: Vec<json::Value> = o.members.iter().map(render_json_typedef).collect();
             let mut m = serde_json::Map::new();
             m.insert(ONEOF_KEY.to_string(), json::Value::Array(arr));
             json::Value::Object(m)
@@ -454,15 +482,11 @@ fn render_json_typedef(t: &JsonTypedef) -> json::Value {
             }
             json::Value::Array(vec![json::Value::Object(m)])
         }
-        JsonTypedef::List(l) => {
-            json::Value::Array(vec![render_json_typedef(&l.element)])
-        }
+        JsonTypedef::List(l) => json::Value::Array(vec![render_json_typedef(&l.element)]),
     }
 }
 
-fn render_json_record(
-    fields: &[JsonRecordFieldTypedef],
-) -> json::Value {
+fn render_json_record(fields: &[JsonRecordFieldTypedef]) -> json::Value {
     let mut m = serde_json::Map::new();
     for f in fields {
         m.insert(f.name.0.clone(), render_json_typedef(&f.typedef));
@@ -481,8 +505,14 @@ fn split_top_level(s: &str, sep: char) -> Vec<String> {
     let mut cur = std::string::String::new();
     for c in s.chars() {
         match c {
-            '<' => { depth += 1; cur.push(c); }
-            '>' => { depth -= 1; cur.push(c); }
+            '<' => {
+                depth += 1;
+                cur.push(c);
+            }
+            '>' => {
+                depth -= 1;
+                cur.push(c);
+            }
             _ if c == sep && depth == 0 => {
                 parts.push(cur.trim().to_string());
                 cur.clear();
@@ -505,10 +535,7 @@ fn split_field(field: &str) -> Result<(std::string::String, &str), String> {
             '<' => depth += 1,
             '>' => depth -= 1,
             ':' if depth == 0 => {
-                return Ok((
-                    field[..i].trim().to_string(),
-                    field[i + 1..].trim(),
-                ));
+                return Ok((field[..i].trim().to_string(), field[i + 1..].trim()));
             }
             _ => {}
         }
@@ -544,9 +571,7 @@ fn nu_typedef_kind(tok: &str) -> Result<NuTypedefKind, String> {
     }
 }
 
-fn parse_nu_record_fields(
-    inner: &str,
-) -> Result<Vec<NuRecordFieldTypedef>, String> {
+fn parse_nu_record_fields(inner: &str) -> Result<Vec<NuRecordFieldTypedef>, String> {
     let mut fields = Vec::new();
     for field in split_top_level(inner, ',') {
         let (name, ty) = split_field(&field)?;
@@ -563,23 +588,20 @@ fn parse_nu_typedef(tok: &str) -> Result<NuTypedef, String> {
     let tok = tok.trim();
     Ok(match nu_typedef_kind(tok)? {
         NuTypedefKind::Nothing => NuTypedef::Nothing,
-        NuTypedefKind::Scalar => {
-            NuTypedef::Scalar(NuScalarTypedef::from_name(tok)?)
-        }
+        NuTypedefKind::Scalar => NuTypedef::Scalar(NuScalarTypedef::from_name(tok)?),
         NuTypedefKind::Record => {
             let inner = bracketed(tok, "record<")
                 .ok_or_else(|| format!("malformed record type `{tok}`"))?;
             if inner.trim().is_empty() {
-                return Err(
-                    "nested empty record<> is not allowed".to_string());
+                return Err("nested empty record<> is not allowed".to_string());
             }
             NuTypedef::Record(NuRecordTypedef {
                 fields: parse_nu_record_fields(inner)?,
             })
         }
         NuTypedefKind::Oneof => {
-            let inner = bracketed(tok, "oneof<")
-                .ok_or_else(|| format!("malformed oneof type `{tok}`"))?;
+            let inner =
+                bracketed(tok, "oneof<").ok_or_else(|| format!("malformed oneof type `{tok}`"))?;
             let parts = split_top_level(inner, ',');
             if parts.is_empty() {
                 return Err("empty oneof<> is not allowed".to_string());
@@ -591,11 +613,10 @@ fn parse_nu_typedef(tok: &str) -> Result<NuTypedef, String> {
             NuTypedef::Oneof(NuOneofTypedef { members })
         }
         NuTypedefKind::Table => {
-            let inner = bracketed(tok, "table<")
-                .ok_or_else(|| format!("malformed table type `{tok}`"))?;
+            let inner =
+                bracketed(tok, "table<").ok_or_else(|| format!("malformed table type `{tok}`"))?;
             if inner.trim().is_empty() {
-                return Err(
-                    "table<> with no columns is not allowed".to_string());
+                return Err("table<> with no columns is not allowed".to_string());
             }
             let mut columns = Vec::new();
             for col in split_top_level(inner, ',') {
@@ -608,8 +629,8 @@ fn parse_nu_typedef(tok: &str) -> Result<NuTypedef, String> {
             NuTypedef::Table(NuTableTypedef { columns })
         }
         NuTypedefKind::List => {
-            let inner = bracketed(tok, "list<")
-                .ok_or_else(|| format!("malformed list type `{tok}`"))?;
+            let inner =
+                bracketed(tok, "list<").ok_or_else(|| format!("malformed list type `{tok}`"))?;
             NuTypedef::List(NuListTypedef {
                 element: Box::new(parse_nu_typedef(inner)?),
             })
@@ -625,16 +646,15 @@ fn parse_nu_args(tok: &str) -> Result<NuArgsTypedef, String> {
         Ok(NuArgsTypedef::Void)
     } else if let Some(inner) = bracketed(tok, "record<") {
         if inner.trim().is_empty() {
-            return Err(
-                "top-level record<> is not allowed; use {} (void)"
-                    .to_string());
+            return Err("top-level record<> is not allowed; use {} (void)".to_string());
         }
         Ok(NuArgsTypedef::Record(NuRecordTypedef {
             fields: parse_nu_record_fields(inner)?,
         }))
     } else {
         Err(format!(
-            "top-level args type must be `nothing` or `record<...>`, got `{tok}`"))
+            "top-level args type must be `nothing` or `record<...>`, got `{tok}`"
+        ))
     }
 }
 
@@ -644,16 +664,15 @@ fn parse_nu_result(tok: &str) -> Result<NuResultTypedef, String> {
         Ok(NuResultTypedef::Void)
     } else if let Some(inner) = bracketed(tok, "record<") {
         if inner.trim().is_empty() {
-            return Err(
-                "top-level record<> is not allowed; use {} (void)"
-                    .to_string());
+            return Err("top-level record<> is not allowed; use {} (void)".to_string());
         }
         Ok(NuResultTypedef::Record(NuRecordTypedef {
             fields: parse_nu_record_fields(inner)?,
         }))
     } else {
         Err(format!(
-            "top-level result type must be `nothing` or `record<...>`, got `{tok}`"))
+            "top-level result type must be `nothing` or `record<...>`, got `{tok}`"
+        ))
     }
 }
 
@@ -663,8 +682,7 @@ fn render_nu_typedef(t: &NuTypedef) -> std::string::String {
         NuTypedef::Nothing => "nothing".to_string(),
         NuTypedef::Record(r) => render_nu_record(&r.fields),
         NuTypedef::Oneof(o) => {
-            let parts: Vec<std::string::String> =
-                o.members.iter().map(render_nu_typedef).collect();
+            let parts: Vec<std::string::String> = o.members.iter().map(render_nu_typedef).collect();
             format!("oneof<{}>", parts.join(", "))
         }
         NuTypedef::Table(tab) => {
@@ -795,9 +813,7 @@ fn scalar_n2j(s: NuScalarTypedef) -> JsonScalarTypedef {
 
 /// Input: a JSON args schema object -> the nu positional-type string
 /// (`record<...>` or `nothing`).
-pub(crate) fn args_schema_to_nu(
-    schema: &mcp::JsonObject,
-) -> Result<std::string::String, String> {
+pub(crate) fn args_schema_to_nu(schema: &mcp::JsonObject) -> Result<std::string::String, String> {
     let json = parse_json_args(schema)?;
     let nu = match json {
         JsonArgsTypedef::Void => NuArgsTypedef::Void,
@@ -807,9 +823,7 @@ pub(crate) fn args_schema_to_nu(
 }
 
 /// Input: a JSON result schema object -> the nu positional-type string.
-pub(crate) fn result_schema_to_nu(
-    schema: &mcp::JsonObject,
-) -> Result<std::string::String, String> {
+pub(crate) fn result_schema_to_nu(schema: &mcp::JsonObject) -> Result<std::string::String, String> {
     let json = parse_json_result(schema)?;
     let nu = match json {
         JsonResultTypedef::Void => NuResultTypedef::Void,
@@ -820,9 +834,7 @@ pub(crate) fn result_schema_to_nu(
 
 /// Emit: a nu args positional-type string -> the JSON schema object
 /// ({} for void, {fields} for a record).
-pub(crate) fn nu_to_args_schema(
-    typedef: &str,
-) -> Result<mcp::JsonObject, String> {
+pub(crate) fn nu_to_args_schema(typedef: &str) -> Result<mcp::JsonObject, String> {
     let nu = parse_nu_args(typedef)?;
     let json = match nu {
         NuArgsTypedef::Void => JsonArgsTypedef::Void,
@@ -838,9 +850,7 @@ pub(crate) fn nu_to_args_schema(
 }
 
 /// Emit: a nu result positional-type string -> the JSON schema object.
-pub(crate) fn nu_to_result_schema(
-    typedef: &str,
-) -> Result<mcp::JsonObject, String> {
+pub(crate) fn nu_to_result_schema(typedef: &str) -> Result<mcp::JsonObject, String> {
     let nu = parse_nu_result(typedef)?;
     let json = match nu {
         NuResultTypedef::Void => JsonResultTypedef::Void,
@@ -881,31 +891,39 @@ mod tests {
     fn args_simple_record() {
         assert_eq!(
             args_schema_to_nu(&obj(r#"{"a":"int","b":"string"}"#)).unwrap(),
-            "record<a: int, b: string>");
+            "record<a: int, b: string>"
+        );
     }
 
     #[test]
     fn args_nested_record_list_table_oneof() {
         let got = args_schema_to_nu(&obj(
             r#"{"r":{"a":"string","b":["int"]},"t":[{"c":"int"}],"u":{"oneof<>":["int",null]}}"#,
-        )).unwrap();
+        ))
+        .unwrap();
         assert_eq!(
             got,
-            "record<r: record<a: string, b: list<int>>, t: table<c: int>, u: oneof<int, nothing>>");
+            "record<r: record<a: string, b: list<int>>, t: table<c: int>, u: oneof<int, nothing>>"
+        );
     }
 
     #[test]
     fn args_list_of_oneof_with_record_member() {
-        let got = args_schema_to_nu(&obj(
-            r#"{"xs":[{"oneof<>":[{"a":"int"},"string"]}]}"#)).unwrap();
+        let got =
+            args_schema_to_nu(&obj(r#"{"xs":[{"oneof<>":[{"a":"int"},"string"]}]}"#)).unwrap();
         assert_eq!(got, "record<xs: list<oneof<record<a: int>, string>>>");
     }
 
     #[test]
     fn args_all_scalars_incl_cell_path() {
         let got = args_schema_to_nu(&obj(
-            r#"{"c":"cell-path","d":"directory","n":"number","p":"path"}"#)).unwrap();
-        assert_eq!(got, "record<c: cell-path, d: directory, n: number, p: path>");
+            r#"{"c":"cell-path","d":"directory","n":"number","p":"path"}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            got,
+            "record<c: cell-path, d: directory, n: number, p: path>"
+        );
     }
 
     // ---- denials ----
@@ -956,9 +974,14 @@ mod tests {
     fn emit_nested() {
         let got = nu_to_args_schema(
             "record<t: record<y: string, n: list<int>>, u: table<a: int>, v: oneof<int, nothing>>",
-        ).unwrap();
-        assert_eq!(got, obj(
-            r#"{"t":{"y":"string","n":["int"]},"u":[{"a":"int"}],"v":{"oneof<>":["int",null]}}"#));
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            obj(
+                r#"{"t":{"y":"string","n":["int"]},"u":[{"a":"int"}],"v":{"oneof<>":["int",null]}}"#
+            )
+        );
     }
 
     #[test]
@@ -993,7 +1016,8 @@ mod tests {
         assert_eq!(result_schema_to_nu(&obj("{}")).unwrap(), "nothing");
         assert_eq!(
             result_schema_to_nu(&obj(r#"{"out":"int"}"#)).unwrap(),
-            "record<out: int>");
+            "record<out: int>"
+        );
         assert_eq!(nu_to_result_schema("nothing").unwrap(), obj("{}"));
     }
 
@@ -1027,29 +1051,33 @@ mod tests {
         // the settled grammar maps [{record}] canonically to a table.
         assert_eq!(
             nu_to_args_schema("record<x: list<record<a: int>>>").unwrap(),
-            obj(r#"{"x":[{"a":"int"}]}"#));
+            obj(r#"{"x":[{"a":"int"}]}"#)
+        );
         assert_eq!(
             nu_to_args_schema("record<x: table<a: int>>").unwrap(),
-            obj(r#"{"x":[{"a":"int"}]}"#));
+            obj(r#"{"x":[{"a":"int"}]}"#)
+        );
     }
 
     #[test]
     fn emit_nested_list_and_list_of_table() {
         assert_eq!(
             nu_to_args_schema("record<x: list<list<int>>>").unwrap(),
-            obj(r#"{"x":[["int"]]}"#));
+            obj(r#"{"x":[["int"]]}"#)
+        );
         assert_eq!(
             nu_to_args_schema("record<x: list<table<a: int>>>").unwrap(),
-            obj(r#"{"x":[[{"a":"int"}]]}"#));
+            obj(r#"{"x":[[{"a":"int"}]]}"#)
+        );
     }
 
     #[test]
     fn emit_oneof_with_composite_members() {
         assert_eq!(
-            nu_to_args_schema(
-                "record<u: oneof<record<a: int>, table<b: string>, nothing>>",
-            ).unwrap(),
-            obj(r#"{"u":{"oneof<>":[{"a":"int"},[{"b":"string"}],null]}}"#));
+            nu_to_args_schema("record<u: oneof<record<a: int>, table<b: string>, nothing>>",)
+                .unwrap(),
+            obj(r#"{"u":{"oneof<>":[{"a":"int"},[{"b":"string"}],null]}}"#)
+        );
     }
 
     // ---- emit denials (the nu parse side) ----
@@ -1083,8 +1111,7 @@ mod tests {
 
     #[test]
     fn deny_oneof_extra_key() {
-        assert!(args_schema_to_nu(
-            &obj(r#"{"x":{"oneof<>":["int"],"k":"string"}}"#)).is_err());
+        assert!(args_schema_to_nu(&obj(r#"{"x":{"oneof<>":["int"],"k":"string"}}"#)).is_err());
     }
 
     #[test]
@@ -1103,9 +1130,20 @@ mod tests {
     #[test]
     fn all_scalars_roundtrip_both_ways() {
         let names = [
-            "int", "float", "string", "bool", "datetime", "duration",
-            "filesize", "binary", "range", "number", "glob", "cell-path",
-            "path", "directory",
+            "int",
+            "float",
+            "string",
+            "bool",
+            "datetime",
+            "duration",
+            "filesize",
+            "binary",
+            "range",
+            "number",
+            "glob",
+            "cell-path",
+            "path",
+            "directory",
         ];
         for n in names {
             let json = obj(&format!(r#"{{"f":"{n}"}}"#));
@@ -1123,7 +1161,8 @@ mod tests {
         let nu = result_schema_to_nu(&obj(s)).unwrap();
         assert_eq!(
             nu,
-            "record<suspect_count: int, suspects: table<files: list<string>, id: string>>");
+            "record<suspect_count: int, suspects: table<files: list<string>, id: string>>"
+        );
         assert_eq!(nu_to_result_schema(&nu).unwrap(), obj(s));
     }
 

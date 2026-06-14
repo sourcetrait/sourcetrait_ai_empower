@@ -57,8 +57,7 @@ fn json_value_to_nu_value(v: &serde_json::Value) -> nu::Value {
         }
         serde_json::Value::String(s) => nu::Value::string(s.clone(), span),
         serde_json::Value::Array(arr) => {
-            let items: Vec<nu::Value> =
-                arr.iter().map(json_value_to_nu_value).collect();
+            let items: Vec<nu::Value> = arr.iter().map(json_value_to_nu_value).collect();
             nu::Value::list(items, span)
         }
         serde_json::Value::Object(map) => {

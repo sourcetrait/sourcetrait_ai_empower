@@ -5,8 +5,9 @@ use crate::*;
 /// plus the args object to pass as `$args`.
 ///
 /// Why: call routes through the stateless worker with a synthesized
-/// template `use <abs path>; <name> resolve (<name> ARGS_JSON)` so
-/// the function's result_schema typecheck runs on every invocation.
+/// template `use <abs path>; <name> resolve (<name> call ARGS_JSON)`
+/// so the function's result_schema typecheck runs on every invocation,
+/// against the RAW `call` (never `main`) for boundary enforcement.
 /// HEAD-only -- no version pinning per the slice 3 lock.
 ///
 /// Where: extracted in `NuSh::call`; the coordinate is path-validated
@@ -40,7 +41,7 @@ pub(crate) struct CallEnvelope {
 #[mcp::tool_router(router = call_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Invoke a registered library function on a stateless worker. Builds `use <abs path to function file>.nu; <name> resolve (<name> $args)` so the function's `resolve` typecheck runs on the call's result. HEAD-only -- no version pinning.",
+        description = "Invoke a registered library function on a stateless worker. Builds `use <abs path to function file>.nu; <name> resolve (<name> call $args)` - targeting the raw `call` so a mis-authored `main` cannot leak an unvalidated value, with the function's `resolve` typecheck run on the boundary. HEAD-only -- no version pinning.",
         output_schema = mcp::schema_for_type::<CallEnvelope>()
     )]
     async fn call(
@@ -88,7 +89,7 @@ impl NuSh {
             json::to_string_json(&p.args).unwrap_or_else(|_| "{}".to_string())
         };
         let source = format!(
-            "use {}\n{} resolve ({} {})\n",
+            "use {}\n{} resolve ({} call {})\n",
             file_path.display(),
             p.name,
             p.name,

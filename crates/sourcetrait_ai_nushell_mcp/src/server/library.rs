@@ -442,6 +442,185 @@ pub(crate) fn unregister_library_impl(name: &str) -> Result<(), Error> {
 }
 
 // ============================================================================
+// leg 3: new() - the scaffold authoring surface
+// ============================================================================
+
+/// Result of `new()`: the source tree it scaffolded into + the paths
+/// created (the agent now edits these, then `commit()`s).
+#[derive(Debug, ser::Serialize)]
+pub(crate) struct NewResult {
+    pub source_path: String,
+    pub created: Vec<String>,
+}
+
+/// The call/resolve/main skeleton a fresh function file is scaffolded
+/// with: `record<>` placeholders (the unfleshed-skeleton marker the
+/// validator rejects until real fields land), no doc. (leg 3)
+fn skeleton_function_source() -> String {
+    "export def call [args: record<>] {\n    # the function's raw logic; replace record<> with the real fields\n    {}\n}\n\nexport def resolve [args: record<>] {\n    $args\n}\n\nexport def main [args: record<>] {\n    resolve (call $args)\n}\n".to_string()
+}
+
+/// Append `entry` to `modnu` if not already present, preserving existing
+/// (leg-1 authored) content -- the ADDITIVE cascade wiring that replaces
+/// regenerate_mod_nu's full rewrite. (leg 3)
+fn additively_wire_modnu(modnu: &std::path::Path, entry: &str) -> io::Result<()> {
+    let existing = if modnu.exists() {
+        fs::read_to_string(modnu)?
+    } else {
+        String::new()
+    };
+    if existing.lines().any(|l| l.trim() == entry) {
+        return Ok(());
+    }
+    let mut out = existing;
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(entry);
+    out.push('\n');
+    fs::write(modnu, out)
+}
+
+/// Validate the new() coordinate idents + apply the leg-1b reserved-terms
+/// ban (no library / module segment / function named `call` or `resolve`).
+fn validate_new_coordinate(
+    library: &str,
+    module_path: &str,
+    name: Option<&str>,
+) -> Result<(), Error> {
+    if !is_valid_ident(library) || is_reserved_term(library) {
+        return Err(Error::LibraryInvalidName {
+            library: library.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]* and not be the reserved `call`/`resolve`".to_string(),
+        });
+    }
+    if build_target().is_test() && !library.ends_with("_test") {
+        return Err(Error::LibraryTestSuffixRequired {
+            library: library.to_string(),
+        });
+    }
+    if !is_valid_module_path(module_path) {
+        return Err(Error::LibraryInvalidName {
+            library: module_path.to_string(),
+            reason: "invalid module path".to_string(),
+        });
+    }
+    for seg in module_path.split('/').filter(|s| !s.is_empty()) {
+        if is_reserved_term(seg) {
+            return Err(Error::LibraryInvalidName {
+                library: seg.to_string(),
+                reason: "reserved `call`/`resolve` cannot name a module".to_string(),
+            });
+        }
+    }
+    if let Some(n) = name {
+        if !is_valid_ident(n) || is_reserved_term(n) {
+            return Err(Error::LibraryInvalidName {
+                library: n.to_string(),
+                reason: "invalid or reserved (`call`/`resolve`) function name".to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Implementation for `new(library, source_path?, module_path, name?)` -
+/// the scaffold tool (leg 3). The FIRST call for a library establishes it
+/// (records source_path in the canonical meta, immutable thereafter); it
+/// then additively scaffolds the named leaf INTO the agent's source tree
+/// (module dir + fresh mod.nu, or the call/resolve/main function skeleton),
+/// where the agent edits it before `commit()`. LEAF-GUARD: refuses the
+/// terminal coordinate if it already exists (ancestors are mkdir -p'd).
+pub(crate) fn new_impl(
+    library: &str,
+    source_path: Option<&std::path::Path>,
+    module_path: &str,
+    name: Option<&str>,
+) -> Result<NewResult, Error> {
+    validate_new_coordinate(library, module_path, name)?;
+
+    let canonical = library_dir(library);
+    let established = canonical.exists();
+
+    if !established {
+        let sp = source_path.ok_or_else(|| Error::LibraryInvalidName {
+            library: library.to_string(),
+            reason: "source_path is required on the establishing new() call".to_string(),
+        })?;
+        fs::create_dir_all(&canonical)?;
+        fs::write(library_root_modnu_path(library), b"")?;
+        let meta = LibraryMeta {
+            kind: LibraryKind::Imported,
+            source_path: sp.to_path_buf(),
+        };
+        let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
+            phase: "new::serialize_meta".to_string(),
+            reason: e.to_string(),
+        })?;
+        fs::write(library_meta_path(library), &meta_bytes)?;
+        run_git(&libraries_dir(), &["add", "--", library])?;
+        run_git(&libraries_dir(), &["commit", "-m", &format!("new library {library}")])?;
+        fs::create_dir_all(sp)?;
+        let root_modnu = sp.join("mod.nu");
+        if !root_modnu.exists() {
+            fs::write(&root_modnu, b"")?;
+        }
+    } else if source_path.is_some() {
+        return Err(Error::LibraryAlreadyRegistered {
+            library: library.to_string(),
+        });
+    }
+
+    let meta = load_meta(library)?;
+    let sp = meta.source_path.clone();
+    let mut created: Vec<String> = Vec::new();
+
+    // mkdir -p the module-path chain, additively wiring each level into
+    // its parent's mod.nu. The terminal MODULE segment is leaf-guarded.
+    let mut dir = sp.clone();
+    if !module_path.is_empty() {
+        let segs: Vec<&str> = module_path.split('/').collect();
+        for (i, seg) in segs.iter().enumerate() {
+            let parent_modnu = dir.join("mod.nu");
+            let child = dir.join(seg);
+            let terminal_module = name.is_none() && i == segs.len() - 1;
+            if terminal_module && child.exists() {
+                return Err(Error::LibraryInvalidName {
+                    library: module_path.to_string(),
+                    reason: "module already exists; edit it instead of scaffolding over it".to_string(),
+                });
+            }
+            fs::create_dir_all(&child)?;
+            let child_modnu = child.join("mod.nu");
+            if !child_modnu.exists() {
+                fs::write(&child_modnu, b"")?;
+            }
+            additively_wire_modnu(&parent_modnu, &format!("export module {seg}"))?;
+            created.push(child.to_string_lossy().into_owned());
+            dir = child;
+        }
+    }
+
+    if let Some(fn_name) = name {
+        let fn_file = dir.join(format!("{fn_name}.nu"));
+        if fn_file.exists() {
+            return Err(Error::LibraryInvalidName {
+                library: fn_name.to_string(),
+                reason: "function already exists; edit it instead of scaffolding over it".to_string(),
+            });
+        }
+        fs::write(&fn_file, skeleton_function_source())?;
+        additively_wire_modnu(&dir.join("mod.nu"), &format!("export use ./{fn_name}.nu"))?;
+        created.push(fn_file.to_string_lossy().into_owned());
+    }
+
+    Ok(NewResult {
+        source_path: sp.to_string_lossy().into_owned(),
+        created,
+    })
+}
+
+// ============================================================================
 // Name + path validation
 // ============================================================================
 

@@ -24,6 +24,7 @@ pub(crate) mod server {
         pub(crate) mod kill;
         pub(crate) mod info;
         pub(crate) mod learn;
+        pub(crate) mod new;
     }
     pub(crate) mod worker_handle;
 }
@@ -77,6 +78,7 @@ pub(crate) use crate::{
             ensure_substrate,
             enumerate_libraries,
             import_library_impl,
+            new_impl,
             parse_check_function_source,
             register_library_impl,
             reimport_library_impl,

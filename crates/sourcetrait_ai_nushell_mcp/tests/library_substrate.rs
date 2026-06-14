@@ -215,7 +215,7 @@ fn tools_list_has_fourteen() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 14, "expected 14 tools; got {names:?}");
+    assert_eq!(names.len(), 15, "expected 15 tools; got {names:?}");
     for expected in [
         "run",
         "interact",
@@ -228,6 +228,7 @@ fn tools_list_has_fourteen() {
         "reimport_library",
         "call",
         "learn",
+        "new",
     ] {
         assert!(
             names.contains(&expected),

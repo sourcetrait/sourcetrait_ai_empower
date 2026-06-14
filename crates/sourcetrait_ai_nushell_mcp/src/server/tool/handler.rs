@@ -30,6 +30,7 @@ impl NuSh {
             + Self::kill_router()
             + Self::info_router()
             + Self::learn_router()
+            + Self::new_router()
     }
 }
 

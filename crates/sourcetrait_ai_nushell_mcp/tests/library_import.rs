@@ -865,3 +865,77 @@ fn import_accepts_reserved_as_quoted_string_value() {
     );
     assert!(!has_error_path(&resp), "quoted string value should not trip the ban; got {resp}");
 }
+
+// ---- leg 3: new() scaffold ----
+
+#[test]
+fn new_establishes_library_and_scaffolds_function() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("scaffolded");
+    // Establish the library (first new(); source_path required).
+    let r1 = host.call(
+        "new",
+        serde_json::json!({"library": "scaffolded", "source_path": src.to_str().unwrap()}),
+    );
+    assert!(!has_error_path(&r1), "establish should succeed; got {r1}");
+    let meta_text = std::fs::read_to_string(
+        host.library_dir("scaffolded").join(".nushell_mcp_meta.json"),
+    )
+    .unwrap();
+    assert!(
+        meta_text.contains(src.to_str().unwrap()),
+        "meta should record source_path; got {meta_text}",
+    );
+    assert!(src.join("mod.nu").exists(), "source root mod.nu should be seeded");
+
+    // Scaffold a function (later call; source_path omitted).
+    let r2 = host.call(
+        "new",
+        serde_json::json!({"library": "scaffolded", "module_path": "math", "name": "double"}),
+    );
+    assert!(!has_error_path(&r2), "scaffold function should succeed; got {r2}");
+    let fn_src = std::fs::read_to_string(src.join("math").join("double.nu")).unwrap();
+    assert!(fn_src.contains("export def call"), "skeleton missing call; got {fn_src:?}");
+    assert!(fn_src.contains("export def resolve"), "skeleton missing resolve");
+    assert!(fn_src.contains("export def main"), "skeleton missing main");
+    assert!(fn_src.contains("resolve (call $args)"), "skeleton main body wrong");
+    // Additive cascade wiring (NOT regenerate).
+    let math_mod = std::fs::read_to_string(src.join("math").join("mod.nu")).unwrap();
+    assert!(
+        math_mod.contains("export use ./double.nu"),
+        "math mod.nu should wire double; got {math_mod:?}",
+    );
+    let root_mod = std::fs::read_to_string(src.join("mod.nu")).unwrap();
+    assert!(
+        root_mod.contains("export module math"),
+        "root mod.nu should wire math; got {root_mod:?}",
+    );
+}
+
+#[test]
+fn new_leaf_guard_refuses_existing_function() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("guarded");
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "guarded", "source_path": src.to_str().unwrap()}),
+    );
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "guarded", "module_path": "m", "name": "f"}),
+    );
+    // Scaffolding the same function again -> the leaf-guard rejects.
+    let dup = host.call(
+        "new",
+        serde_json::json!({"library": "guarded", "module_path": "m", "name": "f"}),
+    );
+    assert!(has_error_path(&dup), "scaffolding over an existing function should reject; got {dup}");
+}
+
+#[test]
+fn new_requires_source_path_on_establish() {
+    let mut host = Host::spawn();
+    // First new() for a name with no source_path -> rejected.
+    let resp = host.call("new", serde_json::json!({"library": "nopath"}));
+    assert!(has_error_path(&resp), "establishing new() without source_path should reject; got {resp}");
+}

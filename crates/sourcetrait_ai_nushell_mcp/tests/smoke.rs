@@ -240,9 +240,10 @@ fn smoke_6_worker_death_via_exit() {
 #[test]
 fn smoke_9_timeout_fires() {
     // Slice 5.10: timeout_ms wraps the round-trip in tokio::time::timeout.
-    // A closure that sleeps longer than the timeout should return code
-    // -32001 with a "timeout:" message; the worker is killed and the
-    // next call succeeds on a fresh pool worker.
+    // A closure that sleeps longer than the timeout emits a typed
+    // worker::timeout error envelope (kind + timeout_ms data + nonce);
+    // the worker is killed and the next call succeeds on a fresh pool
+    // worker.
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"noop": "int"},

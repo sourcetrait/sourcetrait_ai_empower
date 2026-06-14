@@ -136,6 +136,18 @@ const REGEX_RECEIVERS: &[&str] = &[
     "str replace",
 ];
 
+/// Decls whose positional[0] is a parse-time-const file/module path -
+/// `use` / `overlay use` / `source` / `source-env`. The path cannot be
+/// lifted to args (a `source $args.p` / `use $args.p` is
+/// `not_a_constant`), so flagging it is a false positive (the_user
+/// 2026-06-14). A RESOLVED `use`/`overlay use` parses to
+/// `Expr::ImportPattern` / `Expr::Overlay` (skipped by the walker's
+/// catch-all); but on module-NOT-found it falls back to a plain
+/// `Expr::Call` with the path as positional[0] (parse_keywords.rs
+/// parse_use: import-pattern Nothing -> `Expr::Call(call)`) - this
+/// receiver-skip covers that fallback, and source/source-env always.
+const PARSE_PATH_RECEIVERS: &[&str] = &["use", "overlay use", "source", "source-env"];
+
 // ============================================================================
 // Entry points
 // ============================================================================
@@ -283,16 +295,22 @@ fn walk_expr(
                 && call.arguments.iter().any(|a| {
                     matches!(a, nu::Argument::Named((n, _, _)) if n.item == "regex")
                 });
+            // use/overlay use/source/source-env: positional[0] is a
+            // parse-time-const path; exempt it (the_user 2026-06-14). A
+            // resolved use/overlay is Expr::ImportPattern/Overlay
+            // (catch-all skip); the module-not-found fallback is a Call.
+            let parse_path_skip = PARSE_PATH_RECEIVERS.contains(&name);
             let mut positional_idx = 0usize;
             for arg in &call.arguments {
                 match arg {
                     nu::Argument::Positional(ae) => {
-                        let skip_this = regex_skip
-                            && positional_idx == 0
-                            && matches!(
-                                ae.expr,
-                                nu::Expr::String(_) | nu::Expr::RawString(_),
-                            );
+                        let skip_this = positional_idx == 0
+                            && (parse_path_skip
+                                || (regex_skip
+                                    && matches!(
+                                        ae.expr,
+                                        nu::Expr::String(_) | nu::Expr::RawString(_),
+                                    )));
                         positional_idx += 1;
                         if skip_this {
                             continue;
@@ -693,6 +711,30 @@ mod tests {
     fn passes_regex_named_flag_parse() {
         let v = lint("let x = (\"a/b/c\" | parse --regex '(?<g>.+/.+)'); { out: 0 }");
         assert!(v.is_empty(), "got {v:?}");
+    }
+
+    #[test]
+    fn passes_source_path() {
+        // `source <path>` takes a parse-time-const path as positional[0]
+        // (a `source $args.p` is not_a_constant), so flagging it is a
+        // false positive (the_user 2026-06-14). source-not-found is a
+        // recoverable parse error - the source Call still reaches the
+        // walker - so this exercises the receiver-skip, not a parse bail.
+        let v = lint("source \"/home/box/lib/util.nu\"; { out: 0 }");
+        assert!(v.is_empty(), "got {v:?}");
+    }
+
+    #[test]
+    fn passes_use_and_overlay_paths() {
+        // use / overlay use: a parse-time-const path. On module-not-found
+        // (as here) they fall back to a plain Call whose positional[0]
+        // path the receiver-skip exempts; a resolved module is an
+        // Expr::ImportPattern/Overlay the catch-all skips. Either way the
+        // path is not flagged (the_user 2026-06-14).
+        let u = lint("use ./helpers/util.nu; { out: 0 }");
+        assert!(u.is_empty(), "got {u:?}");
+        let o = lint("overlay use ./helpers/util.nu; { out: 0 }");
+        assert!(o.is_empty(), "got {o:?}");
     }
 
     #[test]

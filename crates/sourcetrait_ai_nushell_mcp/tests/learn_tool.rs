@@ -1,8 +1,11 @@
-//! Interact() tool surface smoke.
+//! learn() tool surface test.
 //!
-//! Full persistence coverage lives in `tests/interact_persistence.rs`
-//! (env + cd across calls). This file only verifies the tool surface
-//! advertised by `#[tool_router]`.
+//! Verifies learn(harness_dir) renders the embedded /nu skill template
+//! and writes <harness_dir>/skills/nu/SKILL.md:
+//! - envelope carries written_path / bytes / version (== CARGO_PKG_VERSION).
+//! - the file exists at the composed path with bytes > 0 matching the body.
+//! - the body is rendered (no literal `{{ version }}`; the stamp shows the
+//!   live version) and retains the skill frontmatter.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -36,30 +39,16 @@ impl Host {
             .expect("spawn host");
         let stdin = child.stdin.take().expect("host stdin");
         let stdout = BufReader::new(child.stdout.take().expect("host stdout"));
-        let mut host = Self { child, stdin, stdout, next_id: 1, data_dir, cache_dir };
+        let mut host = Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+            data_dir,
+            cache_dir,
+        };
         host.initialize();
         host
-    }
-
-    fn initialize(&mut self) {
-        let id = self.next_id();
-        let init = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "interact_state", "version": "0.0.1"}
-            }
-        });
-        self.send(&init);
-        let _ = self.read_id(id);
-        let initialized = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-        });
-        self.send(&initialized);
     }
 
     fn next_id(&mut self) -> u64 {
@@ -98,8 +87,27 @@ impl Host {
         }
     }
 
-    #[allow(dead_code)]
-    fn call(&mut self, tool: &str, args: serde_json::Value) -> serde_json::Value {
+    fn initialize(&mut self) {
+        let id = self.next_id();
+        let init = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "learn_tool", "version": "0.0.1"}
+            }
+        });
+        self.send(&init);
+        let _ = self.read_id(id);
+        self.send(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+        }));
+    }
+
+    fn call_tool(&mut self, tool: &str, args: serde_json::Value) -> serde_json::Value {
         let id = self.next_id();
         let req = serde_json::json!({
             "jsonrpc": "2.0",
@@ -119,55 +127,54 @@ impl Drop for Host {
     }
 }
 
-#[allow(dead_code)]
-fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Value> {
-    let result = call_response.get("result")?;
-    if let Some(sc) = result.get("structuredContent") {
-        return Some(sc.clone());
-    }
-    let content = result.get("content")?.as_array()?;
-    let text = content.first()?.get("text")?.as_str()?;
-    serde_json::from_str(text).ok()
-}
-
 #[test]
-fn interact_lists_both_run_and_interact_tools() {
-    // Sanity check on the tool surface: tools/list should show all 14
-    // tools registered by `#[tool_router]` (membership-checked below).
+fn learn_writes_versioned_skill() {
     let mut host = Host::spawn();
-    let id = host.next_id();
-    let req = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "tools/list",
-    });
-    host.send(&req);
-    let resp = host.read_id(id);
-    let tools = resp["result"]["tools"]
-        .as_array()
-        .expect("tools array");
-    let names: Vec<&str> = tools
-        .iter()
-        .map(|t| t["name"].as_str().expect("tool name"))
-        .collect();
-    assert_eq!(names.len(), 14, "expected 14 tools; got {names:?}");
-    for expected in [
-        "run",
-        "interact",
-        "rerun",
-        "register_library",
-        "unregister_library",
-        "define_function",
-        "undefine_function",
-        "import_library",
-        "reimport_library",
-        "call",
-        "learn",
-    ] {
-        assert!(
-            names.contains(&expected),
-            "missing `{expected}` in {names:?}",
-        );
-    }
-}
+    let harness = tempfile::tempdir().expect("harness tempdir");
 
+    let resp = host.call_tool(
+        "learn",
+        serde_json::json!({ "harness_dir": harness.path().to_str().unwrap() }),
+    );
+    let env = resp["result"]
+        .get("structuredContent")
+        .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
+    assert!(env.get("error").is_none(), "learn returned an error: {env}");
+
+    let version = env["version"].as_str().expect("version field");
+    assert_eq!(
+        version,
+        env!("CARGO_PKG_VERSION"),
+        "stamped version should match the crate version",
+    );
+
+    let bytes = env["bytes"].as_u64().expect("bytes field");
+    assert!(bytes > 0, "written skill should be non-empty");
+
+    let written = env["written_path"].as_str().expect("written_path field");
+    let expected = harness.path().join("skills").join("nu").join("SKILL.md");
+    assert_eq!(
+        written,
+        expected.to_str().unwrap(),
+        "written_path should be <harness>/skills/nu/SKILL.md",
+    );
+
+    let body = std::fs::read_to_string(&expected).expect("read written skill");
+    assert_eq!(
+        body.len() as u64,
+        bytes,
+        "reported bytes should match the written file length",
+    );
+    assert!(
+        !body.contains("{{ version }}"),
+        "template should be rendered, not raw liquid",
+    );
+    assert!(
+        body.contains(&format!("server v{version}")),
+        "stamp line should carry the live version v{version}",
+    );
+    assert!(
+        body.contains("name: nu"),
+        "generated skill should retain its frontmatter",
+    );
+}

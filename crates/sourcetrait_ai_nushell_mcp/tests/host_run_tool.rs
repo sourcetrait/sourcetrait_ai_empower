@@ -96,7 +96,7 @@ fn host_tools_list_and_run_stub() {
     let tools = list_resp["result"]["tools"]
         .as_array()
         .expect("tools array in tools/list result");
-    assert_eq!(tools.len(), 13, "expected exactly 13 tools, got {tools:?}");
+    assert_eq!(tools.len(), 14, "expected exactly 14 tools, got {tools:?}");
     let names: Vec<&str> = tools
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
@@ -112,6 +112,7 @@ fn host_tools_list_and_run_stub() {
         "import_library",
         "reimport_library",
         "call",
+        "learn",
     ] {
         assert!(
             names.contains(&expected),

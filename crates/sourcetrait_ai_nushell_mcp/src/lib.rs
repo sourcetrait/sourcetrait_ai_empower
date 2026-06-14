@@ -23,6 +23,7 @@ pub(crate) mod server {
         pub(crate) mod processes;
         pub(crate) mod kill;
         pub(crate) mod info;
+        pub(crate) mod learn;
     }
     pub(crate) mod worker_handle;
 }

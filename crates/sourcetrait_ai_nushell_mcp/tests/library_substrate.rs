@@ -9,7 +9,7 @@
 //!   - Duplicate `register_library` errors.
 //!   - `unregister_library` removes from the MCP repo; commits.
 //!   - `unregister_library` on a missing name errors.
-//!   - `tools/list` returns all 13 tools (membership-checked).
+//!   - `tools/list` returns all 14 tools (membership-checked).
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -205,7 +205,7 @@ fn substrate_initializes_on_first_startup() {
 }
 
 #[test]
-fn tools_list_has_thirteen() {
+fn tools_list_has_fourteen() {
     let mut host = Host::spawn();
     let resp = host.list_tools();
     let tools = resp["result"]["tools"]
@@ -215,7 +215,7 @@ fn tools_list_has_thirteen() {
         .iter()
         .map(|t| t["name"].as_str().expect("tool name"))
         .collect();
-    assert_eq!(names.len(), 13, "expected 13 tools; got {names:?}");
+    assert_eq!(names.len(), 14, "expected 14 tools; got {names:?}");
     for expected in [
         "run",
         "interact",
@@ -227,6 +227,7 @@ fn tools_list_has_thirteen() {
         "import_library",
         "reimport_library",
         "call",
+        "learn",
     ] {
         assert!(
             names.contains(&expected),

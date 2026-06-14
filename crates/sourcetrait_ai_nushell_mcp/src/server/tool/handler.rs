@@ -29,6 +29,7 @@ impl NuSh {
             + Self::processes_router()
             + Self::kill_router()
             + Self::info_router()
+            + Self::learn_router()
     }
 }
 

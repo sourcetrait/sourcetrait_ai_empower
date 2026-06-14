@@ -27,6 +27,7 @@ impl NuSh {
             + Self::new_router()
             + Self::commit_router()
             + Self::delete_router()
+            + Self::inspect_router()
     }
 }
 

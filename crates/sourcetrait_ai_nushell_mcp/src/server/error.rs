@@ -96,6 +96,7 @@ pub enum Error {
     #[serde(rename = "library::violations")]
     LibraryViolations {
         structural: Vec<Violation>,
+        structural_more: bool,
         lint: Vec<LintViolation>,
     },
 

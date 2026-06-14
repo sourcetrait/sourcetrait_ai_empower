@@ -430,3 +430,39 @@ fn info_lists_hand_authored_library_hierarchy() {
         serde_json::json!({"out": "int"})
     );
 }
+
+#[test]
+fn info_includes_node_summaries() {
+    // leg 4: info() carries the one-liner `summary` per library / module /
+    // function node (the doc above `export def main`, or the mod.nu
+    // leading comment); empty when undocumented.
+    let mut host = Host::spawn();
+    let src = host.source_dir("doctreelib");
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "doctreelib", "source_path": src.to_str().unwrap()}),
+    );
+    write_source(&src, "mod.nu", "# the doctree library\nexport use ./fn.nu\n");
+    write_source(
+        &src,
+        "fn.nu",
+        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\n# the fn summary\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+    );
+    let committed = host.call_tool("commit", serde_json::json!({"library": "doctreelib"}));
+    assert!(
+        committed["result"]["structuredContent"]
+            .get("error")
+            .is_none(),
+        "commit failed: {committed}",
+    );
+
+    let resp = host.call_tool("info", serde_json::json!({}));
+    let env = resp["result"]
+        .get("structuredContent")
+        .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
+    let lib = &env["libraries"].as_array().expect("libraries")[0];
+    assert_eq!(lib["summary"].as_str(), Some("the doctree library"));
+    let fns = lib["functions"].as_array().expect("functions");
+    assert_eq!(fns[0]["name"].as_str(), Some("fn"));
+    assert_eq!(fns[0]["summary"].as_str(), Some("the fn summary"));
+}

@@ -640,6 +640,7 @@ pub(crate) fn call_file_path(library: &str, module_path: &str, name: &str) -> Op
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct FunctionInfo {
     pub name: String,
+    pub summary: String,
     pub args_schema: mcp::JsonObject,
     pub result_schema: mcp::JsonObject,
 }
@@ -663,6 +664,7 @@ pub struct FunctionInfo {
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct ModuleInfo {
     pub name: String,
+    pub summary: String,
     pub submodules: Vec<ModuleInfo>,
     pub functions: Vec<FunctionInfo>,
 }
@@ -684,6 +686,7 @@ pub struct ModuleInfo {
 pub struct LibraryInfo {
     pub name: String,
     pub path: String,
+    pub summary: String,
     pub modules: Vec<ModuleInfo>,
     pub functions: Vec<FunctionInfo>,
 }
@@ -761,8 +764,10 @@ fn build_module_tree(dir: &std::path::Path) -> io::Result<(Vec<ModuleInfo>, Vec<
     for (name, is_dir) in entries {
         if is_dir {
             let (m, f) = build_module_tree(&dir.join(&name))?;
+            let summary = modnu_summary(&dir.join(&name));
             modules.push(ModuleInfo {
                 name,
+                summary,
                 submodules: m,
                 functions: f,
             });
@@ -774,8 +779,10 @@ fn build_module_tree(dir: &std::path::Path) -> io::Result<(Vec<ModuleInfo>, Vec<
                 .map_err(|e| io::Error::other(format!("{stem}: args schema: {e}")))?;
             let result_schema = nu_to_result_schema(&result_type)
                 .map_err(|e| io::Error::other(format!("{stem}: result schema: {e}")))?;
+            let (summary, _details, _line) = extract_doc(&source, Some("export def main"));
             functions.push(FunctionInfo {
                 name: stem,
+                summary,
                 args_schema,
                 result_schema,
             });
@@ -832,18 +839,103 @@ pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo
             }
         };
         match build_module_tree(&library_dir(&name)) {
-            Ok((modules, functions)) => out.push(LibraryInfo {
-                name,
-                path: meta.source_path.display().to_string(),
-                modules,
-                functions,
-            }),
+            Ok((modules, functions)) => {
+                let summary = modnu_summary(&library_dir(&name));
+                out.push(LibraryInfo {
+                    name,
+                    path: meta.source_path.display().to_string(),
+                    summary,
+                    modules,
+                    functions,
+                });
+            }
             Err(e) => {
                 eprintln!("nushell_mcp: info enumeration skipped {name}: {e}");
             }
         }
     }
     out
+}
+
+/// Result of `inspect()`: the full doc for one node (leg 4).
+#[derive(Debug, ser::Serialize)]
+pub(crate) struct InspectResult {
+    pub summary: String,
+    pub details: String,
+}
+
+/// What: the full doc (`summary` + `details`) for one node coordinate -
+/// a function (`library` + `module_path` + `name`), a module (`library`
+/// + `module_path`, no `name`), or the library root (`library` only).
+/// Reads the doc straight from the canonical `.nu` file via `extract_doc`;
+/// no source, no schemas.
+///
+/// Why: info() carries only the one-liner `summary` (lean); inspect() is
+/// the on-demand full-doc lookup that retires item 20's source
+/// introspection -- the file IS the source of truth.
+///
+/// Where: called by `server::tool::inspect::NuSh::inspect` under the
+/// per-library read lock.
+pub(crate) fn inspect_impl(
+    library: &str,
+    module_path: &str,
+    name: Option<&str>,
+) -> Result<InspectResult, Error> {
+    if !is_valid_ident(library) {
+        return Err(Error::LibraryInvalidName {
+            library: library.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
+    }
+    let lib_root = library_dir(library);
+    if !lib_root.exists() {
+        return Err(Error::LibraryNotRegistered {
+            library: library.to_string(),
+        });
+    }
+    if !is_valid_module_path(module_path) {
+        return Err(Error::LibraryInvalidModulePath {
+            module_path: module_path.to_string(),
+            reason: "invalid module path".to_string(),
+        });
+    }
+    let (summary, details) = match name {
+        Some(fn_name) => {
+            let file = call_file_path(library, module_path, fn_name).ok_or_else(|| {
+                Error::LibraryInvalidModulePath {
+                    module_path: module_path.to_string(),
+                    reason: "library / module_path / name must satisfy identifier rules".to_string(),
+                }
+            })?;
+            if !file.exists() {
+                return Err(Error::FunctionNotDefined {
+                    library: library.to_string(),
+                    module_path: module_path.to_string(),
+                    name: fn_name.to_string(),
+                });
+            }
+            let source = fs::read_to_string(&file)?;
+            let (s, d, _) = extract_doc(&source, Some("export def main"));
+            (s, d)
+        }
+        None => {
+            let dir = if module_path.is_empty() {
+                lib_root
+            } else {
+                lib_root.join(module_path)
+            };
+            if !dir.exists() {
+                return Err(Error::LibraryInvalidModulePath {
+                    module_path: module_path.to_string(),
+                    reason: "module not found".to_string(),
+                });
+            }
+            let source = fs::read_to_string(dir.join("mod.nu")).unwrap_or_default();
+            let (s, d, _) = extract_doc(&source, None);
+            (s, d)
+        }
+    };
+    Ok(InspectResult { summary, details })
 }
 
 // ============================================================================
@@ -880,12 +972,126 @@ pub struct Violation {
 #[derive(Debug, Clone)]
 pub(crate) struct ValidationResult {
     pub structural: Vec<Violation>,
+    /// leg 4: true when the structural list was capped at
+    /// `LINT_VIOLATION_CAP` and the walk early-stopped (there may be
+    /// more). `Error::LibraryViolations.structural_more` mirrors it.
+    pub structural_more: bool,
+    /// leg 4: doc `summary_length` lint violations (capped at
+    /// `LINT_VIOLATION_CAP` + a `More` sentinel). Populates the formerly
+    /// dormant `lint` field of `Error::LibraryViolations`.
+    pub lint: Vec<LintViolation>,
 }
 
 impl ValidationResult {
     pub(crate) fn is_empty(&self) -> bool {
-        self.structural.is_empty()
+        self.structural.is_empty() && self.lint.is_empty()
     }
+}
+
+/// leg 4: the doc summary (one-liner) char cap. A longer summary is a
+/// `summary_length` lint violation on commit.
+const SUMMARY_MAX_CHARS: usize = 80;
+
+/// What: extract a node's doc comment as `(summary, details,
+/// summary_line)`. `marker = Some(decl)` takes the consecutive `#`
+/// comment lines immediately above the line that starts with `decl`
+/// (e.g. `export def main`); `marker = None` takes the leading `#`
+/// comment block at the top of the file (a mod.nu). First comment line
+/// is the summary, the rest (newline-joined) the details; the `#` marker
+/// + one optional space are stripped. Empty + line 0 when unattached.
+///
+/// Why: leg 4 documents nodes from the comment the author already writes
+/// -- functions above `export def main` (nushell attaches it natively),
+/// modules/libraries as the mod.nu leading comment (nushell does NOT
+/// attach directory-module comments, so we read it ourselves). Text-scan
+/// keeps both uniform and lets info()/inspect() read the canonical file.
+///
+/// Where: `check_summary_length` (commit validation) + the info() /
+/// inspect() doc surface (leg 4b / 4c).
+fn extract_doc(source: &str, marker: Option<&str>) -> (String, String, usize) {
+    let lines: Vec<&str> = source.lines().collect();
+    let doc_idxs: Vec<usize> = match marker {
+        None => {
+            let mut idxs = Vec::new();
+            for (i, l) in lines.iter().enumerate() {
+                if l.trim_start().starts_with('#') {
+                    idxs.push(i);
+                } else {
+                    break;
+                }
+            }
+            idxs
+        }
+        Some(m) => match lines.iter().position(|l| l.trim_start().starts_with(m)) {
+            None => Vec::new(),
+            Some(decl) => {
+                let mut idxs = Vec::new();
+                let mut i = decl;
+                while i > 0 {
+                    i -= 1;
+                    if lines[i].trim_start().starts_with('#') {
+                        idxs.push(i);
+                    } else {
+                        break;
+                    }
+                }
+                idxs.reverse();
+                idxs
+            }
+        },
+    };
+    if doc_idxs.is_empty() {
+        return (String::new(), String::new(), 0);
+    }
+    let stripped: Vec<String> = doc_idxs
+        .iter()
+        .map(|&i| {
+            let t = lines[i].trim_start();
+            let t = t.strip_prefix('#').unwrap_or(t);
+            t.strip_prefix(' ').unwrap_or(t).to_string()
+        })
+        .collect();
+    let summary = stripped.first().cloned().unwrap_or_default();
+    let details = if stripped.len() > 1 {
+        stripped[1..].join("\n")
+    } else {
+        String::new()
+    };
+    (summary, details, doc_idxs[0] + 1)
+}
+
+/// What: push a `LintViolation::SummaryLength` when a node's doc summary
+/// (via `extract_doc`) exceeds `SUMMARY_MAX_CHARS`; `position` is the
+/// summary line, `source` the file (`WhereSource::Mod`).
+///
+/// Why: leg 4's only hard doc rule -- the one-liner is length-bounded so
+/// info() stays lean (details unconstrained). Lint (capped + More), not
+/// structural, so an over-long summary is agent-fixable.
+///
+/// Where: `validate_function_file_ast` (the `export def main` comment)
+/// and `validate_mod_nu_ast` (the mod.nu leading comment).
+fn check_summary_length(
+    rel: &str,
+    source: &str,
+    marker: Option<&str>,
+    lint: &mut Vec<LintViolation>,
+) {
+    let (summary, _details, line) = extract_doc(source, marker);
+    if summary.chars().count() > SUMMARY_MAX_CHARS {
+        lint.push(LintViolation::summary_length(Where {
+            position: [line, 1],
+            source: Some(WhereSource::Mod(rel.to_string())),
+        }));
+    }
+}
+
+/// leg 4: the summary (doc one-liner) of a module/library = its mod.nu
+/// leading comment's first line. Empty when the dir has no mod.nu or no
+/// leading comment. Used by the info() enumeration + inspect().
+fn modnu_summary(dir: &std::path::Path) -> String {
+    fs::read_to_string(dir.join("mod.nu"))
+        .map(|s| extract_doc(&s, None).0)
+        .unwrap_or_default()
 }
 
 /// Walk every `.nu` under `root`. Apply the strict per-file shape:
@@ -909,8 +1115,23 @@ pub(crate) fn validate_library_source(
 ) -> io::Result<ValidationResult> {
     let mut result = ValidationResult {
         structural: Vec::new(),
+        structural_more: false,
+        lint: Vec::new(),
     };
     validate_walk(root, root, engine, &mut result)?;
+    // leg 4: cap both lists at LINT_VIOLATION_CAP. Structural early-stops
+    // the walk (see validate_walk) so a hard-broken tree rejects without
+    // parsing every file; truncate + flag `structural_more`. The doc
+    // `summary_length` lint accumulates across the walk; truncate + append
+    // the `More` sentinel (the body-lint truncation discipline).
+    if result.structural.len() > LINT_VIOLATION_CAP {
+        result.structural.truncate(LINT_VIOLATION_CAP);
+        result.structural_more = true;
+    }
+    if result.lint.len() > LINT_VIOLATION_CAP {
+        result.lint.truncate(LINT_VIOLATION_CAP);
+        result.lint.push(LintViolation::More);
+    }
     Ok(result)
 }
 
@@ -921,6 +1142,13 @@ fn validate_walk(
     result: &mut ValidationResult,
 ) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
+        // leg 4: stop on cap. Once structural has exceeded the cap the
+        // commit rejects regardless, so abandon the walk rather than parse
+        // the rest of the tree (validate_library_source truncates + flags
+        // structural_more).
+        if result.structural.len() > LINT_VIOLATION_CAP {
+            return Ok(());
+        }
         let entry = entry?;
         let name = entry.file_name();
         let name_lossy = name.to_string_lossy();
@@ -957,9 +1185,25 @@ fn validate_one_file(
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
     let is_mod = path.file_name().map(|n| n == "mod.nu").unwrap_or(false);
     if is_mod {
-        validate_mod_nu_ast(&rel, stem, &source, parent, engine, &mut result.structural);
+        validate_mod_nu_ast(
+            &rel,
+            stem,
+            &source,
+            parent,
+            engine,
+            &mut result.structural,
+            &mut result.lint,
+        );
     } else {
-        validate_function_file_ast(&rel, stem, &source, parent, engine, &mut result.structural);
+        validate_function_file_ast(
+            &rel,
+            stem,
+            &source,
+            parent,
+            engine,
+            &mut result.structural,
+            &mut result.lint,
+        );
     }
     // leg 1b: the reserved-terms ban applies to EVERY .nu file -- `call`
     // and `resolve` may appear only as a call-target's exported sentinel.
@@ -1155,7 +1399,11 @@ fn validate_mod_nu_ast(
     parent: &std::path::Path,
     engine: &ParseEngine,
     violations: &mut Vec<Violation>,
+    lint: &mut Vec<LintViolation>,
 ) {
+    // leg 4: the module/library summary (the mod.nu leading comment's
+    // first line) must be <= 80 chars. Lint, not structural.
+    check_summary_length(rel, source, None, lint);
     let wrapper_name = format!("__v_{stem}");
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
     let engine_state = engine.engine_state_for_file(parent);
@@ -1318,7 +1566,11 @@ fn validate_function_file_ast(
     parent: &std::path::Path,
     engine: &ParseEngine,
     violations: &mut Vec<Violation>,
+    lint: &mut Vec<LintViolation>,
 ) {
+    // leg 4: the function summary (the doc one-liner above `export def
+    // main`) must be <= 80 chars. Lint (capped + More), not structural.
+    check_summary_length(rel, source, Some("export def main"), lint);
     let wrapper_name = format!("__v_{stem}");
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
     let engine_state = engine.engine_state_for_file(parent);
@@ -2000,7 +2252,8 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
     if !result.is_empty() {
         return Err(Error::LibraryViolations {
             structural: result.structural,
-            lint: vec![],
+            structural_more: result.structural_more,
+            lint: result.lint,
         });
     }
     // Rebuild the canonical subtree from the validated source.

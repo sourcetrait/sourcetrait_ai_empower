@@ -179,6 +179,21 @@ fn structural_messages(resp: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// leg 4: the `kind`s in the `lint` section of a `library::violations`
+/// error (e.g. `summary_length`).
+fn lint_kinds(resp: &serde_json::Value) -> Vec<String> {
+    envelope_error(resp)
+        .and_then(|e| e.get("data"))
+        .and_then(|d| d.get("lint"))
+        .and_then(|l| l.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Greppable JSON-serialized form of the error envelope for tests
 /// that match substrings against error messages. Returns the full
 /// response string when no envelope error is present.
@@ -511,15 +526,19 @@ fn commit_aggregates_multiple_violations() {
         "new",
         serde_json::json!({"library": "badlib5", "source_path": src.to_str().unwrap()}),
     );
-    // leg 1: a bare `def` in mod.nu (only export forms allowed), a
-    // call-target missing `call`, and a call-target whose `main` body is
-    // wrong -- three distinct violations across the tree.
+    // Three distinct violations across the tree (== the cap of 3, so all
+    // surface): a bare `def` in mod.nu, a non-passthrough resolve body,
+    // and a wrong main body.
     write_source(&src, "mod.nu", "export module a\ndef helper [] { 1 }\n");
-    write_source(&src, "a/mod.nu", "");
     write_source(
         &src,
-        "a/no_call.nu",
-        "export def resolve [args: record<x: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "a/mod.nu",
+        "export use ./bad_resolve.nu\nexport use ./bad_main.nu\n",
+    );
+    write_source(
+        &src,
+        "a/bad_resolve.nu",
+        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { print $args; $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
     );
     write_source(
         &src,
@@ -543,7 +562,9 @@ fn commit_aggregates_multiple_violations() {
         "got {messages:?}"
     );
     assert!(
-        messages.iter().any(|m| m.contains("must export `call`")),
+        messages
+            .iter()
+            .any(|m| m.contains("resolve's body must be exactly")),
         "got {messages:?}"
     );
     assert!(
@@ -551,6 +572,108 @@ fn commit_aggregates_multiple_violations() {
             .iter()
             .any(|m| m.contains("main's body must be exactly")),
         "got {messages:?}"
+    );
+}
+
+#[test]
+fn commit_caps_structural_violations() {
+    // leg 4: structural violations cap at LINT_VIOLATION_CAP (3) and the
+    // walk early-stops -- a tree with more than 3 violations rejects with
+    // exactly 3 structural + structural_more = true (truthful truncation),
+    // so a hard-broken library doesn't parse in full.
+    let mut host = Host::spawn();
+    let src = host.source_dir("caplib");
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "caplib", "source_path": src.to_str().unwrap()}),
+    );
+    // Four bare `def`s in mod.nu -> four "mod.nu may only contain"
+    // violations, more than the cap of 3.
+    write_source(
+        &src,
+        "mod.nu",
+        "export module a\ndef h1 [] { 1 }\ndef h2 [] { 2 }\ndef h3 [] { 3 }\ndef h4 [] { 4 }\n",
+    );
+    write_source(&src, "a/mod.nu", "");
+    let resp = host.call("commit", serde_json::json!({"library": "caplib"}));
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("library::violations"),
+        "got {resp}"
+    );
+    let data = envelope_error(&resp)
+        .and_then(|e| e.get("data"))
+        .expect("violations data");
+    let structural = data
+        .get("structural")
+        .and_then(|s| s.as_array())
+        .expect("structural array");
+    assert_eq!(
+        structural.len(),
+        3,
+        "structural should cap at 3; got {structural:?}"
+    );
+    assert_eq!(
+        data.get("structural_more").and_then(|v| v.as_bool()),
+        Some(true),
+        "structural_more should be true; got {data}"
+    );
+}
+
+#[test]
+fn commit_rejects_long_summary() {
+    // leg 4: a doc summary (here the mod.nu leading comment's first line)
+    // longer than 80 chars is a `summary_length` lint violation -- it
+    // rides the `lint` field of `library::violations`.
+    let mut host = Host::spawn();
+    let src = host.source_dir("doclib");
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "doclib", "source_path": src.to_str().unwrap()}),
+    );
+    let long = "x".repeat(81);
+    write_source(&src, "mod.nu", &format!("# {long}\nexport use ./thing.nu\n"));
+    write_source(
+        &src,
+        "thing.nu",
+        &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+    );
+    let resp = host.call("commit", serde_json::json!({"library": "doclib"}));
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("library::violations"),
+        "got {resp}"
+    );
+    let kinds = lint_kinds(&resp);
+    assert!(
+        kinds.iter().any(|k| k == "summary_length"),
+        "expected summary_length lint; got {kinds:?}"
+    );
+}
+
+#[test]
+fn commit_accepts_short_summary() {
+    // leg 4: a <= 80 summary (+ details) on a node commits clean.
+    let mut host = Host::spawn();
+    let src = host.source_dir("okdoclib");
+    let _ = host.call(
+        "new",
+        serde_json::json!({"library": "okdoclib", "source_path": src.to_str().unwrap()}),
+    );
+    write_source(
+        &src,
+        "mod.nu",
+        "# doubles its input\n# the math double helper module\nexport use ./thing.nu\n",
+    );
+    write_source(
+        &src,
+        "thing.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+    let resp = host.call("commit", serde_json::json!({"library": "okdoclib"}));
+    assert!(
+        !has_error_path(&resp),
+        "documented library should commit; got {resp}"
     );
 }
 

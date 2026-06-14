@@ -326,3 +326,95 @@ fn call_args_typecheck_failure_surfaces() {
         "type mismatch should surface as error; got {resp}"
     );
 }
+
+#[test]
+fn inspect_returns_function_doc() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("inspectlib");
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "inspectlib", "source_path": src.to_str().unwrap()}),
+    );
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "inspectlib", "module_path": "math", "name": "double"}),
+    );
+    write_source(
+        &src,
+        "math/double.nu",
+        "export def call [args: record<x: int>] { { out: ($args.x * 2) } }\nexport def resolve [args: record<out: int>] { $args }\n# doubles its input\n# returns the doubled value\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+    );
+    let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib"}));
+    let resp = host.call_tool(
+        "inspect",
+        serde_json::json!({"library": "inspectlib", "module_path": "math", "name": "double"}),
+    );
+    let env = extract_envelope(&resp).unwrap_or_else(|| panic!("inspect envelope; got {resp}"));
+    assert_eq!(env["summary"].as_str(), Some("doubles its input"));
+    assert_eq!(env["details"].as_str(), Some("returns the doubled value"));
+}
+
+#[test]
+fn inspect_library_root_and_module() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("inspectlib2");
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "inspectlib2", "source_path": src.to_str().unwrap()}),
+    );
+    write_source(&src, "mod.nu", "# the inspectlib2 library\nexport module math\n");
+    write_source(&src, "math/mod.nu", "# math helpers\nexport use ./double.nu\n");
+    write_source(
+        &src,
+        "math/double.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+    let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib2"}));
+    let lib = host.call_tool("inspect", serde_json::json!({"library": "inspectlib2"}));
+    assert_eq!(
+        extract_envelope(&lib).unwrap()["summary"].as_str(),
+        Some("the inspectlib2 library"),
+    );
+    let m = host.call_tool(
+        "inspect",
+        serde_json::json!({"library": "inspectlib2", "module_path": "math"}),
+    );
+    assert_eq!(
+        extract_envelope(&m).unwrap()["summary"].as_str(),
+        Some("math helpers"),
+    );
+}
+
+#[test]
+fn inspect_undocumented_is_empty() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("inspectlib3");
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "inspectlib3", "source_path": src.to_str().unwrap()}),
+    );
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "inspectlib3", "module_path": "", "name": "f"}),
+    );
+    write_source(
+        &src,
+        "f.nu",
+        &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+    );
+    let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib3"}));
+    let resp = host.call_tool(
+        "inspect",
+        serde_json::json!({"library": "inspectlib3", "module_path": "", "name": "f"}),
+    );
+    let env = extract_envelope(&resp).unwrap_or_else(|| panic!("inspect envelope; got {resp}"));
+    assert_eq!(env["summary"].as_str(), Some(""));
+    assert_eq!(env["details"].as_str(), Some(""));
+}
+
+#[test]
+fn inspect_unknown_library_errors() {
+    let mut host = Host::spawn();
+    let resp = host.call_tool("inspect", serde_json::json!({"library": "ghost"}));
+    assert!(has_error_path(&resp));
+}

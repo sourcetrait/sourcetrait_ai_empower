@@ -14,6 +14,7 @@ pub(crate) mod server {
         pub(crate) mod delete;
         pub(crate) mod handler;
         pub(crate) mod info;
+        pub(crate) mod inspect;
         pub(crate) mod interact;
         pub(crate) mod kill;
         pub(crate) mod learn;
@@ -51,9 +52,9 @@ pub(crate) use crate::{
         error::{Error, Where, WhereSource, error_to_call_result},
         library::{
             LibraryInfo, LibraryLocks, Violation, call_file_path, commit_impl, delete_impl,
-            ensure_substrate, enumerate_libraries, new_impl,
+            ensure_substrate, enumerate_libraries, inspect_impl, new_impl,
         },
-        lint::{LintViolation, lint_body},
+        lint::{LINT_VIOLATION_CAP, LintViolation, lint_body},
         parse_engine::{ParseEngine, span_to_line_col, wrap_as_def_body, wrap_as_module},
         pool::Pool,
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},

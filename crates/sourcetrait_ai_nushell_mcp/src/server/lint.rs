@@ -43,6 +43,15 @@ pub enum LintViolation {
         #[serde(skip_serializing_if = "Option::is_none")]
         source: Option<WhereSource>,
     },
+    /// leg 4: a node's summary line (the doc one-liner above `export def
+    /// main`, or a mod.nu leading comment) exceeds the 80-char cap.
+    /// Emitted by the library validator only; `source` is the file
+    /// (`WhereSource::Mod(rel_path)`), `position` the summary line.
+    SummaryLength {
+        position: [usize; 2],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<WhereSource>,
+    },
     More,
 }
 
@@ -73,6 +82,22 @@ impl LintViolation {
     /// rule fires.
     pub(crate) fn denied_command(w: Where) -> Self {
         Self::DeniedCommand {
+            position: w.position,
+            source: w.source,
+        }
+    }
+
+    /// What: construct `SummaryLength` from a `Where` value (leg 4).
+    /// Mirror of `hardcoded_variable` for an over-long doc summary.
+    ///
+    /// Why: the library validator emits this when a node's summary (doc
+    /// one-liner) exceeds the 80-char cap; same `{position, source}`
+    /// carrier as the other lint violations.
+    ///
+    /// Where: called by `library::validate_function_file_ast` /
+    /// `validate_mod_nu_ast` after extracting the node's doc.
+    pub(crate) fn summary_length(w: Where) -> Self {
+        Self::SummaryLength {
             position: w.position,
             source: w.source,
         }
@@ -594,6 +619,7 @@ mod tests {
             .map(|x| match x {
                 LintViolation::HardcodedVariable { .. } => "hardcoded_variable",
                 LintViolation::DeniedCommand { .. } => "denied_command",
+                LintViolation::SummaryLength { .. } => "summary_length",
                 LintViolation::More => "more",
             })
             .collect()

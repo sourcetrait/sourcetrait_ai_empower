@@ -145,13 +145,6 @@ impl Host {
     fn define_function(&mut self, args: serde_json::Value) -> serde_json::Value {
         self.call_tool("define_function", args)
     }
-
-    fn import(&mut self, name: &str, path: &str) -> serde_json::Value {
-        self.call_tool("import_library", serde_json::json!({
-            "name": name,
-            "path": path,
-        }))
-    }
 }
 
 impl Drop for Host {
@@ -355,75 +348,4 @@ fn lint_define_function_passes_clean_body() {
         result.get("structuredContent").is_none(),
         "no-return tools should not emit structuredContent; got {result}",
     );
-}
-
-// ----------------------------------------------------------------------------
-// Slice 5.2: import_library body lint (source-tagged with `mod <rel_path>`)
-// ----------------------------------------------------------------------------
-
-fn write_library_with_path_in_main(root: &std::path::Path) {
-    std::fs::create_dir_all(root).expect("mkdir lib root");
-    let mod_nu = "export use ./bad.nu\n";
-    std::fs::write(root.join("mod.nu"), mod_nu).expect("write mod.nu");
-    // Hardcoded path inside main's body; resolve passthrough.
-    let bad_nu = "\
-export def main [args: record<noop: int>] {
-    cd \"/home/box/proj/x\"
-    { out: 0 }
-}
-
-export def resolve [args: record<out: int>] {
-    $args
-}
-";
-    std::fs::write(root.join("bad.nu"), bad_nu).expect("write bad.nu");
-}
-
-#[test]
-fn lint_import_library_reports_main_body_violation() {
-    let mut host = Host::spawn();
-    let lib = host.source_dir("liblint1");
-    write_library_with_path_in_main(&lib);
-    let resp = host.import("liblint1", lib.to_str().unwrap());
-    assert_eq!(envelope_error_kind(&resp), Some("library::violations"), "got {resp}");
-    let env = envelope_error(&resp).unwrap();
-    let lint = env["data"]["lint"].as_array().unwrap();
-    let has_hardcoded = lint.iter().any(|v| v["kind"] == "hardcoded_variable"
-        && v["source"].as_str() == Some("mod bad.nu"));
-    assert!(has_hardcoded, "expected hardcoded_variable lint with mod bad.nu source; got {env}");
-}
-
-#[test]
-fn lint_import_library_combines_structural_and_lint() {
-    let mut host = Host::spawn();
-    let lib = host.source_dir("liblint2");
-    std::fs::create_dir_all(&lib).expect("mkdir lib");
-    // Structural violation: mod.nu has an inline def.
-    let mod_nu = "\
-export use ./bad.nu
-def helper [] { 1 }
-";
-    std::fs::write(lib.join("mod.nu"), mod_nu).expect("write mod.nu");
-    // Lint violation: bad.nu has hardcoded path in main.
-    let bad_nu = "\
-export def main [args: record<noop: int>] {
-    cd \"/home/box/x\"
-    { out: 0 }
-}
-
-export def resolve [args: record<out: int>] {
-    $args
-}
-";
-    std::fs::write(lib.join("bad.nu"), bad_nu).expect("write bad.nu");
-    let resp = host.import("liblint2", lib.to_str().unwrap());
-    assert_eq!(envelope_error_kind(&resp), Some("library::violations"), "got {resp}");
-    let env = envelope_error(&resp).unwrap();
-    let structural = env["data"]["structural"].as_array().unwrap();
-    assert!(structural.iter().any(|v| v["path"].as_str() == Some("mod.nu")),
-        "expected a structural violation on mod.nu; got {env}");
-    let lint = env["data"]["lint"].as_array().unwrap();
-    let has_hardcoded = lint.iter().any(|v| v["kind"] == "hardcoded_variable"
-        && v["source"].as_str() == Some("mod bad.nu"));
-    assert!(has_hardcoded, "expected hardcoded_variable lint with mod bad.nu source; got {env}");
 }

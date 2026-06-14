@@ -227,6 +227,7 @@ pub struct Where {
 /// validator emit sites.
 #[derive(Debug, Clone)]
 pub enum WhereSource {
+    #[allow(dead_code)]
     Mod(String),
     #[allow(dead_code)]
     Def(String),

@@ -181,34 +181,6 @@ pub(crate) fn lint_body(
     violations
 }
 
-/// What: lint a pre-parsed body `Block` against the same rules as
-/// `lint_body` but without re-parsing. `body_source` is the source
-/// text the block was parsed from; `prefix_len` is the byte offset
-/// that translates from the parsed source's spans to
-/// `body_source`-relative positions (set to the wrap prefix len, 0
-/// when no wrap was used).
-///
-/// Why: the library validator (slice 5.2) already parses each
-/// function file in a `module __v_<stem> { ... }` wrapper; reusing
-/// that parse avoids a second pass per file. Same walker, same
-/// rules, just a different entry point. Cap fires the same way --
-/// each file's lint reports up to 3 typed + 1 sentinel.
-///
-/// Where: called by `library::validate_function_file_ast` after the
-/// structural shape passes, with `block` = main's body block,
-/// source = `Some(WhereSource::Mod(rel_path))`.
-pub(crate) fn lint_block(
-    block: &nu::Block,
-    ws: &nu::StateWorkingSet,
-    body_source: &str,
-    prefix_len: usize,
-    source: Option<WhereSource>,
-) -> Vec<LintViolation> {
-    let mut violations = Vec::new();
-    let _ = walk_block(block, ws, body_source, prefix_len, source.as_ref(), &mut violations);
-    violations
-}
-
 // ============================================================================
 // Internal walkers
 // ============================================================================

@@ -85,7 +85,6 @@ pub(crate) use crate::{
         },
         lint::{
             LintViolation,
-            lint_block,
             lint_body,
         },
         parse_engine::{

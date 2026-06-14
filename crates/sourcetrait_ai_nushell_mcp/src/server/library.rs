@@ -1112,12 +1112,11 @@ pub struct Violation {
 #[derive(Debug, Clone)]
 pub(crate) struct ValidationResult {
     pub structural: Vec<Violation>,
-    pub lint: Vec<LintViolation>,
 }
 
 impl ValidationResult {
     pub(crate) fn is_empty(&self) -> bool {
-        self.structural.is_empty() && self.lint.is_empty()
+        self.structural.is_empty()
     }
 }
 
@@ -1127,22 +1126,21 @@ impl ValidationResult {
 ///   code lives in mod.nu).
 /// - Function files: exactly two exports named `main` and `resolve`;
 ///   both have `args: record<...>` typed positionals; resolve's body is
-///   exactly the expression `$args`. Additionally (slice 5.2) main's
-///   body is body-linted for hardcoded paths and denied externals,
-///   with source tag `mod <rel_path>`.
+///   exactly the expression `$args`. Authored bodies are NOT lint-checked
+///   (item 7, the_user 2026-06-12: imports are authored with intent; the
+///   AST body-lint covers the on-the-fly run/interact/define path only).
 ///
 /// Each file is parsed through `nu_parser::parse` (in a
 /// `module __v_<stem> { ... }` wrapper) so syntax errors land as
 /// structural violations with line numbers. Dotfile entries (e.g.
-/// `.git`, `.nushell_mcp_meta.json`) are skipped. Returns ALL violations
-/// (structural + lint) -- no bail-on-first; no auto-fix.
+/// `.git`, `.nushell_mcp_meta.json`) are skipped. Returns ALL structural
+/// violations -- no bail-on-first; no auto-fix.
 pub(crate) fn validate_library_source(
     root: &std::path::Path,
     engine: &ParseEngine,
 ) -> io::Result<ValidationResult> {
     let mut result = ValidationResult {
         structural: Vec::new(),
-        lint: Vec::new(),
     };
     validate_walk(root, root, engine, &mut result)?;
     Ok(result)
@@ -1202,7 +1200,6 @@ fn validate_one_file(
             parent,
             engine,
             &mut result.structural,
-            &mut result.lint,
         );
     }
     Ok(())
@@ -1380,7 +1377,6 @@ fn validate_function_file_ast(
     parent: &std::path::Path,
     engine: &ParseEngine,
     violations: &mut Vec<Violation>,
-    lint: &mut Vec<LintViolation>,
 ) {
     let wrapper_name = format!("__v_{stem}");
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
@@ -1490,27 +1486,6 @@ fn validate_function_file_ast(
             prefix_len,
             violations,
         );
-    }
-
-    // 6. Slice 5.2: lint main's body for hardcoded paths and denied
-    //    externals. Source tag is `mod <rel_path>` so the rendered line
-    //    has the file context per the_user 2026-05-31 format choice.
-    //    Skipped when main wasn't found or its body block isn't resolvable
-    //    (those cases already pushed structural violations).
-    if let Some(id) = main_decl {
-        let decl = working_set.get_decl(id);
-        if let Some(main_block_id) = decl.block_id() {
-            let main_block = working_set.get_block(main_block_id);
-            let source_tag = WhereSource::Mod(rel.to_string());
-            let mut lvs = lint_block(
-                main_block,
-                &working_set,
-                source,
-                prefix_len,
-                Some(source_tag),
-            );
-            lint.append(&mut lvs);
-        }
     }
 }
 
@@ -1856,7 +1831,7 @@ pub(crate) fn import_library_impl(
     if !result.is_empty() {
         return Err(Error::LibraryViolations {
             structural: result.structural,
-            lint: result.lint,
+            lint: vec![],
         });
     }
     let dest = library_dir(name);
@@ -1927,7 +1902,7 @@ pub(crate) fn reimport_library_impl(
     if !result.is_empty() {
         return Err(Error::LibraryViolations {
             structural: result.structural,
-            lint: result.lint,
+            lint: vec![],
         });
     }
     if lib_root.exists() {

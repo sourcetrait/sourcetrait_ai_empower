@@ -25,6 +25,7 @@ pub(crate) mod server {
         pub(crate) mod info;
         pub(crate) mod learn;
         pub(crate) mod new;
+        pub(crate) mod commit;
     }
     pub(crate) mod worker_handle;
 }
@@ -74,6 +75,7 @@ pub(crate) use crate::{
             LibraryLocks,
             Violation,
             call_file_path,
+            commit_impl,
             define_function_impl,
             ensure_substrate,
             enumerate_libraries,

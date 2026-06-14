@@ -939,3 +939,36 @@ fn new_requires_source_path_on_establish() {
     let resp = host.call("new", serde_json::json!({"library": "nopath"}));
     assert!(has_error_path(&resp), "establishing new() without source_path should reject; got {resp}");
 }
+
+#[test]
+fn commit_validates_and_upserts_source() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("clib");
+    let _ = host.call("new", serde_json::json!({"library": "clib", "source_path": src.to_str().unwrap()}));
+    let _ = host.call("new", serde_json::json!({"library": "clib", "module_path": "math", "name": "double"}));
+    std::fs::write(
+        src.join("math").join("double.nu"),
+        valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    )
+    .unwrap();
+    let resp = host.call("commit", serde_json::json!({"library": "clib"}));
+    assert!(!has_error_path(&resp), "commit should succeed; got {resp}");
+    assert!(
+        host.library_dir("clib").join("math").join("double.nu").exists(),
+        "canonical should have the committed function",
+    );
+    let resp2 = host.call("commit", serde_json::json!({"library": "clib"}));
+    assert!(!has_error_path(&resp2), "no-change commit should succeed; got {resp2}");
+    let changed = resp2["result"]["structuredContent"]["changed"].as_array().expect("changed array");
+    assert!(changed.is_empty(), "no-change commit should report no changes; got {changed:?}");
+}
+
+#[test]
+fn commit_rejects_unfleshed_skeleton() {
+    let mut host = Host::spawn();
+    let src = host.source_dir("sklib");
+    let _ = host.call("new", serde_json::json!({"library": "sklib", "source_path": src.to_str().unwrap()}));
+    let _ = host.call("new", serde_json::json!({"library": "sklib", "module_path": "", "name": "raw"}));
+    let resp = host.call("commit", serde_json::json!({"library": "sklib"}));
+    assert!(has_error_path(&resp), "committing an unfleshed skeleton should reject; got {resp}");
+}

@@ -31,6 +31,7 @@ impl NuSh {
             + Self::info_router()
             + Self::learn_router()
             + Self::new_router()
+            + Self::commit_router()
     }
 }
 

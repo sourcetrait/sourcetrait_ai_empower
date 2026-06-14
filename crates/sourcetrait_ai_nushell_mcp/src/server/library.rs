@@ -2423,6 +2423,118 @@ pub(crate) fn reimport_library_impl(
     Ok(())
 }
 
+// ============================================================================
+// leg 3: commit() - the validate-and-promote upsert
+// ============================================================================
+
+/// A single path changed by a commit(): kind is added | modified | removed.
+#[derive(Debug, ser::Serialize)]
+pub(crate) struct ChangedPath {
+    pub path: String,
+    pub kind: String,
+}
+
+/// Result of commit(): the paths it changed (empty = idempotent no-op).
+#[derive(Debug, ser::Serialize)]
+pub(crate) struct CommitResult {
+    pub changed: Vec<ChangedPath>,
+}
+
+/// Like `run_git` but returns the command's stdout (for `status
+/// --porcelain` and other read-back queries).
+fn run_git_output(dir: &std::path::Path, args: &[&str]) -> io::Result<String> {
+    let out = process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| io::Error::other(format!("git: {e}")))?;
+    if !out.status.success() {
+        return Err(io::Error::other(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr),
+        )));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Parse staged changes out of `git status --porcelain`. The first
+/// column is the staged status after `git add` (A/M/D/R/C); renames
+/// render as `old -> new` (keep the new path).
+fn parse_git_changes(porcelain: &str) -> Vec<ChangedPath> {
+    let mut changes = Vec::new();
+    for line in porcelain.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let kind = match line.as_bytes()[0] as char {
+            'A' | 'C' => "added",
+            'M' | 'R' => "modified",
+            'D' => "removed",
+            _ => continue,
+        };
+        let raw = line[3..].trim();
+        let path = raw.rsplit(" -> ").next().unwrap_or(raw).trim().to_string();
+        changes.push(ChangedPath {
+            path,
+            kind: kind.to_string(),
+        });
+    }
+    changes
+}
+
+/// Implementation for `commit(library)` - the validate-and-promote
+/// UPSERT (leg 3): re-reads the source tree from the meta's source_path,
+/// runs the strict structural + call/resolve/main contract validator,
+/// and rebuilds the canonical signed subtree from it. NO kind gate (one
+/// authored kind). IDEMPOTENT on a no-change resync (no empty commit);
+/// RETURNS the changed paths.
+pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResult, Error> {
+    if !is_valid_ident(name) {
+        return Err(Error::LibraryInvalidName {
+            library: name.to_string(),
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+        });
+    }
+    let lib_root = library_dir(name);
+    if !lib_root.exists() {
+        return Err(Error::LibraryNotRegistered {
+            library: name.to_string(),
+        });
+    }
+    let meta = load_meta(name)?;
+    let source_path = meta.source_path.clone();
+    if !source_path.exists() || !source_path.is_dir() {
+        return Err(Error::LibrarySourceMissing {
+            path: source_path.display().to_string(),
+        });
+    }
+    let result = validate_library_source(&source_path, engine)?;
+    if !result.is_empty() {
+        return Err(Error::LibraryViolations {
+            structural: result.structural,
+            lint: vec![],
+        });
+    }
+    // Rebuild the canonical subtree from the validated source.
+    fs::remove_dir_all(&lib_root)?;
+    copy_dir_recursive(&source_path, &lib_root)?;
+    let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
+        phase: "commit::serialize_meta".to_string(),
+        reason: e.to_string(),
+    })?;
+    fs::write(library_meta_path(name), &meta_bytes)?;
+    // Stage, then diff. Idempotent: nothing staged -> no commit (item 10).
+    run_git(&libraries_dir(), &["add", "--", name])?;
+    let porcelain = run_git_output(&libraries_dir(), &["status", "--porcelain", "--", name])?;
+    let changed = parse_git_changes(&porcelain);
+    if changed.is_empty() {
+        return Ok(CommitResult { changed: vec![] });
+    }
+    run_git(&libraries_dir(), &["commit", "-m", &format!("commit library {name}")])?;
+    Ok(CommitResult { changed })
+}
+
 /// What: copies a directory tree recursively. Skips dotfile entries
 /// at every level (so a client `.git` doesn't bleed into the MCP
 /// repo). Creates `dst` and all parents if needed.

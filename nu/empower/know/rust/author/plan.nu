@@ -1,4 +1,4 @@
-export def main [args: record<picks_path: string, batch_size: int, out_dir: string>] {
+export def call [args: record<picks_path: string, batch_size: int, out_dir: string>] {
     let all_picks = (open --raw $args.picks_path | decode utf-8 | from json)
     let total = ($all_picks | length)
     mkdir $args.out_dir
@@ -18,4 +18,8 @@ export def main [args: record<picks_path: string, batch_size: int, out_dir: stri
 
 export def resolve [args: record<batch_paths: list<string>, total_picks: int, batches: int>] {
     $args
+}
+
+export def main [args: record<picks_path: string, batch_size: int, out_dir: string>] {
+    resolve (call $args)
 }

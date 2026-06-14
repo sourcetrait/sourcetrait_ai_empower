@@ -1,4 +1,4 @@
-export def main [args: record<picks_path: string, failed_patterns: list<string>, out_dir: string, attempt: int>] {
+export def call [args: record<picks_path: string, failed_patterns: list<string>, out_dir: string, attempt: int>] {
     let all_picks = (open --raw $args.picks_path | decode utf-8 | from json)
     let failed_set = $args.failed_patterns
     let retry_picks = ($all_picks | where {|p| $p.pattern in $failed_set})
@@ -12,4 +12,8 @@ export def main [args: record<picks_path: string, failed_patterns: list<string>,
 
 export def resolve [args: record<retry_picks_path: string, retry_count: int>] {
     $args
+}
+
+export def main [args: record<picks_path: string, failed_patterns: list<string>, out_dir: string, attempt: int>] {
+    resolve (call $args)
 }

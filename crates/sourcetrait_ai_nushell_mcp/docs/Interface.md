@@ -3,17 +3,16 @@
 ## Overview
 - [`run()`](#run) Evaluate a typed nushell closure body on a stateless worker.
 - [`interact()`](#interact) Evaluate a typed nushell closure body on a persistent stateful worker.
-- [`call()`](#call) Invoke a registered library function with typed args.
+- [`call()`](#call) Invoke a committed library function with typed args.
 - [`rerun()`](#rerun) Re-evaluate a cached `run()` body with fresh args.
-- [`register_library()`](#register_library) Register an empty library namespace.
-- [`unregister_library()`](#unregister_library) Drop a registered library and all its functions.
-- [`define_function()`](#define_function) Add (or replace) a function in a registered library.
-- [`undefine_function()`](#undefine_function) Remove a function from a library.
-- [`import_library()`](#import_library) Import a pre-authored library tree from a client path.
-- [`reimport_library()`](#reimport_library) Re-import a library from its saved source path.
 - [`processes()`](#processes) Snapshot every in-flight tool call on the host.
 - [`kill()`](#kill) Cancel an in-flight call by its nonce.
-- [`info()`](#info) Name, version, nu version, nu plugins, and the registered library hierarchy.
+- [`info()`](#info) Versions, plugins, and the live library/module/function hierarchy with summaries + schemas.
+- [`inspect()`](#inspect) Full doc (summary + details) + schemas for one node.
+- [`new()`](#new) Scaffold a library / module / function into the agent's source tree.
+- [`commit()`](#commit) Validate the source tree and upsert it into the signed store.
+- [`delete()`](#delete) Guarded drop of a library.
+- [`learn()`](#learn) (Re)generate the `/nu` skill to `<harness_dir>/skills/nu/SKILL.md`.
 
 ## Schemas
 
@@ -36,6 +35,65 @@ each field name to its type. The type vocabulary:
 
 Records and tables are open - extra fields are accepted - and every
 declared field is required and is type-checked to its full depth.
+
+## Library authoring
+
+A library is a directory tree the agent edits, promoted into the MCP's
+signed canonical store by `commit`. Establish + scaffold with `new`, edit
+the files in place, then `commit` to validate + upsert; `delete` drops
+it. `call` invokes a committed function; `info` / `inspect` are the live
+index of what exists, each node's schemas, and its docs.
+
+### Function files: call / resolve / main
+
+A callable function lives at `<module_path>/<name>.nu` and exports
+EXACTLY `call`, `resolve`, `main`:
+
+```nu
+export def call [args: record<x: int>] {
+    { out: ($args.x * 2) }            # your logic; carries the ARGS schema
+}
+
+export def resolve [args: record<out: int>] {
+    $args                             # carries the RESULT schema (typecheck)
+}
+
+# <summary line, <= 80 chars>
+#
+# <optional details, any length>
+export def main [args: record<x: int>] {
+    resolve (call $args)              # AST-locked glue; you own only the doc
+}
+```
+
+The `args` positional is `record<...>` with real fields, or `nothing`
+for a void function; a bare `record<>` is the unfleshed skeleton and is
+rejected. `call` and `resolve` are RESERVED - they may appear only as
+these exported sentinels, never as any other def / module / directory /
+file / parameter / record-key / cell-path-member name. A `.nu` file with
+NEITHER sentinel is organizational (free `export def` / `export const`
+helpers, not a call-target); `mod.nu` may carry such helpers too.
+
+### The mod.nu cascade
+
+Each directory's `mod.nu` wires its children: `export use ./<name>.nu`
+(re-export a sibling function / helper file) and `export module <name>`
+(re-export a sibling subdirectory, which has its own `mod.nu`).
+
+### Node documentation + inference reduction
+
+Document a FUNCTION via the comment block directly above its
+`export def main`; a MODULE or the LIBRARY via its `mod.nu` LEADING
+comment. The first blank comment line splits the block: SUMMARY (<= 80
+chars, the only hard rule; surfaced by `info`) then DETAILS (any length;
+surfaced by `inspect`).
+
+Write for INFERENCE REDUCTION. The reader already has, for free, the
+library name, module path, function name, argument field names and types,
+result field names and types, and the summaries of the enclosing library
+and modules. Spend the summary on what those do NOT convey - units, side
+effects, what counts as "valid", ordering / edge / failure behavior - not
+a restatement of the coordinate or the schema. Details carry the rest.
 
 ## Recursive globs
 
@@ -134,6 +192,10 @@ Output (partial):
 ## `interact()`
 *Evaluate a typed nushell closure body on a persistent stateful worker.*
 
+Env mutations, `cd`, and top-level `def`s persist across calls; `run()`
+state does not leak in. For administrative, stateful sessions; use
+`run()` for everything else.
+
 ### arguments
 
 Schema (partial):
@@ -187,7 +249,11 @@ Output (partial):
 ```
 
 ## `call()`
-*Invoke a registered library function with typed args.*
+*Invoke a committed library function with typed args.*
+
+Discover the live targets + their schemas with [`info()`](#info) /
+[`inspect()`](#inspect); `module_path` is empty for a library-root
+function.
 
 ### arguments
 
@@ -211,10 +277,10 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "library": "math",
-    "module_path": "ops",
-    "name": "double",
-    "args": { "x": 21 }
+    "library": "geo",
+    "module_path": "shape",
+    "name": "area",
+    "args": { "width": 3.0, "height": 4.0 }
   }
 }
 ```
@@ -224,7 +290,7 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "result": { "out": 42 },
+      "result": { "area": 12.0 },
       "nonce": "Hk39pXqRT2v"
     },
     "content": []
@@ -278,243 +344,13 @@ Output (partial):
 }
 ```
 
-## `register_library()`
-*Register an empty library namespace.*
-
-Subsequent `define_function()` calls populate it.
-
-The local mirror at `path` is created if absent.
-
-### arguments
-
-Schema (partial):
-```json
-{
-  "properties": {
-    "name": { "type": "string" },
-    "path": { "type": "string" }
-  },
-  "required": ["name", "path"]
-}
-```
-
-### Example
-
-MCP (partial):
-```json
-{
-  "arguments": {
-    "name": "math",
-    "path": "/your/local/math"
-  }
-}
-```
-
-Output (partial):
-```json
-{
-  "result": { "content": [] }
-}
-```
-
-## `unregister_library()`
-*Drop a registered library and all its functions.*
-
-Does not touch the agent's local mirror.
-
-### arguments
-
-Schema (partial):
-```json
-{
-  "properties": {
-    "name": { "type": "string" }
-  },
-  "required": ["name"]
-}
-```
-
-### Example
-
-MCP (partial):
-```json
-{
-  "arguments": { "name": "math" }
-}
-```
-
-Output (partial):
-```json
-{
-  "result": { "content": [] }
-}
-```
-
-## `define_function()`
-*Add (or replace) a function in a registered library.*
-
-### arguments
-
-Schema (partial):
-```json
-{
-  "properties": {
-    "library":       { "type": "string" },
-    "module_path":   { "type": "string" },
-    "name":          { "type": "string" },
-    "args_schema":   { "type": "object", "additionalProperties": true },
-    "result_schema": { "type": "object", "additionalProperties": true },
-    "body":          { "type": "string" }
-  },
-  "required": ["library", "module_path", "name", "args_schema", "result_schema", "body"]
-}
-```
-
-### Example
-
-Nu equivalent (the function body the agent ships):
-```nu
-# @returns record<out: int>
-def double [args: record<x: int>] {
-    { out: ($args.x * 2) }
-}
-```
-
-MCP (partial):
-```json
-{
-  "arguments": {
-    "library": "math",
-    "module_path": "ops",
-    "name": "double",
-    "args_schema": { "x": "int" },
-    "result_schema": { "out": "int" },
-    "body": "{ out: ($args.x * 2) }"
-  }
-}
-```
-
-Output (partial):
-```json
-{
-  "result": { "content": [] }
-}
-```
-
-## `undefine_function()`
-*Remove a function from a library.*
-
-### arguments
-
-Schema (partial):
-```json
-{
-  "properties": {
-    "library":     { "type": "string" },
-    "module_path": { "type": "string" },
-    "name":        { "type": "string" }
-  },
-  "required": ["library", "module_path", "name"]
-}
-```
-
-### Example
-
-MCP (partial):
-```json
-{
-  "arguments": {
-    "library": "math",
-    "module_path": "ops",
-    "name": "double"
-  }
-}
-```
-
-Output (partial):
-```json
-{
-  "result": { "content": [] }
-}
-```
-
-## `import_library()`
-*Import a pre-authored library tree from a client path.*
-
-## Requirements
-Each function file must have exactly:
-- `export def main [args: record<...>]`
-- `export def resolve [args: record<...>] { $args }`
-
-Each `mod.nu` may only re-export children.
-
-### arguments
-
-Schema (partial):
-```json
-{
-  "properties": {
-    "name": { "type": "string" },
-    "path": { "type": "string" }
-  },
-  "required": ["name", "path"]
-}
-```
-
-### Example
-
-MCP (partial):
-```json
-{
-  "arguments": {
-    "name": "utils",
-    "path": "/your/local/utils"
-  }
-}
-```
-
-Output (partial):
-```json
-{
-  "result": { "content": [] }
-}
-```
-
-## `reimport_library()`
-*Re-import a library from its saved source path.*
-
-### arguments
-
-Schema (partial):
-```json
-{
-  "properties": {
-    "name": { "type": "string" }
-  },
-  "required": ["name"]
-}
-```
-
-### Example
-
-MCP (partial):
-```json
-{
-  "arguments": { "name": "utils" }
-}
-```
-
-Output (partial):
-```json
-{
-  "result": { "content": [] }
-}
-```
-
 ## `processes()`
 *Snapshot every in-flight tool call on the host.*
 
-Pair with [`kill()`](#kill) to cancel a specific call.
+Pair with [`kill()`](#kill) to cancel a specific call. Entries are
+`{nonce, tool, started_at, args, ...}`: `rerun` adds `rerun_id`, `call`
+adds a flat `path` (`library:module/path:name`). Match against your own
+send-set via `args`.
 
 ### arguments
 
@@ -557,9 +393,8 @@ Output (partial):
 ## `kill()`
 *Cancel an in-flight call by its nonce.*
 
-SIGKILLs the worker holding the call.
-
-Silently returns success if unknown.
+SIGKILLs the worker holding the call. No payload; silently succeeds if
+the nonce is unknown or already completed (race-safe).
 
 ### arguments
 
@@ -590,7 +425,7 @@ Output (partial):
 ```
 
 ## `info()`
-*Name, version, nu version, nu plugins, and the registered library hierarchy.*
+*Versions, plugins, and the live library/module/function hierarchy with summaries + schemas.*
 
 ### arguments
 
@@ -617,25 +452,25 @@ Output (partial):
   "result": {
     "structuredContent": {
       "name": "nushell_mcp",
-      "version": "0.0.40",
+      "version": "0.0.46",
       "nu_version": "0.113.1",
-      "plugins": [
-        { "name": "query", "version": "0.112.2" },
-        { "name": "polars" }
-      ],
+      "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
       "libraries": [
         {
-          "name": "math",
-          "path": "/your/local/math",
+          "name": "geo",
+          "path": "/abs/path/to/source/geo",
+          "summary": "planar geometry helpers",
           "modules": [
             {
-              "name": "ops",
+              "name": "shape",
+              "summary": "",
               "submodules": [],
               "functions": [
                 {
-                  "name": "double",
-                  "args_schema": { "x": "int" },
-                  "result_schema": { "out": "int" }
+                  "name": "area",
+                  "summary": "result is in the inputs' unit, squared",
+                  "args_schema": { "width": "float", "height": "float" },
+                  "result_schema": { "area": "float" }
                 }
               ]
             }
@@ -643,6 +478,248 @@ Output (partial):
           "functions": []
         }
       ]
+    },
+    "content": []
+  }
+}
+```
+
+The `libraries` hierarchy is the live, version-matched `call()` surface:
+each library carries `path` (the editable source dir) + a one-line
+`summary` + `modules` + root-level `functions`; each module carries
+`summary` + `submodules` + `functions`; each function carries its
+one-line `summary` + structured `args_schema` + `result_schema` (a
+void-args function reads `{}`). A library HAS modules; a module MAY HAVE
+submodules. `plugins` are positional `[name, version]` pairs (version is
+`null` when the plugin reports none). For a node's full details, call
+`inspect()`.
+
+## `inspect()`
+*Full doc (summary + details) + schemas for one node.*
+
+Returns the single-node descriptor `{library, module_path, name?,
+summary, args_schema?, result_schema?, details}` - `name` and the schemas
+are present only for a function; `details` is last. Empty strings when
+undocumented. Omit `name` to inspect a module; omit both `name` and
+`module_path` for the library root.
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "library":     { "type": "string" },
+    "module_path": { "type": ["string", "null"] },
+    "name":        { "type": ["string", "null"] }
+  },
+  "required": ["library"]
+}
+```
+
+### Example
+
+MCP (partial):
+```json
+{
+  "arguments": { "library": "geo", "module_path": "shape", "name": "area" }
+}
+```
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "library": "geo",
+      "module_path": "shape",
+      "name": "area",
+      "summary": "result is in the inputs' unit, squared",
+      "args_schema": { "width": "float", "height": "float" },
+      "result_schema": { "area": "float" },
+      "details": "Planar rectangle only; negative inputs are a type-clean error."
+    },
+    "content": []
+  }
+}
+```
+
+## `new()`
+*Scaffold a library / module / function into the agent's source tree.*
+
+The FIRST call for a `library` establishes it - `source_path` is required
+then and immutable after. Add a module with `module_path`; add a
+call/resolve/main skeleton with `module_path` + `name`. Additive: it
+refuses to scaffold over an existing leaf. Edit the files, then
+[`commit()`](#commit). Returns `{source_path, created}`.
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "library":     { "type": "string" },
+    "source_path": { "type": ["string", "null"] },
+    "module_path": { "type": ["string", "null"] },
+    "name":        { "type": ["string", "null"] }
+  },
+  "required": ["library"]
+}
+```
+
+### Example
+
+MCP (partial):
+```json
+{
+  "arguments": {
+    "library": "geo",
+    "module_path": "shape",
+    "name": "area"
+  }
+}
+```
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "source_path": "/abs/path/to/source/geo",
+      "created": ["/abs/path/to/source/geo/shape", "/abs/path/to/source/geo/shape/area.nu"]
+    },
+    "content": []
+  }
+}
+```
+
+## `commit()`
+*Validate the source tree and upsert it into the signed canonical store.*
+
+Re-reads the recorded source_path, validates (structure + the
+call/resolve/main contract + reserved terms + the summary-length rule),
+and rebuilds the generated index + docs. Idempotent (a no-change resync
+returns all-empty). Returns the changed paths grouped by kind; rejects
+with `library::violations`.
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "library": { "type": "string" }
+  },
+  "required": ["library"]
+}
+```
+
+### Example
+
+MCP (partial):
+```json
+{
+  "arguments": { "library": "geo" }
+}
+```
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "added": ["geo/shape/area.nu", "geo/shape/mod.nu"],
+      "modified": ["geo/mod.nu"],
+      "removed": []
+    },
+    "content": []
+  }
+}
+```
+
+## `delete()`
+*Guarded drop of a library.*
+
+Re-pass `source_path` as a sanity check (matched by PLAIN STRING against
+the recorded path). Removes the agent source too unless `mcp_only`.
+Returns `{removed: [{path, side: mcp|source}]}`.
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "library":     { "type": "string" },
+    "source_path": { "type": "string" },
+    "mcp_only":    { "type": "boolean" }
+  },
+  "required": ["library", "source_path"]
+}
+```
+
+### Example
+
+MCP (partial):
+```json
+{
+  "arguments": { "library": "geo", "source_path": "/abs/path/to/source/geo" }
+}
+```
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "removed": [
+        { "path": "/.../libraries/geo", "side": "mcp" },
+        { "path": "/abs/path/to/source/geo", "side": "source" }
+      ]
+    },
+    "content": []
+  }
+}
+```
+
+## `learn()`
+*(Re)generate the `/nu` skill.*
+
+Renders the embedded template to `<harness_dir>/skills/nu/SKILL.md`,
+stamped with the server version. Returns `{written_path, bytes,
+version}`. Regenerate whenever `info().version` differs from the skill's
+stamp.
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "harness_dir": { "type": "string" }
+  },
+  "required": ["harness_dir"]
+}
+```
+
+### Example
+
+MCP (partial):
+```json
+{
+  "arguments": { "harness_dir": "/abs/path/to/harness" }
+}
+```
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "written_path": "/abs/path/to/harness/skills/nu/SKILL.md",
+      "bytes": 30000,
+      "version": "0.0.46"
     },
     "content": []
   }

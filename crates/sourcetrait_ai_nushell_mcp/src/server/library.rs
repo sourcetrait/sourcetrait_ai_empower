@@ -2371,17 +2371,20 @@ fn extract_def_body(source: &str, fn_name: &str) -> Option<String> {
 // leg 3: commit() - the validate-and-promote upsert
 // ============================================================================
 
-/// A single path changed by a commit(): kind is added | modified | removed.
-#[derive(Debug, ser::Serialize)]
-pub(crate) struct ChangedPath {
-    pub path: String,
-    pub kind: String,
-}
-
-/// Result of commit(): the paths it changed (empty = idempotent no-op).
+/// Result of commit(): paths grouped by change kind (all lists empty =
+/// idempotent no-op). Grouped lists (vs a flat `[{path, kind}]`) keep the
+/// envelope terse - no repeated `path` / `kind` keys per entry.
 #[derive(Debug, ser::Serialize)]
 pub(crate) struct CommitResult {
-    pub changed: Vec<ChangedPath>,
+    pub added: Vec<String>,
+    pub modified: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+impl CommitResult {
+    fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.modified.is_empty() && self.removed.is_empty()
+    }
 }
 
 /// Like `run_git` but returns the command's stdout (for `status
@@ -2405,26 +2408,26 @@ fn run_git_output(dir: &std::path::Path, args: &[&str]) -> io::Result<String> {
 /// Parse staged changes out of `git status --porcelain`. The first
 /// column is the staged status after `git add` (A/M/D/R/C); renames
 /// render as `old -> new` (keep the new path).
-fn parse_git_changes(porcelain: &str) -> Vec<ChangedPath> {
-    let mut changes = Vec::new();
+fn parse_git_changes(porcelain: &str) -> CommitResult {
+    let mut result = CommitResult {
+        added: Vec::new(),
+        modified: Vec::new(),
+        removed: Vec::new(),
+    };
     for line in porcelain.lines() {
         if line.len() < 4 {
             continue;
         }
-        let kind = match line.as_bytes()[0] as char {
-            'A' | 'C' => "added",
-            'M' | 'R' => "modified",
-            'D' => "removed",
-            _ => continue,
-        };
         let raw = line[3..].trim();
         let path = raw.rsplit(" -> ").next().unwrap_or(raw).trim().to_string();
-        changes.push(ChangedPath {
-            path,
-            kind: kind.to_string(),
-        });
+        match line.as_bytes()[0] as char {
+            'A' | 'C' => result.added.push(path),
+            'M' | 'R' => result.modified.push(path),
+            'D' => result.removed.push(path),
+            _ => {}
+        }
     }
-    changes
+    result
 }
 
 /// What: write a library's `.meta/` from a clean validation result -
@@ -2517,13 +2520,13 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
     let porcelain = run_git_output(&libraries_dir(), &["status", "--porcelain", "--", name])?;
     let changed = parse_git_changes(&porcelain);
     if changed.is_empty() {
-        return Ok(CommitResult { changed: vec![] });
+        return Ok(changed);
     }
     run_git(
         &libraries_dir(),
         &["commit", "-m", &format!("commit library {name}")],
     )?;
-    Ok(CommitResult { changed })
+    Ok(changed)
 }
 
 // ============================================================================

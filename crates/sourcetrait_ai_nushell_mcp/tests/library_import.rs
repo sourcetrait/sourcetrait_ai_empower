@@ -1134,12 +1134,12 @@ fn commit_validates_and_upserts_source() {
         !has_error_path(&resp2),
         "no-change commit should succeed; got {resp2}"
     );
-    let changed = resp2["result"]["structuredContent"]["changed"]
-        .as_array()
-        .expect("changed array");
+    let sc = &resp2["result"]["structuredContent"];
     assert!(
-        changed.is_empty(),
-        "no-change commit should report no changes; got {changed:?}"
+        sc["added"].as_array().expect("added").is_empty()
+            && sc["modified"].as_array().expect("modified").is_empty()
+            && sc["removed"].as_array().expect("removed").is_empty(),
+        "no-change commit should report nothing changed; got {sc}",
     );
 }
 

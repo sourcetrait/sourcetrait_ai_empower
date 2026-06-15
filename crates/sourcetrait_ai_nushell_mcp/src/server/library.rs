@@ -918,9 +918,9 @@ pub(crate) struct InspectResult {
     pub module_path: String,
     pub name: Option<String>,
     pub summary: String,
-    pub details: String,
     pub args_schema: Option<mcp::JsonObject>,
     pub result_schema: Option<mcp::JsonObject>,
+    pub details: String,
 }
 
 /// What: the full doc (`summary` + `details`) for one node coordinate -

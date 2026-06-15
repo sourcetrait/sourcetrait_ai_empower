@@ -27,11 +27,13 @@ pub(crate) struct InspectEnvelope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub summary: String,
-    pub details: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args_schema: Option<mcp::JsonObject>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_schema: Option<mcp::JsonObject>,
+    /// Full doc body (after the summary's blank line). Last in the ordering -
+    /// the longest, least-scannable field. Empty when undocumented.
+    pub details: String,
 }
 
 #[mcp::tool_router(router = inspect_router, vis = "pub(crate)")]
@@ -64,9 +66,9 @@ impl NuSh {
                 module_path: r.module_path,
                 name: r.name,
                 summary: r.summary,
-                details: r.details,
                 args_schema: r.args_schema,
                 result_schema: r.result_schema,
+                details: r.details,
             }),
             Err(error) => Ok(error_to_call_result(error, None)),
         }

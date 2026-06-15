@@ -1,24 +1,20 @@
 use crate::*;
 
-/// Agent-facing parameters for `new` - the scaffold tool (leg 3).
+/// Parameters for `new()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct NewParams {
     /// Library name. The FIRST new() for a name establishes the library.
     pub library: String,
-    /// Absolute path to the agent's source tree. REQUIRED on the
-    /// establishing (first) call for a library name; omit it thereafter
-    /// (it is fixed in the library meta at establishment).
+    /// Absolute path to the agent's source tree. Required on the first (establishing) call for a library; omit it thereafter.
     pub source_path: Option<String>,
     /// Slash-separated module path within the library; empty/omitted for
     /// the library root.
     pub module_path: Option<String>,
-    /// Function name to scaffold (the call/resolve/main skeleton). Omit to
-    /// scaffold only the module level.
+    /// Function name to scaffold. Omit to scaffold only the module level.
     pub name: Option<String>,
 }
 
-/// Success envelope for `new`: the source tree it scaffolded into + the
-/// paths it created (the agent now edits these, then commit()s).
+/// Success result of `new()`.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct NewEnvelope {
     pub source_path: String,
@@ -29,7 +25,7 @@ pub(crate) struct NewEnvelope {
 impl NuSh {
     #[mcp::tool(
         name = "new",
-        description = "Scaffold a library / module / function into the agent's source tree (the call/resolve/main skeleton with record<> placeholders). The FIRST call for a library name establishes it + records source_path (required then, immutable after). Purely additive - refuses to scaffold over an existing leaf; edit the files, then commit().",
+        description = "Scaffold a callable library / module / function into the agent's source-code repository.",
         output_schema = mcp::schema_for_type::<NewEnvelope>()
     )]
     async fn scaffold(

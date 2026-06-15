@@ -1,34 +1,13 @@
 use crate::*;
 
-/// What: agent-facing parameters for `learn()`. Carries the harness
-/// directory under which the generated `skills/nu/SKILL.md` is written.
-///
-/// Why: learn() ships the nushell_mcp operating skill as a real file
-/// on disk (Read-friendly, compaction-resilient) rather than returning
-/// ~20KB of doc through the tool result. `harness_dir` is the generic
-/// Claude-Code harness root; learn() composes
-/// `<harness_dir>/skills/nu/SKILL.md` from it (the skill name "nu" is
-/// the MCP's own const). Any agent or harness using the MCP can call it.
-///
-/// Where: extracted in `NuSh::learn`; passed to
-/// `learn::generate_skill`.
+/// Parameters for `learn()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct LearnParams {
-    /// Claude-Code harness root. learn() writes the generated skill to
-    /// `<harness_dir>/skills/nu/SKILL.md`, creating the `skills/nu/`
-    /// parents as needed.
+    /// Harness root directory; the skill is written under `<harness_dir>/skills/nu/SKILL.md`.
     pub harness_dir: String,
 }
 
-/// What: success envelope for `learn()`. Reports the path written, its
-/// byte length, and the server version stamped into the skill.
-///
-/// Why: writing to disk leaves one line in agent context (path +
-/// bytes) instead of the full skill body; the agent Reads the path on
-/// demand. `version` lets the caller compare against `info().version`
-/// to decide whether to regenerate.
-///
-/// Where: returned from `NuSh::learn` via `envelope_to_structured`.
+/// Success result of `learn()`.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct LearnEnvelope {
     pub written_path: String,
@@ -109,7 +88,7 @@ pub(crate) fn generate_skill(
 #[mcp::tool_router(router = learn_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Generate the nushell_mcp operating skill (the /nu SKILL.md: tool surface, schemas, lint, library-authoring conventions, Nu Nuances) and write it to <harness_dir>/skills/nu/SKILL.md, version-stamped to this server. Read the returned path on demand; regenerate when info().version differs from the stamp.",
+        description = "Generate the latest `/nu` SKILL.md.",
         output_schema = mcp::schema_for_type::<LearnEnvelope>()
     )]
     async fn learn(

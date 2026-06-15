@@ -51,13 +51,12 @@ impl BuildTarget {
     /// target-equality.
     ///
     /// Why: the `_test`-suffix library-name validator in
-    /// `library::register_library_impl` / `import_library_impl` reads
+    /// `library::validate_new_coordinate` reads
     /// "are we on the test variant?" not "what target string is this?";
     /// expressing the gate as `build_target().is_test()` keeps the
     /// readable intent at the call site.
     ///
-    /// Where: called by `library::register_library_impl` and
-    /// `library::import_library_impl`.
+    /// Where: called by `library::validate_new_coordinate`.
     pub(crate) fn is_test(self) -> bool {
         matches!(self, Self::Test)
     }
@@ -90,9 +89,8 @@ pub(crate) static BUILD_TARGET: OnceLock<BuildTarget> = OnceLock::new();
 /// invariant is centralized + the read sites stay terse.
 ///
 /// Where: called by `cache::cache_base_dir`, `cache::data_base_dir`,
-/// `library::register_library_impl`, `library::import_library_impl`,
-/// `tool::NuSh::info`, `tool::ServerHandler::get_info`. Worker
-/// processes never call this.
+/// `library::validate_new_coordinate`, `tool::NuSh::info`,
+/// `tool::ServerHandler::get_info`. Worker processes never call this.
 pub(crate) fn build_target() -> BuildTarget {
     *BUILD_TARGET.get().expect("BUILD_TARGET set at startup")
 }

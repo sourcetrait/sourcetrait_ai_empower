@@ -1,43 +1,17 @@
 use crate::*;
 
-/// What: agent-facing parameters for `run()` and (because it has the
-/// same shape) `interact()`. Carries the args + result schemas, the
-/// JSON object that becomes `$args`, and the body that becomes the
-/// agent's submission.
-///
-/// Why: a single struct shared between run and interact keeps the
-/// two tools' surface identical to the agent -- the only diff is
-/// substrate (stateless vs stateful worker, do-block wrapping vs
-/// not). schemars-derived JSON Schema makes the params visible to
-/// Claude Code's tool selector.
-///
-/// Where: extracted via `mcp::Parameters<RunParams>` in the
-/// `#[mcp::tool]` handlers `NuSh::run` and `NuSh::interact`; passed
-/// to the corresponding template builders (`build_run_source`,
-/// `build_interact_source`) and serialized into the nonce payload.
+/// Parameters for `run()` / `interact()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct RunParams {
-    /// Structured args schema: a JSON object of `field -> type` (item 21
-    /// grammar). `{}` means a no-args (void) function. Converted to the
-    /// nu positional type via `schema::args_schema_to_nu`.
+    /// The strictly typed Nu `record` schema for `$args`, as a JSON object mapping each field name to its type (`{}` for no arguments).
     pub args_schema: mcp::JsonObject,
-    /// Structured result schema: a JSON object of `field -> type`. `{}`
-    /// means a void return.
+    /// The strictly typed Nu `record` schema for the return value, as a JSON object mapping each field name to its type (`{}` for no return value).
     pub result_schema: mcp::JsonObject,
-    /// JSON object that becomes the nushell `$args` record literal at the
-    /// __exec call site. Schemars represents `serde_json::Value` as the
-    /// JSON Schema 2020-12 `true` keyword (match-anything), which Claude
-    /// Code's MCP client rejects with "Invalid input" -- so we narrow the
-    /// type to a Map (rmcp's `JsonObject` alias) which schemars renders
-    /// as `{"type": "object"}`. Semantically correct anyway: args MUST be
-    /// an object because it has to deserialize into a nushell record.
+    /// JSON object representation of the strictly typed Nu `record` schema for `$args` as passed to the source-code body.
+    // `mcp::JsonObject` (not `serde_json::Value`): schemars renders Value as the JSON Schema `true` keyword, which the MCP client rejects; a Map renders as `{"type": "object"}`. args must be an object anyway -- it deserializes into a nu record.
     pub args: mcp::JsonObject,
     pub body: String,
-    /// Optional per-call timeout in milliseconds. When the worker
-    /// round-trip exceeds this, the call returns -32001 and the worker
-    /// is killed (runs-pool worker is reaped, interact worker is
-    /// respawned losing session state). Defaults to 120000 (2 minutes)
-    /// when omitted. No upper cap -- agent picks.
+    /// Optional per-call timeout in milliseconds; defaults to 120000 (2 minutes). The usage is cancelled if it exceeds this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }
@@ -266,13 +240,12 @@ pub(crate) fn envelope_to_structured<T: ser::Serialize>(
 /// JSON objects to the `(args_type, result_type)` nu positional-type
 /// strings via `args_schema_to_nu` / `result_schema_to_nu`.
 ///
-/// Why: run / interact / define_function all need the converted
+/// Why: run + interact need the converted
 /// positional types BEFORE lint + template synthesis; a single helper
 /// keeps the conversion seam in one place and short-circuits to
 /// `Error::SchemaInvalid` uniformly on a malformed schema.
 ///
-/// Where: called first by `NuSh::run`, `NuSh::interact`, and
-/// `NuSh::define_function`.
+/// Where: called first by `NuSh::run` and `NuSh::interact`.
 pub(crate) fn convert_schemas(
     args_schema: &mcp::JsonObject,
     result_schema: &mcp::JsonObject,

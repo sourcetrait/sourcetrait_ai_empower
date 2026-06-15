@@ -1,37 +1,19 @@
 use crate::*;
 
-/// What: agent-facing parameters for `call`. Carries the
-/// (library, module_path, name) coordinate of the function to invoke
-/// plus the args object to pass as `$args`.
-///
-/// Why: call routes through the stateless worker with a synthesized
-/// template `use <abs path>; <name> resolve (<name> call ARGS_JSON)`
-/// so the function's result_schema typecheck runs on every invocation,
-/// against the RAW `call` (never `main`) for boundary enforcement.
-/// HEAD-only -- no version pinning per the slice 3 lock.
-///
-/// Where: extracted in `NuSh::call`; the coordinate is path-validated
-/// via `call_file_path`, the args become a record literal in the
-/// synthesized source.
+/// Parameters for `call()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct CallParams {
     pub library: String,
     pub module_path: String,
     pub name: String,
-    /// JSON object passed as `$args` to the function. Schema match is
-    /// enforced by the function's `main` signature at parse time inside
-    /// the worker (typed positional binding on a literal record).
+    /// JSON object of argument values passed to the function as `$args`.
     pub args: mcp::JsonObject,
-    /// Optional per-call timeout in milliseconds. Same semantics as
-    /// `RunParams.timeout_ms`. Defaults to 120000 when omitted.
+    /// Optional per-call timeout in milliseconds; defaults to 120000 (2 minutes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }
 
-/// Success envelope for `call()`. Carries the registered library
-/// function's typed return value plus the per-call nonce. No
-/// `rerun_id` (library calls are themselves the replayable unit;
-/// recipe is `call(library, module_path, name, args)`).
+/// Success result of `call()`.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct CallEnvelope {
     pub result: mcp::JsonObject,
@@ -41,7 +23,7 @@ pub(crate) struct CallEnvelope {
 #[mcp::tool_router(router = call_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Invoke a registered library function on a stateless worker. Builds `use <abs path to function file>.nu; <name> resolve (<name> call $args)` - targeting the raw `call` so a mis-authored `main` cannot leak an unvalidated value, with the function's `resolve` typecheck run on the boundary. HEAD-only -- no version pinning.",
+        description = "Invoke a committed library function with typed args.",
         output_schema = mcp::schema_for_type::<CallEnvelope>()
     )]
     async fn call(

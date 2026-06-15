@@ -1,8 +1,6 @@
 use crate::*;
 
-/// Success envelope for `interact()`. Same shape as `RunEnvelope`
-/// minus `rerun_id` -- interact() does not cache closures (stateful
-/// session bodies don't make sense to replay independently).
+/// Success result of `interact()`.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct InteractEnvelope {
     pub result: mcp::JsonObject,
@@ -12,7 +10,7 @@ pub(crate) struct InteractEnvelope {
 #[mcp::tool_router(router = interact_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Evaluate a typed administrative nushell closure body on a persistent stateful worker.",
+        description = "Evaluate a typed nushell source-code body on a persistent stateful worker.",
         output_schema = mcp::schema_for_type::<InteractEnvelope>()
     )]
     async fn interact(

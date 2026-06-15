@@ -541,21 +541,21 @@ glob ($args.root | path join "**" "*")
 ## MCP Interface
 
 ### Overview
-- [`run()`](#run) Evaluate a typed nushell body on a stateless worker.
-- [`interact()`](#interact) Evaluate a typed nushell body on a persistent stateful worker.
+- [`run()`](#run) Evaluate a typed nushell source-code body on a stateless worker.
+- [`interact()`](#interact) Evaluate a typed nushell source-code body on a persistent stateful worker.
 - [`call()`](#call) Invoke a committed library function with typed args.
 - [`rerun()`](#rerun) Re-evaluate a cached `run()` body with fresh args.
-- [`processes()`](#processes) Snapshot every in-flight tool call on the host.
-- [`kill()`](#kill) Cancel an in-flight call by its nonce.
-- [`info()`](#info) Versions, plugins, and the live library/module/function hierarchy with summaries + schemas.
-- [`inspect()`](#inspect) Full doc (summary + details) + schemas for one node.
-- [`new()`](#new) Scaffold a library / module / function into the agent's source tree.
-- [`commit()`](#commit) Validate the source tree and upsert it into the signed store.
-- [`delete()`](#delete) Guarded drop of a library.
-- [`learn()`](#learn) (Re)generate this skill to `<harness_dir>/skills/nu/SKILL.md`.
+- [`processes()`](#processes) List in-flight MCP tool usage.
+- [`kill()`](#kill) Cancel an in-flight usage by its nonce.
+- [`info()`](#info) Versions, plugins, and libraries summary.
+- [`inspect()`](#inspect) Detailed documentation of a specific callable library, module, function.
+- [`new()`](#new) Scaffold a callable library / module / function into the agent's source-code repository.
+- [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
+- [`delete()`](#delete) Delete a library.
+- [`learn()`](#learn) Generate the latest `/nu` SKILL.md.
 
 ### `run()`
-*Evaluate a typed nushell closure body on a stateless worker.*
+*Evaluate a typed nushell source-code body on a stateless worker.*
 
 #### arguments
 
@@ -631,7 +631,7 @@ Output (partial):
 ```
 
 ### `interact()`
-*Evaluate a typed nushell closure body on a persistent stateful worker.*
+*Evaluate a typed nushell source-code body on a persistent stateful worker.*
 
 Env mutations, `cd`, and top-level `def`s persist across calls; `run()`
 state does not leak in. Use it for administrative, stateful sessions; use
@@ -786,7 +786,7 @@ Output (partial):
 ```
 
 ### `processes()`
-*Snapshot every in-flight tool call on the host.*
+*List in-flight MCP tool usage.*
 
 Pair with [`kill()`](#kill) to cancel a specific call. Entries are
 `{nonce, tool, started_at, args, ...}`: `rerun` adds `rerun_id`, `call`
@@ -832,7 +832,7 @@ Output (partial):
 ```
 
 ### `kill()`
-*Cancel an in-flight call by its nonce.*
+*Cancel an in-flight usage by its nonce.*
 
 SIGKILLs the worker holding the call. No payload; silently succeeds if
 the nonce is unknown or already completed (race-safe).
@@ -866,7 +866,7 @@ Output (partial):
 ```
 
 ### `info()`
-*Versions, plugins, and the live library/module/function hierarchy with summaries + schemas.*
+*Versions, plugins, and libraries summary.*
 
 #### arguments
 
@@ -936,7 +936,7 @@ submodules. `plugins` are positional `[name, version]` pairs (version is
 over any static index. For a node's full details, call `inspect()`.
 
 ### `inspect()`
-*Full doc (summary + details) + schemas for one node.*
+*Detailed documentation of a specific callable library, module, function.*
 
 Returns the single-node descriptor `{library, module_path, name?,
 summary, args_schema?, result_schema?, details}` - `name` and the
@@ -986,7 +986,7 @@ Output (partial):
 ```
 
 ### `new()`
-*Scaffold a library / module / function into the agent's source tree.*
+*Scaffold a callable library / module / function into the agent's source-code repository.*
 
 The FIRST call for a `library` establishes it - `source_path` is required
 then and immutable after. Add a module with `module_path`; add a
@@ -1036,7 +1036,7 @@ Output (partial):
 ```
 
 ### `commit()`
-*Validate the source tree and upsert it into the signed canonical store.*
+*Commit the agent's library source-code to the MCP's repository for live use.*
 
 Re-reads the recorded source_path, validates (structure + the
 call/resolve/main contract + reserved terms + the summary-length rule),
@@ -1080,7 +1080,7 @@ Output (partial):
 ```
 
 ### `delete()`
-*Guarded drop of a library.*
+*Delete a library.*
 
 Re-pass `source_path` as a sanity check (matched by PLAIN STRING against
 the recorded path). Removes the agent source too unless `mcp_only`.
@@ -1125,7 +1125,7 @@ Output (partial):
 ```
 
 ### `learn()`
-*(Re)generate this skill.*
+*Generate the latest `/nu` SKILL.md.*
 
 Renders the embedded template to `<harness_dir>/skills/nu/SKILL.md`,
 stamped with the server version. Returns `{written_path, bytes,

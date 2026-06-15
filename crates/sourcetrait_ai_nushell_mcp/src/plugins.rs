@@ -1,22 +1,6 @@
 use crate::*;
 
-/// What: the agent-facing record of one plugin in the canonical
-/// plugin registry, as a positional `(name, version?)` pair. Field 0
-/// is the name (always present); field 1 is the self-reported version
-/// (often unset).
-///
-/// Why: `info()`'s `plugins` field surfaces the registry view at the
-/// tool seam. A plugin entry is name + version and both are inferrable
-/// from position, so it serializes as a 2-element array `[name,
-/// version]` rather than a named record (the_user 2026-06-14). The
-/// version is `Option<String>` because not every plugin author chains
-/// `.with_version(...)` onto its metadata and the `Invalid` data arm
-/// yields none; absent serializes as the `null` slot so the pair keeps
-/// its arity.
-///
-/// Where: returned in a `Vec` from `plugins::list_registered_plugins`;
-/// embedded in `InfoEnvelope::plugins` and serialized through
-/// `envelope_to_structured` to the structured-content channel.
+/// One plugin as a positional `[name, version]` pair (version may be null).
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct PluginInfo(pub String, pub Option<String>);
 

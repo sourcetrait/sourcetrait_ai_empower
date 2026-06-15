@@ -171,8 +171,7 @@ const PARSE_PATH_RECEIVERS: &[&str] = &["use", "overlay use", "source", "source-
 /// Cap + sentinel per the_user 2026-06-02 -- truthful truncation.
 ///
 /// Where: called by `server::tool::NuSh::run` /
-/// `NuSh::interact` /
-/// `NuSh::define_function` immediately before template synthesis.
+/// `NuSh::interact` immediately before template synthesis.
 pub(crate) fn lint_body(
     parse_engine: &ParseEngine,
     args_type: &str,

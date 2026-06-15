@@ -1,6 +1,6 @@
 use crate::*;
 
-/// Agent-facing parameters for `inspect` - the doc lookup (leg 4).
+/// Parameters for `inspect()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct InspectParams {
     /// Library to inspect.
@@ -15,11 +15,7 @@ pub struct InspectParams {
     pub name: Option<String>,
 }
 
-/// Success envelope for `inspect`: a full single-node descriptor at any level
-/// (library / module / function) - the coordinate (library, module_path,
-/// optional name), the docs (summary + details, both empty when undocumented),
-/// and, for a function, the call schemas (args_schema + result_schema).
-/// `name` + the schemas are omitted for a module or the library root.
+/// Success result of `inspect()` -- the documentation for one node.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct InspectEnvelope {
     pub library: String,
@@ -31,15 +27,14 @@ pub(crate) struct InspectEnvelope {
     pub args_schema: Option<mcp::JsonObject>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_schema: Option<mcp::JsonObject>,
-    /// Full doc body (after the summary's blank line). Last in the ordering -
-    /// the longest, least-scannable field. Empty when undocumented.
+    /// The node's full detail documentation (empty when undocumented).
     pub details: String,
 }
 
 #[mcp::tool_router(router = inspect_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Return the full doc (summary + details) for one node coordinate: a function (library + module_path + name), a module (library + module_path), or the library root (library only). Doc-only - no source, no schemas. info() carries the one-liner summary per node; inspect() is the on-demand full-doc lookup.",
+        description = "Detailed documentation of a specific callable library, module, function.",
         output_schema = mcp::schema_for_type::<InspectEnvelope>()
     )]
     async fn inspect(

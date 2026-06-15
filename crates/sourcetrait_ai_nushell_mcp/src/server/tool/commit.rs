@@ -1,18 +1,13 @@
 use crate::*;
 
-/// Agent-facing parameters for `commit` - the validate-and-promote
-/// upsert (leg 3). Library NAME only; source_path is read from the meta.
+/// Parameters for `commit()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct CommitParams {
-    /// Library name to commit. Its source tree is re-read from the
-    /// source_path recorded at new() establishment, validated, and
-    /// upserted into the canonical signed repo.
+    /// Name of the library to commit.
     pub library: String,
 }
 
-/// Success envelope for `commit`: the paths changed by this upsert, grouped by
-/// kind (all lists empty = idempotent no-op, the source already matched the
-/// canonical). Grouped lists keep the wire terse - no repeated keys per entry.
+/// Success result of `commit()` -- the changed paths, grouped by kind.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct CommitEnvelope {
     pub added: Vec<String>,
@@ -23,7 +18,7 @@ pub(crate) struct CommitEnvelope {
 #[mcp::tool_router(router = commit_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Validate the library's source tree (read from the source_path it was established with) and upsert it into the canonical signed repo - the central edit -> commit -> call iterate step. Idempotent on a no-change resync; returns the changed paths {path, kind: added|modified|removed}.",
+        description = "Commit the agent's library source-code to the MCP's repository for live use.",
         output_schema = mcp::schema_for_type::<CommitEnvelope>()
     )]
     async fn commit(

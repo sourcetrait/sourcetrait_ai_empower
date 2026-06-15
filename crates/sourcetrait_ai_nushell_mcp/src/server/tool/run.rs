@@ -1,28 +1,10 @@
 use crate::*;
 
-/// What: agent-facing success envelope for `run()`. Carries the
-/// closure's typed return value (per `result_schema`), the per-call
-/// nonce, and the content-derived `rerun_id` when caching succeeded.
-///
-/// Why: a typed struct (rather than ad-hoc `serde_json::json!`)
-/// gives schemars an outputSchema to publish on `run`'s tool
-/// descriptor, lets rmcp emit the value via `structured_content`,
-/// and lets future-me reason about the envelope by name rather than
-/// by JSON key lookup.
-///
-/// Where: returned from `NuSh::run` wrapped in a `CallToolResult`
-/// whose `structured_content` field carries the serialized
-/// envelope. The matching `outputSchema` is declared on the
-/// `#[mcp::tool]` attribute via `schema_for_type::<RunEnvelope>()`.
+/// Success result of `run()`.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct RunEnvelope {
-    /// Worker-evaluated return value of the body. Always a JSON object
-    /// because the worker template runs `__resolve [result: record<...>]
-    /// $result` which forces a record-shaped return. `mcp::JsonObject`
-    /// (not `serde_json::Value`) keeps the schemars rendering as
-    /// `{"type": "object"}` -- the `true` rendering Value would produce
-    /// is rejected by Claude Code's MCP client schema validator (same
-    /// gotcha as `RunParams.args`).
+    /// The source-code body's return value, as a JSON object matching `result_schema`.
+    // `mcp::JsonObject` (not `serde_json::Value`): same JsonSchema-rendering gotcha as RunParams.args.
     pub result: mcp::JsonObject,
     pub nonce: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,7 +14,7 @@ pub(crate) struct RunEnvelope {
 #[mcp::tool_router(router = run_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Evaluate a typed nushell closure body on a stateless worker.",
+        description = "Evaluate a typed nushell source-code body on a stateless worker.",
         output_schema = mcp::schema_for_type::<RunEnvelope>()
     )]
     async fn run(

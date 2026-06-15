@@ -1,22 +1,10 @@
 use crate::*;
 
-/// What: agent-facing parameters for `processes`. Empty -- the tool
-/// takes no input. Returns a snapshot of every in-flight call on the
-/// host.
-///
-/// Why: an empty params struct (`{}`) is the schemars-friendly shape
-/// rmcp expects for a no-arg tool; not having any params keeps the
-/// tool surface explicit.
-///
-/// Where: extracted in `NuSh::processes`; the body just snapshots the
-/// in-flight map and serializes per-tool entry shapes.
+/// Parameters for `processes()` (none).
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct ProcessesParams {}
 
-/// Per-tool-call entry returned in the `processes()` snapshot.
-/// `args` is always object-shaped (matches the agent's submission
-/// shape for run/interact/call/rerun). `rerun_id` populated only
-/// for rerun calls; `path` only for call calls.
+/// One in-flight tool usage in the `processes()` snapshot.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct ProcessEntry {
     pub nonce: String,
@@ -29,9 +17,7 @@ pub(crate) struct ProcessEntry {
     pub path: Option<String>,
 }
 
-/// Success envelope for `processes()`. The snapshot field carries
-/// zero or more `ProcessEntry` records, one per in-flight tool
-/// call.
+/// Success result of `processes()`.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct ProcessesEnvelope {
     pub processes: Vec<ProcessEntry>,
@@ -40,7 +26,7 @@ pub(crate) struct ProcessesEnvelope {
 #[mcp::tool_router(router = processes_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Snapshot every in-flight tool call on the host. Returns an array of entries with the shape {nonce, tool, started_at, args, ...tool-specific}: for `run`/`interact` no extras; for `rerun` includes `rerun_id`; for `call` includes a flat `path` string `library:module/path:name` (with `library::name` when module_path is empty). Pair with `kill(nonce)` to cancel a specific call.",
+        description = "List in-flight MCP tool usage.",
         output_schema = mcp::schema_for_type::<ProcessesEnvelope>()
     )]
     async fn processes(

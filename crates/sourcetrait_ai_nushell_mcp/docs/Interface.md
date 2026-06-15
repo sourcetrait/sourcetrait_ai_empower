@@ -1,8 +1,8 @@
 # MCP Interface
 
 ## Overview
-- [`run()`](#run) Evaluate a typed nushell closure body on a stateless worker.
-- [`interact()`](#interact) Evaluate a typed nushell closure body on a persistent stateful worker.
+- [`run()`](#run) Evaluate a typed nushell source-code body on a stateless worker.
+- [`interact()`](#interact) Evaluate a typed nushell source-code body on a persistent stateful worker.
 - [`call()`](#call) Invoke a committed library function with typed args.
 - [`rerun()`](#rerun) Re-evaluate a cached `run()` body with fresh args.
 - [`processes()`](#processes) List in-flight MCP tool usage.
@@ -16,7 +16,7 @@
 
 
 ## `run()`
-*Evaluate a typed nushell closure body on a stateless worker.*
+*Evaluate a typed nushell source-code body on a stateless worker.*
 
 ### arguments
 
@@ -92,7 +92,7 @@ Output (partial):
 ```
 
 ## `interact()`
-*Evaluate a typed nushell closure body on a persistent stateful worker.*
+*Evaluate a typed nushell source-code body on a persistent stateful worker.*
 
 ### arguments
 
@@ -239,7 +239,7 @@ Output (partial):
 ```
 
 ## `processes()`
-*Snapshot every in-flight tool call on the host.*
+*List in-flight MCP tool usage.*
 
 
 ### arguments
@@ -281,7 +281,7 @@ Output (partial):
 ```
 
 ## `kill()`
-*Cancel an in-flight call by its nonce.*
+*Cancel an in-flight usage by its nonce.*
 
 SIGKILLs the worker holding the call. No payload; silently succeeds if
 the nonce is unknown or already completed (race-safe).
@@ -315,7 +315,7 @@ Output (partial):
 ```
 
 ## `info()`
-*Versions, plugins, and the live library/module/function hierarchy with summaries + schemas.*
+*Versions, plugins, and libraries summary.*
 
 ### arguments
 
@@ -375,7 +375,7 @@ Output (partial):
 ```
 
 ## `inspect()`
-*Full doc (summary + details) + schemas for one node.*
+*Detailed documentation of a specific callable library, module, function.*
 
 ### arguments
 
@@ -419,7 +419,7 @@ Output (partial):
 ```
 
 ## `new()`
-*Scaffold a library / module / function into the agent's source tree.*
+*Scaffold a callable library / module / function into the agent's source-code repository.*
 
 
 ### arguments
@@ -464,7 +464,7 @@ Output (partial):
 ```
 
 ## `commit()`
-*Validate the source tree and upsert it into the signed canonical store.*
+*Commit the agent's library source-code to the MCP's repository for live use.*
 
 ### arguments
 
@@ -502,7 +502,7 @@ Output (partial):
 ```
 
 ## `delete()`
-*Guarded drop of a library.*
+*Delete a library.*
 
 Re-pass `source_path` as a sanity check (matched by PLAIN STRING against
 the recorded path). Removes the agent source too unless `mcp_only`.
@@ -547,7 +547,7 @@ Output (partial):
 ```
 
 ## `learn()`
-*(Re)generate the `/nu` skill.*
+*Generate the latest `/nu` SKILL.md.*
 
 Renders the embedded template to `<harness_dir>/skills/nu/SKILL.md`,
 stamped with the server version. Returns `{written_path, bytes,

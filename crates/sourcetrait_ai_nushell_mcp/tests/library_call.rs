@@ -352,6 +352,12 @@ fn inspect_returns_function_doc() {
     let env = extract_envelope(&resp).unwrap_or_else(|| panic!("inspect envelope; got {resp}"));
     assert_eq!(env["summary"].as_str(), Some("doubles its input"));
     assert_eq!(env["details"].as_str(), Some("returns the doubled value"));
+    // big meta: inspect is a full node descriptor (coordinate + schemas).
+    assert_eq!(env["library"].as_str(), Some("inspectlib"));
+    assert_eq!(env["module_path"].as_str(), Some("math"));
+    assert_eq!(env["name"].as_str(), Some("double"));
+    assert_eq!(env["args_schema"], serde_json::json!({"x": "int"}));
+    assert_eq!(env["result_schema"], serde_json::json!({"out": "int"}));
 }
 
 #[test]

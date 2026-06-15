@@ -908,11 +908,19 @@ pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo
     out
 }
 
-/// Result of `inspect()`: the full doc for one node (leg 4).
+/// Result of `inspect()`: a full single-node descriptor - the coordinate
+/// (library, module_path, optional name), the docs (summary + details), and,
+/// for a function, the call schemas from the index. `name` + the schemas are
+/// None for a module or the library root.
 #[derive(Debug, ser::Serialize)]
 pub(crate) struct InspectResult {
+    pub library: String,
+    pub module_path: String,
+    pub name: Option<String>,
     pub summary: String,
     pub details: String,
+    pub args_schema: Option<mcp::JsonObject>,
+    pub result_schema: Option<mcp::JsonObject>,
 }
 
 /// What: the full doc (`summary` + `details`) for one node coordinate -
@@ -977,9 +985,9 @@ pub(crate) fn inspect_impl(
     }
     let index = load_index(library)?;
     let docs_dir = library_docs_dir(library);
-    // Resolve the coordinate against the index (not the filesystem); the docs
-    // themselves read as "" when the node is undocumented.
-    let coord = match name {
+    // Resolve the coordinate against the index; a function also carries its
+    // call schemas. Docs read as "" when the node is undocumented.
+    match name {
         Some(fn_name) => {
             let (fns, _) = index_node(&index, module_path).ok_or_else(|| {
                 Error::LibraryInvalidModulePath {
@@ -987,18 +995,27 @@ pub(crate) fn inspect_impl(
                     reason: "module not found".to_string(),
                 }
             })?;
-            if !fns.iter().any(|f| f.name == fn_name) {
-                return Err(Error::FunctionNotDefined {
+            let f = fns.iter().find(|f| f.name == fn_name).ok_or_else(|| {
+                Error::FunctionNotDefined {
                     library: library.to_string(),
                     module_path: module_path.to_string(),
                     name: fn_name.to_string(),
-                });
-            }
-            if module_path.is_empty() {
+                }
+            })?;
+            let coord = if module_path.is_empty() {
                 fn_name.to_string()
             } else {
                 format!("{module_path}/{fn_name}")
-            }
+            };
+            Ok(InspectResult {
+                library: library.to_string(),
+                module_path: module_path.to_string(),
+                name: Some(fn_name.to_string()),
+                summary: read_doc(&docs_dir, &coord, "summary.md"),
+                details: read_doc(&docs_dir, &coord, "details.md"),
+                args_schema: Some(f.args_schema.clone()),
+                result_schema: Some(f.result_schema.clone()),
+            })
         }
         None => {
             if index_node(&index, module_path).is_none() {
@@ -1007,13 +1024,17 @@ pub(crate) fn inspect_impl(
                     reason: "module not found".to_string(),
                 });
             }
-            module_path.to_string()
+            Ok(InspectResult {
+                library: library.to_string(),
+                module_path: module_path.to_string(),
+                name: None,
+                summary: read_doc(&docs_dir, module_path, "summary.md"),
+                details: read_doc(&docs_dir, module_path, "details.md"),
+                args_schema: None,
+                result_schema: None,
+            })
         }
-    };
-    Ok(InspectResult {
-        summary: read_doc(&docs_dir, &coord, "summary.md"),
-        details: read_doc(&docs_dir, &coord, "details.md"),
-    })
+    }
 }
 
 // ============================================================================

@@ -15,14 +15,23 @@ pub struct InspectParams {
     pub name: Option<String>,
 }
 
-/// Success envelope for `inspect`: the full doc (`summary` + `details`)
-/// of one node at any level (library / module / function). `summary` is
-/// the one-liner (also surfaced by info()); `details` the rest. Both
-/// empty when the node is undocumented.
+/// Success envelope for `inspect`: a full single-node descriptor at any level
+/// (library / module / function) - the coordinate (library, module_path,
+/// optional name), the docs (summary + details, both empty when undocumented),
+/// and, for a function, the call schemas (args_schema + result_schema).
+/// `name` + the schemas are omitted for a module or the library root.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct InspectEnvelope {
+    pub library: String,
+    pub module_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub summary: String,
     pub details: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args_schema: Option<mcp::JsonObject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_schema: Option<mcp::JsonObject>,
 }
 
 #[mcp::tool_router(router = inspect_router, vis = "pub(crate)")]
@@ -51,8 +60,13 @@ impl NuSh {
         let name = p.name.as_deref();
         match inspect_impl(&p.library, module_path, name) {
             Ok(r) => envelope_to_structured(&InspectEnvelope {
+                library: r.library,
+                module_path: r.module_path,
+                name: r.name,
                 summary: r.summary,
                 details: r.details,
+                args_schema: r.args_schema,
+                result_schema: r.result_schema,
             }),
             Err(error) => Ok(error_to_call_result(error, None)),
         }

@@ -21,7 +21,8 @@ pub(crate) struct WarmBase {
 
 impl WarmBase {
     /// What: constructs a `WarmBase` with the full shell command
-    /// context loaded (nu_cmd_lang + nu_command), `is_interactive =
+    /// context loaded (nu_cmd_lang + nu_command + nu_cmd_extra; plus
+    /// nu_cmd_plugin on the Stateful/admin worker), `is_interactive =
     /// false`, `is_mcp = true`, seeded env from the OS environment,
     /// and a best-effort `setsid()` to detach the controlling
     /// terminal. Returns by value; the caller owns it.
@@ -37,6 +38,18 @@ impl WarmBase {
     /// `worker::run::run_worker` before the request loop starts.
     pub(crate) fn new(mode: Mode) -> Self {
         let mut engine_state = nu::add_shell_command_context(nu::create_default_context());
+        // The nu-cmd-extra family (bits / math-trig / str-case / format / roll /
+        // to html / from url / ansi gradient) - pure data/string transforms with
+        // no admin or side-effect surface; BOTH worker modes load it (item 17,
+        // the_user 2026-06-15).
+        engine_state = nu::add_extra_command_context(engine_state);
+        // The plugin-management family (plugin add/rm/list/use/stop) lands on the
+        // STATEFUL (interact) administrative worker ONLY: run() stays admin-free,
+        // and plugin registration's merge_delta only persists on the stateful
+        // worker anyway (the stateless per-call clone discards it) (item 17).
+        if matches!(mode, Mode::Stateful) {
+            engine_state = nu::add_plugin_command_context(engine_state);
+        }
         engine_state.is_interactive = false;
         engine_state.is_mcp = true;
         // Slice 5.7: register plugin decls so agent closures can invoke

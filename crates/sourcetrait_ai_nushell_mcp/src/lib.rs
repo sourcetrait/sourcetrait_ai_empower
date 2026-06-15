@@ -94,6 +94,8 @@ pub(crate) mod dirs {
 
 pub(crate) mod nu {
     pub(crate) use nu_cmd_lang::create_default_context;
+    pub(crate) use nu_cmd_extra::add_extra_command_context;
+    pub(crate) use nu_cmd_plugin::add_plugin_command_context;
     pub(crate) use nu_command::add_shell_command_context;
     pub(crate) use nu_command::tls::CRYPTO_PROVIDER;
     pub(crate) use nu_engine::eval_block;

@@ -418,3 +418,68 @@ fn inspect_unknown_library_errors() {
     let resp = host.call_tool("inspect", serde_json::json!({"library": "ghost"}));
     assert!(has_error_path(&resp));
 }
+
+#[test]
+fn helper_file_pruned_from_info_and_not_callable() {
+    // big meta: an organizational helper file (no call/resolve sentinel) is
+    // NOT an indexed call-target -> absent from info()'s function list AND not
+    // callable; the real call-target beside it still works. (The pre-big-meta
+    // enumerate bailed on such a file's schema parse, dropping the WHOLE
+    // library from info(); the index walk prunes it cleanly instead.)
+    let mut host = Host::spawn();
+    let src = host.source_dir("helperlib");
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "helperlib", "source_path": src.to_str().unwrap()}),
+    );
+    write_source(&src, "mod.nu", "export use ./util.nu\nexport use ./real.nu\n");
+    // Organizational helper: no call/resolve sentinel -> not a call-target.
+    write_source(&src, "util.nu", "export def helper [n: int] { $n * 2 }\n");
+    // A real call-target beside it.
+    write_source(
+        &src,
+        "real.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x + 1) }"),
+    );
+    let committed = host.call_tool("commit", serde_json::json!({"library": "helperlib"}));
+    assert!(!has_error_path(&committed), "commit should succeed; got {committed}");
+
+    // info(): the library is present and lists ONLY the call-target.
+    let info = host.call_tool("info", serde_json::json!({}));
+    let libs = info["result"]["structuredContent"]["libraries"]
+        .as_array()
+        .expect("libraries array");
+    let lib = libs
+        .iter()
+        .find(|l| l["name"].as_str() == Some("helperlib"))
+        .expect("helperlib present in info() (not dropped by the helper file)");
+    let fn_names: Vec<&str> = lib["functions"]
+        .as_array()
+        .expect("functions")
+        .iter()
+        .map(|f| f["name"].as_str().expect("fn name"))
+        .collect();
+    assert_eq!(
+        fn_names,
+        vec!["real"],
+        "only the call-target should be listed; got {fn_names:?}",
+    );
+
+    // call() the real target works.
+    let ok = host.call_tool(
+        "call",
+        serde_json::json!({"library":"helperlib","module_path":"","name":"real","args":{"x":41}}),
+    );
+    let env = extract_envelope(&ok).unwrap_or_else(|| panic!("real call; got {ok}"));
+    assert_eq!(env["result"]["out"].as_i64(), Some(42));
+
+    // call() the helper file errors -- it is not an indexed call-target.
+    let bad = host.call_tool(
+        "call",
+        serde_json::json!({"library":"helperlib","module_path":"","name":"util","args":{"n":5}}),
+    );
+    assert!(
+        has_error_path(&bad),
+        "an organizational helper file must NOT be callable; got {bad}",
+    );
+}

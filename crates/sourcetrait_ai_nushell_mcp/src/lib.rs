@@ -52,7 +52,7 @@ pub(crate) use crate::{
         error::{Error, Where, WhereSource, error_to_call_result},
         library::{
             LibraryInfo, LibraryLocks, Violation, call_file_path, commit_impl, delete_impl,
-            ensure_substrate, enumerate_libraries, inspect_impl, new_impl,
+            ensure_substrate, enumerate_libraries, index_node, inspect_impl, load_index, new_impl,
         },
         lint::{LINT_VIOLATION_CAP, LintViolation, lint_body},
         parse_engine::{ParseEngine, span_to_line_col, wrap_as_def_body, wrap_as_module},

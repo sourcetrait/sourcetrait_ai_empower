@@ -73,7 +73,25 @@ impl NuSh {
                 ));
             }
         };
-        if !file_path.exists() {
+        // big meta: the index is the callability authority - the coordinate
+        // must name a registered call-target. A helper file present on disk
+        // but absent from the index is correctly NOT callable.
+        let index = match load_index(&p.library) {
+            Ok(i) => i,
+            Err(e) => {
+                return Ok(error_to_call_result(
+                    Error::Internal {
+                        phase: "call::load_index".to_string(),
+                        reason: e.to_string(),
+                    },
+                    None,
+                ));
+            }
+        };
+        let is_call_target = index_node(&index, &p.module_path)
+            .map(|(fns, _)| fns.iter().any(|f| f.name == p.name))
+            .unwrap_or(false);
+        if !is_call_target {
             return Ok(error_to_call_result(
                 Error::FunctionNotDefined {
                     library: p.library.clone(),

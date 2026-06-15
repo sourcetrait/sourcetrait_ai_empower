@@ -269,7 +269,7 @@ fn new_writes_repo_and_records_meta() {
         lib_dir.display()
     );
     assert!(lib_dir.join("mod.nu").exists(), "lib mod.nu should exist",);
-    let meta_path = lib_dir.join(".nushell_mcp_meta.json");
+    let meta_path = lib_dir.join(".meta/library.json");
     assert!(meta_path.exists(), "meta sidecar should exist");
     let meta: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&meta_path).expect("read meta"))

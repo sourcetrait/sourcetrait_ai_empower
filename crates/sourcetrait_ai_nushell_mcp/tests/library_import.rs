@@ -244,7 +244,7 @@ fn commit_happy_path_writes_repo_and_meta() {
     assert!(lib.join("math").join("double.nu").exists());
 
     // Meta records ONLY source_path (no kind discriminant in 0.0.44+).
-    let meta_text = std::fs::read_to_string(lib.join(".nushell_mcp_meta.json")).unwrap();
+    let meta_text = std::fs::read_to_string(lib.join(".meta/library.json")).unwrap();
     let meta: serde_json::Value = serde_json::from_str(&meta_text).unwrap();
     assert_eq!(meta["source_path"].as_str(), Some(src.to_str().unwrap()));
     assert!(
@@ -1021,7 +1021,7 @@ fn new_establishes_library_and_scaffolds_function() {
     assert!(!has_error_path(&r1), "establish should succeed; got {r1}");
     let meta_text = std::fs::read_to_string(
         host.library_dir("scaffolded")
-            .join(".nushell_mcp_meta.json"),
+            .join(".meta/library.json"),
     )
     .unwrap();
     assert!(

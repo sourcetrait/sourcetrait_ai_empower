@@ -4,20 +4,58 @@ use crate::*;
 // Library metadata
 // ============================================================================
 
-/// On-disk `<library>/.nushell_mcp_meta.json` shape. Git-tracked. Lives at the
-/// root of every library and records the agent's `source_path` - the tree the
-/// MCP re-reads on `commit` and sanity-checks on `delete`. One authored library
-/// kind remains, so there is no discriminant; deserialization silently
-/// tolerates (and drops) the legacy `kind` field written by pre-0.0.44 sidecars
-/// (serde ignores unknown fields), so older test-channel libraries hydrate
-/// cleanly.
+/// On-disk `<library>/.meta/library.json` shape (big meta): the call()
+/// surface INDEX. Git-tracked. Carries `source_path` (the agent's tree the
+/// MCP re-reads on `commit` + sanity-checks on `delete`) plus the recursive
+/// module -> function tree with schemas, SANS docs (docs live as sibling
+/// markdown under `.meta/docs/`). Built at commit during validation; read by
+/// info() / call() / inspect() on the hot path instead of re-walking +
+/// re-parsing the canonical `.nu` tree. ONLY call-targets are listed as
+/// `functions` and ONLY modules carrying a call-target (directly or
+/// transitively) appear in `modules` - helper files + helper-only modules are
+/// pruned. Replaces the flat pre-big-meta `.nushell_mcp_meta.json` sidecar;
+/// `#[serde(default)]` on the tree fields lets an establish-time index
+/// (source_path only) deserialize cleanly.
 #[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
-pub(crate) struct LibraryMeta {
+pub(crate) struct LibraryIndex {
     pub source_path: PathBuf,
+    #[serde(default)]
+    pub functions: Vec<IndexFunction>,
+    #[serde(default)]
+    pub modules: Vec<IndexModule>,
 }
 
-/// Filename of the per-library metadata sidecar.
-pub(crate) const META_FILE: &str = ".nushell_mcp_meta.json";
+/// One call-target in the `library.json` index: its name plus the structured
+/// schemas extracted from the PARSED `main` (args) + `resolve` (result)
+/// signatures at commit time. Mirrors `FunctionInfo` sans the summary (which
+/// lives in `.meta/docs/`).
+#[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
+pub(crate) struct IndexFunction {
+    pub name: String,
+    pub args_schema: mcp::JsonObject,
+    pub result_schema: mcp::JsonObject,
+}
+
+/// One module node in the `library.json` index: a single path segment plus its
+/// call-target `functions` and (pruned) `modules`. Pure-helper modules (no
+/// call-target anywhere below) are absent. Mirrors `ModuleInfo` sans summary.
+#[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
+pub(crate) struct IndexModule {
+    pub name: String,
+    #[serde(default)]
+    pub functions: Vec<IndexFunction>,
+    #[serde(default)]
+    pub modules: Vec<IndexModule>,
+}
+
+/// Per-library path (relative to the library dir) of the big-meta index
+/// sidecar. Doubles as the library-detection marker: a subdir with
+/// `.meta/library.json` present IS a registered library (the same key
+/// `hydrate_from_disk` + `enumerate_libraries` test). The `.meta/` segment is a
+/// dotfile, so `copy_dir_recursive` + `validate_walk` skip it (MCP-generated,
+/// never authored, never validated); git still tracks it as part of the signed
+/// canonical subtree.
+pub(crate) const META_FILE: &str = ".meta/library.json";
 
 // ============================================================================
 // Path helpers
@@ -106,18 +144,41 @@ pub(crate) fn library_dir(library: &str) -> PathBuf {
     libraries_dir().join(library)
 }
 
-/// What: path to a library's metadata sidecar
-/// (`<library_dir>/.nushell_mcp_meta.json`).
+/// What: path to a library's big-meta index sidecar
+/// (`<library_dir>/.meta/library.json`).
 ///
-/// Why: the sidecar carries the library's `kind`
-/// (registered/imported) plus the original source_path; both are
-/// needed by the lifecycle ops to drive correct behavior (mirror on
-/// define if registered; re-read on reimport if imported).
+/// Why: the index carries `source_path` (re-read on commit, sanity-checked
+/// on delete) plus the call() surface tree (read by info / call / inspect).
 ///
-/// Where: written by `register_library_impl` + `import_library_impl`
-/// + `reimport_library_impl`; read by `load_meta`.
+/// Where: written by `new_impl` (establish) + `commit_impl` (rebuild); read
+/// by `load_index`.
 pub(crate) fn library_meta_path(library: &str) -> PathBuf {
     library_dir(library).join(META_FILE)
+}
+
+/// What: a library's `.meta/` dir (`<library_dir>/.meta`), holding the
+/// `library.json` index + the `docs/` tree.
+///
+/// Why: one MCP-generated dotfile dir per library; `commit_impl` recreates it
+/// after wiping + copying the authored source (the copy skips dotfiles, so the
+/// authored tree never carries one).
+///
+/// Where: called by `commit_impl` (mkdir + write) and the docs path helper.
+pub(crate) fn library_meta_dir(library: &str) -> PathBuf {
+    library_dir(library).join(".meta")
+}
+
+/// What: a library's doc tree root (`<library_dir>/.meta/docs`). Per-node docs
+/// live at `<docs>/<coord>/{summary.md,details.md}` (coord: root = ``, module =
+/// `<module_path>`, function = `<module_path>/<name>`).
+///
+/// Why: prose is split out of `library.json` so the index stays lean; info()
+/// overlays the one-liner summary, inspect() returns summary + details.
+///
+/// Where: written by `commit_impl`; read by `enumerate_libraries` +
+/// `inspect_impl`.
+pub(crate) fn library_docs_dir(library: &str) -> PathBuf {
+    library_meta_dir(library).join("docs")
 }
 
 /// What: path to a library's root `mod.nu` file.
@@ -461,14 +522,20 @@ pub(crate) fn new_impl(
         })?;
         fs::create_dir_all(&canonical)?;
         fs::write(library_root_modnu_path(library), b"")?;
-        let meta = LibraryMeta {
+        // Establish-time index: source_path only, empty tree. commit()
+        // rebuilds it from the validated source. Writing it under .meta/ is
+        // what makes the library detectable (hydrate / enumerate key on it).
+        fs::create_dir_all(library_meta_dir(library))?;
+        let index = LibraryIndex {
             source_path: sp.to_path_buf(),
+            functions: Vec::new(),
+            modules: Vec::new(),
         };
-        let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
-            phase: "new::serialize_meta".to_string(),
+        let index_bytes = json::to_vec(&index).map_err(|e| Error::Internal {
+            phase: "new::serialize_index".to_string(),
             reason: e.to_string(),
         })?;
-        fs::write(library_meta_path(library), &meta_bytes)?;
+        fs::write(library_meta_path(library), &index_bytes)?;
         run_git(&libraries_dir(), &["add", "--", library])?;
         run_git(
             &libraries_dir(),
@@ -485,8 +552,8 @@ pub(crate) fn new_impl(
         });
     }
 
-    let meta = load_meta(library)?;
-    let sp = meta.source_path.clone();
+    let index = load_index(library)?;
+    let sp = index.source_path.clone();
     let mut created: Vec<String> = Vec::new();
 
     // mkdir -p the module-path chain, additively wiring each level into
@@ -576,23 +643,21 @@ pub(crate) fn is_valid_module_path(s: &str) -> bool {
 // LibraryMeta load helper
 // ============================================================================
 
-/// What: reads + parses `<library>/.nushell_mcp_meta.json`, returning
-/// the deserialized `LibraryMeta`. Returns an io::Error wrapping the
-/// JSON decode error if the file is malformed.
+/// What: reads + parses `<library>/.meta/library.json`, returning the
+/// deserialized `LibraryIndex`. Returns an io::Error wrapping the JSON decode
+/// error if the file is malformed.
 ///
-/// Why: the meta is the source of truth for `kind` (registered vs
-/// imported) and `source_path`; both drive lifecycle decisions
-/// (whether to mirror on define, where to re-read on reimport).
-/// Wrapping JSON-decode errors as io::Error keeps the impl signature
-/// uniform with other library impls.
+/// Why: the index is the source of truth for `source_path` (commit re-read,
+/// delete sanity-check) and the call() surface tree (info / call / inspect).
+/// Wrapping JSON-decode errors as io::Error keeps the impl signature uniform
+/// with other library impls.
 ///
-/// Where: called by `define_function_impl` + `undefine_function_impl`
-/// (to decide whether to mirror) and `reimport_library_impl` (to
-/// recover the source_path).
-pub(crate) fn load_meta(library: &str) -> io::Result<LibraryMeta> {
+/// Where: called by `commit_impl` + `delete_impl` + `new_impl` (source_path)
+/// and `enumerate_libraries` + `call` + `inspect_impl` (the tree).
+pub(crate) fn load_index(library: &str) -> io::Result<LibraryIndex> {
     let bytes = fs::read(library_meta_path(library))?;
     json::from_slice(&bytes)
-        .map_err(|e| io::Error::other(format!("decode meta for {library}: {e}")))
+        .map_err(|e| io::Error::other(format!("decode index for {library}: {e}")))
 }
 
 // ============================================================================
@@ -691,118 +756,103 @@ pub struct LibraryInfo {
     pub functions: Vec<FunctionInfo>,
 }
 
-/// What: scan `source` for `marker` (an `export def <name>`), then
-/// capture the full positional TYPE of its `args` parameter -- the
-/// text between `args:` and the param list's closing `]`. That type
-/// is `record<...>` for a normal function or `nothing` for a
-/// void/no-arg one (item 21); typedef text never contains `]`, so the
-/// first `]` after the marker closes the param list.
+/// What: read `.meta/docs/<coord>/<file>` (summary.md / details.md),
+/// returning "" when the file is absent. `coord` is "" for the library
+/// root, the module path for a module, or `<module_path>/<name>` for a
+/// function.
 ///
-/// Why: info() emits the structured schema by parsing this verbatim
-/// text via `schema::nu_to_args_schema` / `nu_to_result_schema`; the
-/// canonical file is the single source of truth for the call contract.
+/// Why: big meta splits prose out of `library.json` into the docs tree;
+/// info() overlays the one-liner summary and inspect() returns summary +
+/// details, both via this reader. Absent == undocumented == "".
 ///
-/// Where: called twice per function file by `extract_function_schemas`.
-fn positional_type_after(source: &str, marker: &str) -> Option<String> {
-    let marker_at = source.find(marker)?;
-    let tail = &source[marker_at..];
-    let bracket_at = tail.find('[')?;
-    let after_bracket = &tail[bracket_at + 1..];
-    let close_rel = after_bracket.find(']')?;
-    let params = &after_bracket[..close_rel];
-    let colon = params.find(':')?;
-    Some(params[colon + 1..].trim().to_string())
+/// Where: called by `index_function_to_info` / `index_module_to_info` /
+/// `enumerate_libraries` (summary.md) and `inspect_impl` (both files).
+fn read_doc(docs_dir: &std::path::Path, coord: &str, file: &str) -> String {
+    let dir = if coord.is_empty() {
+        docs_dir.to_path_buf()
+    } else {
+        docs_dir.join(coord)
+    };
+    fs::read_to_string(dir.join(file)).unwrap_or_default()
 }
 
-/// What: extract `(args_schema, result_schema)` from a canonical
-/// function file's source. Empty strings on a failed scan - which
-/// cannot happen for files that passed the strict validator; the
-/// degenerate value keeps enumeration total rather than dropping
-/// the function silently.
+/// What: build a `FunctionInfo` (info() node) from an indexed call-target,
+/// overlaying its one-liner summary from `.meta/docs/<coord>/summary.md`.
+/// `parent` is the accumulated module coordinate ("" at the library root).
 ///
-/// Why: info()'s FunctionInfo carries the call contract; the
-/// canonical file is the single source of truth for it.
+/// Why: info()'s envelope carries the summary alongside the schemas; the
+/// schemas come straight from the index (no re-parse), the summary from
+/// the docs tree.
 ///
-/// Where: called by `build_module_tree` for every `<name>.nu`.
-fn extract_function_schemas(source: &str) -> (String, String) {
-    let args = positional_type_after(source, "export def main").unwrap_or_default();
-    let result = positional_type_after(source, "export def resolve").unwrap_or_default();
-    (args, result)
-}
-
-/// What: recursively walk one directory of a canonical library,
-/// returning its (sub)modules and functions, both sorted by name.
-/// Skips dotfiles and `mod.nu` (cascade plumbing, not surface);
-/// only subdirectories carrying a `mod.nu` count as modules.
-///
-/// Why: the on-disk tree IS the module hierarchy (the mod.nu
-/// cascade mirrors it), so a sorted directory walk reproduces the
-/// library -> module -> function structure deterministically.
-///
-/// Where: called by `enumerate_libraries` at each library root and
-/// by itself for nested modules.
-fn build_module_tree(dir: &std::path::Path) -> io::Result<(Vec<ModuleInfo>, Vec<FunctionInfo>)> {
-    let mut entries: Vec<(String, bool)> = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') || name == "mod.nu" {
-            continue;
-        }
-        let ft = entry.file_type()?;
-        if ft.is_dir() {
-            if entry.path().join("mod.nu").exists() {
-                entries.push((name, true));
-            }
-        } else if ft.is_file() && name.ends_with(".nu") {
-            entries.push((name, false));
-        }
+/// Where: called by `index_module_to_info` + `enumerate_libraries`.
+fn index_function_to_info(
+    f: &IndexFunction,
+    docs_dir: &std::path::Path,
+    parent: &str,
+) -> FunctionInfo {
+    let coord = if parent.is_empty() {
+        f.name.clone()
+    } else {
+        format!("{parent}/{}", f.name)
+    };
+    FunctionInfo {
+        name: f.name.clone(),
+        summary: read_doc(docs_dir, &coord, "summary.md"),
+        args_schema: f.args_schema.clone(),
+        result_schema: f.result_schema.clone(),
     }
-    entries.sort();
-    let mut modules = Vec::new();
-    let mut functions = Vec::new();
-    for (name, is_dir) in entries {
-        if is_dir {
-            let (m, f) = build_module_tree(&dir.join(&name))?;
-            let summary = modnu_summary(&dir.join(&name));
-            modules.push(ModuleInfo {
-                name,
-                summary,
-                submodules: m,
-                functions: f,
-            });
-        } else {
-            let source = fs::read_to_string(dir.join(&name))?;
-            let stem = name.trim_end_matches(".nu").to_string();
-            let (args_type, result_type) = extract_function_schemas(&source);
-            let args_schema = nu_to_args_schema(&args_type)
-                .map_err(|e| io::Error::other(format!("{stem}: args schema: {e}")))?;
-            let result_schema = nu_to_result_schema(&result_type)
-                .map_err(|e| io::Error::other(format!("{stem}: result schema: {e}")))?;
-            let (summary, _details, _line) = extract_doc(&source, Some("export def main"));
-            functions.push(FunctionInfo {
-                name: stem,
-                summary,
-                args_schema,
-                result_schema,
-            });
-        }
-    }
-    Ok((modules, functions))
 }
 
-/// What: enumerate every canonical library into the info()
-/// hierarchy. Walks `libraries_dir()` for subdirs carrying the meta
-/// sidecar (the same marker `hydrate_from_disk` keys on), takes the
-/// per-library READ lock while reading that library's meta +
-/// function files (the_user ruling), and builds the recursive node
-/// tree. Libraries sorted by name; a library whose meta or tree
-/// read fails is skipped with a host-stderr note rather than
-/// failing the whole info() call.
+/// What: build a `ModuleInfo` (info() node) from an indexed module,
+/// recursing into submodules and overlaying each node's summary from the
+/// docs tree. `parent` is the accumulated coordinate of this module's
+/// PARENT ("" at the library root), so this module's coord is
+/// `<parent>/<name>`.
 ///
-/// Why: gives the agent a live, always-current view of the call()
-/// surface; the read lock means a concurrent define/reimport can't
-/// tear an enumeration mid-library.
+/// Why: info() mirrors the index tree; the index is the structural source,
+/// the docs tree the prose overlay - no canonical `.nu` walk or parse.
+///
+/// Where: called by `enumerate_libraries` (top modules) and itself.
+fn index_module_to_info(
+    m: &IndexModule,
+    docs_dir: &std::path::Path,
+    parent: &str,
+) -> ModuleInfo {
+    let coord = if parent.is_empty() {
+        m.name.clone()
+    } else {
+        format!("{parent}/{}", m.name)
+    };
+    ModuleInfo {
+        name: m.name.clone(),
+        summary: read_doc(docs_dir, &coord, "summary.md"),
+        submodules: m
+            .modules
+            .iter()
+            .map(|s| index_module_to_info(s, docs_dir, &coord))
+            .collect(),
+        functions: m
+            .functions
+            .iter()
+            .map(|f| index_function_to_info(f, docs_dir, &coord))
+            .collect(),
+    }
+}
+
+/// What: enumerate every canonical library into the info() hierarchy.
+/// Walks `libraries_dir()` for subdirs carrying `.meta/library.json` (the
+/// same marker `hydrate_from_disk` keys on), takes the per-library READ
+/// lock, deserializes the index, and overlays each node's one-liner
+/// summary from the docs tree. NO `.nu` walk or parse - the index is the
+/// authority (big meta). Libraries sorted by name; one whose index fails
+/// to decode is skipped with a host-stderr note rather than failing the
+/// whole info() call.
+///
+/// Why: the hot path reads MCP-generated meta instead of re-deriving the
+/// surface from the filesystem on every call - an organizational helper
+/// file can no longer drop the whole library (the old enumerate bailed on
+/// its schema parse). The read lock means a concurrent commit can't tear
+/// an enumeration mid-library.
 ///
 /// Where: called by `server::tool::NuSh::info` to populate
 /// `InfoEnvelope::libraries`.
@@ -831,28 +881,29 @@ pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo
             Some(l) => Some(l.read().await),
             None => None,
         };
-        let meta = match load_meta(&name) {
-            Ok(m) => m,
+        let index = match load_index(&name) {
+            Ok(i) => i,
             Err(e) => {
                 eprintln!("nushell_mcp: info enumeration skipped {name}: {e}");
                 continue;
             }
         };
-        match build_module_tree(&library_dir(&name)) {
-            Ok((modules, functions)) => {
-                let summary = modnu_summary(&library_dir(&name));
-                out.push(LibraryInfo {
-                    name,
-                    path: meta.source_path.display().to_string(),
-                    summary,
-                    modules,
-                    functions,
-                });
-            }
-            Err(e) => {
-                eprintln!("nushell_mcp: info enumeration skipped {name}: {e}");
-            }
-        }
+        let docs_dir = library_docs_dir(&name);
+        out.push(LibraryInfo {
+            name: name.clone(),
+            path: index.source_path.display().to_string(),
+            summary: read_doc(&docs_dir, "", "summary.md"),
+            modules: index
+                .modules
+                .iter()
+                .map(|m| index_module_to_info(m, &docs_dir, ""))
+                .collect(),
+            functions: index
+                .functions
+                .iter()
+                .map(|f| index_function_to_info(f, &docs_dir, ""))
+                .collect(),
+        });
     }
     out
 }
@@ -876,6 +927,32 @@ pub(crate) struct InspectResult {
 ///
 /// Where: called by `server::tool::inspect::NuSh::inspect` under the
 /// per-library read lock.
+/// What: navigate the index tree to the node at `module_path`, returning its
+/// (functions, modules) slices. Empty path -> the library root. None when a
+/// path segment names no module in the index.
+///
+/// Why: call() + inspect() validate a coordinate against the index (is it a
+/// registered call-target / module?) instead of touching the filesystem - a
+/// helper file (absent from the index) becomes correctly non-addressable.
+///
+/// Where: called by `inspect_impl` and `server::tool::call::NuSh::call`.
+pub(crate) fn index_node<'a>(
+    index: &'a LibraryIndex,
+    module_path: &str,
+) -> Option<(&'a Vec<IndexFunction>, &'a Vec<IndexModule>)> {
+    if module_path.is_empty() {
+        return Some((&index.functions, &index.modules));
+    }
+    let mut fns = &index.functions;
+    let mut mods = &index.modules;
+    for seg in module_path.split('/') {
+        let m = mods.iter().find(|m| m.name == seg)?;
+        fns = &m.functions;
+        mods = &m.modules;
+    }
+    Some((fns, mods))
+}
+
 pub(crate) fn inspect_impl(
     library: &str,
     module_path: &str,
@@ -887,8 +964,7 @@ pub(crate) fn inspect_impl(
             reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
         });
     }
-    let lib_root = library_dir(library);
-    if !lib_root.exists() {
+    if !library_dir(library).exists() {
         return Err(Error::LibraryNotRegistered {
             library: library.to_string(),
         });
@@ -899,43 +975,45 @@ pub(crate) fn inspect_impl(
             reason: "invalid module path".to_string(),
         });
     }
-    let (summary, details) = match name {
+    let index = load_index(library)?;
+    let docs_dir = library_docs_dir(library);
+    // Resolve the coordinate against the index (not the filesystem); the docs
+    // themselves read as "" when the node is undocumented.
+    let coord = match name {
         Some(fn_name) => {
-            let file = call_file_path(library, module_path, fn_name).ok_or_else(|| {
+            let (fns, _) = index_node(&index, module_path).ok_or_else(|| {
                 Error::LibraryInvalidModulePath {
                     module_path: module_path.to_string(),
-                    reason: "library / module_path / name must satisfy identifier rules".to_string(),
+                    reason: "module not found".to_string(),
                 }
             })?;
-            if !file.exists() {
+            if !fns.iter().any(|f| f.name == fn_name) {
                 return Err(Error::FunctionNotDefined {
                     library: library.to_string(),
                     module_path: module_path.to_string(),
                     name: fn_name.to_string(),
                 });
             }
-            let source = fs::read_to_string(&file)?;
-            let (s, d, _) = extract_doc(&source, Some("export def main"));
-            (s, d)
+            if module_path.is_empty() {
+                fn_name.to_string()
+            } else {
+                format!("{module_path}/{fn_name}")
+            }
         }
         None => {
-            let dir = if module_path.is_empty() {
-                lib_root
-            } else {
-                lib_root.join(module_path)
-            };
-            if !dir.exists() {
+            if index_node(&index, module_path).is_none() {
                 return Err(Error::LibraryInvalidModulePath {
                     module_path: module_path.to_string(),
                     reason: "module not found".to_string(),
                 });
             }
-            let source = fs::read_to_string(dir.join("mod.nu")).unwrap_or_default();
-            let (s, d, _) = extract_doc(&source, None);
-            (s, d)
+            module_path.to_string()
         }
     };
-    Ok(InspectResult { summary, details })
+    Ok(InspectResult {
+        summary: read_doc(&docs_dir, &coord, "summary.md"),
+        details: read_doc(&docs_dir, &coord, "details.md"),
+    })
 }
 
 // ============================================================================
@@ -980,6 +1058,25 @@ pub(crate) struct ValidationResult {
     /// `LINT_VIOLATION_CAP` + a `More` sentinel). Populates the formerly
     /// dormant `lint` field of `Error::LibraryViolations`.
     pub lint: Vec<LintViolation>,
+    /// big meta: the library root's call-target functions, built during the
+    /// validation walk. Only meaningful when the result is otherwise clean
+    /// (commit_impl writes the index only after `is_empty()` passes).
+    pub functions: Vec<IndexFunction>,
+    /// big meta: the library root's pruned module tree.
+    pub modules: Vec<IndexModule>,
+    /// big meta: per-node docs collected during the walk (only nodes with a
+    /// non-empty summary or details). commit_impl writes them under
+    /// `.meta/docs/<coord>/`.
+    pub docs: Vec<DocEntry>,
+}
+
+/// big meta: one node's prose, keyed by its docs coordinate ("" = library
+/// root, `<module_path>` = module, `<module_path>/<name>` = function).
+#[derive(Debug, Clone)]
+pub(crate) struct DocEntry {
+    pub coord: String,
+    pub summary: String,
+    pub details: String,
 }
 
 impl ValidationResult {
@@ -1085,15 +1182,6 @@ fn check_summary_length(
     }
 }
 
-/// leg 4: the summary (doc one-liner) of a module/library = its mod.nu
-/// leading comment's first line. Empty when the dir has no mod.nu or no
-/// leading comment. Used by the info() enumeration + inspect().
-fn modnu_summary(dir: &std::path::Path) -> String {
-    fs::read_to_string(dir.join("mod.nu"))
-        .map(|s| extract_doc(&s, None).0)
-        .unwrap_or_default()
-}
-
 /// Walk every `.nu` under `root`. Apply the strict per-file shape:
 /// - `mod.nu`: only `export use ./<file>.nu` or `export module <name>` lines
 ///   (plus blank lines and `#` comments). Body-lint NOT applied (no agent
@@ -1107,8 +1195,10 @@ fn modnu_summary(dir: &std::path::Path) -> String {
 /// Each file is parsed through `nu_parser::parse` (in a
 /// `module __v_<stem> { ... }` wrapper) so syntax errors land as
 /// structural violations with line numbers. Dotfile entries (e.g.
-/// `.git`, `.nushell_mcp_meta.json`) are skipped. Returns ALL structural
-/// violations -- no bail-on-first; no auto-fix.
+/// `.git`, `.meta/`) are skipped. Returns ALL structural violations -- no
+/// bail-on-first; no auto-fix. ALSO assembles the big-meta index + docs into
+/// `result` (functions / modules / docs) during the same walk (built once at
+/// commit, read thereafter by info / call / inspect).
 pub(crate) fn validate_library_source(
     root: &std::path::Path,
     engine: &ParseEngine,
@@ -1117,8 +1207,13 @@ pub(crate) fn validate_library_source(
         structural: Vec::new(),
         structural_more: false,
         lint: Vec::new(),
+        functions: Vec::new(),
+        modules: Vec::new(),
+        docs: Vec::new(),
     };
-    validate_walk(root, root, engine, &mut result)?;
+    let (modules, functions) = validate_walk(root, root, engine, "", &mut result)?;
+    result.modules = modules;
+    result.functions = functions;
     // leg 4: cap both lists at LINT_VIOLATION_CAP. Structural early-stops
     // the walk (see validate_walk) so a hard-broken tree rejects without
     // parsing every file; truncate + flag `structural_more`. The doc
@@ -1135,35 +1230,109 @@ pub(crate) fn validate_library_source(
     Ok(result)
 }
 
+/// Recursive validate + index walk over one directory. Validates every `.nu`
+/// (mod.nu + function files + the reserved-terms scan) AND assembles the
+/// big-meta tree for this level: the dir's own docs (its mod.nu leading
+/// comment, keyed at `module_path`), the call-target `functions` here, and the
+/// surviving (call-target-bearing) submodules. Returns the dir's
+/// `(modules, functions)`; the top call yields the library-root tree. Entries
+/// are sorted for a deterministic index order. The structural cap early-stops
+/// the walk (commit rejects on violations, so a partial index is harmless).
 fn validate_walk(
     root: &std::path::Path,
     dir: &std::path::Path,
     engine: &ParseEngine,
+    module_path: &str,
     result: &mut ValidationResult,
-) -> io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        // leg 4: stop on cap. Once structural has exceeded the cap the
-        // commit rejects regardless, so abandon the walk rather than parse
-        // the rest of the tree (validate_library_source truncates + flags
-        // structural_more).
-        if result.structural.len() > LINT_VIOLATION_CAP {
-            return Ok(());
+) -> io::Result<(Vec<IndexModule>, Vec<IndexFunction>)> {
+    // This dir's own docs: its mod.nu leading comment, keyed at `module_path`
+    // ("" == the library root). Pushed only when non-empty.
+    let modnu = dir.join("mod.nu");
+    if modnu.exists() {
+        let src = fs::read_to_string(&modnu).unwrap_or_default();
+        let (summary, details, _) = extract_doc(&src, None);
+        if !summary.is_empty() || !details.is_empty() {
+            result.docs.push(DocEntry {
+                coord: module_path.to_string(),
+                summary,
+                details,
+            });
         }
+    }
+
+    // Collect + sort entries (dotfiles skipped, incl. the MCP `.meta/`).
+    let mut dirs: Vec<(String, PathBuf)> = Vec::new();
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
+    for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        let name = entry.file_name();
-        let name_lossy = name.to_string_lossy();
-        if name_lossy.starts_with('.') {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
             continue;
         }
         let path = entry.path();
         let ft = entry.file_type()?;
         if ft.is_dir() {
-            validate_walk(root, &path, engine, result)?;
+            dirs.push((name, path));
         } else if ft.is_file() && path.extension().map(|e| e == "nu").unwrap_or(false) {
-            validate_one_file(root, &path, engine, result)?;
+            files.push((name, path));
         }
     }
-    Ok(())
+    dirs.sort();
+    files.sort();
+
+    let mut functions: Vec<IndexFunction> = Vec::new();
+    let mut modules: Vec<IndexModule> = Vec::new();
+
+    // Function (+ mod.nu) files at this level. mod.nu validates but yields no
+    // IndexFunction; a call-target yields one plus its docs at the function
+    // coordinate.
+    for (name, path) in &files {
+        if result.structural.len() > LINT_VIOLATION_CAP {
+            return Ok((modules, functions));
+        }
+        let stem = name.trim_end_matches(".nu");
+        let coord = if module_path.is_empty() {
+            stem.to_string()
+        } else {
+            format!("{module_path}/{stem}")
+        };
+        if let Some((idx_fn, summary, details)) = validate_one_file(root, path, engine, result)? {
+            if !summary.is_empty() || !details.is_empty() {
+                result.docs.push(DocEntry {
+                    coord,
+                    summary,
+                    details,
+                });
+            }
+            functions.push(idx_fn);
+        }
+    }
+
+    // Subdirectory modules: only dirs carrying mod.nu are modules; only those
+    // with a call-target below them survive the prune.
+    for (name, path) in &dirs {
+        if result.structural.len() > LINT_VIOLATION_CAP {
+            return Ok((modules, functions));
+        }
+        if !path.join("mod.nu").exists() {
+            continue;
+        }
+        let child_path = if module_path.is_empty() {
+            name.clone()
+        } else {
+            format!("{module_path}/{name}")
+        };
+        let (sub_mods, sub_fns) = validate_walk(root, path, engine, &child_path, result)?;
+        if !sub_fns.is_empty() || !sub_mods.is_empty() {
+            modules.push(IndexModule {
+                name: name.clone(),
+                functions: sub_fns,
+                modules: sub_mods,
+            });
+        }
+    }
+
+    Ok((modules, functions))
 }
 
 fn validate_one_file(
@@ -1171,7 +1340,7 @@ fn validate_one_file(
     path: &std::path::Path,
     engine: &ParseEngine,
     result: &mut ValidationResult,
-) -> io::Result<()> {
+) -> io::Result<Option<(IndexFunction, String, String)>> {
     let source = fs::read_to_string(path)?;
     let rel = path
         .strip_prefix(root)
@@ -1184,7 +1353,9 @@ fn validate_one_file(
         .unwrap_or("unknown");
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
     let is_mod = path.file_name().map(|n| n == "mod.nu").unwrap_or(false);
-    if is_mod {
+    // mod.nu validates but is no call-target (None); a function file yields the
+    // IndexFunction + (summary, details) when it is a clean call-target.
+    let extracted = if is_mod {
         validate_mod_nu_ast(
             &rel,
             stem,
@@ -1194,6 +1365,7 @@ fn validate_one_file(
             &mut result.structural,
             &mut result.lint,
         );
+        None
     } else {
         validate_function_file_ast(
             &rel,
@@ -1203,12 +1375,12 @@ fn validate_one_file(
             engine,
             &mut result.structural,
             &mut result.lint,
-        );
-    }
+        )
+    };
     // leg 1b: the reserved-terms ban applies to EVERY .nu file -- `call`
     // and `resolve` may appear only as a call-target's exported sentinel.
     scan_reserved_terms(&rel, stem, &source, parent, engine, &mut result.structural);
-    Ok(())
+    Ok(extracted)
 }
 
 /// leg 1b: the reserved-terms ban. `call` and `resolve` may appear in a
@@ -1567,7 +1739,7 @@ fn validate_function_file_ast(
     engine: &ParseEngine,
     violations: &mut Vec<Violation>,
     lint: &mut Vec<LintViolation>,
-) {
+) -> Option<(IndexFunction, String, String)> {
     // leg 4: the function summary (the doc one-liner above `export def
     // main`) must be <= 80 chars. Lint (capped + More), not structural.
     check_summary_length(rel, source, Some("export def main"), lint);
@@ -1590,7 +1762,7 @@ fn validate_function_file_ast(
     if !working_set.parse_errors.is_empty() {
         // Don't try to walk a half-parsed AST. Leave structural checks
         // for the next round; parse errors already cover the file.
-        return;
+        return None;
     }
 
     // 2. Find the wrapper module. The parser registers it under
@@ -1604,7 +1776,7 @@ fn validate_function_file_ast(
                 line: 0,
                 message: "internal: wrapper module not found after parse".to_string(),
             });
-            return;
+            return None;
         }
     };
     let module: &nu::Module = working_set.get_module(module_id);
@@ -1638,7 +1810,7 @@ fn validate_function_file_ast(
         // Organizational file: a plain module (helper defs, export const,
         // export def). No call/resolve sentinel -> no contract to enforce;
         // parse-correctness (checked above) is sufficient here. (leg 1)
-        return;
+        return None;
     }
 
     // 4. Call-target: enforce the full call / resolve / main contract.
@@ -1737,6 +1909,39 @@ fn validate_function_file_ast(
             violations,
         );
     }
+
+    // big meta: extract the IndexFunction (schemas from the PARSED main +
+    // resolve signatures, rendered via SyntaxShape Display -> nu_to_*_schema -
+    // full fidelity, all 14 scalars incl. path/directory/glob) + the function
+    // docs (main's native description / extra_description). Only for a
+    // call-target with both main + resolve present + a leading positional; any
+    // miss returns None (the structural checks above recorded the defect, and
+    // commit rejects before the index is written).
+    let (Some(main_id), Some(resolve_id)) = (main_decl, resolve_decl) else {
+        return None;
+    };
+    let main_sig = working_set.get_decl(main_id).signature();
+    let resolve_sig = working_set.get_decl(resolve_id).signature();
+    // Function docs: the comment above `export def main`, split first-line
+    // (summary) / rest (details). nushell's native `description` folds a
+    // no-blank-line comment block into ONE string (no first-line/rest split),
+    // so use extract_doc - it delivers the_user's stated doc structure (FIRST
+    // LINE = one-liner, REST = full doc) and the one-line-summary ethos, and is
+    // already the mod.nu doc reader, keeping function + module docs uniform.
+    let (summary, details, _) = extract_doc(source, Some("export def main"));
+    let args_str = main_sig.required_positional.first()?.shape.to_string();
+    let result_str = resolve_sig.required_positional.first()?.shape.to_string();
+    let args_schema = nu_to_args_schema(&args_str).ok()?;
+    let result_schema = nu_to_result_schema(&result_str).ok()?;
+    Some((
+        IndexFunction {
+            name: stem.to_string(),
+            args_schema,
+            result_schema,
+        },
+        summary,
+        details,
+    ))
 }
 
 /// Confirm the decl's first required positional is named `args` with a
@@ -2222,6 +2427,50 @@ fn parse_git_changes(porcelain: &str) -> Vec<ChangedPath> {
     changes
 }
 
+/// What: write a library's `.meta/` from a clean validation result -
+/// `.meta/library.json` (source_path + the index tree built during the walk)
+/// + `.meta/docs/<coord>/{summary,details}.md` (only the non-empty parts).
+///
+/// Why: big meta makes `.meta/` the authority for the call() surface; commit
+/// is the only place it is (re)built, right after the canonical subtree is
+/// rebuilt from the authored source.
+///
+/// Where: called by `commit_impl` after `copy_dir_recursive`, before the git
+/// add / commit.
+fn write_meta(
+    name: &str,
+    source_path: &std::path::Path,
+    result: &ValidationResult,
+) -> Result<(), Error> {
+    fs::create_dir_all(library_meta_dir(name))?;
+    let index = LibraryIndex {
+        source_path: source_path.to_path_buf(),
+        functions: result.functions.clone(),
+        modules: result.modules.clone(),
+    };
+    let index_bytes = json::to_vec(&index).map_err(|e| Error::Internal {
+        phase: "commit::serialize_index".to_string(),
+        reason: e.to_string(),
+    })?;
+    fs::write(library_meta_path(name), &index_bytes)?;
+    let docs_dir = library_docs_dir(name);
+    for doc in &result.docs {
+        let dir = if doc.coord.is_empty() {
+            docs_dir.clone()
+        } else {
+            docs_dir.join(&doc.coord)
+        };
+        fs::create_dir_all(&dir)?;
+        if !doc.summary.is_empty() {
+            fs::write(dir.join("summary.md"), doc.summary.as_bytes())?;
+        }
+        if !doc.details.is_empty() {
+            fs::write(dir.join("details.md"), doc.details.as_bytes())?;
+        }
+    }
+    Ok(())
+}
+
 /// Implementation for `commit(library)` - the validate-and-promote
 /// UPSERT (leg 3): re-reads the source tree from the meta's source_path,
 /// runs the strict structural + call/resolve/main contract validator,
@@ -2241,8 +2490,8 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
             library: name.to_string(),
         });
     }
-    let meta = load_meta(name)?;
-    let source_path = meta.source_path.clone();
+    let index = load_index(name)?;
+    let source_path = index.source_path.clone();
     if !source_path.exists() || !source_path.is_dir() {
         return Err(Error::LibrarySourceMissing {
             path: source_path.display().to_string(),
@@ -2256,14 +2505,13 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
             lint: result.lint,
         });
     }
-    // Rebuild the canonical subtree from the validated source.
+    // Rebuild the canonical subtree from the validated source. copy_dir_
+    // recursive skips dotfiles, so the prior .meta/ is gone with the wipe and
+    // the authored source never carries one; write_meta then lays the fresh
+    // big-meta index + docs back down.
     fs::remove_dir_all(&lib_root)?;
     copy_dir_recursive(&source_path, &lib_root)?;
-    let meta_bytes = json::to_vec(&meta).map_err(|e| Error::Internal {
-        phase: "commit::serialize_meta".to_string(),
-        reason: e.to_string(),
-    })?;
-    fs::write(library_meta_path(name), &meta_bytes)?;
+    write_meta(name, &source_path, &result)?;
     // Stage, then diff. Idempotent: nothing staged -> no commit (item 10).
     run_git(&libraries_dir(), &["add", "--", name])?;
     let porcelain = run_git_output(&libraries_dir(), &["status", "--porcelain", "--", name])?;
@@ -2321,8 +2569,8 @@ pub(crate) fn delete_impl(
             library: name.to_string(),
         });
     }
-    let meta = load_meta(name)?;
-    let registered = meta.source_path.to_string_lossy().into_owned();
+    let index = load_index(name)?;
+    let registered = index.source_path.to_string_lossy().into_owned();
     if registered != source_path {
         return Err(Error::LibrarySourcePathMismatch {
             library: name.to_string(),

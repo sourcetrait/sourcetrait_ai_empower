@@ -342,7 +342,7 @@ fn inspect_returns_function_doc() {
     write_source(
         &src,
         "math/double.nu",
-        "export def call [args: record<x: int>] { { out: ($args.x * 2) } }\nexport def resolve [args: record<out: int>] { $args }\n# doubles its input\n# returns the doubled value\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "export def call [args: record<x: int>] { { out: ($args.x * 2) } }\nexport def resolve [args: record<out: int>] { $args }\n# doubles its input\n#\n# returns the doubled value\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib"}));
     let resp = host.call_tool(

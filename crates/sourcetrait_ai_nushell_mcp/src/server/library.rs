@@ -1148,11 +1148,13 @@ fn extract_doc(source: &str, marker: Option<&str>) -> (String, String, usize) {
             t.strip_prefix(' ').unwrap_or(t).to_string()
         })
         .collect();
-    let summary = stripped.first().cloned().unwrap_or_default();
-    let details = if stripped.len() > 1 {
-        stripped[1..].join("\n")
-    } else {
-        String::new()
+    // nushell's rule (build_desc): join the comment lines, split on the first
+    // blank line (an empty `#` line). Before -> summary; after -> details; no
+    // blank -> all summary. Mirrors `Signature.description`/`extra_description`.
+    let joined = stripped.join("\n");
+    let (summary, details) = match joined.split_once("\n\n") {
+        Some((s, d)) => (s.to_string(), d.to_string()),
+        None => (joined, String::new()),
     };
     (summary, details, doc_idxs[0] + 1)
 }
@@ -1922,13 +1924,11 @@ fn validate_function_file_ast(
     };
     let main_sig = working_set.get_decl(main_id).signature();
     let resolve_sig = working_set.get_decl(resolve_id).signature();
-    // Function docs: the comment above `export def main`, split first-line
-    // (summary) / rest (details). nushell's native `description` folds a
-    // no-blank-line comment block into ONE string (no first-line/rest split),
-    // so use extract_doc - it delivers the_user's stated doc structure (FIRST
-    // LINE = one-liner, REST = full doc) and the one-line-summary ethos, and is
-    // already the mod.nu doc reader, keeping function + module docs uniform.
-    let (summary, details, _) = extract_doc(source, Some("export def main"));
+    // Function docs: nushell's native description / extra_description for the
+    // `main` command (the parser's build_desc splits the comment on the first
+    // blank line). extract_doc applies the same rule to mod.nu modules.
+    let summary = main_sig.description.clone();
+    let details = main_sig.extra_description.clone();
     let args_str = main_sig.required_positional.first()?.shape.to_string();
     let result_str = resolve_sig.required_positional.first()?.shape.to_string();
     let args_schema = nu_to_args_schema(&args_str).ok()?;

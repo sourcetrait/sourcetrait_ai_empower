@@ -5,113 +5,15 @@
 - [`interact()`](#interact) Evaluate a typed nushell closure body on a persistent stateful worker.
 - [`call()`](#call) Invoke a committed library function with typed args.
 - [`rerun()`](#rerun) Re-evaluate a cached `run()` body with fresh args.
-- [`processes()`](#processes) Snapshot every in-flight tool call on the host.
-- [`kill()`](#kill) Cancel an in-flight call by its nonce.
-- [`info()`](#info) Versions, plugins, and the live library/module/function hierarchy with summaries + schemas.
-- [`inspect()`](#inspect) Full doc (summary + details) + schemas for one node.
-- [`new()`](#new) Scaffold a library / module / function into the agent's source tree.
-- [`commit()`](#commit) Validate the source tree and upsert it into the signed store.
-- [`delete()`](#delete) Guarded drop of a library.
-- [`learn()`](#learn) (Re)generate the `/nu` skill to `<harness_dir>/skills/nu/SKILL.md`.
+- [`processes()`](#processes) List in-flight MCP tool usage.
+- [`kill()`](#kill) Cancel an in-flight usage by its nonce.
+- [`info()`](#info) Versions, plugins, and libraries summary.
+- [`inspect()`](#inspect) Detailed documentation of a specific callable library, module, function.
+- [`new()`](#new) Scaffold a callable library / module / function into the agent's source-code repository.
+- [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
+- [`delete()`](#delete) Delete a library.
+- [`learn()`](#learn) Generate the latest `/nu` SKILL.md.
 
-## Schemas
-
-`args_schema` and `result_schema` are structured JSON objects mapping
-each field name to its type. The type vocabulary:
-
-- scalar: a type-name string - one of `int`, `float`, `string`, `bool`,
-  `datetime`, `duration`, `filesize`, `binary`, `range`, `number`,
-  `glob`, `cell-path`, `path`, `directory`.
-- record: a nested object, e.g. `{ "point": { "x": "int", "y": "int" } }`.
-- table: an array holding one record, e.g.
-  `[{ "name": "string", "age": "int" }]`.
-- list: an array holding one element type, e.g. `["string"]`.
-- oneof (type union): the reserved-key object
-  `{ "oneof<>": [ <type>, ... ] }`; the everyday case is value
-  nullability, `{ "oneof<>": ["int", null] }`.
-- nothing: the JSON `null` literal (only as a `oneof<>` member).
-- void: an empty object `{}` as the entire `args_schema` (a no-args
-  function) or the entire `result_schema` (a no-value return).
-
-Records and tables are open - extra fields are accepted - and every
-declared field is required and is type-checked to its full depth.
-
-## Library authoring
-
-A library is a directory tree the agent edits, promoted into the MCP's
-signed canonical store by `commit`. Establish + scaffold with `new`, edit
-the files in place, then `commit` to validate + upsert; `delete` drops
-it. `call` invokes a committed function; `info` / `inspect` are the live
-index of what exists, each node's schemas, and its docs.
-
-### Function files: call / resolve / main
-
-A callable function lives at `<module_path>/<name>.nu` and exports
-EXACTLY `call`, `resolve`, `main`:
-
-```nu
-export def call [args: record<x: int>] {
-    { out: ($args.x * 2) }            # your logic; carries the ARGS schema
-}
-
-export def resolve [args: record<out: int>] {
-    $args                             # carries the RESULT schema (typecheck)
-}
-
-# <summary line, <= 80 chars>
-#
-# <optional details, any length>
-export def main [args: record<x: int>] {
-    resolve (call $args)              # AST-locked glue; you own only the doc
-}
-```
-
-The `args` positional is `record<...>` with real fields, or `nothing`
-for a void function; a bare `record<>` is the unfleshed skeleton and is
-rejected. `call` and `resolve` are RESERVED - they may appear only as
-these exported sentinels, never as any other def / module / directory /
-file / parameter / record-key / cell-path-member name. A `.nu` file with
-NEITHER sentinel is organizational (free `export def` / `export const`
-helpers, not a call-target); `mod.nu` may carry such helpers too.
-
-### The mod.nu cascade
-
-Each directory's `mod.nu` wires its children: `export use ./<name>.nu`
-(re-export a sibling function / helper file) and `export module <name>`
-(re-export a sibling subdirectory, which has its own `mod.nu`).
-
-### Node documentation + inference reduction
-
-Document a FUNCTION via the comment block directly above its
-`export def main`; a MODULE or the LIBRARY via its `mod.nu` LEADING
-comment. The first blank comment line splits the block: SUMMARY (<= 80
-chars, the only hard rule; surfaced by `info`) then DETAILS (any length;
-surfaced by `inspect`).
-
-Write for INFERENCE REDUCTION. The reader already has, for free, the
-library name, module path, function name, argument field names and types,
-result field names and types, and the summaries of the enclosing library
-and modules. Spend the summary on what those do NOT convey - units, side
-effects, what counts as "valid", ordering / edge / failure behavior - not
-a restatement of the coordinate or the schema. Details carry the rest.
-
-## Recursive globs
-
-A `*` segment matches one level; `**` recurses to all depths. Build the
-pattern with `path join` (a leading-`/` literal trips the path lint):
-
-```nu
-glob ($args.root | path join "**" "*")
-```
-
-The result INCLUDES the root dir itself, and returns files as well as
-directories (nu 0.113.1; `**` and `**/*` behave the same). For "every
-subdirectory below `<root>`", filter to dirs and drop the root:
-
-```nu
-glob ($args.root | path join "**" "*")
-| where {|p| (($p | path type) == "dir") and ($p != $args.root) }
-```
 
 ## `run()`
 *Evaluate a typed nushell closure body on a stateless worker.*
@@ -192,10 +94,6 @@ Output (partial):
 ## `interact()`
 *Evaluate a typed nushell closure body on a persistent stateful worker.*
 
-Env mutations, `cd`, and top-level `def`s persist across calls; `run()`
-state does not leak in. For administrative, stateful sessions; use
-`run()` for everything else.
-
 ### arguments
 
 Schema (partial):
@@ -250,10 +148,6 @@ Output (partial):
 
 ## `call()`
 *Invoke a committed library function with typed args.*
-
-Discover the live targets + their schemas with [`info()`](#info) /
-[`inspect()`](#inspect); `module_path` is empty for a library-root
-function.
 
 ### arguments
 
@@ -347,10 +241,6 @@ Output (partial):
 ## `processes()`
 *Snapshot every in-flight tool call on the host.*
 
-Pair with [`kill()`](#kill) to cancel a specific call. Entries are
-`{nonce, tool, started_at, args, ...}`: `rerun` adds `rerun_id`, `call`
-adds a flat `path` (`library:module/path:name`). Match against your own
-send-set via `args`.
 
 ### arguments
 
@@ -484,24 +374,8 @@ Output (partial):
 }
 ```
 
-The `libraries` hierarchy is the live, version-matched `call()` surface:
-each library carries `path` (the editable source dir) + a one-line
-`summary` + `modules` + root-level `functions`; each module carries
-`summary` + `submodules` + `functions`; each function carries its
-one-line `summary` + structured `args_schema` + `result_schema` (a
-void-args function reads `{}`). A library HAS modules; a module MAY HAVE
-submodules. `plugins` are positional `[name, version]` pairs (version is
-`null` when the plugin reports none). For a node's full details, call
-`inspect()`.
-
 ## `inspect()`
 *Full doc (summary + details) + schemas for one node.*
-
-Returns the single-node descriptor `{library, module_path, name?,
-summary, args_schema?, result_schema?, details}` - `name` and the schemas
-are present only for a function; `details` is last. Empty strings when
-undocumented. Omit `name` to inspect a module; omit both `name` and
-`module_path` for the library root.
 
 ### arguments
 
@@ -547,11 +421,6 @@ Output (partial):
 ## `new()`
 *Scaffold a library / module / function into the agent's source tree.*
 
-The FIRST call for a `library` establishes it - `source_path` is required
-then and immutable after. Add a module with `module_path`; add a
-call/resolve/main skeleton with `module_path` + `name`. Additive: it
-refuses to scaffold over an existing leaf. Edit the files, then
-[`commit()`](#commit). Returns `{source_path, created}`.
 
 ### arguments
 
@@ -596,12 +465,6 @@ Output (partial):
 
 ## `commit()`
 *Validate the source tree and upsert it into the signed canonical store.*
-
-Re-reads the recorded source_path, validates (structure + the
-call/resolve/main contract + reserved terms + the summary-length rule),
-and rebuilds the generated index + docs. Idempotent (a no-change resync
-returns all-empty). Returns the changed paths grouped by kind; rejects
-with `library::violations`.
 
 ### arguments
 

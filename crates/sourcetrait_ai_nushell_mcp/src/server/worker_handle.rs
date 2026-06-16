@@ -68,7 +68,7 @@ impl WorkerHandle {
     /// step fails.
     ///
     /// Why: the Hello handshake fails fast on version skew (e.g. an
-    /// older worker binary lingering in `~/app/bin`); inherit stderr
+    /// older worker binary lingering in `~/.sys/app/bin`); inherit stderr
     /// so worker panics + nu errors surface in the host's stderr
     /// stream for debugging. Mode is set at spawn time, immutable for
     /// the worker's life.

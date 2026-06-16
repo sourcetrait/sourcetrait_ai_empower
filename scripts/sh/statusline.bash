@@ -8,7 +8,7 @@
 # exposed in its per-turn context. The render is the primary concern; the
 # write must never block it.
 
-STATE_DIR="$HOME/sys/.claude/state"
+STATE_DIR="$CLAUDE_CONFIG_DIR/state"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
 # Read stdin once; reuse for both consumers.

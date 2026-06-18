@@ -1,4 +1,4 @@
-export def call [args: record<out_dir: string, picks_path: string, orientation_out_path: string>] {
+export def main [args: record<out_dir: string, picks_path: string, orientation_out_path: string>]: nothing -> record<written_path: string, picks_included: int, picks_missing: list<string>, byte_count: int> {
     let all_picks = (open --raw $args.picks_path | decode utf-8 | from json)
 
     def slug [pattern: string] {
@@ -69,12 +69,4 @@ export def call [args: record<out_dir: string, picks_path: string, orientation_o
         picks_missing: $missing
         byte_count: ($final_text | str length)
     }
-}
-
-export def resolve [args: record<written_path: string, picks_included: int, picks_missing: list<string>, byte_count: int>] {
-    $args
-}
-
-export def main [args: record<out_dir: string, picks_path: string, orientation_out_path: string>] {
-    resolve (call $args)
 }

@@ -1,4 +1,9 @@
-export def call [args: record<dir: string>] {
+# Memory snakes present in a KB dir (MEMORY.md excluded).
+#
+# Globs <dir>/*.md, drops the MEMORY.md index, strips the .md extension, returns
+# the bare snakes sorted. The source of truth for which memories exist on disk;
+# works on any fae's live or repo memory dir via the dir arg.
+export def main [args: record<dir: string>]: nothing -> record<names: list<string>> {
     let names = (
         glob ($args.dir | path join "*.md")
         | each {|p| $p | path basename }
@@ -7,17 +12,4 @@ export def call [args: record<dir: string>] {
         | sort
     )
     { names: $names }
-}
-
-export def resolve [args: record<names: list<string>>] {
-    $args
-}
-
-# Memory snakes present in a KB dir (MEMORY.md excluded).
-#
-# Globs <dir>/*.md, drops the MEMORY.md index, strips the .md extension, returns
-# the bare snakes sorted. The source of truth for which memories exist on disk;
-# works on any fae's live or repo memory dir via the dir arg.
-export def main [args: record<dir: string>] {
-    resolve (call $args)
 }

@@ -1,6 +1,17 @@
 use ./classify.nu *
 
-export def call [args: record<live: string, repo: string, direction: string>] {
+# Guarded directional live<->repo memory mirror (explicit direction, no default).
+#
+# direction is "live_to_repo" (the normal export) or "repo_to_live" (fresh-clone
+# hydration). Verify-then-act, all-or-nothing: classifies each file via git into
+# add / modify / delete; ABORTS (proceeded=false, no changes) when unsafe -
+# unsafe.modify_conflict (a modify whose destination copy is newer) or
+# unsafe.mass_delete (deletes while source has under half the files - the
+# un-hydrated guard). On a safe run it copies adds + safe modifies and git-rm's
+# committed deletes (recoverable via history), returning the lists plus a
+# warnings record (resurrected / untracked_stray / mtime_skew) for after-action
+# review. The git-synced repo is never edited directly - edit live, mirror down.
+export def main [args: record<live: string, repo: string, direction: string>]: nothing -> record<direction: string, proceeded: bool, added: list<string>, modified: list<string>, deleted: list<string>, warnings: record<resurrected: table<file: string, live_mtime: datetime>, untracked_stray: table<file: string, repo_mtime: datetime>, mtime_skew: table<file: string, live_mtime: datetime, repo_mtime: datetime>>, unsafe: record<modify_conflict: table<file: string, live_mtime: datetime, repo_mtime: datetime>, mass_delete: table<file: string, repo_mtime: datetime>>> {
     let dir = $args.direction
     if (($dir != "live_to_repo") and ($dir != "repo_to_live")) {
         error make {msg: $"invalid direction '($dir)': expected live_to_repo or repo_to_live"}
@@ -50,23 +61,4 @@ export def call [args: record<live: string, repo: string, direction: string>] {
         }
         {direction: $dir, proceeded: true, added: ($adds | get file), modified: ($safe_mods | get file), deleted: ($deletes | get file), warnings: $warnings, unsafe: $unsafe}
     }
-}
-
-export def resolve [args: record<direction: string, proceeded: bool, added: list<string>, modified: list<string>, deleted: list<string>, warnings: record<resurrected: table<file: string, live_mtime: datetime>, untracked_stray: table<file: string, repo_mtime: datetime>, mtime_skew: table<file: string, live_mtime: datetime, repo_mtime: datetime>>, unsafe: record<modify_conflict: table<file: string, live_mtime: datetime, repo_mtime: datetime>, mass_delete: table<file: string, repo_mtime: datetime>>>] {
-    $args
-}
-
-# Guarded directional live<->repo memory mirror (explicit direction, no default).
-#
-# direction is "live_to_repo" (the normal export) or "repo_to_live" (fresh-clone
-# hydration). Verify-then-act, all-or-nothing: classifies each file via git into
-# add / modify / delete; ABORTS (proceeded=false, no changes) when unsafe -
-# unsafe.modify_conflict (a modify whose destination copy is newer) or
-# unsafe.mass_delete (deletes while source has under half the files - the
-# un-hydrated guard). On a safe run it copies adds + safe modifies and git-rm's
-# committed deletes (recoverable via history), returning the lists plus a
-# warnings record (resurrected / untracked_stray / mtime_skew) for after-action
-# review. The git-synced repo is never edited directly - edit live, mirror down.
-export def main [args: record<live: string, repo: string, direction: string>] {
-    resolve (call $args)
 }

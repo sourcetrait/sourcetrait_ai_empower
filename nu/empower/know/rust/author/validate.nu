@@ -1,4 +1,4 @@
-export def call [args: record<out_dir: string, picks_batch_path: string>] {
+export def main [args: record<out_dir: string, picks_batch_path: string>]: nothing -> record<valid_count: int, failed_count: int, valid_patterns: list<string>, failed_patterns: list<string>, failed_details: table<pattern: string, reason: string, bytes: int>> {
     let picks = (open --raw $args.picks_batch_path | decode utf-8 | from json)
 
     def slug [pattern: string] {
@@ -44,12 +44,4 @@ export def call [args: record<out_dir: string, picks_batch_path: string>] {
         failed_patterns: ($failed | get pattern)
         failed_details: ($failed | each {|f| {pattern: $f.pattern, reason: $f.reason, bytes: $f.bytes}})
     }
-}
-
-export def resolve [args: record<valid_count: int, failed_count: int, valid_patterns: list<string>, failed_patterns: list<string>, failed_details: table<pattern: string, reason: string, bytes: int>>] {
-    $args
-}
-
-export def main [args: record<out_dir: string, picks_batch_path: string>] {
-    resolve (call $args)
 }

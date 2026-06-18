@@ -1,4 +1,12 @@
-export def call [args: record<live: string, repo: string>] {
+# KB integrity audit over the token-form ragref memory store (p1-p5 envelope).
+#
+# p1 frontmatter (name==snake, description present + no triple-dash, meta
+# complete), p2 refs (dangling = a `## ref` token whose base memory is missing;
+# orphans = memories no ref points at), p3 index (MEMORY.md first-bullet token
+# coverage), p4 mirror (live<->repo sha drift), p5 MEMORY.md size vs cap. Parses
+# the {implied:/adhoc:} token forms (shards + granularity); the retired wikilink
+# / mem: / MEMORY_*_INDEX machinery is gone.
+export def main [args: record<live: string, repo: string>]: nothing -> record<counts: record<memories: int, indexed: int>, p1_frontmatter: record<bad_frontmatter: list<string>, name_missing: list<string>, name_mismatch: table<file: string, name: string, snake: string>, desc_missing: list<string>, desc_tripledash: list<string>, meta_incomplete: list<string>>, p2_refs: record<dangling: table<from: string, base: string>, orphan_count: int, orphans: list<string>>, p3_index: record<unindexed: list<string>, broken: table<idx: string, missing: string>>, p4_mirror: record<only_live: list<string>, only_repo: list<string>, sha_mismatch: table<file: string>>, p5_sizes: record<memory_md_bytes: int, over_cap: bool>> {
     const DEFAULT_MEMORY_CAP = 24576
 
     def mem-files [dir: string] {
@@ -128,20 +136,4 @@ export def call [args: record<live: string, repo: string>] {
             over_cap: ($mem_bytes > $DEFAULT_MEMORY_CAP)
         }
     }
-}
-
-export def resolve [args: record<counts: record<memories: int, indexed: int>, p1_frontmatter: record<bad_frontmatter: list<string>, name_missing: list<string>, name_mismatch: table<file: string, name: string, snake: string>, desc_missing: list<string>, desc_tripledash: list<string>, meta_incomplete: list<string>>, p2_refs: record<dangling: table<from: string, base: string>, orphan_count: int, orphans: list<string>>, p3_index: record<unindexed: list<string>, broken: table<idx: string, missing: string>>, p4_mirror: record<only_live: list<string>, only_repo: list<string>, sha_mismatch: table<file: string>>, p5_sizes: record<memory_md_bytes: int, over_cap: bool>>] {
-    $args
-}
-
-# KB integrity audit over the token-form ragref memory store (p1-p5 envelope).
-#
-# p1 frontmatter (name==snake, description present + no triple-dash, meta
-# complete), p2 refs (dangling = a `## ref` token whose base memory is missing;
-# orphans = memories no ref points at), p3 index (MEMORY.md first-bullet token
-# coverage), p4 mirror (live<->repo sha drift), p5 MEMORY.md size vs cap. Parses
-# the {implied:/adhoc:} token forms (shards + granularity); the retired wikilink
-# / mem: / MEMORY_*_INDEX machinery is gone.
-export def main [args: record<live: string, repo: string>] {
-    resolve (call $args)
 }

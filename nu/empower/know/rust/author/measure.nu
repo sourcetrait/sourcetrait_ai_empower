@@ -1,4 +1,4 @@
-export def call [args: record<out_dir: string, picks_path: string>] {
+export def main [args: record<out_dir: string, picks_path: string>]: nothing -> record<valid_picks: int, failed_picks: int, total_kp_chars: int, per_set: table<set: string, count: int, kp_chars: int>, per_group: table<group: string, count: int, kp_chars: int>> {
     let all_picks = (open --raw $args.picks_path | decode utf-8 | from json)
 
     def slug [pattern: string] {
@@ -42,12 +42,4 @@ export def call [args: record<out_dir: string, picks_path: string>] {
         per_set: $per_set
         per_group: $per_group
     }
-}
-
-export def resolve [args: record<valid_picks: int, failed_picks: int, total_kp_chars: int, per_set: table<set: string, count: int, kp_chars: int>, per_group: table<group: string, count: int, kp_chars: int>>] {
-    $args
-}
-
-export def main [args: record<out_dir: string, picks_path: string>] {
-    resolve (call $args)
 }

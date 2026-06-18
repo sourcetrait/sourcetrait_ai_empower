@@ -83,18 +83,7 @@ impl NuSh {
                 None,
             ));
         }
-        let args_json_str = if p.args.is_empty() {
-            "null".to_string()
-        } else {
-            json::to_string_json(&p.args).unwrap_or_else(|_| "{}".to_string())
-        };
-        let source = format!(
-            "use {}\n{} resolve ({} call {})\n",
-            file_path.display(),
-            p.name,
-            p.name,
-            args_json_str,
-        );
+        let source = build_call_source(&file_path.display().to_string(), &p.name, &p.args);
         let payload_bytes = match json::to_vec(&p) {
             Ok(b) => b,
             Err(e) => {

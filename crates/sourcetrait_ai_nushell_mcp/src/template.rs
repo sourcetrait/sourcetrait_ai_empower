@@ -129,6 +129,38 @@ pub(crate) fn build_run_source(
     )
 }
 
+/// What: builds the nushell source the stateless worker evals for a
+/// `call()` -- `use PATH` imports the committed function file, then
+/// `NAME LIT` invokes its `main` (NAME = the file stem; nushell runs a
+/// module's `main` when the module name is called directly). LIT is the
+/// args record as NUON, or bare `null` for empty / void args.
+///
+/// Why: the committed call-target is a single infix-signatured
+/// `export def main [args: A]: nothing -> R` -- main's positional
+/// runtime-enforces the args and its output type parse-checks a static
+/// result, so the synthesis needs no resolve / call shim, just the
+/// two-line drive of `main`. The path comes from `call_file_path`
+/// (validated under the libraries dir); `use` resolves it at parse time.
+///
+/// Where: called by `server::tool::NuSh::call`; the rendered source ships
+/// through a pool worker exactly like run() / rerun().
+pub(crate) fn build_call_source(path: &str, name: &str, args: &mcp::JsonObject) -> String {
+    let lit = if args.is_empty() {
+        "null".to_string()
+    } else {
+        args_to_nuon(args)
+    };
+    formatdoc!(
+        r#"
+        use {path}
+        {name} {lit}
+    "#,
+        path = path,
+        name = name,
+        lit = lit,
+    )
+}
+
 /// What: builds the nushell source the stateful worker will eval for
 /// an `interact()` call. Emits a top-level `__validate_result` def, a
 /// typed-let binding `$args` against the agent-supplied args
@@ -271,5 +303,21 @@ mod tests {
             parses_clean(&got),
             "multi-line run source must parse clean:\n{got}"
         );
+    }
+
+    #[test]
+    fn call_source_typed_args() {
+        let got = build_call_source("/libs/calc/math/double.nu", "double", &obj(r#"{"x":6}"#));
+        let expected = "use /libs/calc/math/double.nu\ndouble {x: 6}\n";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn call_source_void_args() {
+        // Void / no-arg main: empty args bind the bare `null` literal so the
+        // `nothing` positional typechecks (a `{}` record would not).
+        let got = build_call_source("/libs/util/ping.nu", "ping", &obj("{}"));
+        let expected = "use /libs/util/ping.nu\nping null\n";
+        assert_eq!(got, expected);
     }
 }

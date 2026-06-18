@@ -157,8 +157,10 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
 }
 
 fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
+    // the 1-def `main` contract: main owns the body; the result schema comes
+    // from the `: nothing -> R` output type.
     format!(
-        "export def call [args: record<{args_schema}>] {{\n{body}\n}}\n\nexport def resolve [args: record<{result_schema}>] {{\n    $args\n}}\n\nexport def main [args: record<{args_schema}>] {{\n    resolve (call $args)\n}}\n",
+        "export def main [args: record<{args_schema}>]: nothing -> record<{result_schema}> {{\n{body}\n}}\n",
     )
 }
 
@@ -342,7 +344,7 @@ fn inspect_returns_function_doc() {
     write_source(
         &src,
         "math/double.nu",
-        "export def call [args: record<x: int>] { { out: ($args.x * 2) } }\nexport def resolve [args: record<out: int>] { $args }\n# doubles its input\n#\n# returns the doubled value\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "# doubles its input\n#\n# returns the doubled value\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: ($args.x * 2) } }\n",
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib"}));
     let resp = host.call_tool(
@@ -426,8 +428,45 @@ fn inspect_unknown_library_errors() {
 }
 
 #[test]
+fn result_record_field_shapes_preserved() {
+    // the_user 2026-06-18: a result record's FIELDS keep their precise scalar
+    // shapes -- incl. path/directory, which the parsed output Type collapses
+    // to string. The schema is read from main's signature source text, so all
+    // four survive verbatim (matching the args-side SyntaxShape fidelity).
+    let mut host = Host::spawn();
+    let src = host.source_dir("fidelitylib");
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "fidelitylib", "source_path": src.to_str().unwrap()}),
+    );
+    let _ = host.call_tool(
+        "new",
+        serde_json::json!({"library": "fidelitylib", "module_path": "", "name": "shapes"}),
+    );
+    write_source(
+        &src,
+        "shapes.nu",
+        "export def main [args: record<n: int>]: nothing -> record<p: path, d: directory, c: cell-path, g: glob> { { p: \"x\", d: \"y\", c: $.a, g: (\"z\" | into glob) } }\n",
+    );
+    let committed = host.call_tool("commit", serde_json::json!({"library": "fidelitylib"}));
+    assert!(!has_error_path(&committed), "commit should succeed; got {committed}");
+    let resp = host.call_tool(
+        "inspect",
+        serde_json::json!({"library": "fidelitylib", "module_path": "", "name": "shapes"}),
+    );
+    let env = extract_envelope(&resp).unwrap_or_else(|| panic!("inspect envelope; got {resp}"));
+    assert_eq!(
+        env["result_schema"],
+        serde_json::json!({"p": "path", "d": "directory", "c": "cell-path", "g": "glob"}),
+        "result fields must keep path/directory/cell-path/glob verbatim; got {}",
+        env["result_schema"],
+    );
+    assert_eq!(env["args_schema"], serde_json::json!({"n": "int"}));
+}
+
+#[test]
 fn helper_file_pruned_from_info_and_not_callable() {
-    // big meta: an organizational helper file (no call/resolve sentinel) is
+    // big meta: an organizational helper file (no `main` sentinel) is
     // NOT an indexed call-target -> absent from info()'s function list AND not
     // callable; the real call-target beside it still works. (The pre-big-meta
     // enumerate bailed on such a file's schema parse, dropping the WHOLE
@@ -439,7 +478,7 @@ fn helper_file_pruned_from_info_and_not_callable() {
         serde_json::json!({"library": "helperlib", "source_path": src.to_str().unwrap()}),
     );
     write_source(&src, "mod.nu", "export use ./util.nu\nexport use ./real.nu\n");
-    // Organizational helper: no call/resolve sentinel -> not a call-target.
+    // Organizational helper: no `main` sentinel -> not a call-target.
     write_source(&src, "util.nu", "export def helper [n: int] { $n * 2 }\n");
     // A real call-target beside it.
     write_source(

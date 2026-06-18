@@ -64,7 +64,7 @@ pub(crate) use crate::{
         },
         worker_handle::{WorkerHandle, kill_worker_pid},
     },
-    template::{build_interact_source, build_run_source},
+    template::{build_call_source, build_interact_source, build_run_source},
     wire::{Hello, PROTOCOL_VERSION, RunRequest, RunResponse},
     worker::base::WarmBase,
 };
@@ -158,7 +158,7 @@ pub(crate) mod tk {
 }
 
 pub(crate) mod json {
-    pub(crate) use serde_json::{Value, from_slice, to_string as to_string_json, to_value, to_vec};
+    pub(crate) use serde_json::{Value, from_slice, to_value, to_vec};
 }
 
 pub use crate::{

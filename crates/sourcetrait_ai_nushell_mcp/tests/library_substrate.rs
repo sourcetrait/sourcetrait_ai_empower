@@ -183,8 +183,10 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
 }
 
 fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
+    // the 1-def `main` contract: main owns the body; the result schema comes
+    // from the `: nothing -> R` output type.
     format!(
-        "export def call [args: record<{args_schema}>] {{\n{body}\n}}\n\nexport def resolve [args: record<{result_schema}>] {{\n    $args\n}}\n\nexport def main [args: record<{args_schema}>] {{\n    resolve (call $args)\n}}\n",
+        "export def main [args: record<{args_schema}>]: nothing -> record<{result_schema}> {{\n{body}\n}}\n",
     )
 }
 

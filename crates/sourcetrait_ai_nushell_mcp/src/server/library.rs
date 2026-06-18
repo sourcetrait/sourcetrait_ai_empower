@@ -26,9 +26,9 @@ pub(crate) struct LibraryIndex {
 }
 
 /// One call-target in the `library.json` index: its name plus the structured
-/// schemas extracted from the PARSED `main` (args) + `resolve` (result)
-/// signatures at commit time. Mirrors `FunctionInfo` sans the summary (which
-/// lives in `.meta/docs/`).
+/// schemas extracted from `main`'s PARSED signature (args from the leading
+/// positional, result from the output type) at commit time. Mirrors
+/// `FunctionInfo` sans the summary (which lives in `.meta/docs/`).
 #[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
 pub(crate) struct IndexFunction {
     pub name: String,
@@ -420,11 +420,13 @@ pub(crate) struct NewResult {
     pub created: Vec<String>,
 }
 
-/// The call/resolve/main skeleton a fresh function file is scaffolded
-/// with: `record<>` placeholders (the unfleshed-skeleton marker the
-/// validator rejects until real fields land), no doc. (leg 3)
+/// The single-`main` skeleton a fresh function file is scaffolded with:
+/// `record<>` placeholders on BOTH the args positional and the
+/// `: nothing -> record<>` output type (the unfleshed-skeleton marker
+/// commit rejects on either side until real fields land, or `nothing` for
+/// void). The author owns the whole body.
 fn skeleton_function_source() -> String {
-    "export def call [args: record<>] {\n    # the function's raw logic; replace record<> with the real fields\n    {}\n}\n\nexport def resolve [args: record<>] {\n    $args\n}\n\nexport def main [args: record<>] {\n    resolve (call $args)\n}\n".to_string()
+    "# one-line summary (<= 80 chars); becomes this function's doc\nexport def main [args: record<>]: nothing -> record<> {\n    # logic here; replace each record<> with real fields (or `nothing` for void)\n    {}\n}\n".to_string()
 }
 
 /// Append `entry` to `modnu` if not already present, preserving existing
@@ -448,8 +450,8 @@ fn additively_wire_modnu(modnu: &std::path::Path, entry: &str) -> io::Result<()>
     fs::write(modnu, out)
 }
 
-/// Validate the new() coordinate idents + apply the leg-1b reserved-terms
-/// ban (no library / module segment / function named `call` or `resolve`).
+/// Validate the new() coordinate idents + apply the reserved-terms
+/// ban (no library / module segment / function named `main`).
 fn validate_new_coordinate(
     library: &str,
     module_path: &str,
@@ -458,7 +460,7 @@ fn validate_new_coordinate(
     if !is_valid_ident(library) || is_reserved_term(library) {
         return Err(Error::LibraryInvalidName {
             library: library.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]* and not be the reserved `call`/`resolve`"
+            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]* and not be the reserved `main`"
                 .to_string(),
         });
     }
@@ -477,7 +479,7 @@ fn validate_new_coordinate(
         if is_reserved_term(seg) {
             return Err(Error::LibraryInvalidName {
                 library: seg.to_string(),
-                reason: "reserved `call`/`resolve` cannot name a module".to_string(),
+                reason: "reserved `main` cannot name a module".to_string(),
             });
         }
     }
@@ -485,7 +487,7 @@ fn validate_new_coordinate(
         if !is_valid_ident(n) || is_reserved_term(n) {
             return Err(Error::LibraryInvalidName {
                 library: n.to_string(),
-                reason: "invalid or reserved (`call`/`resolve`) function name".to_string(),
+                reason: "invalid or reserved (`main`) function name".to_string(),
             });
         }
     }
@@ -496,7 +498,7 @@ fn validate_new_coordinate(
 /// the scaffold tool (leg 3). The FIRST call for a library establishes it
 /// (records source_path in the canonical meta, immutable thereafter); it
 /// then additively scaffolds the named leaf INTO the agent's source tree
-/// (module dir + fresh mod.nu, or the call/resolve/main function skeleton),
+/// (module dir + fresh mod.nu, or the single-`main` function skeleton),
 /// where the agent edits it before `commit()`. LEAF-GUARD: refuses the
 /// terminal coordinate if it already exists (ancestors are mkdir -p'd).
 pub(crate) fn new_impl(
@@ -1151,9 +1153,9 @@ fn check_summary_length(
 /// - `mod.nu`: only `export use ./<file>.nu` or `export module <name>` lines
 ///   (plus blank lines and `#` comments). Body-lint NOT applied (no agent
 ///   code lives in mod.nu).
-/// - Function files: exactly two exports named `main` and `resolve`;
-///   both have `args: record<...>` typed positionals; resolve's body is
-///   exactly the expression `$args`. Authored bodies are NOT lint-checked
+/// - Function files: a single `export def main [args: A]: nothing -> R` (the
+///   sole export); args is a non-empty `record<...>` (or `nothing`) and the
+///   output type R likewise. Authored bodies are NOT lint-checked
 ///   (item 7, the_user 2026-06-12: imports are authored with intent; the
 ///   AST body-lint covers the on-the-fly run/interact/define path only).
 ///
@@ -1342,30 +1344,28 @@ fn validate_one_file(
             &mut result.lint,
         )
     };
-    // leg 1b: the reserved-terms ban applies to EVERY .nu file -- `call`
-    // and `resolve` may appear only as a call-target's exported sentinel.
+    // the reserved-terms ban applies to EVERY .nu file -- `main` may appear
+    // only as a call-target's exported sentinel.
     scan_reserved_terms(&rel, stem, &source, parent, engine, &mut result.structural);
     Ok(extracted)
 }
 
-/// leg 1b: the reserved-terms ban. `call` and `resolve` may appear in a
-/// library ONLY as the exported call/resolve trie of a call-target (1a
-/// validates that contract). ANY OTHER occurrence as an identifier is a
-/// violation -- a private/nested def, a module/dir/file name, a const /
-/// alias / let / mut binding, a parameter, a record/table column key, or a
-/// cell-path member. Quoted string *values* and command references
-/// (`resolve (call $args)`) are not identifiers and pass.
+/// The reserved-terms ban. `main` may appear in a library ONLY as the
+/// exported call-target sentinel (`export def main`, the 1-def contract).
+/// ANY OTHER occurrence as an identifier is a violation -- a private/nested
+/// def, a module/dir/file name, a const / alias / let / mut binding, a
+/// parameter, a record/table column key, or a cell-path member. Quoted
+/// string *values* and command references are not identifiers and pass.
 ///
-/// `nu_parser::flatten_block` tags each token with a `FlatShape`:
-/// `call`/`resolve` flag at `VarDecl` (let/mut/const names) and `String`
-/// (def/module/alias names, record/table keys, cell-path members,
-/// barewords) -- except a `String` token immediately following an
-/// `export def` token, which is the call-target's valid sentinel export.
-/// Command references parse as `InternalCall`/`External` (skipped), and a
-/// quoted `"call"` keeps its quotes in the token content so it never
-/// matches `call`. Parameter names hide inside the `Signature` token, so
-/// they are walked separately (TODO leg 1b params); module/dir/file names
-/// are checked on the path.
+/// `nu_parser::flatten_block` tags each token with a `FlatShape`: `main`
+/// flags at `VarDecl` (let/mut/const names) and `String` (def/module/alias
+/// names, record/table keys, cell-path members, barewords) -- except a
+/// `String` token immediately following an `export def` token, which is the
+/// call-target's valid sentinel export. Command references parse as
+/// `InternalCall`/`External` (skipped), and a quoted `"main"` keeps its
+/// quotes in the token content so it never matches `main`. Parameter names
+/// hide inside the `Signature` token, so they are walked separately;
+/// module/dir/file names are checked on the path.
 fn scan_reserved_terms(
     rel: &str,
     stem: &str,
@@ -1374,7 +1374,7 @@ fn scan_reserved_terms(
     engine: &ParseEngine,
     violations: &mut Vec<Violation>,
 ) {
-    // 1. Path components: no module / directory / file named call|resolve.
+    // 1. Path components: no module / directory / file named main.
     for comp in rel.split('/') {
         let bare = comp.strip_suffix(".nu").unwrap_or(comp);
         if is_reserved_term(bare) {
@@ -1416,7 +1416,7 @@ fn scan_reserved_terms(
                 path: rel.to_string(),
                 line,
                 message: format!(
-                    "`{content}` is reserved -- it may appear only as a call-target's exported `call`/`resolve`; rename this identifier",
+                    "`{content}` is reserved -- it may appear only as a call-target's exported `main`; rename this identifier",
                 ),
             });
         }
@@ -1443,14 +1443,14 @@ fn scan_reserved_terms(
     }
 }
 
-/// `call` and `resolve` are the reserved call-target sentinel names.
+/// `main` is the reserved call-target sentinel name.
 fn is_reserved_term(s: &str) -> bool {
-    s == "call" || s == "resolve"
+    s == "main"
 }
 
 /// Extract the top-level parameter names from a flattened `Signature`
 /// token (`[call: int, --flag: string, ...rest]`, or a closure `|call|`),
-/// skipping names nested inside type annotations (`record<resolve: int>`)
+/// skipping names nested inside type annotations (`record<main: int>`)
 /// and stripping flag / rest sigils so `--call` and `...call` surface as
 /// `call`. A name slot opens at signature start and after each depth<=1
 /// comma; `:` and any nested `<([{` close it.
@@ -1687,15 +1687,19 @@ fn short_expr_label(expr: &nu::Expr) -> &'static str {
     }
 }
 
-/// AST-based function file validator. Wraps `source` in
-/// `module __v_<stem> { ... }`, runs nu_parser (with `$env.PWD =
-/// parent` so any sibling `use` resolves cleanly), then walks the
-/// resulting `Module` to enforce:
+/// AST-based function file validator (the 1-def `main` contract). Wraps
+/// `source` in `module __v_<stem> { ... }`, runs nu_parser (with `$env.PWD =
+/// parent` so any sibling `use` resolves cleanly), then walks the resulting
+/// `Module` to enforce:
 ///   - parse cleanly (no syntax errors)
-///   - exactly two exports named `main` and `resolve`
-///   - main has a typed `args: record<...>` positional
-///   - resolve has a typed `args: record<...>` positional AND its body
-///     block is exactly the expression `$args` (passthrough)
+///   - the sole export is `main` (no extra exports)
+///   - main has a typed `args: record<...>` (or `nothing`) positional
+///   - main declares a `: nothing -> R` output whose R is a non-empty
+///     `record<...>` (or `nothing` for void)
+/// A file WITHOUT `main` is ORGANIZATIONAL (helper `export def` /
+/// `export const`, unconstrained): parse-correctness only, no contract.
+/// `main` IS the call-target -- the author owns the whole body (no
+/// resolve / main-body AST-lock).
 fn validate_function_file_ast(
     rel: &str,
     stem: &str,
@@ -1746,154 +1750,44 @@ fn validate_function_file_ast(
     };
     let module: &nu::Module = working_set.get_module(module_id);
 
-    // 3. Classify by the call / resolve sentinel. nu's Module tracks
-    //    `main` separately from `decls` (which holds call / resolve / any
-    //    extras). A file exporting `call` or `resolve` is a CALL-TARGET and
-    //    must satisfy the full call/resolve/main contract; a file with
-    //    neither sentinel is ORGANIZATIONAL (helper defs / export const /
-    //    export def) and is left to parse-correctness only. The reserved-
-    //    terms ban (leg 1b) makes the sentinel airtight. (leg 1)
+    // 3. Classify by the `main` sentinel. nu's Module tracks `main`
+    //    separately from `decls`. A file exporting `main` is a CALL-TARGET
+    //    (the 1-def contract: main IS the logic); a file WITHOUT it is
+    //    ORGANIZATIONAL (helper `export def` / `export const`,
+    //    unconstrained) and is left to parse-correctness only. The
+    //    reserved-terms ban (scan_reserved_terms) keeps the sentinel
+    //    airtight.
     let main_decl = module.main;
-    let mut export_names: Vec<(String, nu::DeclId)> = module
-        .decls
-        .iter()
-        .filter(|(name_bytes, _)| name_bytes.as_slice() != b"main")
-        .map(|(name_bytes, decl_id)| (String::from_utf8_lossy(name_bytes).into_owned(), *decl_id))
-        .collect();
-    export_names.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let call_decl = export_names
-        .iter()
-        .find(|(n, _)| n == "call")
-        .map(|(_, id)| *id);
-    let resolve_decl = export_names
-        .iter()
-        .find(|(n, _)| n == "resolve")
-        .map(|(_, id)| *id);
-
-    if call_decl.is_none() && resolve_decl.is_none() {
-        // Organizational file: a plain module (helper defs, export const,
-        // export def). No call/resolve sentinel -> no contract to enforce;
-        // parse-correctness (checked above) is sufficient here. (leg 1)
-        return None;
-    }
-
-    // 4. Call-target: enforce the full call / resolve / main contract.
-    if call_decl.is_none() {
-        violations.push(Violation {
-            path: rel.to_string(),
-            line: 0,
-            message: "call-target function file must export `call` (the raw logic): `export def call [args: <T>] { ... }`"
-                .to_string(),
-        });
-    }
-    if resolve_decl.is_none() {
-        violations.push(Violation {
-            path: rel.to_string(),
-            line: 0,
-            message: "call-target function file must export `resolve` (the result typecheck): `export def resolve [args: <R>] { $args }`"
-                .to_string(),
-        });
-    }
-    if main_decl.is_none() {
-        violations.push(Violation {
-            path: rel.to_string(),
-            line: 0,
-            message: "call-target function file must export `main` (the validated sugar): `export def main [args: <T>] { resolve (call $args) }`"
-                .to_string(),
-        });
-    }
-    for (name, _) in &export_names {
-        if name != "call" && name != "resolve" {
-            violations.push(Violation {
-                path: rel.to_string(),
-                line: 0,
-                message: format!(
-                    "a call-target function file exports only `call`, `resolve`, and `main`; saw `export def {name}` (move helpers to an organizational file and `use ./<file>.nu`)",
-                ),
-            });
-        }
-    }
-
-    // 5. Signatures + bodies.
-    //    call: typed `args` positional (record<...> with real fields, or
-    //    nothing); body is the author's raw logic -- unchecked.
-    if let Some(id) = call_decl {
-        check_args_record_positional(
-            rel,
-            &working_set,
-            id,
-            "call",
-            source,
-            prefix_len,
-            violations,
-        );
-    }
-    //    resolve: typed `args` positional (the result schema); body exactly
-    //    `$args` (the passthrough that forces the runtime result check).
-    if let Some(id) = resolve_decl {
-        let resolve_args_var = check_args_record_positional(
-            rel,
-            &working_set,
-            id,
-            "resolve",
-            source,
-            prefix_len,
-            violations,
-        );
-        check_resolve_body_is_args(
-            rel,
-            &working_set,
-            id,
-            resolve_args_var,
-            source,
-            prefix_len,
-            violations,
-        );
-    }
-    //    main: typed `args` positional mirroring call's; body AST-locked to
-    //    EXACTLY `resolve (call $args)` -- the generated sugar; the author
-    //    owns only main's doc comment, never its body.
-    if let Some(id) = main_decl {
-        let main_args_var = check_args_record_positional(
-            rel,
-            &working_set,
-            id,
-            "main",
-            source,
-            prefix_len,
-            violations,
-        );
-        check_main_body_is_resolve_call_args(
-            rel,
-            &working_set,
-            id,
-            main_args_var,
-            source,
-            prefix_len,
-            violations,
-        );
-    }
-
-    // big meta: extract the IndexFunction (schemas from the PARSED main +
-    // resolve signatures, rendered via SyntaxShape Display -> nu_to_*_schema -
-    // full fidelity, all 14 scalars incl. path/directory/glob) + the function
-    // docs (main's native description / extra_description). Only for a
-    // call-target with both main + resolve present + a leading positional; any
-    // miss returns None (the structural checks above recorded the defect, and
-    // commit rejects before the index is written).
-    let (Some(main_id), Some(resolve_id)) = (main_decl, resolve_decl) else {
+    let Some(main_id) = main_decl else {
+        // Organizational file: no `main` sentinel -> no contract to enforce;
+        // parse-correctness (checked above) is sufficient here.
         return None;
     };
+
+    // 4. A call-target file MAY also export helpers (and define private defs)
+    //    alongside `main` -- only `main` is the indexed / callable target, so
+    //    there is no export-set restriction. The reserved-terms ban still
+    //    keeps `main` itself sacrosanct.
+
+    // 5. main's signature: a typed `args: record<...>` (real fields) or
+    //    `args: nothing` positional, AND a `: nothing -> R` output whose R is
+    //    a non-empty `record<...>` or `nothing`. The author owns the body --
+    //    no AST-lock, since main IS the logic now.
+    check_args_record_positional(rel, &working_set, main_id, "main", source, prefix_len, violations);
+    let out_type = check_main_output_type(rel, &working_set, main_id, source, prefix_len, &wrapped, violations);
+
+    // big meta: extract the IndexFunction + the function docs (main's native
+    // description / extra_description). args come from main's positional
+    // SyntaxShape; the result comes from main's OUTPUT annotation read as
+    // SOURCE TEXT (not the parsed Type, which collapses path/directory fields
+    // to string) -- so both sides keep full fidelity across all 14 scalars.
+    // Any miss returns None (the structural checks above recorded the defect;
+    // commit rejects before the index is written).
     let main_sig = working_set.get_decl(main_id).signature();
-    let resolve_sig = working_set.get_decl(resolve_id).signature();
-    // Function docs: nushell's native description / extra_description for the
-    // `main` command (the parser's build_desc splits the comment on the first
-    // blank line). extract_doc applies the same rule to mod.nu modules.
     let summary = main_sig.description.clone();
     let details = main_sig.extra_description.clone();
     let args_str = main_sig.required_positional.first()?.shape.to_string();
-    let result_str = resolve_sig.required_positional.first()?.shape.to_string();
+    let result_str = out_type?;
     let args_schema = nu_to_args_schema(&args_str).ok()?;
     let result_schema = nu_to_result_schema(&result_str).ok()?;
     Some((
@@ -1908,8 +1802,8 @@ fn validate_function_file_ast(
 }
 
 /// Confirm the decl's first required positional is named `args` with a
-/// `record<...>` shape. Returns the positional's VarId so the caller can
-/// match it against resolve's body `$args` expression.
+/// `record<...>` shape (real fields) or `nothing` (void); pushes a violation
+/// otherwise. (Returns the positional's VarId; vestigial, now unused.)
 fn check_args_record_positional(
     rel: &str,
     working_set: &nu::StateWorkingSet,
@@ -1951,182 +1845,106 @@ fn check_args_record_positional(
     var_id
 }
 
-/// Confirm `resolve`'s body block contains exactly one pipeline with one
-/// element whose expression is `$args` (passthrough). The expression's
-/// AST shape for `$args` is `Expr::FullCellPath` wrapping a head that is
-/// `Expr::Var(args_var_id)` with no tail.
-fn check_resolve_body_is_args(
+/// Confirm `main`'s output type (the `-> R` of `: nothing -> R`) and return
+/// the result type as a nu type STRING for schema extraction. The contract: a
+/// `nothing -> R` input/output pair (args arrive via the positional, never
+/// the pipe) whose R is `nothing` (void) or a NON-EMPTY `record<...>`. An
+/// empty `record<>` is the unfleshed-skeleton marker on the result side; a
+/// missing pair or a non-record/non-nothing output is a violation.
+///
+/// Structure is validated against the parsed output `Type`, but for a record
+/// the returned string is read from the OUTPUT ANNOTATION SOURCE TEXT (via
+/// `extract_main_output_text`), because the parsed `Type` collapses
+/// `path`/`directory` fields to `string` -- the source keeps every scalar
+/// (`path`, `directory`, `cell-path`, `glob`, ...) verbatim, matching the
+/// args-side SyntaxShape fidelity. Void returns `"nothing"`. Pushes a
+/// violation + returns None on any miss.
+fn check_main_output_type(
     rel: &str,
     working_set: &nu::StateWorkingSet,
     decl_id: nu::DeclId,
-    args_var_id: Option<nu::VarId>,
     source: &str,
     prefix_len: usize,
+    wrapped: &str,
     violations: &mut Vec<Violation>,
-) {
-    let decl = working_set.get_decl(decl_id);
-    let block_id = match decl.block_id() {
-        Some(id) => id,
-        None => {
+) -> Option<String> {
+    let sig = working_set.get_decl(decl_id).signature();
+    let line = decl_line(working_set, decl_id, source, prefix_len);
+    // The contract's pipeline signature is `nothing -> R`: find the pair
+    // whose input is `nothing`. Its output carries the result schema.
+    let output = sig
+        .input_output_types
+        .iter()
+        .find(|(input, _)| matches!(input, nu::Type::Nothing))
+        .map(|(_, out)| out.clone());
+    let Some(output) = output else {
+        violations.push(Violation {
+            path: rel.to_string(),
+            line,
+            message: "main must declare a `: nothing -> <record<...>|nothing>` output type"
+                .to_string(),
+        });
+        return None;
+    };
+    match &output {
+        nu::Type::Nothing => Some("nothing".to_string()),
+        nu::Type::Record(fields) if !fields.is_empty() => {
+            // Structurally valid; read the precise type string from the source
+            // annotation so path/directory fields survive (the parsed Type
+            // collapsed them). Fall back to the lossy Type render only if the
+            // source extraction unexpectedly fails.
+            Some(
+                extract_main_output_text(working_set, decl_id, wrapped)
+                    .unwrap_or_else(|| output.to_string()),
+            )
+        }
+        nu::Type::Record(_) => {
             violations.push(Violation {
                 path: rel.to_string(),
-                line: 0,
-                message: "resolve must be a user-defined `def`".to_string(),
+                line,
+                message: "main's output `record<>` is the unfleshed skeleton; give it real fields (or `nothing` for void)".to_string(),
             });
-            return;
+            None
         }
-    };
-    let block = working_set.get_block(block_id);
-    let line_of_decl = decl_line(working_set, decl_id, source, prefix_len);
-    let mut ok = false;
-    if block.pipelines.len() == 1 {
-        let pipeline = &block.pipelines[0];
-        if pipeline.elements.len() == 1 {
-            let elem = &pipeline.elements[0];
-            ok = is_args_var(&elem.expr, args_var_id);
+        other => {
+            violations.push(Violation {
+                path: rel.to_string(),
+                line,
+                message: format!(
+                    "main's output type must be a non-empty `record<...>` or `nothing`; got `{other}`",
+                ),
+            });
+            None
         }
-    }
-    if !ok {
-        violations.push(Violation {
-            path: rel.to_string(),
-            line: line_of_decl,
-            message: "resolve's body must be exactly `$args`".to_string(),
-        });
     }
 }
 
-/// Recognize the AST shape of the literal expression `$args`: a
-/// `FullCellPath` with a `Var(args_var_id)` head and an empty tail.
-fn is_args_var(expr: &nu::Expression, args_var_id: Option<nu::VarId>) -> bool {
-    let expected = match args_var_id {
-        Some(id) => id,
-        None => return false,
-    };
-    let var_id = match &expr.expr {
-        nu::Expr::FullCellPath(fcp) if fcp.tail.is_empty() => match &fcp.head.expr {
-            nu::Expr::Var(id) => *id,
-            _ => return false,
-        },
-        nu::Expr::Var(id) => *id,
-        _ => return false,
-    };
-    var_id == expected
-}
-
-/// Confirm `main`'s body is exactly `resolve (call $args)` -- one
-/// pipeline, one element: a Call to `resolve` whose single positional is
-/// the parenthesized `(call $args)` (a Call to `call` taking the `args`
-/// positional). The shape is fixed because it is GENERATED and mirrors
-/// call()'s composition; the author owns only main's doc comment.
-fn check_main_body_is_resolve_call_args(
-    rel: &str,
+/// Read `main`'s output type annotation (the `R` of `: nothing -> R`) verbatim
+/// from the wrapped source, so path/directory fields survive (the parsed
+/// `Type` collapses them to string). Slices the wrapped source up to main's
+/// body block and takes the text after the LAST `->` before it -- main's own
+/// output arrow (the caller gates this on the parsed Type confirming main HAS
+/// a `nothing`-input pair, so a helper's earlier arrow can't be mistaken). The
+/// grammar has no other `->`, and a type carries no `{`, so the slice is
+/// exactly `R`. None if the body span or arrow can't be located.
+fn extract_main_output_text(
     working_set: &nu::StateWorkingSet,
     decl_id: nu::DeclId,
-    main_args_var: Option<nu::VarId>,
-    source: &str,
-    prefix_len: usize,
-    violations: &mut Vec<Violation>,
-) {
-    let decl = working_set.get_decl(decl_id);
-    let line_of_decl = decl_line(working_set, decl_id, source, prefix_len);
-    let mut ok = false;
-    if let Some(block_id) = decl.block_id() {
-        let block = working_set.get_block(block_id);
-        if block.pipelines.len() == 1 && block.pipelines[0].elements.len() == 1 {
-            ok = is_resolve_of_call_args(
-                &block.pipelines[0].elements[0].expr,
-                working_set,
-                main_args_var,
-            );
-        }
+    wrapped: &str,
+) -> Option<String> {
+    let block_id = working_set.get_decl(decl_id).block_id()?;
+    let body_start = working_set.get_block(block_id).span?.start;
+    let before = wrapped.get(..body_start)?;
+    let arrow = before.rfind("->")?;
+    // R ends at the body's opening `{`; a type carries no `{`, so split there
+    // (robust whether the body span starts at or just past the `{`).
+    let after = &before[arrow + 2..];
+    let r = after.split('{').next().unwrap_or(after).trim();
+    if r.is_empty() {
+        None
+    } else {
+        Some(r.to_string())
     }
-    if !ok {
-        violations.push(Violation {
-            path: rel.to_string(),
-            line: line_of_decl,
-            message: "main's body must be exactly `resolve (call $args)`".to_string(),
-        });
-    }
-}
-
-/// Match `resolve (call $args)`: a Call to `resolve` with one positional
-/// argument that is `(call $args)`.
-fn is_resolve_of_call_args(
-    expr: &nu::Expression,
-    working_set: &nu::StateWorkingSet,
-    args_var: Option<nu::VarId>,
-) -> bool {
-    let nu::Expr::Call(outer) = &expr.expr else {
-        return false;
-    };
-    if working_set.get_decl(outer.decl_id).name() != "resolve" {
-        return false;
-    }
-    let mut pos = outer.arguments.iter().filter_map(|a| match a {
-        nu::Argument::Positional(e) => Some(e),
-        _ => None,
-    });
-    let (Some(arg), None) = (pos.next(), pos.next()) else {
-        return false;
-    };
-    inner_is_call_args(arg, working_set, args_var)
-}
-
-/// Match the `(call $args)` argument: a parenthesized subexpression (or a
-/// bare call) wrapping `call $args`.
-fn inner_is_call_args(
-    expr: &nu::Expression,
-    working_set: &nu::StateWorkingSet,
-    args_var: Option<nu::VarId>,
-) -> bool {
-    match &expr.expr {
-        nu::Expr::Subexpression(block_id) => block_is_call_args(*block_id, working_set, args_var),
-        nu::Expr::FullCellPath(fcp) if fcp.tail.is_empty() => match &fcp.head.expr {
-            nu::Expr::Subexpression(block_id) => {
-                block_is_call_args(*block_id, working_set, args_var)
-            }
-            nu::Expr::Call(_) => is_call_args_call(&fcp.head, working_set, args_var),
-            _ => false,
-        },
-        nu::Expr::Call(_) => is_call_args_call(expr, working_set, args_var),
-        _ => false,
-    }
-}
-
-/// A subexpression block holding exactly one `call $args` pipeline element.
-fn block_is_call_args(
-    block_id: nu::BlockId,
-    working_set: &nu::StateWorkingSet,
-    args_var: Option<nu::VarId>,
-) -> bool {
-    let block = working_set.get_block(block_id);
-    if block.pipelines.len() != 1 || block.pipelines[0].elements.len() != 1 {
-        return false;
-    }
-    is_call_args_call(&block.pipelines[0].elements[0].expr, working_set, args_var)
-}
-
-/// Match `call $args`: a Call to `call` whose one positional is `$args`
-/// (main's `args` positional VarId).
-fn is_call_args_call(
-    expr: &nu::Expression,
-    working_set: &nu::StateWorkingSet,
-    args_var: Option<nu::VarId>,
-) -> bool {
-    let nu::Expr::Call(inner) = &expr.expr else {
-        return false;
-    };
-    if working_set.get_decl(inner.decl_id).name() != "call" {
-        return false;
-    }
-    let mut pos = inner.arguments.iter().filter_map(|a| match a {
-        nu::Argument::Positional(e) => Some(e),
-        _ => None,
-    });
-    let (Some(arg), None) = (pos.next(), pos.next()) else {
-        return false;
-    };
-    is_args_var(arg, args_var)
 }
 
 /// Best-effort: locate the source line where a Decl's `def` lives via
@@ -2439,7 +2257,7 @@ fn write_meta(
 
 /// Implementation for `commit(library)` - the validate-and-promote
 /// UPSERT (leg 3): re-reads the source tree from the meta's source_path,
-/// runs the strict structural + call/resolve/main contract validator,
+/// runs the strict structural + single-`main` contract validator,
 /// and rebuilds the canonical signed subtree from it. NO kind gate (one
 /// authored kind). IDEMPOTENT on a no-change resync (no empty commit);
 /// RETURNS the changed paths.

@@ -162,8 +162,10 @@ fn write_source(dir: &std::path::Path, rel: &str, contents: &str) {
 }
 
 fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
+    // the 1-def `main` contract: main owns the body; the result schema comes
+    // from the `: nothing -> R` output type.
     format!(
-        "export def call [args: record<{args_schema}>] {{\n{body}\n}}\n\nexport def resolve [args: record<{result_schema}>] {{\n    $args\n}}\n\nexport def main [args: record<{args_schema}>] {{\n    resolve (call $args)\n}}\n",
+        "export def main [args: record<{args_schema}>]: nothing -> record<{result_schema}> {{\n{body}\n}}\n",
     )
 }
 
@@ -259,7 +261,7 @@ fn info_lists_committed_library_hierarchy() {
     // Root function (library node), one in `alpha`, one in `alpha/beta`.
     // b1 carries a NESTED record typedef to exercise balanced extraction.
     // info() reads args_schema from `main`'s positional and result_schema
-    // from `resolve`'s positional, so valid_function_source(args, result, ..)
+    // from `main`'s output type, so valid_function_source(args, result, ..)
     // round-trips both. The nu record-inner forms below render to the JSON
     // schemas asserted after commit.
     for (module_path, name, args_inner, result_inner, body) in [
@@ -446,7 +448,7 @@ fn info_includes_node_summaries() {
     write_source(
         &src,
         "fn.nu",
-        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\n# the fn summary\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "# the fn summary\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x } }\n",
     );
     let committed = host.call_tool("commit", serde_json::json!({"library": "doctreelib"}));
     assert!(

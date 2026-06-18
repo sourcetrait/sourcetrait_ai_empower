@@ -1,10 +1,10 @@
 //! new + commit + delete + strict validator tests.
 //!
-//! The strict-validator coverage (reserved-terms ban, missing-call /
-//! missing-resolve, extra-export, non-passthrough-resolve, mod.nu
+//! The strict-validator coverage (reserved-`main` ban, missing-output-type,
+//! extra-export, empty-record arg/result skeleton, mod.nu
 //! inline const/alias/def/let, comments-only / multiline-signature /
-//! organizational-file acceptance, empty-record-skeleton rejection,
-//! etc.) is triggered through `commit()` (which runs the same
+//! organizational-file acceptance, etc.) is triggered through `commit()`
+//! (which runs the same
 //! validator the retired `import_library` did): `new(name, src)`
 //! establishes the library, the (good or bad) source tree is written,
 //! then `commit(name)` validates + upserts it.
@@ -212,10 +212,10 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
 }
 
 fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
-    // leg 1: the call / resolve / main contract -- `body` is the raw logic
-    // (now in `call`); main is the AST-locked sugar.
+    // the 1-def `main` contract: main owns the body; the result schema comes
+    // from the `: nothing -> R` output type.
     format!(
-        "export def call [args: record<{args_schema}>] {{\n{body}\n}}\n\nexport def resolve [args: record<{result_schema}>] {{\n    $args\n}}\n\nexport def main [args: record<{args_schema}>] {{\n    resolve (call $args)\n}}\n",
+        "export def main [args: record<{args_schema}>]: nothing -> record<{result_schema}> {{\n{body}\n}}\n",
     )
 }
 
@@ -315,7 +315,7 @@ fn commit_accepts_multiline_def_signature() {
     write_source(
         &src,
         "thing.nu",
-        "export def call [\n    args: record<x: int>\n] {\n    { out: ($args.x * 2) }\n}\n\nexport def resolve [\n    args: record<out: int>\n] {\n    $args\n}\n\nexport def main [args: record<x: int>] {\n    resolve (call $args)\n}\n",
+        "export def main [\n    args: record<x: int>\n]: nothing -> record<out: int> {\n    { out: ($args.x * 2) }\n}\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "multilinelib"}));
     assert!(
@@ -337,7 +337,7 @@ fn commit_rejects_function_with_syntax_error() {
     write_source(
         &src,
         "broken.nu",
-        "export def main [args: record<x: int>] {\n    { out: ($args.x * 2) \nexport def resolve [args: record<out: int>] { $args }\n",
+        "export def main [args: record<x: int>]: nothing -> record<out: int> {\n    { out: ($args.x * 2) \n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "syntaxlib"}));
     assert!(has_error_path(&resp));
@@ -349,9 +349,10 @@ fn commit_rejects_function_with_syntax_error() {
 }
 
 #[test]
-fn commit_rejects_call_target_missing_resolve() {
-    // A file exporting `call` is a call-target; it must complete the
-    // contract. Missing `resolve` -> reject. (leg 1)
+fn commit_rejects_main_without_output_type() {
+    // A call-target `main` must declare a `: nothing -> R` output type (the
+    // result-schema source). A bare `[args: ...] { ... }` with no infix
+    // output is rejected.
     let mut host = Host::spawn();
     let src = host.source_dir("badlib1");
     let _ = host.call(
@@ -362,44 +363,57 @@ fn commit_rejects_call_target_missing_resolve() {
     write_source(
         &src,
         "thing.nu",
-        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "export def main [args: record<x: int>] { { out: $args.x } }\n",
     );
 
     let resp = host.call("commit", serde_json::json!({"library": "badlib1"}));
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
     assert!(
-        msg.contains("must export `resolve`"),
-        "expected missing-resolve violation; got {msg:?}",
+        msg.contains("output type"),
+        "expected missing-output-type violation; got {msg:?}",
     );
 }
 
 #[test]
-fn commit_rejects_call_target_extra_export() {
+fn commit_accepts_call_target_with_helper_export() {
+    // A call-target file MAY export helpers (and define private defs) beside
+    // `main`; only `main` is the indexed / callable target -- no export-set
+    // restriction (the_user 2026-06-18).
     let mut host = Host::spawn();
-    let src = host.source_dir("badlib2");
+    let src = host.source_dir("helperexportlib");
     let _ = host.call(
         "new",
-        serde_json::json!({"library": "badlib2", "source_path": src.to_str().unwrap()}),
+        serde_json::json!({"library": "helperexportlib", "source_path": src.to_str().unwrap()}),
     );
-    write_source(&src, "mod.nu", "");
+    write_source(&src, "mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
         "thing.nu",
-        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\nexport def helper [args: record<x: int>] { $args.x }\n",
+        "export def helper [n: int] { $n * 2 }\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x } }\n",
     );
 
-    let resp = host.call("commit", serde_json::json!({"library": "badlib2"}));
-    assert!(has_error_path(&resp));
-    let msg = error_message(&resp);
+    let resp = host.call("commit", serde_json::json!({"library": "helperexportlib"}));
     assert!(
-        msg.contains("exports only `call`, `resolve`, and `main`"),
-        "expected extra-export violation; got {msg:?}",
+        !has_error_path(&resp),
+        "a call-target may export helpers beside main; got {resp}"
+    );
+    // call() still targets main.
+    let called = host.call(
+        "call",
+        serde_json::json!({"library": "helperexportlib", "module_path": "", "name": "thing", "args": {"x": 5}}),
+    );
+    assert_eq!(
+        called["result"]["structuredContent"]["result"]["out"].as_i64(),
+        Some(5),
+        "call() should run main; got {called}",
     );
 }
 
 #[test]
-fn commit_rejects_non_passthrough_resolve_body() {
+fn commit_rejects_main_empty_record_output() {
+    // An empty `record<>` on the OUTPUT side is the unfleshed-skeleton marker
+    // (the result-schema source); reject it, mirroring the arg side.
     let mut host = Host::spawn();
     let src = host.source_dir("badlib3");
     let _ = host.call(
@@ -410,15 +424,15 @@ fn commit_rejects_non_passthrough_resolve_body() {
     write_source(
         &src,
         "thing.nu",
-        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { print $args; $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "export def main [args: record<x: int>]: nothing -> record<> { {} }\n",
     );
 
     let resp = host.call("commit", serde_json::json!({"library": "badlib3"}));
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
     assert!(
-        msg.contains("must be exactly `$args`"),
-        "expected resolve-body violation; got {msg:?}",
+        msg.contains("unfleshed skeleton") || msg.contains("real fields"),
+        "expected empty-output-record violation; got {msg:?}",
     );
 }
 
@@ -527,23 +541,23 @@ fn commit_aggregates_multiple_violations() {
         serde_json::json!({"library": "badlib5", "source_path": src.to_str().unwrap()}),
     );
     // Three distinct violations across the tree (== the cap of 3, so all
-    // surface): a bare `def` in mod.nu, a non-passthrough resolve body,
-    // and a wrong main body.
+    // surface): a bare `def` in mod.nu, an empty-args skeleton, and a main
+    // lacking an output type.
     write_source(&src, "mod.nu", "export module a\ndef helper [] { 1 }\n");
     write_source(
         &src,
         "a/mod.nu",
-        "export use ./bad_resolve.nu\nexport use ./bad_main.nu\n",
+        "export use ./skel.nu\nexport use ./noout.nu\n",
     );
     write_source(
         &src,
-        "a/bad_resolve.nu",
-        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { print $args; $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "a/skel.nu",
+        "export def main [args: record<>]: nothing -> record<out: int> { { out: 1 } }\n",
     );
     write_source(
         &src,
-        "a/bad_main.nu",
-        "export def call [args: record<x: int>] { { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { call $args }\n",
+        "a/noout.nu",
+        "export def main [args: record<x: int>] { { out: $args.x } }\n",
     );
 
     let resp = host.call("commit", serde_json::json!({"library": "badlib5"}));
@@ -562,15 +576,11 @@ fn commit_aggregates_multiple_violations() {
         "got {messages:?}"
     );
     assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("resolve's body must be exactly")),
+        messages.iter().any(|m| m.contains("unfleshed skeleton")),
         "got {messages:?}"
     );
     assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("main's body must be exactly")),
+        messages.iter().any(|m| m.contains("output type")),
         "got {messages:?}"
     );
 }
@@ -761,7 +771,7 @@ fn committed_library_invokable_via_standalone_driver() {
     let out = Command::new("nu")
         .env("NU_LIB_DIRS", host.libraries_dir())
         .arg("-c")
-        .arg("use drvilib; drvilib math double resolve (drvilib math double {x: 6}) | to nuon")
+        .arg("use drvilib; drvilib math double {x: 6} | to nuon")
         .output()
         .expect("spawn nu");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -776,8 +786,8 @@ fn committed_library_invokable_via_standalone_driver() {
 
 #[test]
 fn commit_accepts_organizational_file() {
-    // A file with no call/resolve sentinel is ORGANIZATIONAL: helper defs
-    // + export const, unconstrained signatures, no contract. (leg 1)
+    // A file with no `main` sentinel is ORGANIZATIONAL: helper defs
+    // + export const, unconstrained signatures, no contract.
     let mut host = Host::spawn();
     let src = host.source_dir("orglib");
     let _ = host.call(
@@ -836,7 +846,7 @@ fn commit_rejects_empty_record_skeleton() {
     write_source(
         &src,
         "thing.nu",
-        "export def call [args: record<>] { {} }\nexport def resolve [args: record<n: int>] { $args }\nexport def main [args: record<>] { resolve (call $args) }\n",
+        "export def main [args: record<>]: nothing -> record<n: int> { { n: 1 } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "skellib"}));
     assert!(has_error_path(&resp));
@@ -861,7 +871,7 @@ fn commit_rejects_private_def_named_reserved() {
     write_source(
         &src,
         "util.nu",
-        "export const LIMIT = 5\ndef call [] { 1 }\n",
+        "export const LIMIT = 5\ndef main [] { 1 }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "pdeflib"}));
     assert!(has_error_path(&resp));
@@ -880,9 +890,9 @@ fn commit_rejects_module_named_reserved() {
         "new",
         serde_json::json!({"library": "modreslib", "source_path": src.to_str().unwrap()}),
     );
-    std::fs::create_dir_all(src.join("resolve")).unwrap();
-    write_source(&src, "mod.nu", "export module resolve\n");
-    write_source(&src, "resolve/mod.nu", "");
+    std::fs::create_dir_all(src.join("main")).unwrap();
+    write_source(&src, "mod.nu", "export module main\n");
+    write_source(&src, "main/mod.nu", "");
     let resp = host.call("commit", serde_json::json!({"library": "modreslib"}));
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
@@ -903,7 +913,7 @@ fn commit_rejects_const_named_reserved() {
     write_source(
         &src,
         "mod.nu",
-        "export const call = 5\nexport use ./thing.nu\n",
+        "export const main = 5\nexport use ./thing.nu\n",
     );
     write_source(
         &src,
@@ -931,7 +941,7 @@ fn commit_rejects_record_key_reserved() {
     write_source(
         &src,
         "thing.nu",
-        "export def call [args: record<x: int>] { { call: $args.x } }\nexport def resolve [args: record<n: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "export def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x, main: 1 } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "rkeylib"}));
     assert!(has_error_path(&resp));
@@ -954,7 +964,7 @@ fn commit_rejects_cellpath_member_reserved() {
     write_source(
         &src,
         "thing.nu",
-        "export def call [args: record<x: int>] { { out: $args.resolve } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "export def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.main } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "cpathlib"}));
     assert!(has_error_path(&resp));
@@ -974,7 +984,7 @@ fn commit_rejects_param_named_reserved() {
         serde_json::json!({"library": "paramreslib", "source_path": src.to_str().unwrap()}),
     );
     write_source(&src, "mod.nu", "export use ./util.nu\n");
-    write_source(&src, "util.nu", "export def helper [call: int] { $call }\n");
+    write_source(&src, "util.nu", "export def helper [main: int] { $main }\n");
     let resp = host.call("commit", serde_json::json!({"library": "paramreslib"}));
     assert!(has_error_path(&resp));
     let msg = error_message(&resp);
@@ -987,7 +997,7 @@ fn commit_rejects_param_named_reserved() {
 #[test]
 fn commit_accepts_reserved_as_quoted_string_value() {
     // A quoted string value keeps its quotes in the token, so an exact
-    // `resolve` value never matches; command refs to the exports pass too.
+    // `main` value never matches; command refs to the exports pass too.
     let mut host = Host::spawn();
     let src = host.source_dir("strvallib");
     let _ = host.call(
@@ -998,7 +1008,7 @@ fn commit_accepts_reserved_as_quoted_string_value() {
     write_source(
         &src,
         "thing.nu",
-        "export def call [args: record<x: int>] { let note = \"resolve\"; { out: $args.x } }\nexport def resolve [args: record<out: int>] { $args }\nexport def main [args: record<x: int>] { resolve (call $args) }\n",
+        "export def main [args: record<x: int>]: nothing -> record<out: int> { let note = \"main\"; { out: $args.x } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "strvallib"}));
     assert!(
@@ -1044,17 +1054,12 @@ fn new_establishes_library_and_scaffolds_function() {
     );
     let fn_src = std::fs::read_to_string(src.join("math").join("double.nu")).unwrap();
     assert!(
-        fn_src.contains("export def call"),
-        "skeleton missing call; got {fn_src:?}"
+        fn_src.contains("export def main [args: record<>]: nothing -> record<>"),
+        "skeleton missing the single infix-signatured main; got {fn_src:?}"
     );
     assert!(
-        fn_src.contains("export def resolve"),
-        "skeleton missing resolve"
-    );
-    assert!(fn_src.contains("export def main"), "skeleton missing main");
-    assert!(
-        fn_src.contains("resolve (call $args)"),
-        "skeleton main body wrong"
+        !fn_src.contains("export def call") && !fn_src.contains("export def resolve"),
+        "skeleton should be 1-def main only; got {fn_src:?}"
     );
     // Additive cascade wiring (NOT regenerate).
     let math_mod = std::fs::read_to_string(src.join("math").join("mod.nu")).unwrap();

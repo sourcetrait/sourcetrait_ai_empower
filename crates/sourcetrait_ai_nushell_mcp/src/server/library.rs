@@ -278,6 +278,13 @@ impl LibraryLocks {
         let map = self.map.lock().await;
         map.get(name).cloned()
     }
+
+    /// Remove a library's lock entry. Called after `library(uninstall)` drops
+    /// the canonical subtree, so the in-memory registry matches on-disk state.
+    pub(crate) async fn unregister(&self, name: &str) {
+        let mut map = self.map.lock().await;
+        map.remove(name);
+    }
 }
 
 /// What: marker error returned by `LibraryLocks::register` when the
@@ -2342,105 +2349,97 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
 }
 
 // ============================================================================
-// leg 3: delete() - the guarded drop
+// library() admin: install / uninstall / check (+ new via establish_library)
 // ============================================================================
 
-/// One path removed by delete(): side is mcp | source.
-#[derive(Debug, ser::Serialize)]
-pub(crate) struct Removed {
-    pub path: String,
-    pub side: String,
-}
-
-/// Result of delete(): the paths removed.
-#[derive(Debug, ser::Serialize)]
-pub(crate) struct DeleteResult {
-    pub removed: Vec<Removed>,
-}
-
-/// Implementation for `delete(library, source_path, mcp_only)` - the
-/// guarded full drop (leg 3). SANITY: the passed source_path must equal
-/// the meta's source_path by PLAIN STRING EQUALITY (never canonicalized -
-/// a realpath compare could follow a symlink). Removes the canonical
-/// (MCP) subtree always; the agent's source too unless mcp_only. Source
-/// removal is lstat-guarded: a symlink source_path is unlinked (the
-/// install link, not the project tree); a real dir is removed with a
-/// symlink-aware recursive walk (inner symlinks are not followed out).
-/// Idempotent: a side already gone is skipped, not an error.
-pub(crate) fn delete_impl(
-    name: &str,
-    source_path: &str,
-    mcp_only: bool,
-) -> Result<DeleteResult, Error> {
-    if !is_valid_ident(name) {
-        return Err(Error::LibraryInvalidName {
-            library: name.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
-        });
-    }
-    let lib_root = library_dir(name);
-    if !lib_root.exists() {
-        return Err(Error::LibraryNotRegistered {
-            library: name.to_string(),
-        });
-    }
-    let index = load_index(name)?;
+/// The `library()` "are you sure" cross-check: the passed source_dir must
+/// equal the registered source_path by PLAIN STRING EQUALITY (never
+/// canonicalized - a realpath compare could follow a symlink). Used by the
+/// actions that operate on an already-registered library (check, uninstall).
+pub(crate) fn check_source_dir(library: &str, source_dir: &str) -> Result<(), Error> {
+    let index = load_index(library)?;
     let registered = index.source_path.to_string_lossy().into_owned();
-    if registered != source_path {
+    if registered != source_dir {
         return Err(Error::LibrarySourcePathMismatch {
-            library: name.to_string(),
-            passed: source_path.to_string(),
+            library: library.to_string(),
+            passed: source_dir.to_string(),
             registered,
         });
     }
-    let mut removed: Vec<Removed> = Vec::new();
+    Ok(())
+}
 
-    // MCP side: drop the canonical subtree + commit.
-    if lib_root.exists() {
-        fs::remove_dir_all(&lib_root)?;
-        run_git(&libraries_dir(), &["add", "--", name])?;
-        run_git(
-            &libraries_dir(),
-            &["commit", "-m", &format!("delete library {name}")],
-        )?;
-        removed.push(Removed {
-            path: lib_root.to_string_lossy().into_owned(),
-            side: "mcp".to_string(),
-        });
-    }
-
-    // Source side (unless mcp_only): lstat-guarded removal.
-    if !mcp_only {
-        let sp = std::path::Path::new(source_path);
-        match std::fs::symlink_metadata(sp) {
-            Ok(m) if m.file_type().is_symlink() => {
-                std::fs::remove_file(sp)?;
-                removed.push(Removed {
-                    path: source_path.to_string(),
-                    side: "source".to_string(),
-                });
+/// Implementation for `library(install)`: bring a shipped/complete library
+/// source into the mcp - establish it at `source_dir`, then run the first
+/// `commit_impl`. ATOMIC: if the commit (validation) fails, the freshly-built
+/// canonical subtree is wiped so nothing stays registered. Returns the first
+/// commit's changed paths.
+pub(crate) fn install_impl(
+    library: &str,
+    source_dir: &std::path::Path,
+    engine: &ParseEngine,
+) -> Result<CommitResult, Error> {
+    establish_library(library, source_dir)?;
+    match commit_impl(library, engine) {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            // Fresh install whose first commit failed: wipe what we built so
+            // nothing remains registered, and record the removal in git.
+            let lib_root = library_dir(library);
+            if lib_root.exists() {
+                let _ = fs::remove_dir_all(&lib_root);
+                let _ = run_git(&libraries_dir(), &["add", "--", library]);
+                let _ = run_git(
+                    &libraries_dir(),
+                    &["commit", "-m", &format!("rollback failed install {library}")],
+                );
             }
-            Ok(m) if m.is_dir() => {
-                std::fs::remove_dir_all(sp)?;
-                removed.push(Removed {
-                    path: source_path.to_string(),
-                    side: "source".to_string(),
-                });
-            }
-            Ok(_) => {
-                std::fs::remove_file(sp)?;
-                removed.push(Removed {
-                    path: source_path.to_string(),
-                    side: "source".to_string(),
-                });
-            }
-            Err(_) => {
-                // Already gone -> idempotent.
-            }
+            Err(e)
         }
     }
+}
 
-    Ok(DeleteResult { removed })
+/// Implementation for `library(uninstall)`: remove the library from the mcp
+/// (drop the canonical subtree + a signed commit). The agent's source_dir is
+/// NEVER touched. Idempotent: an absent canonical subtree is success. The
+/// source_dir sanity check + the lock-registry removal are the caller's
+/// (tool::library) responsibility.
+pub(crate) fn uninstall_impl(library: &str) -> Result<(), Error> {
+    let lib_root = library_dir(library);
+    if !lib_root.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(&lib_root)?;
+    run_git(&libraries_dir(), &["add", "--", library])?;
+    run_git(
+        &libraries_dir(),
+        &["commit", "-m", &format!("uninstall library {library}")],
+    )?;
+    Ok(())
+}
+
+/// Implementation for `library(check)`: validate the registered library's
+/// in-source tree (its `cargo test`) WITHOUT committing or mutating anything.
+/// Returns the `ValidationResult` (structural + lint findings) for the caller
+/// to bucket into errors / warnings. Requires the library registered.
+pub(crate) fn check_library(
+    library: &str,
+    engine: &ParseEngine,
+) -> Result<ValidationResult, Error> {
+    let lib_root = library_dir(library);
+    if !lib_root.exists() {
+        return Err(Error::LibraryNotRegistered {
+            library: library.to_string(),
+        });
+    }
+    let index = load_index(library)?;
+    let source_path = index.source_path.clone();
+    if !source_path.exists() || !source_path.is_dir() {
+        return Err(Error::LibrarySourceMissing {
+            path: source_path.display().to_string(),
+        });
+    }
+    Ok(validate_library_source(&source_path, engine)?)
 }
 
 /// What: copies a directory tree recursively. Skips dotfile entries

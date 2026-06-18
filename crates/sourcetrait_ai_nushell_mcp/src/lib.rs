@@ -12,13 +12,13 @@ pub(crate) mod server {
         pub(crate) mod call;
         pub(crate) mod commit;
         pub(crate) mod common;
-        pub(crate) mod delete;
         pub(crate) mod handler;
         pub(crate) mod info;
         pub(crate) mod inspect;
         pub(crate) mod interact;
         pub(crate) mod kill;
         pub(crate) mod learn;
+        pub(crate) mod library;
         pub(crate) mod new;
         pub(crate) mod processes;
         pub(crate) mod rerun;
@@ -52,10 +52,10 @@ pub(crate) use crate::{
         cache::{CacheKind, cache_dir, closure_cache_file, data_base_dir},
         error::{Error, Where, WhereSource, error_to_call_result},
         library::{
-            LibraryInfo, LibraryLocks, Violation, call_file_path, commit_impl, delete_impl,
-            ensure_substrate, enumerate_libraries, establish_library, index_node, inspect_impl,
-            is_valid_ident, is_valid_module_path, libraries_dir, load_index, scaffold_leaf,
-            scaffold_leaf_exists,
+            LibraryInfo, LibraryLocks, ValidationResult, Violation, call_file_path, check_library,
+            check_source_dir, commit_impl, ensure_substrate, enumerate_libraries, establish_library,
+            index_node, inspect_impl, install_impl, is_valid_ident, is_valid_module_path,
+            libraries_dir, load_index, scaffold_leaf, scaffold_leaf_exists, uninstall_impl,
         },
         lint::{LINT_VIOLATION_CAP, LintViolation, lint_body},
         namepath::{Namepath, NamepathRef},

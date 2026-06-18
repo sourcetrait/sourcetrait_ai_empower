@@ -31,6 +31,8 @@ pub enum ErrorKind {
     LibrarySourcePathMismatch,
     #[serde(rename = "library::violations")]
     LibraryViolations,
+    #[serde(rename = "library::invalid_action")]
+    LibraryInvalidAction,
     #[serde(rename = "function::not_defined")]
     FunctionNotDefined,
     #[serde(rename = "lint::violations")]
@@ -102,6 +104,9 @@ pub enum Error {
         lint: Vec<LintViolation>,
     },
 
+    #[serde(rename = "library::invalid_action")]
+    LibraryInvalidAction { action: String },
+
     #[serde(rename = "function::not_defined")]
     FunctionNotDefined {
         library: String,
@@ -162,6 +167,7 @@ impl Error {
             Self::LibrarySourceMissing { .. } => K::LibrarySourceMissing,
             Self::LibrarySourcePathMismatch { .. } => K::LibrarySourcePathMismatch,
             Self::LibraryViolations { .. } => K::LibraryViolations,
+            Self::LibraryInvalidAction { .. } => K::LibraryInvalidAction,
             Self::FunctionNotDefined { .. } => K::FunctionNotDefined,
             Self::LintViolations { .. } => K::LintViolations,
             Self::SchemaInvalid { .. } => K::SchemaInvalid,

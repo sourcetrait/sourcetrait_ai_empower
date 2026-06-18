@@ -412,14 +412,6 @@ pub(crate) fn run_git(dir: &std::path::Path, args: &[&str]) -> io::Result<()> {
 // leg 3: new() - the scaffold authoring surface
 // ============================================================================
 
-/// Result of `new()`: the source tree it scaffolded into + the paths
-/// created (the agent now edits these, then `commit()`s).
-#[derive(Debug, ser::Serialize)]
-pub(crate) struct NewResult {
-    pub source_path: String,
-    pub created: Vec<String>,
-}
-
 /// The single-`main` skeleton a fresh function file is scaffolded with:
 /// `record<>` placeholders on BOTH the args positional and the
 /// `: nothing -> record<>` output type (the unfleshed-skeleton marker
@@ -494,61 +486,103 @@ fn validate_new_coordinate(
     Ok(())
 }
 
-/// Implementation for `new(library, source_path?, module_path, name?)` -
-/// the scaffold tool (leg 3). The FIRST call for a library establishes it
-/// (records source_path in the canonical meta, immutable thereafter); it
-/// then additively scaffolds the named leaf INTO the agent's source tree
-/// (module dir + fresh mod.nu, or the single-`main` function skeleton),
-/// where the agent edits it before `commit()`. LEAF-GUARD: refuses the
-/// terminal coordinate if it already exists (ancestors are mkdir -p'd).
-pub(crate) fn new_impl(
-    library: &str,
-    source_path: Option<&std::path::Path>,
-    module_path: &str,
-    name: Option<&str>,
-) -> Result<NewResult, Error> {
-    validate_new_coordinate(library, module_path, name)?;
-
+/// Establish a fresh library: create the canonical subtree (empty root
+/// mod.nu + an establish-time `.meta/library.json` recording `source_path`),
+/// land a signed `new library <name>` commit, and seed `source_path/mod.nu`.
+///
+/// Why: extracted from the old `new_impl` establish path so the `library()`
+/// admin tool's `new` + `install` actions share one establishment routine -
+/// `new()` itself no longer establishes (it only scaffolds into existing
+/// libraries). Errors `LibraryAlreadyRegistered` if the canonical dir already
+/// exists (the name is taken).
+///
+/// Where: called by `tool::library` (the `new` + `install` actions).
+pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) -> Result<(), Error> {
+    validate_new_coordinate(library, "", None)?;
     let canonical = library_dir(library);
-    let established = canonical.exists();
-
-    if !established {
-        let sp = source_path.ok_or_else(|| Error::LibraryInvalidName {
-            library: library.to_string(),
-            reason: "source_path is required on the establishing new() call".to_string(),
-        })?;
-        fs::create_dir_all(&canonical)?;
-        fs::write(library_root_modnu_path(library), b"")?;
-        // Establish-time index: source_path only, empty tree. commit()
-        // rebuilds it from the validated source. Writing it under .meta/ is
-        // what makes the library detectable (hydrate / enumerate key on it).
-        fs::create_dir_all(library_meta_dir(library))?;
-        let index = LibraryIndex {
-            source_path: sp.to_path_buf(),
-            functions: Vec::new(),
-            modules: Vec::new(),
-        };
-        let index_bytes = json::to_vec(&index).map_err(|e| Error::Internal {
-            phase: "new::serialize_index".to_string(),
-            reason: e.to_string(),
-        })?;
-        fs::write(library_meta_path(library), &index_bytes)?;
-        run_git(&libraries_dir(), &["add", "--", library])?;
-        run_git(
-            &libraries_dir(),
-            &["commit", "-m", &format!("new library {library}")],
-        )?;
-        fs::create_dir_all(sp)?;
-        let root_modnu = sp.join("mod.nu");
-        if !root_modnu.exists() {
-            fs::write(&root_modnu, b"")?;
-        }
-    } else if source_path.is_some() {
+    if canonical.exists() {
         return Err(Error::LibraryAlreadyRegistered {
             library: library.to_string(),
         });
     }
+    fs::create_dir_all(&canonical)?;
+    fs::write(library_root_modnu_path(library), b"")?;
+    // Establish-time index: source_path only, empty tree. commit() rebuilds it
+    // from the validated source. Writing it under .meta/ is what makes the
+    // library detectable (hydrate / enumerate key on it).
+    fs::create_dir_all(library_meta_dir(library))?;
+    let index = LibraryIndex {
+        source_path: source_path.to_path_buf(),
+        functions: Vec::new(),
+        modules: Vec::new(),
+    };
+    let index_bytes = json::to_vec(&index).map_err(|e| Error::Internal {
+        phase: "establish::serialize_index".to_string(),
+        reason: e.to_string(),
+    })?;
+    fs::write(library_meta_path(library), &index_bytes)?;
+    run_git(&libraries_dir(), &["add", "--", library])?;
+    run_git(
+        &libraries_dir(),
+        &["commit", "-m", &format!("new library {library}")],
+    )?;
+    fs::create_dir_all(source_path)?;
+    let root_modnu = source_path.join("mod.nu");
+    if !root_modnu.exists() {
+        fs::write(&root_modnu, b"")?;
+    }
+    Ok(())
+}
 
+/// True if the terminal leaf of a scaffold coordinate already exists in the
+/// agent source tree: the module directory for a 2-part namepath, the
+/// `<name>.nu` file for a 3-part one.
+///
+/// Why: the batch `new()` pre-checks every requested leaf before scaffolding
+/// any, so a single collision aborts the whole batch (nothing scaffolded).
+///
+/// Where: called by `tool::scaffold` (the new() handler) once per namepath,
+/// before the scaffold pass.
+pub(crate) fn scaffold_leaf_exists(
+    library: &str,
+    module_path: &str,
+    name: Option<&str>,
+) -> Result<bool, Error> {
+    let index = load_index(library)?;
+    let mut dir = index.source_path.clone();
+    for seg in module_path.split('/').filter(|s| !s.is_empty()) {
+        dir = dir.join(seg);
+    }
+    let leaf = match name {
+        Some(fn_name) => dir.join(format!("{fn_name}.nu")),
+        None => dir,
+    };
+    Ok(leaf.exists())
+}
+
+/// Scaffold one namepath leaf into an already-established library: mkdir -p
+/// the module-path chain (additively wiring each level's mod.nu), then write
+/// the single-`main` function skeleton for a 3-part coordinate. Returns the
+/// created paths. Errors `LibraryNotRegistered` if the library was never
+/// established (via `library(new|install)`); LEAF-GUARD refuses a terminal
+/// coordinate that already exists.
+///
+/// Why: `new()` no longer establishes libraries - it batch-scaffolds into
+/// existing ones. This is the per-namepath worker the batch handler calls
+/// under each library's write lock (after the pre-existence pre-check).
+///
+/// Where: called by `tool::scaffold` (the new() handler), once per namepath.
+pub(crate) fn scaffold_leaf(
+    library: &str,
+    module_path: &str,
+    name: Option<&str>,
+) -> Result<Vec<String>, Error> {
+    validate_new_coordinate(library, module_path, name)?;
+    if !library_dir(library).exists() {
+        return Err(Error::LibraryNotRegistered {
+            library: library.to_string(),
+        });
+    }
     let index = load_index(library)?;
     let sp = index.source_path.clone();
     let mut created: Vec<String> = Vec::new();
@@ -594,10 +628,7 @@ pub(crate) fn new_impl(
         created.push(fn_file.to_string_lossy().into_owned());
     }
 
-    Ok(NewResult {
-        source_path: sp.to_string_lossy().into_owned(),
-        created,
-    })
+    Ok(created)
 }
 
 // ============================================================================

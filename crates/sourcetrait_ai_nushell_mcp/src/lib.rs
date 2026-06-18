@@ -53,8 +53,9 @@ pub(crate) use crate::{
         error::{Error, Where, WhereSource, error_to_call_result},
         library::{
             LibraryInfo, LibraryLocks, Violation, call_file_path, commit_impl, delete_impl,
-            ensure_substrate, enumerate_libraries, index_node, inspect_impl, is_valid_ident,
-            is_valid_module_path, libraries_dir, load_index, new_impl,
+            ensure_substrate, enumerate_libraries, establish_library, index_node, inspect_impl,
+            is_valid_ident, is_valid_module_path, libraries_dir, load_index, scaffold_leaf,
+            scaffold_leaf_exists,
         },
         lint::{LINT_VIOLATION_CAP, LintViolation, lint_body},
         namepath::{Namepath, NamepathRef},

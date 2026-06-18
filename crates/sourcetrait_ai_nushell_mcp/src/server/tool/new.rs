@@ -3,21 +3,15 @@ use crate::*;
 /// Parameters for `new()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct NewParams {
-    /// Library name. The FIRST new() for a name establishes the library.
-    pub library: String,
-    /// Absolute path to the agent's source tree. Required on the first (establishing) call for a library; omit it thereafter.
-    pub source_path: Option<String>,
-    /// Slash-separated module path within the library; empty/omitted for
-    /// the library root.
-    pub module_path: Option<String>,
-    /// Function name to scaffold. Omit to scaffold only the module level.
-    pub name: Option<String>,
+    /// Namepaths to scaffold into existing libraries: `library:module/path`
+    /// (a utility module) or `library:module/path:function` (a single-`main`
+    /// function skeleton). Multiple may target multiple libraries.
+    pub namepaths: Vec<String>,
 }
 
-/// Success result of `new()`.
+/// Success result of `new()` -- every path created across the batch.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct NewEnvelope {
-    pub source_path: String,
     pub created: Vec<String>,
 }
 
@@ -25,40 +19,96 @@ pub(crate) struct NewEnvelope {
 impl NuSh {
     #[mcp::tool(
         name = "new",
-        description = "Scaffold a callable library / module / function into the agent's source-code repository.",
+        description = "Scaffold modules / functions (by namepath) into existing libraries.",
         output_schema = mcp::schema_for_type::<NewEnvelope>()
     )]
     async fn scaffold(
         &self,
         mcp::Parameters(p): mcp::Parameters<NewParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // Get-or-create the per-library write lock: register on the first
-        // (establishing) call, look up the existing lock thereafter.
-        let lock = match self.library_locks.register(&p.library).await {
-            Ok(l) => l,
-            Err(_) => match self.library_locks.lookup(&p.library).await {
-                Some(l) => l,
-                None => {
+        // Parse + validate every namepath up front. new() scaffolds INTO
+        // existing libraries, so each must be a Module (2-part) or Function
+        // (3-part); a bare library namepath is rejected (use library(new)).
+        let mut targets: Vec<(String, String, Option<String>)> = Vec::new();
+        for np in &p.namepaths {
+            match Namepath(np.clone()).validate() {
+                Ok(NamepathRef::Module {
+                    library,
+                    module_path,
+                }) => targets.push((library, module_path, None)),
+                Ok(NamepathRef::Function {
+                    library,
+                    module_path,
+                    name,
+                }) => targets.push((library, module_path, Some(name))),
+                Ok(NamepathRef::Library { .. }) => {
                     return Ok(error_to_call_result(
-                        Error::Internal {
-                            phase: "new::lock".to_string(),
-                            reason: format!("could not acquire the write lock for `{}`", p.library),
+                        Error::NamepathInvalid {
+                            namepath: np.clone(),
+                            reason: "new() needs a module or function namepath; use library(new) to create a library"
+                                .to_string(),
                         },
                         None,
                     ));
                 }
-            },
-        };
-        let _guard = lock.write().await;
-        let source_path = p.source_path.as_deref().map(std::path::Path::new);
-        let module_path = p.module_path.as_deref().unwrap_or("");
-        let name = p.name.as_deref();
-        match new_impl(&p.library, source_path, module_path, name) {
-            Ok(result) => envelope_to_structured(&NewEnvelope {
-                source_path: result.source_path,
-                created: result.created,
-            }),
-            Err(error) => Ok(error_to_call_result(error, None)),
+                Err(e) => return Ok(error_to_call_result(e, None)),
+            }
         }
+
+        // Lock every requested library, in canonical (sorted, deduped) order so
+        // two concurrent batches can't deadlock. A library must be registered
+        // (established via library(new|install)) - new() never establishes.
+        let mut libs: Vec<String> = targets.iter().map(|(l, _, _)| l.clone()).collect();
+        libs.sort();
+        libs.dedup();
+        let mut locks = Vec::new();
+        for lib in &libs {
+            match self.library_locks.lookup(lib).await {
+                Some(l) => locks.push(l),
+                None => {
+                    return Ok(error_to_call_result(
+                        Error::LibraryNotRegistered {
+                            library: lib.clone(),
+                        },
+                        None,
+                    ));
+                }
+            }
+        }
+        let mut guards = Vec::new();
+        for l in &locks {
+            guards.push(l.write().await);
+        }
+
+        // Pre-check: no target leaf may already exist - abort the whole batch
+        // before scaffolding any (atomic-ish: all-or-nothing on collision).
+        for (library, module_path, name) in &targets {
+            match scaffold_leaf_exists(library, module_path, name.as_deref()) {
+                Ok(true) => {
+                    return Ok(error_to_call_result(
+                        Error::LibraryInvalidName {
+                            library: module_path.clone(),
+                            reason: format!(
+                                "`{}` already exists; edit it instead of scaffolding over it",
+                                name.clone().unwrap_or_else(|| module_path.clone()),
+                            ),
+                        },
+                        None,
+                    ));
+                }
+                Ok(false) => {}
+                Err(e) => return Ok(error_to_call_result(e, None)),
+            }
+        }
+
+        // Scaffold each namepath.
+        let mut created = Vec::new();
+        for (library, module_path, name) in &targets {
+            match scaffold_leaf(library, module_path, name.as_deref()) {
+                Ok(mut c) => created.append(&mut c),
+                Err(e) => return Ok(error_to_call_result(e, None)),
+            }
+        }
+        envelope_to_structured(&NewEnvelope { created })
     }
 }

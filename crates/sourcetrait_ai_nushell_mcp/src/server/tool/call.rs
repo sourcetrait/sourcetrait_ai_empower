@@ -3,9 +3,8 @@ use crate::*;
 /// Parameters for `call()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct CallParams {
-    pub library: String,
-    pub module_path: String,
-    pub name: String,
+    /// The function's namepath: `library:module/path:function`.
+    pub namepath: String,
     /// JSON object of argument values passed to the function as `$args`.
     pub args: mcp::JsonObject,
     /// Optional per-call timeout in milliseconds; defaults to 120000 (2 minutes).
@@ -30,24 +29,43 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<CallParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let lock = match self.library_locks.lookup(&p.library).await {
+        // call requires a FUNCTION namepath (library:module/path:function).
+        let (library, module_path, name) = match Namepath(p.namepath.clone()).validate() {
+            Ok(NamepathRef::Function {
+                library,
+                module_path,
+                name,
+            }) => (library, module_path, name),
+            Ok(_) => {
+                return Ok(error_to_call_result(
+                    Error::NamepathInvalid {
+                        namepath: p.namepath.clone(),
+                        reason: "call requires a function namepath: library:module/path:function"
+                            .to_string(),
+                    },
+                    None,
+                ));
+            }
+            Err(e) => return Ok(error_to_call_result(e, None)),
+        };
+        let lock = match self.library_locks.lookup(&library).await {
             Some(l) => l,
             None => {
                 return Ok(error_to_call_result(
                     Error::LibraryNotRegistered {
-                        library: p.library.clone(),
+                        library: library.clone(),
                     },
                     None,
                 ));
             }
         };
         let _guard = lock.read().await;
-        let file_path = match call_file_path(&p.library, &p.module_path, &p.name) {
-            Some(p) => p,
+        let file_path = match call_file_path(&library, &module_path, &name) {
+            Some(fp) => fp,
             None => {
                 return Ok(error_to_call_result(
                     Error::LibraryInvalidModulePath {
-                        module_path: p.module_path.clone(),
+                        module_path: module_path.clone(),
                         reason: "library / module_path / name must satisfy identifier rules"
                             .to_string(),
                     },
@@ -58,7 +76,7 @@ impl NuSh {
         // big meta: the index is the callability authority - the coordinate
         // must name a registered call-target. A helper file present on disk
         // but absent from the index is correctly NOT callable.
-        let index = match load_index(&p.library) {
+        let index = match load_index(&library) {
             Ok(i) => i,
             Err(e) => {
                 return Ok(error_to_call_result(
@@ -70,20 +88,20 @@ impl NuSh {
                 ));
             }
         };
-        let is_call_target = index_node(&index, &p.module_path)
-            .map(|(fns, _)| fns.iter().any(|f| f.name == p.name))
+        let is_call_target = index_node(&index, &module_path)
+            .map(|(fns, _)| fns.iter().any(|f| f.name == name))
             .unwrap_or(false);
         if !is_call_target {
             return Ok(error_to_call_result(
                 Error::FunctionNotDefined {
-                    library: p.library.clone(),
-                    module_path: p.module_path.clone(),
-                    name: p.name.clone(),
+                    library: library.clone(),
+                    module_path: module_path.clone(),
+                    name: name.clone(),
                 },
                 None,
             ));
         }
-        let source = build_call_source(&file_path.display().to_string(), &p.name, &p.args);
+        let source = build_call_source(&file_path.display().to_string(), &name, &p.args);
         let payload_bytes = match json::to_vec(&p) {
             Ok(b) => b,
             Err(e) => {
@@ -96,11 +114,9 @@ impl NuSh {
                 ));
             }
         };
-        let path_str = if p.module_path.is_empty() {
-            format!("{}::{}", p.library, p.name)
-        } else {
-            format!("{}:{}:{}", p.library, p.module_path, p.name)
-        };
+        // The in-flight path IS the namepath (a function namepath is always
+        // library:module/path:name; there are no root functions).
+        let path_str = p.namepath.clone();
         let args_json = serde_json::Value::Object(p.args.clone());
         let outcome = match dispatch_pooled(
             &self.runs_pool,

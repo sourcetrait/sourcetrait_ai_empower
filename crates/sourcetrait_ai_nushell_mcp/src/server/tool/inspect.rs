@@ -3,16 +3,9 @@ use crate::*;
 /// Parameters for `inspect()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct InspectParams {
-    /// Library to inspect.
-    pub library: String,
-    /// Slash-separated module path within the library; empty/omitted for
-    /// the library root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub module_path: Option<String>,
-    /// Function name. Omit to inspect a module (with `module_path`) or the
-    /// library root (with neither).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    /// The coordinate's namepath: `library`, `library:module/path`, or
+    /// `library:module/path:function`.
+    pub namepath: String,
 }
 
 /// Success result of `inspect()` -- the documentation for one node.
@@ -41,21 +34,34 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<InspectParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let lock = match self.library_locks.lookup(&p.library).await {
+        // namepath -> structured coordinate. inspect accepts any arity:
+        // library / module / function.
+        let (library, module_path, name) = match Namepath(p.namepath.clone()).validate() {
+            Ok(NamepathRef::Library { library }) => (library, String::new(), None),
+            Ok(NamepathRef::Module {
+                library,
+                module_path,
+            }) => (library, module_path, None),
+            Ok(NamepathRef::Function {
+                library,
+                module_path,
+                name,
+            }) => (library, module_path, Some(name)),
+            Err(e) => return Ok(error_to_call_result(e, None)),
+        };
+        let lock = match self.library_locks.lookup(&library).await {
             Some(l) => l,
             None => {
                 return Ok(error_to_call_result(
                     Error::LibraryNotRegistered {
-                        library: p.library.clone(),
+                        library: library.clone(),
                     },
                     None,
                 ));
             }
         };
         let _guard = lock.read().await;
-        let module_path = p.module_path.as_deref().unwrap_or("");
-        let name = p.name.as_deref();
-        match inspect_impl(&p.library, module_path, name) {
+        match inspect_impl(&library, &module_path, name.as_deref()) {
             Ok(r) => envelope_to_structured(&InspectEnvelope {
                 library: r.library,
                 module_path: r.module_path,

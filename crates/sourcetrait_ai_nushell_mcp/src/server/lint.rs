@@ -33,11 +33,13 @@ pub(crate) const LINT_VIOLATION_CAP: usize = 3;
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LintViolation {
+    #[serde(rename = "lint::hardcoded_variable")]
     HardcodedVariable {
         position: [usize; 2],
         #[serde(skip_serializing_if = "Option::is_none")]
         source: Option<WhereSource>,
     },
+    #[serde(rename = "lint::denied_command")]
     DeniedCommand {
         position: [usize; 2],
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +49,7 @@ pub enum LintViolation {
     /// main`, or a mod.nu leading comment) exceeds the 80-char cap.
     /// Emitted by the library validator only; `source` is the file
     /// (`WhereSource::Mod(rel_path)`), `position` the summary line.
+    #[serde(rename = "lint::summary_length")]
     SummaryLength {
         position: [usize; 2],
         #[serde(skip_serializing_if = "Option::is_none")]

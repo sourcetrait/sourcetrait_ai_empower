@@ -1027,6 +1027,9 @@ pub(crate) fn inspect_impl(
 
 #[derive(Debug, Clone, ser::Serialize, ser::Deserialize, schema::JsonSchema)]
 pub struct Violation {
+    /// Namespaced diagnostic kind, e.g. `structure::parse_error`,
+    /// `structure::reserved`, `structure::root_function`.
+    pub kind: String,
     /// Path relative to the source root.
     pub path: String,
     /// 1-based line number; 0 means "file-level" (no specific line).
@@ -1083,8 +1086,11 @@ pub(crate) struct DocEntry {
 }
 
 impl ValidationResult {
+    /// Errors (structural) gate a commit; warnings (the doc `lint`) are
+    /// advisory and do NOT block. A result is clean enough to commit iff it
+    /// carries no structural errors.
     pub(crate) fn is_empty(&self) -> bool {
-        self.structural.is_empty() && self.lint.is_empty()
+        self.structural.is_empty()
     }
 }
 
@@ -1312,6 +1318,7 @@ fn validate_walk(
                     .to_string_lossy()
                     .into_owned();
                 result.structural.push(Violation {
+                    kind: "structure::root_function".to_string(),
                     path: rel,
                     line: 0,
                     message:
@@ -1435,6 +1442,7 @@ fn scan_reserved_terms(
         let bare = comp.strip_suffix(".nu").unwrap_or(comp);
         if is_reserved_term(bare) {
             violations.push(Violation {
+                kind: "structure::reserved".to_string(),
                 path: rel.to_string(),
                 line: 0,
                 message: format!(
@@ -1469,6 +1477,7 @@ fn scan_reserved_terms(
             let src_off = span.start.saturating_sub(prefix_len);
             let (line, _col) = span_to_line_col(source, src_off);
             violations.push(Violation {
+                kind: "structure::reserved".to_string(),
                 path: rel.to_string(),
                 line,
                 message: format!(
@@ -1485,6 +1494,7 @@ fn scan_reserved_terms(
                     let src_off = span.start.saturating_sub(prefix_len);
                     let (line, _col) = span_to_line_col(source, src_off);
                     violations.push(Violation {
+                        kind: "structure::reserved".to_string(),
                         path: rel.to_string(),
                         line,
                         message: format!(
@@ -1608,6 +1618,7 @@ fn validate_mod_nu_ast(
         let span_start = err.span().start.saturating_sub(prefix_len);
         let (line, _col) = span_to_line_col(source, span_start);
         violations.push(Violation {
+            kind: "structure::parse_error".to_string(),
             path: rel.to_string(),
             line,
             message: format!("parse error: {err:?}"),
@@ -1692,6 +1703,7 @@ fn check_mod_nu_pipeline_element(
                 return;
             }
             violations.push(Violation {
+                kind: "structure::mod_nu".to_string(),
                 path: rel.to_string(),
                 line,
                 message: format!(
@@ -1704,6 +1716,7 @@ fn check_mod_nu_pipeline_element(
         }
         other => {
             violations.push(Violation {
+                kind: "structure::mod_nu".to_string(),
                 path: rel.to_string(),
                 line,
                 message: format!(
@@ -1779,6 +1792,7 @@ fn validate_function_file_ast(
         let span_start = err.span().start.saturating_sub(prefix_len);
         let (line, _col) = span_to_line_col(source, span_start);
         violations.push(Violation {
+            kind: "structure::parse_error".to_string(),
             path: rel.to_string(),
             line,
             message: format!("parse error: {err:?}"),
@@ -1797,6 +1811,7 @@ fn validate_function_file_ast(
         Some(id) => id,
         None => {
             violations.push(Violation {
+                kind: "structure::internal".to_string(),
                 path: rel.to_string(),
                 line: 0,
                 message: "internal: wrapper module not found after parse".to_string(),
@@ -1891,6 +1906,7 @@ fn check_args_record_positional(
     if bad {
         let line = decl_line(working_set, decl_id, source, prefix_len);
         violations.push(Violation {
+            kind: "structure::args".to_string(),
             path: rel.to_string(),
             line,
             message: format!(
@@ -1935,6 +1951,7 @@ fn check_main_output_type(
         .map(|(_, out)| out.clone());
     let Some(output) = output else {
         violations.push(Violation {
+            kind: "structure::output".to_string(),
             path: rel.to_string(),
             line,
             message: "main must declare a `: nothing -> <record<...>|nothing>` output type"
@@ -1956,6 +1973,7 @@ fn check_main_output_type(
         }
         nu::Type::Record(_) => {
             violations.push(Violation {
+                kind: "structure::skeleton".to_string(),
                 path: rel.to_string(),
                 line,
                 message: "main's output `record<>` is the unfleshed skeleton; give it real fields (or `nothing` for void)".to_string(),
@@ -1964,6 +1982,7 @@ fn check_main_output_type(
         }
         other => {
             violations.push(Violation {
+                kind: "structure::output".to_string(),
                 path: rel.to_string(),
                 line,
                 message: format!(

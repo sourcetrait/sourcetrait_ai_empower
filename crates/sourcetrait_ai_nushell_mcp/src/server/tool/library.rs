@@ -200,7 +200,7 @@ fn check_summary_from(result: &ValidationResult) -> CheckSummary {
         .structural
         .iter()
         .map(|v| CheckDiagnostic {
-            kind: "structure::violation".to_string(),
+            kind: v.kind.clone(),
             path: v.path.clone(),
             position: vec![v.line, 0],
             message: v.message.clone(),

@@ -72,6 +72,10 @@ impl WarmBase {
         // submitted closures will want HOME + PATH. Without env-conversions
         // (no config file), $env.* are simple string values.
         seed_env(&mut engine_state);
+        // Set $env.NU_LIB_DIRS to the canonical libraries root the host passed
+        // (via NUSHELL_MCP_LIBRARIES_DIR) so run()/interact() bodies can
+        // `use <library> <module> ...` against committed libraries.
+        seed_lib_dirs(&mut engine_state);
         // Best-effort: detach the controlling terminal so externals that try
         // to open /dev/tty (sudo, ssh, psql) fail fast rather than hang.
         // setsid() returns EPERM if the process is already a session leader.
@@ -149,4 +153,32 @@ fn seed_env(engine_state: &mut nu::EngineState) {
         }
         engine_state.add_env_var(key, nu::Value::string(val, nu::Span::unknown()));
     }
+}
+
+/// What: sets `$env.NU_LIB_DIRS` to the single-element list `[<libraries
+/// root>]`, read from the `NUSHELL_MCP_LIBRARIES_DIR` env var the host sets
+/// on the worker spawn. No-op when the var is absent (e.g. a worker spawned
+/// outside the host path, like a bare handshake test).
+///
+/// Why: `use <library> <module> ...` from a run()/interact() body resolves a
+/// module by searching `$env.NU_LIB_DIRS`. Every committed library is a subdir
+/// of the canonical libraries root, so one entry makes them all importable and
+/// stays correct as libraries are added/removed. It MUST be a list Value:
+/// nushell's parser reads NU_LIB_DIRS as a list for module resolution, not the
+/// plain OS-env string `seed_env` would otherwise copy. The worker can't
+/// resolve the target-namespaced path itself (it never calls `build_target()`),
+/// so the host passes it across the spawn boundary.
+///
+/// Where: called once in `WarmBase::new` after `seed_env`, both worker modes.
+fn seed_lib_dirs(engine_state: &mut nu::EngineState) {
+    let Ok(dir) = std::env::var("NUSHELL_MCP_LIBRARIES_DIR") else {
+        return;
+    };
+    engine_state.add_env_var(
+        "NU_LIB_DIRS".to_string(),
+        nu::Value::list(
+            vec![nu::Value::string(dir, nu::Span::unknown())],
+            nu::Span::unknown(),
+        ),
+    );
 }

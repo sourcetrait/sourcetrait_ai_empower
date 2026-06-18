@@ -85,6 +85,11 @@ impl WorkerHandle {
         let mut child = tk::Command::new(&worker_bin)
             .arg("--mode")
             .arg(mode_arg)
+            // Hand the canonical libraries root to the worker so WarmBase can set
+            // $env.NU_LIB_DIRS - lets run()/interact() bodies `use <library>
+            // <module> ...`. The worker resolves no XDG/target paths itself, so
+            // the host (which knows the target) passes it across the spawn.
+            .env("NUSHELL_MCP_LIBRARIES_DIR", libraries_dir())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())

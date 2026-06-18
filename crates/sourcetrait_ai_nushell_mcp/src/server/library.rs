@@ -1302,6 +1302,24 @@ fn validate_walk(
             format!("{module_path}/{stem}")
         };
         if let Some((idx_fn, summary, details)) = validate_one_file(root, path, engine, result)? {
+            if module_path.is_empty() {
+                // No root functions: a callable must live in a module (the
+                // library root holds only the cascade + helpers, never a
+                // call-target). Reject it and skip indexing.
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .into_owned();
+                result.structural.push(Violation {
+                    path: rel,
+                    line: 0,
+                    message:
+                        "a call-target cannot live at the library root; move it into a module"
+                            .to_string(),
+                });
+                continue;
+            }
             if !summary.is_empty() || !details.is_empty() {
                 result.docs.push(DocEntry {
                     coord,

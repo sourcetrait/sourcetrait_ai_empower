@@ -3,6 +3,7 @@ pub(crate) mod server {
     pub(crate) mod error;
     pub(crate) mod library;
     pub(crate) mod lint;
+    pub(crate) mod namepath;
     pub(crate) mod parse_engine;
     pub(crate) mod pool;
     pub(crate) mod run;
@@ -52,10 +53,11 @@ pub(crate) use crate::{
         error::{Error, Where, WhereSource, error_to_call_result},
         library::{
             LibraryInfo, LibraryLocks, Violation, call_file_path, commit_impl, delete_impl,
-            ensure_substrate, enumerate_libraries, index_node, inspect_impl, libraries_dir,
-            load_index, new_impl,
+            ensure_substrate, enumerate_libraries, index_node, inspect_impl, is_valid_ident,
+            is_valid_module_path, libraries_dir, load_index, new_impl,
         },
         lint::{LINT_VIOLATION_CAP, LintViolation, lint_body},
+        namepath::{Namepath, NamepathRef},
         parse_engine::{ParseEngine, span_to_line_col, wrap_as_def_body, wrap_as_module},
         pool::Pool,
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},

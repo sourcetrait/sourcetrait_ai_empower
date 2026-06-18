@@ -37,6 +37,8 @@ pub enum ErrorKind {
     LintViolations,
     #[serde(rename = "schema::invalid")]
     SchemaInvalid,
+    #[serde(rename = "namepath::invalid")]
+    NamepathInvalid,
     #[serde(rename = "closure::invalid_rerun_id")]
     ClosureInvalidRerunId,
     #[serde(rename = "closure::cache_missing")]
@@ -113,6 +115,9 @@ pub enum Error {
     #[serde(rename = "schema::invalid")]
     SchemaInvalid { reason: String },
 
+    #[serde(rename = "namepath::invalid")]
+    NamepathInvalid { namepath: String, reason: String },
+
     #[serde(rename = "closure::invalid_rerun_id")]
     ClosureInvalidRerunId { rerun_id: String, reason: String },
 
@@ -160,6 +165,7 @@ impl Error {
             Self::FunctionNotDefined { .. } => K::FunctionNotDefined,
             Self::LintViolations { .. } => K::LintViolations,
             Self::SchemaInvalid { .. } => K::SchemaInvalid,
+            Self::NamepathInvalid { .. } => K::NamepathInvalid,
             Self::ClosureInvalidRerunId { .. } => K::ClosureInvalidRerunId,
             Self::ClosureCacheMissing { .. } => K::ClosureCacheMissing,
             Self::ClosureCacheDecode { .. } => K::ClosureCacheDecode,

@@ -1,8 +1,8 @@
 use crate::*;
 
-pub(crate) struct MdFind;
+pub(crate) struct Command;
 
-impl nu::SimplePluginCommand for MdFind {
+impl nu::SimplePluginCommand for Command {
     type Plugin = EmpowerPlugin;
 
     fn name(&self) -> &str {

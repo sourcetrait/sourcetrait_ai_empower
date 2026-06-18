@@ -1,17 +1,27 @@
+// Plugin commands are not re-exported; referenced long-hand via `crate::...`.
+
 pub(crate) mod peek {
-    pub(crate) mod md_find;
+    pub(crate) mod md {
+        pub(crate) mod find;
+    }
+}
+pub(crate) mod shm {
+    pub(crate) mod dir;
+    pub(crate) mod file;
+    pub(crate) mod path;
+    pub(crate) mod release;
+    pub(crate) mod result;
+    pub(crate) mod shared;
 }
 pub(crate) mod error;
 pub(crate) mod plugin;
 
 pub(crate) use crate::{
-    peek::{
-        md_find::MdFind,
-    },
+    shm::shared::*,
 };
 
 pub(crate) use std::{
-    path::PathBuf
+    path::{Path, PathBuf}
 };
 
 pub(crate) mod nu {

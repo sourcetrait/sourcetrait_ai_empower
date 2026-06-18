@@ -1,22 +1,21 @@
 //! Cross-call persistence contract for `interact()`.
 //!
-//! Verifies the four claims interact() makes against its stateful
-//! worker substrate:
+//! Verifies the claims interact() makes against its stateful worker
+//! substrate:
 //!   1. In-body `$env.X = ...` mutations persist into the next call.
 //!   2. In-body `cd <path>` propagates `$env.PWD` into the next call.
-//!   3. In-body top-level `def foo [...] { ... }` persists so the next
-//!      call's body can invoke it.
-//!   4. Interact state does NOT leak into `run()` (which routes through
+//!   3. Interact state does NOT leak into `run()` (which routes through
 //!      a separate stateless pool worker).
 //!
-//! Mechanism: `build_interact_source` emits the agent body at TOP
-//! LEVEL of the eval'd source (not inside a function-body scope), so
-//! mutations land on the call's outer Stack. After eval_block, the
-//! worker calls `merge_env(&mut stack)` so env + cd flow into
-//! `engine_state` for the next call. Top-level defs propagate via
-//! `merge_delta`. The template's own `__validate_result` def is
-//! scrubbed each call via the trailing `hide` closure so it doesn't
-//! pollute the agent's namespace.
+//! Mechanism: `build_interact_source` wraps the agent body in a
+//! `def --env __interact [args: A]: nothing -> R { BODY }` invoked
+//! inside a `( ... )` subexpression. `def --env` carries the body's
+//! `$env` + `cd` out to the caller; `()` (not `do {}`) lets them reach
+//! eval-top, where the worker's Stateful branch calls
+//! `merge_env(&mut stack)` so they flow into `engine_state` for the
+//! next call. Agent defs in the body are LOCAL to `__interact` and do
+//! NOT persist -- the old top-level-body form persisted them as an
+//! accidental byproduct, never a contract, so that case is retired.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -208,38 +207,6 @@ fn cd_persists_across_interact_calls() {
         env["result"]["cwd"].as_str(),
         Some("/tmp"),
         "expected cd from call 1 to propagate; got {env}",
-    );
-}
-
-#[test]
-fn agent_def_persists_across_interact_calls() {
-    // Agent defines a top-level `def` in the body of call 1; call 2's
-    // body invokes it.
-    let mut host = Host::spawn();
-    let _ = host.call(
-        "interact",
-        serde_json::json!({
-            "args_schema": {"noop": "int"},
-            "result_schema": {"ok": "bool"},
-            "args": {"noop": 0},
-            "body": "def shot_helper [n: int] { $n * 100 }\n{ ok: true }",
-        }),
-    );
-
-    let second = host.call(
-        "interact",
-        serde_json::json!({
-            "args_schema": {"n": "int"},
-            "result_schema": {"value": "int"},
-            "args": {"n": 4},
-            "body": "{ value: (shot_helper $args.n) }",
-        }),
-    );
-    let env = extract_envelope(&second).unwrap_or_else(|| panic!("call 2 envelope; got {second}"));
-    assert_eq!(
-        env["result"]["value"].as_i64(),
-        Some(400),
-        "expected shot_helper 4 = 400 via persisted def; got {env}",
     );
 }
 

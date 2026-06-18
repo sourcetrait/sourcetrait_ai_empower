@@ -161,66 +161,50 @@ pub(crate) fn build_call_source(path: &str, name: &str, args: &mcp::JsonObject) 
     )
 }
 
-/// What: builds the nushell source the stateful worker will eval for
-/// an `interact()` call. Emits a top-level `__validate_result` def, a
-/// typed-let binding `$args` against the agent-supplied args
-/// literal, the agent's body at top level, and a trailing pipeline
-/// `| __validate_result | do {|x| hide __validate_result; $x}` that
-/// runtime-typechecks the body's terminating value and scrubs the
-/// validator def from `engine_state` after use.
+/// What: builds the nushell source the stateful worker evals for an
+/// `interact()` call -- a `( ... )` subexpression holding one
+/// infix-signatured `def --env __interact [args: A]: nothing -> R`
+/// carrying the agent body, invoked as `__interact LIT`. LIT is
+/// `args_literal` (NUON record, or bare `null` for void args).
 ///
-/// Why: interact() advertises stateful semantics -- env mutations,
-/// `cd`, and agent-defined top-level defs persist across calls via
-/// `merge_env` + `merge_delta` (in `worker::request_loop::
-/// eval_source`'s Stateful branch). To deliver that contract, BODY
-/// must run at the top level of the eval'd source -- not inside a
-/// function-body scope (which would hide mutations from the outer
-/// Stack that merge_env reads). The typed-let on `$args` keeps
-/// the args-schema parse-time check against the literal record
-/// substitution. Result validation moves from a typed positional def
-/// (impossible at top level without losing the multi-line body parse)
-/// to a `def [...] { let r: record<RS> = $in; $r }` that consumes
-/// the body's piped terminator and runtime-typechecks via the
-/// typed-let on `$in`. The trailing `do {|x| hide ...; $x}` closure
-/// cleans up the validator from engine_state so the agent's next
-/// call sees a fresh namespace (verified cross-eval via probe P10).
-/// `let args` lives on the Stack (per-eval) so it doesn't persist
-/// (verified via probe P9), no cleanup needed.
+/// Why: interact() advertises stateful semantics -- `$env` mutations
+/// and `cd` in the body persist across calls (the worker's Stateful
+/// branch calls `merge_env` after eval). `def --env` carries the body's
+/// env/cd OUT to the caller's scope; wrapping the call in `()` (not
+/// `do {}`, which would scope env away) lets that reach eval-top where
+/// merge_env reads it (verified by an A/B cross-call probe). The
+/// positional `[args: A]` runtime-enforces the args -- the prior
+/// typed-let enforced NOTHING, the security fix; the `: nothing -> R`
+/// output type parse-checks a statically-typed result. Unlike the old
+/// top-level-body form, agent defs in BODY are LOCAL to `__interact`
+/// and no longer persist -- that persistence was an accidental
+/// byproduct, never a contract. The `;` after the def is required
+/// inside `()`.
 ///
 /// Where: called by `server::tool::NuSh::interact` to produce the
-/// source string that gets shipped to the stateful worker process.
-/// Pairs with `Mode::Stateful` in `worker::request_loop::
-/// eval_source`.
+/// source string shipped to the stateful worker. Pairs with
+/// `Mode::Stateful` in `worker::request_loop::eval_source`.
 pub(crate) fn build_interact_source(
     args_type: &str,
     result_type: &str,
     args: &mcp::JsonObject,
     body: &str,
 ) -> String {
-    let mut out = String::with_capacity(256);
-    out.push_str("def __validate_result [] {\n");
-    out.push_str("    let r: ");
-    out.push_str(result_type);
-    out.push_str(" = $in\n");
-    out.push_str("    $r\n");
-    out.push_str("}\n");
-    out.push_str("let args: ");
-    out.push_str(args_type);
-    out.push_str(" = ");
-    out.push_str(&args_literal(args_type, args));
-    out.push_str("\n");
-    out.push_str(body);
-    out.push_str("\n| __validate_result\n");
-    // The closure scrubs the validator def from engine_state and
-    // returns the validated value as the final pipeline output. Per
-    // probe P10c (and the manual probe verifying $in semantics),
-    // `hide <def>` inside a do-block propagates to engine_state via
-    // merge_delta so the next interact() call sees a fresh namespace.
-    // We bind the piped value via `$in` (not a positional `|x|`
-    // because `value | do {|x| ...}` does NOT auto-bind the pipe
-    // input to `x` -- it raises "Missing parameter: x").
-    out.push_str("| do { let _v = $in; hide __validate_result; $_v }\n");
-    out
+    let lit = args_literal(args_type, args);
+    formatdoc!(
+        r#"
+        (
+            def --env __interact [args: {at}]: nothing -> {rt} {{
+                {body}
+            }} ;
+            __interact {lit}
+        )
+    "#,
+        at = args_type,
+        rt = result_type,
+        lit = lit,
+        body = body,
+    )
 }
 
 #[cfg(test)]
@@ -319,5 +303,32 @@ mod tests {
         let got = build_call_source("/libs/util/ping.nu", "ping", &obj("{}"));
         let expected = "use /libs/util/ping.nu\nping null\n";
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn interact_source_typed_args() {
+        let got = build_interact_source(
+            "record<x: int>",
+            "record<out: int>",
+            &obj(r#"{"x":5}"#),
+            "{ out: ($args.x + 1) }",
+        );
+        let expected = "(\n    def --env __interact [args: record<x: int>]: nothing -> record<out: int> {\n        { out: ($args.x + 1) }\n    } ;\n    __interact {x: 5}\n)\n";
+        assert_eq!(got, expected);
+        assert!(
+            parses_clean(&got),
+            "rendered interact source must parse clean:\n{got}"
+        );
+    }
+
+    #[test]
+    fn interact_source_void_args() {
+        let got = build_interact_source("nothing", "record<out: int>", &obj("{}"), "{ out: 0 }");
+        let expected = "(\n    def --env __interact [args: nothing]: nothing -> record<out: int> {\n        { out: 0 }\n    } ;\n    __interact null\n)\n";
+        assert_eq!(got, expected);
+        assert!(
+            parses_clean(&got),
+            "void interact source must parse clean:\n{got}"
+        );
     }
 }

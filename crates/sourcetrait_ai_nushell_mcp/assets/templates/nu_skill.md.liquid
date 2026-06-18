@@ -10,7 +10,7 @@ description: |
   Invoke this skill when invoking nushell_mcp tools (`mcp__nushell__*`),
   when authoring or maintaining a nushell library, or when looking up a
   tool's args/result shape. Library-authoring conventions cover the
-  call/resolve/main function contract, the mod.nu cascade, node
+  single-main function contract, the mod.nu cascade, node
   documentation, and the new -> edit -> commit lifecycle.
 ---
 # nu
@@ -92,6 +92,47 @@ fields accepted) but every DECLARED field is required and deep
 type-checked - a `result_schema` must match what the body returns
 exactly (see Nu Nuances: positional typecheck).
 
+## Large payloads: shm IPC
+
+The structured tool channel (args + the `result` envelope) has a
+CLIENT-side size cap. An oversized result returns as an
+`Error: result (N characters) exceeds...` envelope that spilled the data
+to a file - that is the client truncating, NOT a nushell_mcp failure. For
+a payload too big for the channel (either direction), pass it out-of-band
+through a shared-memory file instead.
+
+The MCP host, its workers, and your Read/Write tools share one
+filesystem, so a file one writes another reads. The designated scratch
+space is the tmpfs dir (`<identity>` = your agent identity):
+
+```
+/dev/shm/box/ai/<identity>/
+```
+
+The environment provides this dir (created at each login), so you do not
+create it; it is tmpfs - its CONTENTS are transient (don't rely on shm
+files across sessions). `/dev/` is on the hardcoded-path lint allowlist, so a
+`/dev/shm/...` literal in a body does NOT trip the lint (still lift a
+variable filename to args).
+
+Large result OUT - write the data, return only the PATH:
+```nu
+# args_schema { shm_out: string }  result_schema { shm_out: string, rows: int }
+let data = (ls /etc | select name size)        # stand-in for a big result
+$data | to json | save -f $args.shm_out
+{ shm_out: $args.shm_out, rows: ($data | length) }
+```
+The caller passes e.g. `shm_out: "/dev/shm/box/ai/<identity>/etc.json"`,
+then reads that file with the Read tool. Large input IN: Write the data to
+a shm file, pass its path (`shm_in`), and `open` it in the body.
+
+Conventions:
+- Name any arg/result field carrying a shm path with a `shm_` prefix or
+  `_shm` suffix (`shm_out`, `in_shm`) - it flags the out-of-band intent.
+- A shm file holds ANY format - NUON, JSON, YAML, raw text. Use whatever
+  is smallest / easiest to parse on the far side (`to nuon` / `to json` /
+  `to yaml` out; `open` or `open --raw | decode` back).
+
 ## Library authoring conventions
 
 A library is a directory tree the agent owns and edits, promoted into
@@ -107,45 +148,42 @@ native tools over that source tree:
 live index of what exists, each node's schemas, and its docs - read
 those rather than tracking targets by hand.
 
-### The function file: call / resolve / main
+### The function file: a single `main`
 
-A callable function lives at `<module_path>/<name>.nu` and exports
-EXACTLY three decls - `call`, `resolve`, `main`:
+A callable function lives at `<module_path>/<name>.nu` and exports ONE
+core decl - `main` - carrying an infix signature:
 
 ```nu
-export def call [args: record<x: int>] {
-    # the raw logic you author; returns a record
-    { out: ($args.x * 2) }
-}
-
-export def resolve [args: record<out: int>] {
-    $args
-}
-
 # <summary line, <= 80 chars>
 #
 # <optional details, any length>
-export def main [args: record<x: int>] {
-    resolve (call $args)
+export def main [args: record<x: int>]: nothing -> record<out: int> {
+    # YOUR logic; the terminating record matches the output type
+    { out: ($args.x * 2) }
 }
 ```
 
-- `call` holds YOUR logic and the ARGS schema; its body is the only one
-  you write.
-- `resolve` carries the RESULT schema; its body is exactly `$args` (this
-  is what runtime-typechecks the return value).
-- `main` is AST-locked to `resolve (call $args)` - generated glue; you
-  own only its doc comment.
-- The `args` positional is `record<...>` with real fields, or `nothing`
-  for a void (no-arg) function. A bare `record<>` is the unfleshed
-  skeleton and is rejected.
-- `call` and `resolve` are RESERVED words: they may appear ONLY as these
-  exported sentinels, never as any other def / module / directory / file
-  / parameter / record-key / cell-path-member name in the library.
+- `main` IS the call-target: it holds your logic AND owns the whole body
+  (no resolve passthrough, no call/main glue).
+- The `[args: record<...>]` positional carries the ARGS schema - real
+  fields, or `nothing` for a void (no-arg) function. A bare `record<>` is
+  the unfleshed skeleton and is rejected.
+- The `: nothing -> R` output type carries the RESULT schema - R a
+  non-empty `record<...>` or `nothing`; an empty `record<>` is rejected.
+- The positional runtime-enforces the args (missing / wrong-typed
+  rejected, even on an any-typed value); the output type parse-checks a
+  STATICALLY-typed result (a literal record). A dynamic / any-typed
+  result is unchecked and records are open (extra fields pass) -
+  best-effort result, reliably-enforced args.
+- A call-target file MAY ALSO export helper `def` / `const`s beside
+  `main`; only `main` is the indexed / callable target.
+- `main` is a RESERVED word: it may appear ONLY as this exported
+  call-target sentinel, never as any other def / module / directory /
+  file / parameter / record-key / cell-path-member name in the library.
 
 ### Organizational (helper) files
 
-A `.nu` file with NEITHER `call` nor `resolve` is organizational: free
+A `.nu` file WITHOUT `main` is organizational: free
 `export def` / `export const` helpers, no contract. It is not a
 call-target (absent from `info`, not callable) - pull it into a function
 file with `use ./<file>.nu`. A `mod.nu` may likewise carry
@@ -164,7 +202,7 @@ Each directory carries a `mod.nu` wiring its children:
   mod.nu              # export module geo
   geo/
     mod.nu            # export use ./area.nu
-    area.nu          # export def call / resolve / main
+    area.nu          # export def main
 ```
 
 ### Node documentation + inference reduction
@@ -219,10 +257,10 @@ re-reads through it, so you edit that tree and commit to promote.
 - `new(library, source_path?, module_path?, name?)` - scaffold. The
   FIRST call for a name ESTABLISHES the library (source_path required
   then, immutable after). Later calls add a module directory or a
-  call/resolve/main function skeleton. Additive: it refuses to scaffold
+  single-`main` function skeleton. Additive: it refuses to scaffold
   over an existing leaf.
 - `commit(library)` - validate the source tree (structure + the
-  call/resolve/main contract + reserved terms + the summary-length rule)
+  single-`main` contract + reserved terms + the summary-length rule)
   and upsert it into the signed canonical store, rebuilding the generated
   index + docs. Idempotent; returns the changed paths grouped as
   `{added, modified, removed}`.
@@ -370,9 +408,11 @@ patterns don't have to be relearned each session.
 
 ### positional typecheck is deep; records/tables are open; empties bind
 
-The result typecheck (`resolve` / the `__resolve` wrapper) and any
-typed positional check the value's structure to its FULL depth at
-runtime; a wrong nested type fails `Can't convert to <full type>`. So:
+A typed positional - the synthesized `[args: A]` on `__run` / `__interact`
+and the committed `main` - checks the value's structure to its FULL depth
+at RUNTIME; a wrong nested type fails `Can't convert to <full type>`. The
+`: nothing -> R` output type only PARSE-checks a static (literal) result -
+best-effort, not a runtime check. The structural rules:
 
 - DEEP: declare nested types exactly. `table<c: int>` rejects a row
   `{c: "s"}`.
@@ -990,7 +1030,7 @@ Output (partial):
 
 The FIRST call for a `library` establishes it - `source_path` is required
 then and immutable after. Add a module with `module_path`; add a
-call/resolve/main skeleton with `module_path` + `name`. Additive: it
+single-`main` skeleton with `module_path` + `name`. Additive: it
 refuses to scaffold over an existing leaf. Edit the files, then
 [`commit()`](#commit). Returns `{source_path, created}`.
 
@@ -1039,7 +1079,7 @@ Output (partial):
 *Commit the agent's library source-code to the MCP's repository for live use.*
 
 Re-reads the recorded source_path, validates (structure + the
-call/resolve/main contract + reserved terms + the summary-length rule),
+single-`main` contract + reserved terms + the summary-length rule),
 and rebuilds the generated index + docs. Idempotent (a no-change resync
 returns all-empty). Returns the changed paths grouped by kind; rejects
 with `library::violations`.

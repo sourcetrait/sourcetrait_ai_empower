@@ -1,4 +1,5 @@
 use crate::*;
+use indoc::formatdoc;
 
 /// What: convert the agent-supplied args (`mcp::JsonObject`) into a
 /// NUON record-literal string ready for substitution into a nu
@@ -15,10 +16,9 @@ use crate::*;
 /// performance is worse (string parse work the parser doesn't need
 /// to do).
 ///
-/// Where: called by `build_run_source` (substituting into the
-/// `__exec ARGS` call site) and `build_interact_source` (substituting
-/// into the `let args: record<...> = ARGS` typed-let RHS) once per
-/// template emission.
+/// Where: called (via `args_literal`) by `build_run_source` (the
+/// gate-chain `__to_run` call site) and `build_interact_source` (the
+/// `let args` RHS) once per template emission.
 fn args_to_nuon(args: &mcp::JsonObject) -> String {
     let value = json_object_to_nu_value(args);
     let engine_state = nu::EngineState::new();
@@ -70,30 +70,15 @@ fn json_value_to_nu_value(v: &serde_json::Value) -> nu::Value {
     }
 }
 
-/// What: builds the nushell source the stateless worker will eval for
-/// a `run()` call. Emits a `do { ... }` block containing an `__exec`
-/// def carrying the agent's body, a `__resolve` def that gates the
-/// return value against `result_schema`, and a final
-/// `__resolve (__exec ARGS_JSON)` invocation where ARGS_JSON is the
-/// agent's args serialized as a record literal.
+/// What: the value substituted at the `__run` call site (and the
+/// `build_interact_source` `let args` RHS). A void positional (`nothing`)
+/// with empty args binds the bare `null`; otherwise the args record as
+/// NUON. A void positional with NON-empty args emits the record NUON
+/// against a `nothing` parameter and fails the typecheck -- strict void
+/// (item 21).
 ///
-/// Why: the outer `do { ... }` is load-bearing -- nushell's
-/// Arc::make_mut COW on blocks means defs declared inside a do-block
-/// don't persist in the worker's EngineState across calls, which is
-/// exactly the stateless contract `run()` advertises. The
-/// `__exec`/`__resolve` two-def template encodes typed positional
-/// binding at the agent-facing boundary so both args mismatches and
-/// result mismatches surface as nu errors with precise spans.
-///
-/// Where: called by `server::tool::NuSh::run` (and by `rerun`, which
-/// reconstructs a RunParams from cache and reuses the same builder)
-/// to produce the source string that gets shipped through
-/// `WorkerHandle::send_request` to the stateless worker process.
-/// The value substituted at the `__exec` call site (and the interact
-/// `let args` RHS). A void positional (`nothing`) with empty args binds
-/// the bare `null`; otherwise the args record as NUON. A void positional
-/// with NON-empty args therefore emits the record NUON against a
-/// `nothing` parameter and fails the typecheck -- strict void (item 21).
+/// Where: called by `build_run_source` + `build_interact_source` once per
+/// template emission.
 fn args_literal(args_type: &str, args: &mcp::JsonObject) -> String {
     if args_type == "nothing" && args.is_empty() {
         "null".to_string()
@@ -102,27 +87,46 @@ fn args_literal(args_type: &str, args: &mcp::JsonObject) -> String {
     }
 }
 
+/// What: builds the nushell source the stateless worker evals for a
+/// `run()` call -- a `do { ... }` block with one infix-signatured def
+/// `__run [args: A]: nothing -> R` carrying the agent body, invoked as
+/// `__run ARGS_LITERAL`. ARGS_LITERAL is `args_literal` (NUON record, or
+/// bare `null` for void args).
+///
+/// Why: the positional `[args: A]` runtime-enforces the args (missing /
+/// wrong-typed rejected, even on any-typed values; verified). The
+/// `: nothing -> R` output type documents the result and parse-checks a
+/// statically-typed body's result (raises `OutputMismatch`); a dynamic /
+/// any-typed result is unchecked and records are open (extra fields pass)
+/// -- the accepted best-effort-result scope; strict extras are the
+/// deferred record/table seal. The outer `do { ... }` is load-bearing:
+/// defs inside it don't persist in the worker's EngineState across calls,
+/// the stateless contract.
+///
+/// Where: called by `server::tool::NuSh::run` and by `rerun` (which
+/// rebuilds RunParams from cache and reuses this builder); the rendered
+/// source ships through `WorkerHandle::send_request` to a pool worker.
 pub(crate) fn build_run_source(
     args_type: &str,
     result_type: &str,
     args: &mcp::JsonObject,
     body: &str,
 ) -> String {
-    let mut out = String::with_capacity(256);
-    out.push_str("do {\n");
-    out.push_str("    def __exec [args: ");
-    out.push_str(args_type);
-    out.push_str("] {\n");
-    out.push_str(body);
-    out.push_str("\n    }\n");
-    out.push_str("    def __resolve [result: ");
-    out.push_str(result_type);
-    out.push_str("] { $result }\n");
-    out.push_str("    __resolve (__exec ");
-    out.push_str(&args_literal(args_type, args));
-    out.push_str(")\n");
-    out.push_str("}\n");
-    out
+    let lit = args_literal(args_type, args);
+    formatdoc!(
+        r#"
+        do {{
+            def __run [args: {at}]: nothing -> {rt} {{
+                {body}
+            }}
+            __run {lit}
+        }}
+    "#,
+        at = args_type,
+        rt = result_type,
+        lit = lit,
+        body = body
+    )
 }
 
 /// What: builds the nushell source the stateful worker will eval for
@@ -185,4 +189,87 @@ pub(crate) fn build_interact_source(
     // input to `x` -- it raises "Missing parameter: x").
     out.push_str("| do { let _v = $in; hide __validate_result; $_v }\n");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn obj(s: &str) -> mcp::JsonObject {
+        match serde_json::from_str::<json::Value>(s).unwrap() {
+            json::Value::Object(m) => m,
+            _ => panic!("not an object"),
+        }
+    }
+
+    /// Parse the rendered source on the full-shell lint engine; a clean
+    /// parse (no parse errors) is the gate the golden strings must clear.
+    fn parses_clean(src: &str) -> bool {
+        let engine = ParseEngine::new_full();
+        let mut ws = nu::StateWorkingSet::new(engine.engine_state());
+        let _ = nu::parse(&mut ws, Some("golden.nu"), src.as_bytes(), false);
+        ws.parse_errors.is_empty()
+    }
+
+    #[test]
+    fn run_source_typed_args_single_line_body() {
+        let got = build_run_source(
+            "record<x: int>",
+            "record<out: int>",
+            &obj(r#"{"x":5}"#),
+            "{ out: ($args.x + 1) }",
+        );
+        let expected = r#"do {
+    def __run [args: record<x: int>]: nothing -> record<out: int> {
+        { out: ($args.x + 1) }
+    }
+    __run {x: 5}
+}
+"#;
+        assert_eq!(got, expected);
+        assert!(
+            parses_clean(&got),
+            "rendered run source must parse clean:\n{got}"
+        );
+    }
+
+    #[test]
+    fn run_source_void_args() {
+        let got = build_run_source("nothing", "record<out: int>", &obj("{}"), "{ out: 0 }");
+        let expected = r#"do {
+    def __run [args: nothing]: nothing -> record<out: int> {
+        { out: 0 }
+    }
+    __run null
+}
+"#;
+        assert_eq!(got, expected);
+        assert!(
+            parses_clean(&got),
+            "void run source must parse clean:\n{got}"
+        );
+    }
+
+    #[test]
+    fn run_source_multi_line_body() {
+        let got = build_run_source(
+            "record<x: int>",
+            "record<out: int>",
+            &obj(r#"{"x":3}"#),
+            "let y = ($args.x * 2)\n{ out: $y }",
+        );
+        let expected = r#"do {
+    def __run [args: record<x: int>]: nothing -> record<out: int> {
+        let y = ($args.x * 2)
+{ out: $y }
+    }
+    __run {x: 3}
+}
+"#;
+        assert_eq!(got, expected);
+        assert!(
+            parses_clean(&got),
+            "multi-line run source must parse clean:\n{got}"
+        );
+    }
 }

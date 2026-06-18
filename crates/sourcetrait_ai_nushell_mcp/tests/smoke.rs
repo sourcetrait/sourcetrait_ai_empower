@@ -150,7 +150,7 @@ fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Val
 #[test]
 fn smoke_2_runtime_arg_typecheck_error() {
     // The substitution template puts ARGS_DATA as a literal record at the
-    // __exec call site, so the arg typecheck fires at parse time inside the
+    // __run call site, so the arg typecheck fires at parse time inside the
     // worker. The wire returns ok=false with a structured parse-error
     // diagnostic, which the host maps to an MCP error.
     let mut host = Host::spawn();
@@ -176,9 +176,9 @@ fn smoke_2_runtime_arg_typecheck_error() {
 
 #[test]
 fn smoke_3_runtime_result_typecheck_error() {
-    // Closure returns {out: "five"} but result_schema declares out: int. The
-    // __resolve typed positional check fires at runtime and the worker emits
-    // ok=false with the cant_convert error.
+    // Body returns {out: "five"} (static record<out: string>) but
+    // result_schema declares out: int. __run's `: nothing -> R` output type
+    // raises OutputMismatch at parse time -> worker error.
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"x": "int"},
@@ -382,11 +382,11 @@ fn smoke_12_tls_crypto_provider_installed() {
 
 #[test]
 fn smoke_7_multi_call_stability_and_scoping() {
-    // Ten distinct closures in sequence on the same worker. Each call's def
-    // for __exec lives only inside the do block, so the worker's EngineState
+    // Ten distinct closures in sequence on the same worker. Each call's
+    // `__run` def lives only inside the do block, so the worker's EngineState
     // should not accumulate defs across calls. We verify by introspecting
     // `scope commands` AFTER the 10 calls -- the result should NOT contain
-    // a definition named __exec (or any prior __exec lingering).
+    // `__run` lingering.
     let mut host = Host::spawn();
     for i in 0..10 {
         let args = serde_json::json!({
@@ -406,13 +406,13 @@ fn smoke_7_multi_call_stability_and_scoping() {
             envelope["result"],
         );
     }
-    // Introspect: ask the worker whether __exec exists at the top level after
-    // all 10 calls. The do-block scoping should mean __exec does NOT persist.
+    // Introspect: ask the worker whether `__run` leaked to the top level
+    // after all 10 calls. The do-block scoping should mean it does NOT persist.
     let intro = serde_json::json!({
         "args_schema": {"noop": "int"},
         "result_schema": {"leaked": "int"},
         "args": {"noop": 0},
-        "body": "{ leaked: (scope commands | where name == \"__exec\" | length) }",
+        "body": "{ leaked: (scope commands | where name == \"__run\" | length) }",
     });
     let resp = host.run(intro);
     let envelope =
@@ -420,7 +420,7 @@ fn smoke_7_multi_call_stability_and_scoping() {
     assert_eq!(
         envelope["result"]["leaked"].as_i64(),
         Some(0),
-        "do-block scoping should keep __exec out of the persistent \
+        "do-block scoping should keep __run out of the persistent \
          EngineState; got {:?}",
         envelope["result"],
     );

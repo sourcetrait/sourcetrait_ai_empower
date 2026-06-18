@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_ai_nushell_mcp"
-version = "0.0.50"
+version = "0.0.52"
 edition = "2024"
 description = "Nushell engine MCP server"
 authors = ["SourceTrait <development@sourcetrait.com>"]
@@ -29,6 +29,7 @@ path = "src/bin/nushell_mcp_test_worker.rs"
 [dependencies]
 clap.workspace = true
 directories.workspace = true
+indoc.workspace = true
 liquid.workspace = true
 nix.workspace = true
 nu-cmd-extra.workspace = true

@@ -104,7 +104,7 @@ and the MCP.
 shm is NOT a logging mechanism. A body's external-command stdout/stderr is
 already captured per-call by the MCP at its cache log dir (the server
 `instructions` advertise the path) - to read a command's full output,
-fetch that per-nonce log; never `save` command output to shm.
+fetch that per-nonce log; rather than `save` command output to shm.
 
 The oversize tell: a result too big returns as an
 `Error: result (N characters) exceeds...` envelope that spilled the data

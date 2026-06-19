@@ -6,20 +6,28 @@ impl nu::SimplePluginCommand for Command {
     type Plugin = EmpowerPlugin;
 
     fn name(&self) -> &str {
-        "shm path"
+        "into shm files"
     }
 
     fn description(&self) -> &str {
-        "Retrieves the IPC directory or child file path within /dev/shm for a given ident, unique token, and (optionally) filename"
+        ""
     }
 
     fn signature(&self) -> nu::Signature {
         todo!("ai")
+        // `into shm files [--dir?: path]: string -> record<name: string, path: path, dir: record<name: string, path: directory>>'
     }
 
     fn examples(&self) -> Vec<nu::Example<'_>> {
         todo!("ai")
-        // `shm path <shm_ident:string> <unique: string> <filename?: string>` -> path (throws error)
+        // ```nu
+        // let my_shm = "ai/fae_name/message.txt"
+        // let the_shm_file = $my_shm | into shm file
+        // 
+        // let my_shm_dir = "ai/fae_name"
+        // let my_shm_filename = "message.txt"
+        // let the_shm_file = $my_shm_name | into shm --dir $my_shm_dir
+        // ```
     }
 
     fn run(

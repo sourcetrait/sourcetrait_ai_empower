@@ -6,21 +6,28 @@ impl nu::SimplePluginCommand for Command {
     type Plugin = EmpowerPlugin;
 
     fn name(&self) -> &str {
-        "shm file"
+        "into shm file"
     }
 
     fn description(&self) -> &str {
-        "Creates a unique tmpfs file within a given `shm dir` for use with IPC"
+        ""
     }
 
     fn signature(&self) -> nu::Signature {
         todo!("ai")
+        // `into shm file [--dir?: path]: string -> record<name: string, path: path, dir: record<author: path, name: string, path: directory>>'
     }
 
     fn examples(&self) -> Vec<nu::Example<'_>> {
         todo!("ai")
-        // `shm file <shm_dir: record<ident: string, unique: string, dir: directory>`: nothing -> path
-        // creates the empty file. uses a base62 to generate a unique
+        // ```nu
+        // let my_shm = "ai/fae_name/message.txt"
+        // let the_shm_file = $my_shm | into shm file
+        // 
+        // let my_shm_dir = "ai/fae_name"
+        // let my_shm_filename = "message.txt"
+        // let the_shm_file = $my_shm_name | into shm --dir $my_shm_dir
+        // ```
     }
 
     fn run(

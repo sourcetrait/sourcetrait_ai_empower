@@ -1,3 +1,6 @@
+//! ## Nonce
+//! IF `$env.NONCE` exists THEN we use that ELSE we generate a base62
+
 use crate::*;
 
 pub(crate) struct Command;
@@ -6,21 +9,20 @@ impl nu::SimplePluginCommand for Command {
     type Plugin = EmpowerPlugin;
 
     fn name(&self) -> &str {
-        "shm dir"
+        "shm make dir"
     }
 
     fn description(&self) -> &str {
-        "Creates a unique tmpfs directory within /dev/shm for use with IPC"
+        "Stubs a unique tmpfs directory within $env.XDGX_SHM_DIR for use with IPC."
     }
 
     fn signature(&self) -> nu::Signature {
         todo!("ai")
+        // `shm make dir [author: path]: nothing -> record<author: path, name: string, path: directory>
     }
 
     fn examples(&self) -> Vec<nu::Example<'_>> {
         todo!("ai")
-        // `shm dir <shm_ident:string>`: nothing -> record<ident: string, unique: string, dir: directory>
-        // creates the empty directory. uses base62 to generate the unique
     }
 
     fn run(

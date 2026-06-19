@@ -1,20 +1,28 @@
-use crate::*;
+//! Relevant empower gaurantees:
+//! - `$env.XDGX_SHM_DIR` exists; set to `/dev/shm/($env.USER)` (/dev/shm/box)
+//! 
+//! Field naming conventions as passed as arguments / parameters by the agent:
+//! - `shm_author: path` := Categorizes "who" authored a path; (a/b) or (a/b/c)
+//!    - An agent? An MCP library mod? An MCP run/interact?
+//!    - The intention here is to generally categorize origin. It shouldn't be
+//!      verbose. Typically, authors (agents / source-code) should prefer 2 path
+//!      components.
+//!    - Agents: `ai/<fae_name>`. eg. `ai/billy_bob`
+//!    - Nushell MCP run/interact: `mcp/run` and `mcp/interact`
+//!    - MCP libraries (including calls): `<library>/<categorical/mod/path>`.
+//!      eg `empower/know` or `empower/git` for all of their sub-modules
+//!    - etc ...
+//! - `shm: path` := `($env.XDGX_SHM_DIR)/($shm)` Transitive relative path for
+//!   IPC file.
+//!   - Coming from the agent, this is `<shm_author>/<filename>`
+//! - `shm_files: record<dir: path, names: list<string>`
+//!   := `($env.XDGX_SHM_DIR/($shm_files.dir)/[..$shm_files.names])`
+//!   Transitive list of IPC filenames within a IPC directory.
+//!   - Coming from the agent, dir is `<shm_author>` and filenames are relative
+//!     to that.
+//! - `shm_dir: path` := `($env.XDGX_SHM_DIR)/($shm_dir)` Transitive relative
+//!   path for IPC directory.
+//!   - Coming from the agent, this is usually `<shm_author>`
 
-// The following field naming conventions for the `shm` paths in consumers:
-// - `shm_ident`: The name of an AI harness
-//    - Corresponds with ~/ai/<ident>/
-//    - Corresponds with {SHM_BOX_AI_DIR}/<ident>/
-//    - Corresponds with ~/tmp/ai/<ident>/
-// - `shm_unique`: Unique token (base62 if generated here, a uncommon snake if authored by the agent)
-//   - Note: Claude's Write tool performs all mkdirs, so it doesn't need to use a shell tool to write an IPC shm file
-// - `shm_dir`: {SHM_BOX_AI_DIR}/<ident>/<unique>/ Transitive location of IPC files, typically one-turn or one batch of turns.
-//   - SHM_BOX_AI_DIR is convention, so only "ident/unique" needs to be passed to the MPC; where the code can split on '/' to extract both tokens
-// - `shm_file`: {SHM_BOX_AI_DIR}/<ident>/<unique>/<filename> 
-//   - SHM_BOX_AI_DIR is convention, so only "ident/unique/filename" needs to be passed to the MPC; where the code can split on '/' to extract the three
-// - `shm_files`: Used if `shm_dir` (or its components) is already being passed to the MPC and there are multiple files; filename only here.
-// 
-// When the agent is making a MCP run/call/interact, args fields need to send EITHER:
-// - shm_ident, shm_unique, and a list of shm_file
-// - a path relative to {SHM_BOX_AI_DIR}
+//use crate::*;
 
-pub(crate) const SHM_BOX_AI_DIR: &'static str = "/dev/shm/box/ai";

@@ -1,20 +1,20 @@
 //! info() tool surface test.
 //!
 //! Verifies:
-//! - `info` appears in tools/list (count bumps with the new tool).
+//! - `info` appears in tools/list.
 //! - envelope shape: name == "nushell_mcp", version matches the crate's
 //!   CARGO_PKG_VERSION, nu_version is non-empty semver-shaped,
 //!   plugins is a list of positional [name, version] pairs,
 //!   libraries is the recursive library -> module -> function
 //!   hierarchy (empty on a fresh host).
-//! - the hierarchy for a committed library: root functions on the
-//!   library node, nested module nodes, verbatim schema round-trip
-//!   (including nested record<...> typedefs).
+//! - the hierarchy for a committed library: every call-target lives in a
+//!   module (no root functions), nested module nodes, verbatim schema
+//!   round-trip (including nested record<...> typedefs).
 //! - the hierarchy for a hand-authored library, with `path` carrying
 //!   the source directory.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -144,6 +144,23 @@ impl Host {
         self.send(&req);
         self.read_id(id)
     }
+
+    /// Establish a fresh library via `library(new)`.
+    fn library_new(&mut self, name: &str, src: &Path) -> serde_json::Value {
+        self.call_tool(
+            "library",
+            serde_json::json!({
+                "action": "new",
+                "library": name,
+                "source_dir": src.to_str().unwrap(),
+            }),
+        )
+    }
+
+    /// Scaffold a module/function namepath into an established library.
+    fn scaffold(&mut self, namepath: &str) -> serde_json::Value {
+        self.call_tool("new", serde_json::json!({"namepaths": [namepath]}))
+    }
 }
 
 impl Drop for Host {
@@ -153,7 +170,7 @@ impl Drop for Host {
     }
 }
 
-fn write_source(dir: &std::path::Path, rel: &str, contents: &str) {
+fn write_source(dir: &Path, rel: &str, contents: &str) {
     let target = dir.join(rel);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).expect("mkdir");
@@ -167,6 +184,16 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
     format!(
         "export def main [args: record<{args_schema}>]: nothing -> record<{result_schema}> {{\n{body}\n}}\n",
     )
+}
+
+/// Find a module/submodule node by its single-segment name.
+fn find_node<'a>(nodes: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    nodes
+        .as_array()
+        .expect("node array")
+        .iter()
+        .find(|n| n["name"].as_str() == Some(name))
+        .unwrap_or_else(|| panic!("node `{name}` not found in {nodes}"))
 }
 
 #[test]
@@ -250,22 +277,17 @@ fn info_returns_static_server_state() {
 fn info_lists_committed_library_hierarchy() {
     let mut host = Host::spawn();
     let src = host.source_dir("treelib");
-    let est = host.call_tool(
-        "new",
-        serde_json::json!({"library": "treelib", "source_path": src.to_str().unwrap()}),
-    );
+    let est = host.library_new("treelib", &src);
     assert!(
         est["result"]["structuredContent"].get("error").is_none(),
         "establish failed: {est}",
     );
-    // Root function (library node), one in `alpha`, one in `alpha/beta`.
-    // b1 carries a NESTED record typedef to exercise balanced extraction.
-    // info() reads args_schema from `main`'s positional and result_schema
-    // from `main`'s output type, so valid_function_source(args, result, ..)
-    // round-trips both. The nu record-inner forms below render to the JSON
-    // schemas asserted after commit.
+    // Every call-target lives in a module (no root functions): `solo/rootfn`,
+    // one in `alpha`, one in `alpha/beta`. b1 carries a NESTED record typedef
+    // to exercise balanced extraction. info() reads args_schema from `main`'s
+    // positional and result_schema from `main`'s output type.
     for (module_path, name, args_inner, result_inner, body) in [
-        ("", "rootfn", "x: int", "out: int", "{ out: ($args.x + 1) }"),
+        ("solo", "rootfn", "x: int", "out: int", "{ out: ($args.x + 1) }"),
         (
             "alpha",
             "a1",
@@ -281,25 +303,15 @@ fn info_lists_committed_library_hierarchy() {
             "{ out: { y: $args.t.y } }",
         ),
     ] {
-        let scaffold = host.call_tool(
-            "new",
-            serde_json::json!({
-                "library": "treelib",
-                "module_path": module_path,
-                "name": name,
-            }),
-        );
+        let np = format!("treelib:{module_path}:{name}");
+        let scaffold = host.scaffold(&np);
         assert!(
             scaffold["result"]["structuredContent"]
                 .get("error")
                 .is_none(),
-            "scaffold {name} failed: {scaffold}",
+            "scaffold {np} failed: {scaffold}",
         );
-        let rel = if module_path.is_empty() {
-            format!("{name}.nu")
-        } else {
-            format!("{module_path}/{name}.nu")
-        };
+        let rel = format!("{module_path}/{name}.nu");
         write_source(
             &src,
             &rel,
@@ -328,21 +340,27 @@ fn info_lists_committed_library_hierarchy() {
         "path should be the meta source_path",
     );
 
-    // Root function on the library node.
+    // No root functions: the library node carries no direct call-targets.
     let root_fns = lib["functions"].as_array().expect("library functions");
-    assert_eq!(root_fns.len(), 1, "got {root_fns:?}");
-    assert_eq!(root_fns[0]["name"].as_str(), Some("rootfn"));
-    assert_eq!(root_fns[0]["args_schema"], serde_json::json!({"x": "int"}));
+    assert!(root_fns.is_empty(), "no root functions; got {root_fns:?}");
+
+    // Top-level modules sorted: alpha, solo.
+    let modules = lib["modules"].as_array().expect("library modules");
+    assert_eq!(modules.len(), 2, "got {modules:?}");
+
+    // solo -> { functions: [rootfn] }
+    let solo = find_node(&lib["modules"], "solo");
+    let solo_fns = solo["functions"].as_array().expect("solo functions");
+    assert_eq!(solo_fns.len(), 1);
+    assert_eq!(solo_fns[0]["name"].as_str(), Some("rootfn"));
+    assert_eq!(solo_fns[0]["args_schema"], serde_json::json!({"x": "int"}));
     assert_eq!(
-        root_fns[0]["result_schema"],
+        solo_fns[0]["result_schema"],
         serde_json::json!({"out": "int"})
     );
 
     // alpha -> { functions: [a1], submodules: [beta -> { functions: [b1] }] }
-    let modules = lib["modules"].as_array().expect("library modules");
-    assert_eq!(modules.len(), 1, "got {modules:?}");
-    let alpha = &modules[0];
-    assert_eq!(alpha["name"].as_str(), Some("alpha"));
+    let alpha = find_node(&lib["modules"], "alpha");
     let alpha_fns = alpha["functions"].as_array().expect("alpha functions");
     assert_eq!(alpha_fns.len(), 1);
     assert_eq!(alpha_fns[0]["name"].as_str(), Some("a1"));
@@ -376,10 +394,7 @@ fn info_lists_hand_authored_library_hierarchy() {
     let src = host.source_dir("implib");
     // Establish the library, then hand-author the full source tree and
     // commit it (commit re-reads the recorded source_path).
-    let est = host.call_tool(
-        "new",
-        serde_json::json!({"library": "implib", "source_path": src.to_str().unwrap()}),
-    );
+    let est = host.library_new("implib", &src);
     assert!(
         est["result"]["structuredContent"].get("error").is_none(),
         "establish failed: {est}",
@@ -440,14 +455,12 @@ fn info_includes_node_summaries() {
     // leading comment); empty when undocumented.
     let mut host = Host::spawn();
     let src = host.source_dir("doctreelib");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "doctreelib", "source_path": src.to_str().unwrap()}),
-    );
-    write_source(&src, "mod.nu", "# the doctree library\nexport use ./fn.nu\n");
+    let _ = host.library_new("doctreelib", &src);
+    write_source(&src, "mod.nu", "# the doctree library\nexport module m\n");
+    write_source(&src, "m/mod.nu", "# the m module\nexport use ./fn.nu\n");
     write_source(
         &src,
-        "fn.nu",
+        "m/fn.nu",
         "# the fn summary\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x } }\n",
     );
     let committed = host.call_tool("commit", serde_json::json!({"library": "doctreelib"}));
@@ -464,7 +477,9 @@ fn info_includes_node_summaries() {
         .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
     let lib = &env["libraries"].as_array().expect("libraries")[0];
     assert_eq!(lib["summary"].as_str(), Some("the doctree library"));
-    let fns = lib["functions"].as_array().expect("functions");
+    let module = find_node(&lib["modules"], "m");
+    assert_eq!(module["summary"].as_str(), Some("the m module"));
+    let fns = module["functions"].as_array().expect("functions");
     assert_eq!(fns[0]["name"].as_str(), Some("fn"));
     assert_eq!(fns[0]["summary"].as_str(), Some("the fn summary"));
 }

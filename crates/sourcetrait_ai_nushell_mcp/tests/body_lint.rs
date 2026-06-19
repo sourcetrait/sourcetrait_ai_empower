@@ -171,7 +171,7 @@ fn lint_rejects_closure_with_hardcoded_path() {
     );
     let kinds = lint_violation_kinds(&resp);
     assert!(
-        kinds.iter().any(|k| k == "hardcoded_variable"),
+        kinds.iter().any(|k| k == "lint::hardcoded_variable"),
         "expected hardcoded_variable in violations; got {kinds:?}"
     );
 }
@@ -192,7 +192,7 @@ fn lint_rejects_closure_with_denied_external() {
     );
     let kinds = lint_violation_kinds(&resp);
     assert!(
-        kinds.iter().any(|k| k == "denied_command"),
+        kinds.iter().any(|k| k == "lint::denied_command"),
         "expected denied_command in violations; got {kinds:?}"
     );
 }
@@ -236,9 +236,9 @@ cd \"/a/b\"
         "got {resp}"
     );
     let kinds = lint_violation_kinds(&resp);
-    assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
+    assert!(kinds.iter().any(|k| k == "lint::denied_command"), "got {kinds:?}");
     assert!(
-        kinds.iter().any(|k| k == "hardcoded_variable"),
+        kinds.iter().any(|k| k == "lint::hardcoded_variable"),
         "got {kinds:?}"
     );
 }
@@ -263,7 +263,7 @@ fn lint_interact_rejects_hardcoded_path() {
     );
     let kinds = lint_violation_kinds(&resp);
     assert!(
-        kinds.iter().any(|k| k == "hardcoded_variable"),
+        kinds.iter().any(|k| k == "lint::hardcoded_variable"),
         "got {kinds:?}"
     );
 }
@@ -283,5 +283,5 @@ fn lint_interact_rejects_denied_external() {
         "got {resp}"
     );
     let kinds = lint_violation_kinds(&resp);
-    assert!(kinds.iter().any(|k| k == "denied_command"), "got {kinds:?}");
+    assert!(kinds.iter().any(|k| k == "lint::denied_command"), "got {kinds:?}");
 }

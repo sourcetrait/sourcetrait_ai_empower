@@ -112,7 +112,7 @@ fn host_tools_list_and_run_stub() {
         "learn",
         "new",
         "commit",
-        "delete",
+        "library",
         "inspect",
     ] {
         assert!(

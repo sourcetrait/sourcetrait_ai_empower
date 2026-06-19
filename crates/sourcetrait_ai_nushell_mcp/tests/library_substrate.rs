@@ -4,12 +4,12 @@
 //!   - First startup creates `<XDG_DATA_HOME>/sourcetrait/nushell_mcp/keypair/
 //!     {id_nushell_mcp, id_nushell_mcp.pub, allowed_signers}` and the git repo at
 //!     `<XDG_DATA_HOME>/sourcetrait/nushell_mcp/libraries/` with a signed initial commit.
-//!   - `new(name, source_path)` writes the library subtree in the MCP repo
-//!     and lands a signed git commit in the repo log.
-//!   - `delete(name, source_path)` removes the subtree from the MCP repo and
-//!     lands a signed git commit in the repo log.
-//!   - `delete` on a missing name errors.
-//!   - `tools/list` returns all 11 tools (membership-checked).
+//!   - `library(new)` writes the library subtree in the MCP repo and lands a
+//!     signed git commit in the repo log.
+//!   - `library(uninstall)` removes the subtree from the MCP repo and lands a
+//!     signed git commit; the agent source_dir is kept.
+//!   - `library(uninstall)` on a missing name is idempotent success (void).
+//!   - `tools/list` returns all 12 tools (membership-checked).
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -148,6 +148,18 @@ impl Host {
         self.read_id(id)
     }
 
+    /// Establish a fresh library via `library(new)`.
+    fn library_new(&mut self, name: &str, src: &Path) -> serde_json::Value {
+        self.call(
+            "library",
+            serde_json::json!({
+                "action": "new",
+                "library": name,
+                "source_dir": src.to_str().unwrap(),
+            }),
+        )
+    }
+
     fn list_tools(&mut self) -> serde_json::Value {
         let id = self.next_id();
         let req = serde_json::json!({
@@ -221,7 +233,7 @@ fn substrate_initializes_on_first_startup() {
 }
 
 #[test]
-fn tools_list_has_eleven() {
+fn tools_list_has_twelve() {
     let mut host = Host::spawn();
     let resp = host.list_tools();
     let tools = resp["result"]["tools"].as_array().expect("tools array");
@@ -241,7 +253,7 @@ fn tools_list_has_eleven() {
         "learn",
         "new",
         "commit",
-        "delete",
+        "library",
         "inspect",
     ] {
         assert!(
@@ -252,17 +264,11 @@ fn tools_list_has_eleven() {
 }
 
 #[test]
-fn new_writes_repo_and_records_meta() {
+fn library_new_writes_repo_and_records_meta() {
     let mut host = Host::spawn();
     let src = host.source_dir("mylib");
-    let resp = host.call(
-        "new",
-        serde_json::json!({
-            "library": "mylib",
-            "source_path": src.to_str().expect("src to str"),
-        }),
-    );
-    assert!(!has_error_path(&resp), "new should succeed; got {resp}");
+    let resp = host.library_new("mylib", &src);
+    assert!(!has_error_path(&resp), "library(new) should succeed; got {resp}");
     // MCP-side files exist.
     let lib_dir = host.library_dir("mylib");
     assert!(
@@ -297,81 +303,75 @@ fn new_writes_repo_and_records_meta() {
 }
 
 #[test]
-fn new_reestablish_with_source_path_errors() {
+fn library_new_reestablish_errors() {
     let mut host = Host::spawn();
     let src = host.source_dir("dup");
-    let r1 = host.call(
-        "new",
-        serde_json::json!({
-            "library": "dup",
-            "source_path": src.to_str().expect("src to str"),
-        }),
-    );
-    assert!(!has_error_path(&r1), "first new should succeed; got {r1}");
-    // Re-passing source_path on an already-established library is rejected.
-    let r2 = host.call(
-        "new",
-        serde_json::json!({
-            "library": "dup",
-            "source_path": src.to_str().expect("src to str"),
-        }),
-    );
+    let r1 = host.library_new("dup", &src);
+    assert!(!has_error_path(&r1), "first library(new) should succeed; got {r1}");
+    // Re-establishing an already-registered library is rejected.
+    let r2 = host.library_new("dup", &src);
     assert!(
         has_error_path(&r2),
-        "re-establishing with source_path should error; got {r2}",
+        "re-establishing should error; got {r2}",
     );
 }
 
 #[test]
-fn delete_removes_subtree() {
+fn uninstall_removes_subtree_keeps_source() {
     let mut host = Host::spawn();
     let src = host.source_dir("droppable");
-    let _ = host.call(
-        "new",
-        serde_json::json!({
-            "library": "droppable",
-            "source_path": src.to_str().expect("src to str"),
-        }),
-    );
+    let _ = host.library_new("droppable", &src);
+    // A committed call-target lives in a module (no root functions).
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call("commit", serde_json::json!({"library": "droppable"}));
     assert!(host.library_dir("droppable").exists());
     let resp = host.call(
-        "delete",
+        "library",
         serde_json::json!({
+            "action": "uninstall",
             "library": "droppable",
-            "source_path": src.to_str().expect("src to str"),
+            "source_dir": src.to_str().expect("src to str"),
         }),
     );
-    assert!(!has_error_path(&resp), "delete should succeed; got {resp}",);
+    assert!(!has_error_path(&resp), "uninstall should succeed; got {resp}",);
     assert!(
         !host.library_dir("droppable").exists(),
-        "lib dir should be gone after delete",
+        "lib dir should be gone after uninstall",
+    );
+    // uninstall never touches the agent source_dir.
+    assert!(src.exists(), "source should remain after uninstall");
+    assert!(
+        src.join("m/thing.nu").exists(),
+        "source files should remain after uninstall",
     );
     let log = git_log_subjects(&host.libraries_dir());
     assert!(
-        log.iter().any(|s| s == "delete library droppable"),
-        "expected delete-library commit in log; got {log:?}",
+        log.iter().any(|s| s == "uninstall library droppable"),
+        "expected uninstall-library commit in log; got {log:?}",
     );
 }
 
 #[test]
-fn delete_missing_errors() {
+fn uninstall_missing_succeeds() {
+    // uninstall is idempotent: an unregistered library is a void success.
     let mut host = Host::spawn();
     let resp = host.call(
-        "delete",
+        "library",
         serde_json::json!({
+            "action": "uninstall",
             "library": "neverexisted",
-            "source_path": "/some/path",
+            "source_dir": "/some/path",
         }),
     );
     assert!(
-        has_error_path(&resp),
-        "delete of unknown lib should error; got {resp}",
+        !has_error_path(&resp),
+        "uninstall of unknown lib should be idempotent success; got {resp}",
     );
 }
 

@@ -6,13 +6,13 @@
 //!   2. XDG paths are namespaced under `sourcetrait/nushell_mcp_test/`
 //!      (not `sourcetrait/nushell_mcp/`), so the test sandbox shares no
 //!      on-disk state with a co-running production host.
-//!   3. `new` rejects library names that don't end with `_test`
+//!   3. `library(new)` rejects library names that don't end with `_test`
 //!      (defense-in-depth against corrupting production-named
 //!      libraries from a misconfigured test sandbox).
-//!   4. `new` accepts names that DO end with `_test`.
+//!   4. `library(new)` accepts names that DO end with `_test`.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -139,6 +139,18 @@ impl Host {
         self.send(&req);
         self.read_id(id)
     }
+
+    /// Establish a fresh library via `library(new)`.
+    fn library_new(&mut self, name: &str, src: &Path) -> serde_json::Value {
+        self.call_tool(
+            "library",
+            serde_json::json!({
+                "action": "new",
+                "library": name,
+                "source_dir": src.to_str().unwrap(),
+            }),
+        )
+    }
 }
 
 impl Drop for Host {
@@ -184,16 +196,10 @@ fn test_variant_info_returns_test_name() {
 fn test_variant_xdg_paths_isolated() {
     let mut host = Host::spawn();
     let src = host.source_dir("foo_test");
-    let resp = host.call_tool(
-        "new",
-        serde_json::json!({
-            "library": "foo_test",
-            "source_path": src.to_str().unwrap(),
-        }),
-    );
+    let resp = host.library_new("foo_test", &src);
     assert!(
         !has_error_path(&resp),
-        "new with _test-suffix name should succeed; got {resp}",
+        "library(new) with _test-suffix name should succeed; got {resp}",
     );
     let lib_dir = host.libraries_dir().join("foo_test");
     assert!(
@@ -205,19 +211,13 @@ fn test_variant_xdg_paths_isolated() {
 }
 
 #[test]
-fn test_variant_new_rejects_non_test_suffix() {
+fn test_variant_library_new_rejects_non_test_suffix() {
     let mut host = Host::spawn();
     let src = host.source_dir("not_suffixed");
-    let resp = host.call_tool(
-        "new",
-        serde_json::json!({
-            "library": "not_suffixed",
-            "source_path": src.to_str().unwrap(),
-        }),
-    );
+    let resp = host.library_new("not_suffixed", &src);
     assert!(
         has_error_path(&resp),
-        "new on _test variant should reject non-_test-suffix names; got {resp}",
+        "library(new) on _test variant should reject non-_test-suffix names; got {resp}",
     );
     assert_eq!(
         envelope_error_kind(&resp),
@@ -227,18 +227,12 @@ fn test_variant_new_rejects_non_test_suffix() {
 }
 
 #[test]
-fn test_variant_new_accepts_test_suffix() {
+fn test_variant_library_new_accepts_test_suffix() {
     let mut host = Host::spawn();
     let src = host.source_dir("hello_test");
-    let resp = host.call_tool(
-        "new",
-        serde_json::json!({
-            "library": "hello_test",
-            "source_path": src.to_str().unwrap(),
-        }),
-    );
+    let resp = host.library_new("hello_test", &src);
     assert!(
         !has_error_path(&resp),
-        "new with _test-suffix name should succeed on _test variant; got {resp}",
+        "library(new) with _test-suffix name should succeed on _test variant; got {resp}",
     );
 }

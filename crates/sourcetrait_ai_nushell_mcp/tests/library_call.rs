@@ -1,4 +1,4 @@
-//! call() tests for 0.0.13 -- the final tool in slice 3.
+//! call() + inspect() tests over the namepath surface.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -120,6 +120,27 @@ impl Host {
         self.send(&req);
         self.read_id(id)
     }
+
+    /// Establish a fresh library via `library(new)`.
+    fn library_new(&mut self, name: &str, src: &Path) -> serde_json::Value {
+        self.call_tool(
+            "library",
+            serde_json::json!({
+                "action": "new",
+                "library": name,
+                "source_dir": src.to_str().unwrap(),
+            }),
+        )
+    }
+
+    /// Scaffold a module/function namepath into an established library.
+    fn scaffold(&mut self, namepath: &str) -> serde_json::Value {
+        self.call_tool("new", serde_json::json!({"namepaths": [namepath]}))
+    }
+
+    fn call_np(&mut self, namepath: &str, args: serde_json::Value) -> serde_json::Value {
+        self.call_tool("call", serde_json::json!({"namepath": namepath, "args": args}))
+    }
 }
 
 impl Drop for Host {
@@ -168,29 +189,15 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
 fn call_after_commit_returns_result() {
     let mut host = Host::spawn();
     let src = host.source_dir("calc");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "calc", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "calc", "module_path": "math", "name": "double"}),
-    );
+    let _ = host.library_new("calc", &src);
+    let _ = host.scaffold("calc:math:double");
     write_source(
         &src,
         "math/double.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "calc"}));
-    let resp = host.call_tool(
-        "call",
-        serde_json::json!({
-            "library": "calc",
-            "module_path": "math",
-            "name": "double",
-            "args": {"x": 7},
-        }),
-    );
+    let resp = host.call_np("calc:math:double", serde_json::json!({"x": 7}));
     let env = extract_envelope(&resp).unwrap_or_else(|| panic!("call envelope; got {resp}"));
     assert_eq!(env["result"]["out"].as_i64(), Some(14));
     // No rerun_id, no version_id (HEAD-only).
@@ -205,32 +212,20 @@ fn call_after_commit_returns_result() {
 }
 
 #[test]
-fn call_after_root_commit_returns_result() {
+fn call_after_module_commit_returns_result() {
+    // A call-target always lives in a module (no root functions); a deeper
+    // namepath resolves the same way.
     let mut host = Host::spawn();
     let src = host.source_dir("importable");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "importable", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "importable", "module_path": "", "name": "triple"}),
-    );
+    let _ = host.library_new("importable", &src);
+    let _ = host.scaffold("importable:util:triple");
     write_source(
         &src,
-        "triple.nu",
+        "util/triple.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 3) }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "importable"}));
-    let resp = host.call_tool(
-        "call",
-        serde_json::json!({
-            "library": "importable",
-            "module_path": "",
-            "name": "triple",
-            "args": {"x": 11},
-        }),
-    );
+    let resp = host.call_np("importable:util:triple", serde_json::json!({"x": 11}));
     let env = extract_envelope(&resp).unwrap_or_else(|| panic!("call envelope; got {resp}"));
     assert_eq!(env["result"]["out"].as_i64(), Some(33));
 }
@@ -238,15 +233,8 @@ fn call_after_root_commit_returns_result() {
 #[test]
 fn call_unknown_library_errors() {
     let mut host = Host::spawn();
-    let resp = host.call_tool(
-        "call",
-        serde_json::json!({
-            "library": "ghost",
-            "module_path": "",
-            "name": "noop",
-            "args": {"noop": 0},
-        }),
-    );
+    // A valid function namepath whose library was never registered.
+    let resp = host.call_np("ghost:m:noop", serde_json::json!({"noop": 0}));
     assert!(has_error_path(&resp));
 }
 
@@ -254,19 +242,8 @@ fn call_unknown_library_errors() {
 fn call_missing_function_errors() {
     let mut host = Host::spawn();
     let src = host.source_dir("partlib");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "partlib", "source_path": src.to_str().unwrap()}),
-    );
-    let resp = host.call_tool(
-        "call",
-        serde_json::json!({
-            "library": "partlib",
-            "module_path": "",
-            "name": "ghost",
-            "args": {"noop": 0},
-        }),
-    );
+    let _ = host.library_new("partlib", &src);
+    let resp = host.call_np("partlib:m:ghost", serde_json::json!({"noop": 0}));
     assert!(has_error_path(&resp));
 }
 
@@ -274,23 +251,13 @@ fn call_missing_function_errors() {
 fn call_bad_module_path_errors() {
     let mut host = Host::spawn();
     let src = host.source_dir("safelib");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "safelib", "source_path": src.to_str().unwrap()}),
-    );
-    for bad in ["../etc", "a/../b", "/abs"] {
-        let resp = host.call_tool(
-            "call",
-            serde_json::json!({
-                "library": "safelib",
-                "module_path": bad,
-                "name": "x",
-                "args": {"n": 0},
-            }),
-        );
+    let _ = host.library_new("safelib", &src);
+    // Traversal-y module paths are rejected at namepath validation.
+    for bad in ["safelib:../etc:x", "safelib:a/../b:x", "safelib:/abs:x"] {
+        let resp = host.call_np(bad, serde_json::json!({"n": 0}));
         assert!(
             has_error_path(&resp),
-            "module_path {bad:?} should error; got {resp}"
+            "namepath {bad:?} should error; got {resp}"
         );
     }
 }
@@ -299,30 +266,16 @@ fn call_bad_module_path_errors() {
 fn call_args_typecheck_failure_surfaces() {
     let mut host = Host::spawn();
     let src = host.source_dir("strictlib");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "strictlib", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "strictlib", "module_path": "", "name": "needs_int"}),
-    );
+    let _ = host.library_new("strictlib", &src);
+    let _ = host.scaffold("strictlib:m:needs_int");
     write_source(
         &src,
-        "needs_int.nu",
+        "m/needs_int.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "strictlib"}));
     // Send a string where int is expected; worker should reject at parse time.
-    let resp = host.call_tool(
-        "call",
-        serde_json::json!({
-            "library": "strictlib",
-            "module_path": "",
-            "name": "needs_int",
-            "args": {"x": "five"},
-        }),
-    );
+    let resp = host.call_np("strictlib:m:needs_int", serde_json::json!({"x": "five"}));
     assert!(
         has_error_path(&resp),
         "type mismatch should surface as error; got {resp}"
@@ -333,14 +286,8 @@ fn call_args_typecheck_failure_surfaces() {
 fn inspect_returns_function_doc() {
     let mut host = Host::spawn();
     let src = host.source_dir("inspectlib");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "inspectlib", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "inspectlib", "module_path": "math", "name": "double"}),
-    );
+    let _ = host.library_new("inspectlib", &src);
+    let _ = host.scaffold("inspectlib:math:double");
     write_source(
         &src,
         "math/double.nu",
@@ -349,7 +296,7 @@ fn inspect_returns_function_doc() {
     let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib"}));
     let resp = host.call_tool(
         "inspect",
-        serde_json::json!({"library": "inspectlib", "module_path": "math", "name": "double"}),
+        serde_json::json!({"namepath": "inspectlib:math:double"}),
     );
     let env = extract_envelope(&resp).unwrap_or_else(|| panic!("inspect envelope; got {resp}"));
     assert_eq!(env["summary"].as_str(), Some("doubles its input"));
@@ -366,10 +313,7 @@ fn inspect_returns_function_doc() {
 fn inspect_library_root_and_module() {
     let mut host = Host::spawn();
     let src = host.source_dir("inspectlib2");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "inspectlib2", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("inspectlib2", &src);
     write_source(&src, "mod.nu", "# the inspectlib2 library\nexport module math\n");
     write_source(&src, "math/mod.nu", "# math helpers\nexport use ./double.nu\n");
     write_source(
@@ -378,14 +322,14 @@ fn inspect_library_root_and_module() {
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib2"}));
-    let lib = host.call_tool("inspect", serde_json::json!({"library": "inspectlib2"}));
+    let lib = host.call_tool("inspect", serde_json::json!({"namepath": "inspectlib2"}));
     assert_eq!(
         extract_envelope(&lib).unwrap()["summary"].as_str(),
         Some("the inspectlib2 library"),
     );
     let m = host.call_tool(
         "inspect",
-        serde_json::json!({"library": "inspectlib2", "module_path": "math"}),
+        serde_json::json!({"namepath": "inspectlib2:math"}),
     );
     assert_eq!(
         extract_envelope(&m).unwrap()["summary"].as_str(),
@@ -397,23 +341,17 @@ fn inspect_library_root_and_module() {
 fn inspect_undocumented_is_empty() {
     let mut host = Host::spawn();
     let src = host.source_dir("inspectlib3");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "inspectlib3", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "inspectlib3", "module_path": "", "name": "f"}),
-    );
+    let _ = host.library_new("inspectlib3", &src);
+    let _ = host.scaffold("inspectlib3:m:f");
     write_source(
         &src,
-        "f.nu",
+        "m/f.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib3"}));
     let resp = host.call_tool(
         "inspect",
-        serde_json::json!({"library": "inspectlib3", "module_path": "", "name": "f"}),
+        serde_json::json!({"namepath": "inspectlib3:m:f"}),
     );
     let env = extract_envelope(&resp).unwrap_or_else(|| panic!("inspect envelope; got {resp}"));
     assert_eq!(env["summary"].as_str(), Some(""));
@@ -423,7 +361,7 @@ fn inspect_undocumented_is_empty() {
 #[test]
 fn inspect_unknown_library_errors() {
     let mut host = Host::spawn();
-    let resp = host.call_tool("inspect", serde_json::json!({"library": "ghost"}));
+    let resp = host.call_tool("inspect", serde_json::json!({"namepath": "ghost"}));
     assert!(has_error_path(&resp));
 }
 
@@ -435,24 +373,18 @@ fn result_record_field_shapes_preserved() {
     // four survive verbatim (matching the args-side SyntaxShape fidelity).
     let mut host = Host::spawn();
     let src = host.source_dir("fidelitylib");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "fidelitylib", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "fidelitylib", "module_path": "", "name": "shapes"}),
-    );
+    let _ = host.library_new("fidelitylib", &src);
+    let _ = host.scaffold("fidelitylib:m:shapes");
     write_source(
         &src,
-        "shapes.nu",
+        "m/shapes.nu",
         "export def main [args: record<n: int>]: nothing -> record<p: path, d: directory, c: cell-path, g: glob> { { p: \"x\", d: \"y\", c: $.a, g: (\"z\" | into glob) } }\n",
     );
     let committed = host.call_tool("commit", serde_json::json!({"library": "fidelitylib"}));
     assert!(!has_error_path(&committed), "commit should succeed; got {committed}");
     let resp = host.call_tool(
         "inspect",
-        serde_json::json!({"library": "fidelitylib", "module_path": "", "name": "shapes"}),
+        serde_json::json!({"namepath": "fidelitylib:m:shapes"}),
     );
     let env = extract_envelope(&resp).unwrap_or_else(|| panic!("inspect envelope; got {resp}"));
     assert_eq!(
@@ -473,23 +405,21 @@ fn helper_file_pruned_from_info_and_not_callable() {
     // library from info(); the index walk prunes it cleanly instead.)
     let mut host = Host::spawn();
     let src = host.source_dir("helperlib");
-    let _ = host.call_tool(
-        "new",
-        serde_json::json!({"library": "helperlib", "source_path": src.to_str().unwrap()}),
-    );
-    write_source(&src, "mod.nu", "export use ./util.nu\nexport use ./real.nu\n");
+    let _ = host.library_new("helperlib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./util.nu\nexport use ./real.nu\n");
     // Organizational helper: no `main` sentinel -> not a call-target.
-    write_source(&src, "util.nu", "export def helper [n: int] { $n * 2 }\n");
+    write_source(&src, "m/util.nu", "export def helper [n: int] { $n * 2 }\n");
     // A real call-target beside it.
     write_source(
         &src,
-        "real.nu",
+        "m/real.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x + 1) }"),
     );
     let committed = host.call_tool("commit", serde_json::json!({"library": "helperlib"}));
     assert!(!has_error_path(&committed), "commit should succeed; got {committed}");
 
-    // info(): the library is present and lists ONLY the call-target.
+    // info(): the library is present and module `m` lists ONLY the call-target.
     let info = host.call_tool("info", serde_json::json!({}));
     let libs = info["result"]["structuredContent"]["libraries"]
         .as_array()
@@ -498,7 +428,13 @@ fn helper_file_pruned_from_info_and_not_callable() {
         .iter()
         .find(|l| l["name"].as_str() == Some("helperlib"))
         .expect("helperlib present in info() (not dropped by the helper file)");
-    let fn_names: Vec<&str> = lib["functions"]
+    let module = lib["modules"]
+        .as_array()
+        .expect("modules")
+        .iter()
+        .find(|m| m["name"].as_str() == Some("m"))
+        .expect("module m present");
+    let fn_names: Vec<&str> = module["functions"]
         .as_array()
         .expect("functions")
         .iter()
@@ -511,18 +447,12 @@ fn helper_file_pruned_from_info_and_not_callable() {
     );
 
     // call() the real target works.
-    let ok = host.call_tool(
-        "call",
-        serde_json::json!({"library":"helperlib","module_path":"","name":"real","args":{"x":41}}),
-    );
+    let ok = host.call_np("helperlib:m:real", serde_json::json!({"x": 41}));
     let env = extract_envelope(&ok).unwrap_or_else(|| panic!("real call; got {ok}"));
     assert_eq!(env["result"]["out"].as_i64(), Some(42));
 
     // call() the helper file errors -- it is not an indexed call-target.
-    let bad = host.call_tool(
-        "call",
-        serde_json::json!({"library":"helperlib","module_path":"","name":"util","args":{"n":5}}),
-    );
+    let bad = host.call_np("helperlib:m:util", serde_json::json!({"n": 5}));
     assert!(
         has_error_path(&bad),
         "an organizational helper file must NOT be callable; got {bad}",

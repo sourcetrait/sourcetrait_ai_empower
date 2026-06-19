@@ -1,13 +1,12 @@
-//! new + commit + delete + strict validator tests.
+//! new (scaffold) + commit + strict-validator tests.
 //!
-//! The strict-validator coverage (reserved-`main` ban, missing-output-type,
-//! extra-export, empty-record arg/result skeleton, mod.nu
-//! inline const/alias/def/let, comments-only / multiline-signature /
-//! organizational-file acceptance, etc.) is triggered through `commit()`
-//! (which runs the same
-//! validator the retired `import_library` did): `new(name, src)`
-//! establishes the library, the (good or bad) source tree is written,
-//! then `commit(name)` validates + upserts it.
+//! `library(new)` establishes a library; `new([namepaths])` scaffolds module
+//! / function skeletons into it; the (good or bad) source tree is written;
+//! then `commit(name)` validates + upserts it. The strict-validator coverage
+//! (reserved-`main` ban, missing-output-type, extra-export, empty-record
+//! arg/result skeleton, mod.nu inline const/alias/def/let, no-root-function,
+//! comments-only / multiline-signature / organizational-file acceptance, etc.)
+//! is triggered through `commit()`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -141,6 +140,23 @@ impl Host {
         self.send(&req);
         self.read_id(id)
     }
+
+    /// Establish a fresh library via `library(new)`.
+    fn library_new(&mut self, name: &str, src: &Path) -> serde_json::Value {
+        self.call(
+            "library",
+            serde_json::json!({
+                "action": "new",
+                "library": name,
+                "source_dir": src.to_str().unwrap(),
+            }),
+        )
+    }
+
+    /// Scaffold a module/function namepath into an established library.
+    fn scaffold(&mut self, namepath: &str) -> serde_json::Value {
+        self.call("new", serde_json::json!({"namepaths": [namepath]}))
+    }
 }
 
 impl Drop for Host {
@@ -154,7 +170,7 @@ fn has_error_path(resp: &serde_json::Value) -> bool {
     envelope_error(resp).is_some()
 }
 
-fn envelope_error<'a>(resp: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
+fn envelope_error(resp: &serde_json::Value) -> Option<&serde_json::Value> {
     resp.get("result")?.get("structuredContent")?.get("error")
 }
 
@@ -179,13 +195,11 @@ fn structural_messages(resp: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// leg 4: the `kind`s in the `lint` section of a `library::violations`
-/// error (e.g. `summary_length`).
-fn lint_kinds(resp: &serde_json::Value) -> Vec<String> {
+fn structural_kinds(resp: &serde_json::Value) -> Vec<String> {
     envelope_error(resp)
         .and_then(|e| e.get("data"))
-        .and_then(|d| d.get("lint"))
-        .and_then(|l| l.as_array())
+        .and_then(|d| d.get("structural"))
+        .and_then(|s| s.as_array())
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_string))
@@ -223,10 +237,7 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
 fn commit_happy_path_writes_repo_and_meta() {
     let mut host = Host::spawn();
     let src = host.source_dir("happylib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "happylib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("happylib", &src);
     write_source(&src, "mod.nu", "export module math\n");
     write_source(&src, "math/mod.nu", "export use ./double.nu\n");
     write_source(
@@ -257,10 +268,7 @@ fn commit_happy_path_writes_repo_and_meta() {
 fn commit_rejects_mod_nu_with_syntax_error() {
     let mut host = Host::spawn();
     let src = host.source_dir("badmodlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "badmodlib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("badmodlib", &src);
     // Unbalanced angle bracket -- syntax error in mod.nu.
     write_source(&src, "mod.nu", "export module foo\nexport\n");
     write_source(&src, "foo/mod.nu", "");
@@ -280,10 +288,7 @@ fn commit_rejects_mod_nu_with_syntax_error() {
 fn commit_rejects_mod_nu_referencing_missing_file() {
     let mut host = Host::spawn();
     let src = host.source_dir("missingreflib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "missingreflib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("missingreflib", &src);
     // export use references a file that doesn't exist in the tree.
     write_source(&src, "mod.nu", "export use ./does_not_exist.nu\n");
     let resp = host.call("commit", serde_json::json!({"library": "missingreflib"}));
@@ -300,21 +305,17 @@ fn commit_rejects_mod_nu_referencing_missing_file() {
 
 #[test]
 fn commit_accepts_multiline_def_signature() {
-    // Text-based validator would have FAILED this -- the `args: record<...>`
-    // sits on a different line from `export def main`, so the line-level
-    // signature check missed it. AST validator finds the positional via
-    // nu_parser's Signature.required_positional inspection regardless of
-    // formatting.
+    // The `args: record<...>` sits on a different line from `export def main`.
+    // The AST validator finds the positional via nu_parser's
+    // Signature.required_positional inspection regardless of formatting.
     let mut host = Host::spawn();
     let src = host.source_dir("multilinelib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "multilinelib", "source_path": src.to_str().unwrap()}),
-    );
-    write_source(&src, "mod.nu", "");
+    let _ = host.library_new("multilinelib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         "export def main [\n    args: record<x: int>\n]: nothing -> record<out: int> {\n    { out: ($args.x * 2) }\n}\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "multilinelib"}));
@@ -328,10 +329,7 @@ fn commit_accepts_multiline_def_signature() {
 fn commit_rejects_function_with_syntax_error() {
     let mut host = Host::spawn();
     let src = host.source_dir("syntaxlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "syntaxlib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("syntaxlib", &src);
     write_source(&src, "mod.nu", "");
     // Unbalanced brace -- nu_parser surfaces a parse error.
     write_source(
@@ -355,10 +353,7 @@ fn commit_rejects_main_without_output_type() {
     // output is rejected.
     let mut host = Host::spawn();
     let src = host.source_dir("badlib1");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "badlib1", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("badlib1", &src);
     write_source(&src, "mod.nu", "");
     write_source(
         &src,
@@ -382,14 +377,12 @@ fn commit_accepts_call_target_with_helper_export() {
     // restriction (the_user 2026-06-18).
     let mut host = Host::spawn();
     let src = host.source_dir("helperexportlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "helperexportlib", "source_path": src.to_str().unwrap()}),
-    );
-    write_source(&src, "mod.nu", "export use ./thing.nu\n");
+    let _ = host.library_new("helperexportlib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         "export def helper [n: int] { $n * 2 }\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x } }\n",
     );
 
@@ -401,7 +394,7 @@ fn commit_accepts_call_target_with_helper_export() {
     // call() still targets main.
     let called = host.call(
         "call",
-        serde_json::json!({"library": "helperexportlib", "module_path": "", "name": "thing", "args": {"x": 5}}),
+        serde_json::json!({"namepath": "helperexportlib:m:thing", "args": {"x": 5}}),
     );
     assert_eq!(
         called["result"]["structuredContent"]["result"]["out"].as_i64(),
@@ -416,10 +409,7 @@ fn commit_rejects_main_empty_record_output() {
     // (the result-schema source); reject it, mirroring the arg side.
     let mut host = Host::spawn();
     let src = host.source_dir("badlib3");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "badlib3", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("badlib3", &src);
     write_source(&src, "mod.nu", "");
     write_source(
         &src,
@@ -440,10 +430,7 @@ fn commit_rejects_main_empty_record_output() {
 fn commit_rejects_mod_nu_with_inline_const() {
     let mut host = Host::spawn();
     let src = host.source_dir("constmodlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "constmodlib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("constmodlib", &src);
     write_source(&src, "mod.nu", "export module sub\nconst X = 42\n");
     write_source(&src, "sub/mod.nu", "");
     let resp = host.call("commit", serde_json::json!({"library": "constmodlib"}));
@@ -459,10 +446,7 @@ fn commit_rejects_mod_nu_with_inline_const() {
 fn commit_rejects_mod_nu_with_inline_alias() {
     let mut host = Host::spawn();
     let src = host.source_dir("aliasmodlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "aliasmodlib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("aliasmodlib", &src);
     write_source(&src, "mod.nu", "export module sub\nalias foo = ls\n");
     write_source(&src, "sub/mod.nu", "");
     let resp = host.call("commit", serde_json::json!({"library": "aliasmodlib"}));
@@ -476,15 +460,10 @@ fn commit_rejects_mod_nu_with_inline_alias() {
 
 #[test]
 fn commit_rejects_mod_nu_with_let() {
-    // 0.0.16: `let` at module body level is a PARSE ERROR per
-    // nu_parser's grammar (not even on the allowed-keyword list).
-    // The AST validator surfaces it via parse_errors.
+    // `let` at module body level is a PARSE ERROR per nu_parser's grammar.
     let mut host = Host::spawn();
     let src = host.source_dir("letmodlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "letmodlib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("letmodlib", &src);
     write_source(&src, "mod.nu", "let x = 5\n");
     let resp = host.call("commit", serde_json::json!({"library": "letmodlib"}));
     assert!(has_error_path(&resp));
@@ -500,10 +479,7 @@ fn commit_accepts_mod_nu_with_only_comments() {
     // Empty body is legal nushell module; our convention accepts it too.
     let mut host = Host::spawn();
     let src = host.source_dir("commentedmodlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "commentedmodlib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("commentedmodlib", &src);
     write_source(&src, "mod.nu", "# this library is empty\n# more comment\n");
     let resp = host.call("commit", serde_json::json!({"library": "commentedmodlib"}));
     assert!(
@@ -516,10 +492,7 @@ fn commit_accepts_mod_nu_with_only_comments() {
 fn commit_rejects_mod_nu_with_inline_def() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib4");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "badlib4", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("badlib4", &src);
     write_source(&src, "mod.nu", "export module sub\ndef helper [] { 99 }\n");
     write_source(&src, "sub/mod.nu", "");
 
@@ -536,10 +509,7 @@ fn commit_rejects_mod_nu_with_inline_def() {
 fn commit_aggregates_multiple_violations() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib5");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "badlib5", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("badlib5", &src);
     // Three distinct violations across the tree (== the cap of 3, so all
     // surface): a bare `def` in mod.nu, an empty-args skeleton, and a main
     // lacking an output type.
@@ -587,16 +557,12 @@ fn commit_aggregates_multiple_violations() {
 
 #[test]
 fn commit_caps_structural_violations() {
-    // leg 4: structural violations cap at LINT_VIOLATION_CAP (3) and the
-    // walk early-stops -- a tree with more than 3 violations rejects with
-    // exactly 3 structural + structural_more = true (truthful truncation),
-    // so a hard-broken library doesn't parse in full.
+    // structural violations cap at LINT_VIOLATION_CAP (3) and the walk
+    // early-stops -- a tree with more than 3 violations rejects with exactly
+    // 3 structural + structural_more = true (truthful truncation).
     let mut host = Host::spawn();
     let src = host.source_dir("caplib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "caplib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("caplib", &src);
     // Four bare `def`s in mod.nu -> four "mod.nu may only contain"
     // violations, more than the cap of 3.
     write_source(
@@ -631,53 +597,109 @@ fn commit_caps_structural_violations() {
 }
 
 #[test]
-fn commit_rejects_long_summary() {
-    // leg 4: a doc summary (here the mod.nu leading comment's first line)
-    // longer than 80 chars is a `summary_length` lint violation -- it
-    // rides the `lint` field of `library::violations`.
+fn commit_rejects_root_call_target() {
+    // No root functions: a call-target cannot live at the library root; it
+    // must sit inside a module. A valid `main` written directly at the source
+    // root is a `structure::root_function` violation.
     let mut host = Host::spawn();
-    let src = host.source_dir("doclib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "doclib", "source_path": src.to_str().unwrap()}),
-    );
-    let long = "x".repeat(81);
-    write_source(&src, "mod.nu", &format!("# {long}\nexport use ./thing.nu\n"));
+    let src = host.source_dir("rootfnlib");
+    let _ = host.library_new("rootfnlib", &src);
+    write_source(&src, "mod.nu", "");
     write_source(
         &src,
         "thing.nu",
-        &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
-    let resp = host.call("commit", serde_json::json!({"library": "doclib"}));
+    let resp = host.call("commit", serde_json::json!({"library": "rootfnlib"}));
     assert_eq!(
         envelope_error_kind(&resp),
         Some("library::violations"),
         "got {resp}"
     );
-    let kinds = lint_kinds(&resp);
     assert!(
-        kinds.iter().any(|k| k == "summary_length"),
-        "expected summary_length lint; got {kinds:?}"
+        structural_kinds(&resp)
+            .iter()
+            .any(|k| k == "structure::root_function"),
+        "expected structure::root_function; got {:?}",
+        structural_kinds(&resp),
+    );
+    let messages = structural_messages(&resp);
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("library root") && m.contains("module")),
+        "got {messages:?}"
+    );
+}
+
+#[test]
+fn commit_succeeds_then_check_warns_long_summary() {
+    // A doc summary (here the mod.nu leading comment's first line) longer than
+    // 80 chars is a WARNING, not an error: commit SUCCEEDS, and `library(check)`
+    // surfaces the `lint::summary_length` warning (num_warnings > 0; ok stays
+    // true since no structural error blocks).
+    let mut host = Host::spawn();
+    let src = host.source_dir("doclib");
+    let _ = host.library_new("doclib", &src);
+    let long = "x".repeat(81);
+    write_source(&src, "mod.nu", &format!("# {long}\nexport module m\n"));
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(
+        &src,
+        "m/thing.nu",
+        &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+    );
+    let committed = host.call("commit", serde_json::json!({"library": "doclib"}));
+    assert!(
+        !has_error_path(&committed),
+        "an over-long summary is advisory; commit should succeed; got {committed}"
+    );
+
+    let check = host.call(
+        "library",
+        serde_json::json!({
+            "action": "check",
+            "library": "doclib",
+            "source_dir": src.to_str().unwrap(),
+        }),
+    );
+    let summary = &check["result"]["structuredContent"]["summary"];
+    assert_eq!(
+        summary["ok"].as_bool(),
+        Some(true),
+        "warnings don't fail check; got {check}"
+    );
+    assert!(
+        summary["num_warnings"].as_u64().unwrap_or(0) >= 1,
+        "expected a warning; got {summary}"
+    );
+    let warn_kinds: Vec<&str> = summary["warnings"]
+        .as_array()
+        .expect("warnings array")
+        .iter()
+        .filter_map(|w| w["kind"].as_str())
+        .collect();
+    assert!(
+        warn_kinds.iter().any(|k| *k == "lint::summary_length"),
+        "expected lint::summary_length warning; got {warn_kinds:?}"
     );
 }
 
 #[test]
 fn commit_accepts_short_summary() {
-    // leg 4: a <= 80 summary (+ details) on a node commits clean.
+    // A <= 80 summary (+ details) on a node commits clean.
     let mut host = Host::spawn();
     let src = host.source_dir("okdoclib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "okdoclib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("okdoclib", &src);
     write_source(
         &src,
         "mod.nu",
-        "# doubles its input\n# the math double helper module\nexport use ./thing.nu\n",
+        "# doubles its input\n# the math double helper module\nexport module m\n",
     );
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "okdoclib"}));
@@ -688,19 +710,12 @@ fn commit_accepts_short_summary() {
 }
 
 #[test]
-fn new_reestablish_duplicate_name_errors() {
+fn library_new_reestablish_duplicate_errors() {
     let mut host = Host::spawn();
     let src = host.source_dir("duplib");
-    let r1 = host.call(
-        "new",
-        serde_json::json!({"library": "duplib", "source_path": src.to_str().unwrap()}),
-    );
-    assert!(!has_error_path(&r1), "first new should succeed; got {r1}");
-    // Re-passing source_path on an established library -> LibraryAlreadyRegistered.
-    let r2 = host.call(
-        "new",
-        serde_json::json!({"library": "duplib", "source_path": src.to_str().unwrap()}),
-    );
+    let r1 = host.library_new("duplib", &src);
+    assert!(!has_error_path(&r1), "first library(new) should succeed; got {r1}");
+    let r2 = host.library_new("duplib", &src);
     assert!(
         has_error_path(&r2),
         "duplicate establish should error; got {r2}"
@@ -716,21 +731,19 @@ fn new_reestablish_duplicate_name_errors() {
 fn commit_picks_up_mutated_source() {
     let mut host = Host::spawn();
     let src = host.source_dir("livelib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "livelib", "source_path": src.to_str().unwrap()}),
-    );
-    write_source(&src, "mod.nu", "");
+    let _ = host.library_new("livelib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call("commit", serde_json::json!({"library": "livelib"}));
     // Mutate the source and re-commit.
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x + 1000) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "livelib"}));
@@ -738,7 +751,8 @@ fn commit_picks_up_mutated_source() {
         !has_error_path(&resp),
         "re-commit should succeed; got {resp}"
     );
-    let committed = std::fs::read_to_string(host.library_dir("livelib").join("thing.nu")).unwrap();
+    let committed =
+        std::fs::read_to_string(host.library_dir("livelib").join("m").join("thing.nu")).unwrap();
     assert!(
         committed.contains("+ 1000"),
         "committed body should reflect mutated source; got {committed:?}",
@@ -756,10 +770,7 @@ fn commit_unknown_library_errors() {
 fn committed_library_invokable_via_standalone_driver() {
     let mut host = Host::spawn();
     let src = host.source_dir("drvilib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "drvilib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("drvilib", &src);
     write_source(&src, "mod.nu", "export module math\n");
     write_source(&src, "math/mod.nu", "export use ./double.nu\n");
     write_source(
@@ -787,13 +798,11 @@ fn committed_library_invokable_via_standalone_driver() {
 #[test]
 fn commit_accepts_organizational_file() {
     // A file with no `main` sentinel is ORGANIZATIONAL: helper defs
-    // + export const, unconstrained signatures, no contract.
+    // + export const, unconstrained signatures, no contract. A helper file at
+    // the library root is fine (only call-targets are banned there).
     let mut host = Host::spawn();
     let src = host.source_dir("orglib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "orglib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("orglib", &src);
     write_source(&src, "mod.nu", "export use ./util.nu\n");
     write_source(
         &src,
@@ -812,18 +821,16 @@ fn commit_accepts_mod_nu_with_export_const_and_def() {
     // mod.nu carries module-level utils/consts alongside the cascade. (leg 1)
     let mut host = Host::spawn();
     let src = host.source_dir("modutillib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "modutillib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("modutillib", &src);
     write_source(
         &src,
         "mod.nu",
-        "export const VERSION = 1\nexport def shared [] { 42 }\nexport use ./thing.nu\n",
+        "export const VERSION = 1\nexport def shared [] { 42 }\nexport module m\n",
     );
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "modutillib"}));
@@ -838,10 +845,7 @@ fn commit_rejects_empty_record_skeleton() {
     // An empty `record<>` positional is the unfleshed-skeleton marker. (leg 1)
     let mut host = Host::spawn();
     let src = host.source_dir("skellib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "skellib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("skellib", &src);
     write_source(&src, "mod.nu", "");
     write_source(
         &src,
@@ -857,16 +861,13 @@ fn commit_rejects_empty_record_skeleton() {
     );
 }
 
-// ---- leg 1b: the reserved-terms ban ----
+// ---- the reserved-terms ban ----
 
 #[test]
 fn commit_rejects_private_def_named_reserved() {
     let mut host = Host::spawn();
     let src = host.source_dir("pdeflib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "pdeflib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("pdeflib", &src);
     write_source(&src, "mod.nu", "export use ./util.nu\n");
     write_source(
         &src,
@@ -886,10 +887,7 @@ fn commit_rejects_private_def_named_reserved() {
 fn commit_rejects_module_named_reserved() {
     let mut host = Host::spawn();
     let src = host.source_dir("modreslib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "modreslib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("modreslib", &src);
     std::fs::create_dir_all(src.join("main")).unwrap();
     write_source(&src, "mod.nu", "export module main\n");
     write_source(&src, "main/mod.nu", "");
@@ -906,18 +904,16 @@ fn commit_rejects_module_named_reserved() {
 fn commit_rejects_const_named_reserved() {
     let mut host = Host::spawn();
     let src = host.source_dir("constreslib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "constreslib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("constreslib", &src);
     write_source(
         &src,
         "mod.nu",
-        "export const main = 5\nexport use ./thing.nu\n",
+        "export const main = 5\nexport module m\n",
     );
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "constreslib"}));
@@ -933,14 +929,12 @@ fn commit_rejects_const_named_reserved() {
 fn commit_rejects_record_key_reserved() {
     let mut host = Host::spawn();
     let src = host.source_dir("rkeylib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "rkeylib", "source_path": src.to_str().unwrap()}),
-    );
-    write_source(&src, "mod.nu", "");
+    let _ = host.library_new("rkeylib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         "export def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x, main: 1 } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "rkeylib"}));
@@ -956,14 +950,12 @@ fn commit_rejects_record_key_reserved() {
 fn commit_rejects_cellpath_member_reserved() {
     let mut host = Host::spawn();
     let src = host.source_dir("cpathlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "cpathlib", "source_path": src.to_str().unwrap()}),
-    );
-    write_source(&src, "mod.nu", "");
+    let _ = host.library_new("cpathlib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         "export def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.main } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "cpathlib"}));
@@ -979,10 +971,7 @@ fn commit_rejects_cellpath_member_reserved() {
 fn commit_rejects_param_named_reserved() {
     let mut host = Host::spawn();
     let src = host.source_dir("paramreslib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "paramreslib", "source_path": src.to_str().unwrap()}),
-    );
+    let _ = host.library_new("paramreslib", &src);
     write_source(&src, "mod.nu", "export use ./util.nu\n");
     write_source(&src, "util.nu", "export def helper [main: int] { $main }\n");
     let resp = host.call("commit", serde_json::json!({"library": "paramreslib"}));
@@ -1000,14 +989,12 @@ fn commit_accepts_reserved_as_quoted_string_value() {
     // `main` value never matches; command refs to the exports pass too.
     let mut host = Host::spawn();
     let src = host.source_dir("strvallib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "strvallib", "source_path": src.to_str().unwrap()}),
-    );
-    write_source(&src, "mod.nu", "");
+    let _ = host.library_new("strvallib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing.nu",
         "export def main [args: record<x: int>]: nothing -> record<out: int> { let note = \"main\"; { out: $args.x } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "strvallib"}));
@@ -1017,17 +1004,14 @@ fn commit_accepts_reserved_as_quoted_string_value() {
     );
 }
 
-// ---- leg 3: new() scaffold ----
+// ---- new() scaffold ----
 
 #[test]
-fn new_establishes_library_and_scaffolds_function() {
+fn library_new_and_scaffold_function() {
     let mut host = Host::spawn();
     let src = host.source_dir("scaffolded");
-    // Establish the library (first new(); source_path required).
-    let r1 = host.call(
-        "new",
-        serde_json::json!({"library": "scaffolded", "source_path": src.to_str().unwrap()}),
-    );
+    // Establish the library via library(new).
+    let r1 = host.library_new("scaffolded", &src);
     assert!(!has_error_path(&r1), "establish should succeed; got {r1}");
     let meta_text = std::fs::read_to_string(
         host.library_dir("scaffolded")
@@ -1043,11 +1027,8 @@ fn new_establishes_library_and_scaffolds_function() {
         "source root mod.nu should be seeded"
     );
 
-    // Scaffold a function (later call; source_path omitted).
-    let r2 = host.call(
-        "new",
-        serde_json::json!({"library": "scaffolded", "module_path": "math", "name": "double"}),
-    );
+    // Scaffold a function via new([namepath]).
+    let r2 = host.scaffold("scaffolded:math:double");
     assert!(
         !has_error_path(&r2),
         "scaffold function should succeed; got {r2}"
@@ -1078,19 +1059,10 @@ fn new_establishes_library_and_scaffolds_function() {
 fn new_leaf_guard_refuses_existing_function() {
     let mut host = Host::spawn();
     let src = host.source_dir("guarded");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "guarded", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "guarded", "module_path": "m", "name": "f"}),
-    );
+    let _ = host.library_new("guarded", &src);
+    let _ = host.scaffold("guarded:m:f");
     // Scaffolding the same function again -> the leaf-guard rejects.
-    let dup = host.call(
-        "new",
-        serde_json::json!({"library": "guarded", "module_path": "m", "name": "f"}),
-    );
+    let dup = host.scaffold("guarded:m:f");
     assert!(
         has_error_path(&dup),
         "scaffolding over an existing function should reject; got {dup}"
@@ -1098,13 +1070,18 @@ fn new_leaf_guard_refuses_existing_function() {
 }
 
 #[test]
-fn new_requires_source_path_on_establish() {
+fn scaffold_into_unregistered_library_errors() {
+    // new() scaffolds into EXISTING libraries only; it never establishes.
     let mut host = Host::spawn();
-    // First new() for a name with no source_path -> rejected.
-    let resp = host.call("new", serde_json::json!({"library": "nopath"}));
+    let resp = host.scaffold("nopath:m:f");
     assert!(
         has_error_path(&resp),
-        "establishing new() without source_path should reject; got {resp}"
+        "scaffolding into an unregistered library should reject; got {resp}"
+    );
+    assert_eq!(
+        envelope_error_kind(&resp),
+        Some("library::not_registered"),
+        "got {resp}"
     );
 }
 
@@ -1112,14 +1089,8 @@ fn new_requires_source_path_on_establish() {
 fn commit_validates_and_upserts_source() {
     let mut host = Host::spawn();
     let src = host.source_dir("clib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "clib", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "clib", "module_path": "math", "name": "double"}),
-    );
+    let _ = host.library_new("clib", &src);
+    let _ = host.scaffold("clib:math:double");
     std::fs::write(
         src.join("math").join("double.nu"),
         valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
@@ -1152,102 +1123,11 @@ fn commit_validates_and_upserts_source() {
 fn commit_rejects_unfleshed_skeleton() {
     let mut host = Host::spawn();
     let src = host.source_dir("sklib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "sklib", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "sklib", "module_path": "", "name": "raw"}),
-    );
+    let _ = host.library_new("sklib", &src);
+    let _ = host.scaffold("sklib:m:raw");
     let resp = host.call("commit", serde_json::json!({"library": "sklib"}));
     assert!(
         has_error_path(&resp),
         "committing an unfleshed skeleton should reject; got {resp}"
     );
-}
-
-#[test]
-fn delete_removes_mcp_and_source() {
-    let mut host = Host::spawn();
-    let src = host.source_dir("dlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "dlib", "source_path": src.to_str().unwrap()}),
-    );
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "dlib", "module_path": "", "name": "f"}),
-    );
-    std::fs::write(
-        src.join("f.nu"),
-        valid_function_source("x: int", "out: int", "{ out: $args.x }"),
-    )
-    .unwrap();
-    let _ = host.call("commit", serde_json::json!({"library": "dlib"}));
-    assert!(
-        host.library_dir("dlib").exists(),
-        "canonical should exist before delete"
-    );
-    assert!(src.exists(), "source should exist before delete");
-    let resp = host.call(
-        "delete",
-        serde_json::json!({"library": "dlib", "source_path": src.to_str().unwrap()}),
-    );
-    assert!(!has_error_path(&resp), "delete should succeed; got {resp}");
-    assert!(
-        !host.library_dir("dlib").exists(),
-        "canonical should be gone"
-    );
-    assert!(
-        !src.exists(),
-        "source should be gone (default delete removes it)"
-    );
-}
-
-#[test]
-fn delete_rejects_source_path_mismatch() {
-    let mut host = Host::spawn();
-    let src = host.source_dir("mlib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "mlib", "source_path": src.to_str().unwrap()}),
-    );
-    let resp = host.call(
-        "delete",
-        serde_json::json!({"library": "mlib", "source_path": "/some/other/path"}),
-    );
-    assert!(
-        has_error_path(&resp),
-        "mismatched source_path should reject; got {resp}"
-    );
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("library::source_path_mismatch"),
-        "got {resp}"
-    );
-    assert!(
-        host.library_dir("mlib").exists(),
-        "canonical should survive a rejected delete"
-    );
-}
-
-#[test]
-fn delete_mcp_only_keeps_source() {
-    let mut host = Host::spawn();
-    let src = host.source_dir("olib");
-    let _ = host.call(
-        "new",
-        serde_json::json!({"library": "olib", "source_path": src.to_str().unwrap()}),
-    );
-    let resp = host.call("delete", serde_json::json!({"library": "olib", "source_path": src.to_str().unwrap(), "mcp_only": true}));
-    assert!(
-        !has_error_path(&resp),
-        "mcp_only delete should succeed; got {resp}"
-    );
-    assert!(
-        !host.library_dir("olib").exists(),
-        "canonical should be gone"
-    );
-    assert!(src.exists(), "source should remain (mcp_only)");
 }

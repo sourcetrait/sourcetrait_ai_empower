@@ -167,7 +167,7 @@ fn interact_lists_both_run_and_interact_tools() {
         "learn",
         "new",
         "commit",
-        "delete",
+        "library",
         "inspect",
     ] {
         assert!(

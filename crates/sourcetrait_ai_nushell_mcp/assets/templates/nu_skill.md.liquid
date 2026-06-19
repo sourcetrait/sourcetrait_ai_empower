@@ -3,7 +3,7 @@ name: nu
 description: |
   nushell_mcp tool surface plus the out-of-band library-authoring
   conventions. Covers the 12 MCP tools (run, interact, call, rerun,
-  processes, kill, info, inspect, new, commit, delete, learn) and the
+  processes, kill, info, inspect, new, commit, library, learn) and the
   new -> edit -> commit flow agents use to build libraries the MCP
   validates, indexes, and serves.
 
@@ -136,17 +136,20 @@ Conventions:
 ## Library authoring conventions
 
 A library is a directory tree the agent owns and edits, promoted into
-the MCP's signed canonical store by `commit`. The lifecycle is three
-native tools over that source tree:
+the MCP's signed canonical store by `commit`. The lifecycle over that
+source tree:
 
-- `new` scaffolds - establishes the library, or adds a module / function
-  skeleton.
+- `library(new)` establishes a fresh, empty library at a source dir.
+- `new([namepaths])` scaffolds module / function skeletons into it.
 - edit the scaffolded files in place.
-- `commit` validates the whole tree and upserts it; `delete` drops it.
+- `commit` validates the whole tree and upserts it.
+- `library(uninstall)` drops a library; `library(install)` brings a
+  complete shipped source in (establish + commit) in one step;
+  `library(check)` validates the in-source tree without committing.
 
-`call` then invokes a committed function; `info` / `inspect` are the
-live index of what exists, each node's schemas, and its docs - read
-those rather than tracking targets by hand.
+`call` then invokes a committed function by namepath; `info` / `inspect`
+are the live index of what exists, each node's schemas, and its docs -
+read those rather than tracking targets by hand.
 
 ### The function file: a single `main`
 
@@ -180,6 +183,10 @@ export def main [args: record<x: int>]: nothing -> record<out: int> {
 - `main` is a RESERVED word: it may appear ONLY as this exported
   call-target sentinel, never as any other def / module / directory /
   file / parameter / record-key / cell-path-member name in the library.
+- NO ROOT FUNCTIONS: a call-target always lives inside a module
+  (`library:module/path:function`). The library root holds only the
+  cascade + helpers, never a `main`; a call-target at the root is
+  rejected at commit.
 
 ### Organizational (helper) files
 
@@ -249,32 +256,44 @@ whatever a caller needs once the summary has told them whether they care.
   (someday `/usr/local/lib/nu/...` when distribution-packaged). The
   `nu/` segment is the asset-type.
 
-`new`'s establishing call records the source_path; `commit` always
-re-reads through it, so you edit that tree and commit to promote.
+`library(new)`'s establishing call records the source dir; `commit`
+always re-reads through it, so you edit that tree and commit to promote.
 
 ### The lifecycle tools
 
-- `new(library, source_path?, module_path?, name?)` - scaffold. The
-  FIRST call for a name ESTABLISHES the library (source_path required
-  then, immutable after). Later calls add a module directory or a
-  single-`main` function skeleton. Additive: it refuses to scaffold
-  over an existing leaf.
+- `library(action, library, source_dir)` - the admin tool. `new`
+  establishes a fresh empty library at `source_dir`; `install` brings a
+  complete shipped source in (establish + first commit, atomic); `check`
+  validates the in-source tree without committing (errors block a commit,
+  warnings advise); `uninstall` drops the library (the agent source is
+  never touched; idempotent). `source_dir` is the "are you sure"
+  cross-check on every action.
+- `new([namepaths])` - scaffold module (`library:module/path`) or function
+  (`library:module/path:function`) skeletons into ALREADY established
+  libraries (it no longer establishes). Batch; the namepaths may span
+  libraries. Additive: it refuses to scaffold over an existing leaf.
 - `commit(library)` - validate the source tree (structure + the
   single-`main` contract + reserved terms + the summary-length rule)
   and upsert it into the signed canonical store, rebuilding the generated
   index + docs. Idempotent; returns the changed paths grouped as
   `{added, modified, removed}`.
-- `delete(library, source_path, mcp_only?)` - guarded drop; re-pass
-  source_path (matched by plain string). Removes the agent source too
-  unless `mcp_only`.
 
 `commit` rejects with `library::violations` (capped, truncation-flagged)
 on: a malformed function contract, a `mod.nu` carrying anything but the
 allowed exports, reserved-term misuse, a parse error, a bare `record<>`
-skeleton, or a summary over 80 chars. Authored bodies are NOT
-body-linted - you write them with intent; the hardcoded-path /
-denied-external lint below applies to the `run()` / `interact()` surface
-only.
+skeleton, or a call-target at the library root (no root functions). The
+summary-over-80-chars rule is a WARNING (surfaced by `library(check)`),
+not a commit blocker. Authored bodies are NOT body-linted - you write
+them with intent; the hardcoded-path / denied-external lint below applies
+to the `run()` / `interact()` surface only.
+
+### Using a committed library from run() / interact()
+
+A committed library is a full nu module on `$env.NU_LIB_DIRS`, so a
+run() / interact() body can `use <library>` and invoke its exports
+directly - not just call-targets but every `export`. `call()` drives a
+single committed `main`; `use <library> <module> ...` from a body reuses
+the same library as ordinary nu code.
 
 ## Lint
 
@@ -312,7 +331,7 @@ Error envelope:
     "kind": "lint::violations",
     "data": {
       "violations": [
-        { "kind": "hardcoded_variable", "position": [1, 4] }
+        { "kind": "lint::hardcoded_variable", "position": [1, 4] }
       ]
     }
   }
@@ -356,7 +375,7 @@ Error envelope:
     "kind": "lint::violations",
     "data": {
       "violations": [
-        { "kind": "denied_command", "position": [1, 1] }
+        { "kind": "lint::denied_command", "position": [1, 1] }
       ]
     }
   }
@@ -539,7 +558,7 @@ Good - inline the logic OR author the function as a library + `call` it:
 
 # library option: author the .nu via new + commit, then call() it
 #   (discover the target + its schema via info() / inspect())
-mcp__nushell__call --library mylib --module_path foo --name bar --args { ... }
+mcp__nushell__call --namepath mylib:foo:bar --args { ... }
 ```
 
 ### `str join` separator is a value, not a regex / format string
@@ -589,9 +608,9 @@ glob ($args.root | path join "**" "*")
 - [`kill()`](#kill) Cancel an in-flight usage by its nonce.
 - [`info()`](#info) Versions, plugins, and libraries summary.
 - [`inspect()`](#inspect) Detailed documentation of a specific callable library, module, function.
-- [`new()`](#new) Scaffold a callable library / module / function into the agent's source-code repository.
+- [`new()`](#new) Scaffold modules / functions (by namepath) into existing libraries.
 - [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
-- [`delete()`](#delete) Delete a library.
+- [`library()`](#library) Library administration: new, install, check, uninstall.
 - [`learn()`](#learn) Generate the latest `/nu` SKILL.md.
 
 ### `run()`
@@ -732,9 +751,9 @@ Output (partial):
 ### `call()`
 *Invoke a committed library function with typed args.*
 
-Discover the live targets + their schemas with [`info()`](#info) /
-[`inspect()`](#inspect); `module_path` is empty for a library-root
-function.
+`namepath` is the function coordinate `library:module/path:function` (a
+callable always lives in a module - there are no root functions). Discover
+the live targets + their schemas with [`info()`](#info) / [`inspect()`](#inspect).
 
 #### arguments
 
@@ -742,13 +761,11 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "library":     { "type": "string" },
-    "module_path": { "type": "string" },
-    "name":        { "type": "string" },
-    "args":        { "type": "object", "additionalProperties": true },
-    "timeout_ms":  { "type": ["integer", "null"], "format": "uint64", "minimum": 0 }
+    "namepath":   { "type": "string" },
+    "args":       { "type": "object", "additionalProperties": true },
+    "timeout_ms": { "type": ["integer", "null"], "format": "uint64", "minimum": 0 }
   },
-  "required": ["library", "module_path", "name", "args"]
+  "required": ["namepath", "args"]
 }
 ```
 
@@ -758,9 +775,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "library": "geo",
-    "module_path": "shape",
-    "name": "area",
+    "namepath": "geo:shape:area",
     "args": { "width": 3.0, "height": 4.0 }
   }
 }
@@ -981,8 +996,8 @@ over any static index. For a node's full details, call `inspect()`.
 Returns the single-node descriptor `{library, module_path, name?,
 summary, args_schema?, result_schema?, details}` - `name` and the
 schemas are present only for a function; `details` is last. Empty strings
-when undocumented. Omit `name` to inspect a module, omit both `name` and
-`module_path` for the library root.
+when undocumented. `namepath` is `library` (the root),
+`library:module/path` (a module), or `library:module/path:function`.
 
 #### arguments
 
@@ -990,11 +1005,9 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "library":     { "type": "string" },
-    "module_path": { "type": ["string", "null"] },
-    "name":        { "type": ["string", "null"] }
+    "namepath": { "type": "string" }
   },
-  "required": ["library"]
+  "required": ["namepath"]
 }
 ```
 
@@ -1003,7 +1016,7 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "library": "geo", "module_path": "shape", "name": "area" }
+  "arguments": { "namepath": "geo:shape:area" }
 }
 ```
 
@@ -1026,13 +1039,13 @@ Output (partial):
 ```
 
 ### `new()`
-*Scaffold a callable library / module / function into the agent's source-code repository.*
+*Scaffold modules / functions (by namepath) into existing libraries.*
 
-The FIRST call for a `library` establishes it - `source_path` is required
-then and immutable after. Add a module with `module_path`; add a
-single-`main` skeleton with `module_path` + `name`. Additive: it
-refuses to scaffold over an existing leaf. Edit the files, then
-[`commit()`](#commit). Returns `{source_path, created}`.
+Batch-scaffolds module (`library:module/path`) or function
+(`library:module/path:function`) skeletons into ALREADY-ESTABLISHED
+libraries (establish one with [`library()`](#library) `new`); the namepaths
+may span libraries. Additive: it refuses to scaffold over an existing leaf.
+Edit the files, then [`commit()`](#commit). Returns `{created}`.
 
 #### arguments
 
@@ -1040,12 +1053,9 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "library":     { "type": "string" },
-    "source_path": { "type": ["string", "null"] },
-    "module_path": { "type": ["string", "null"] },
-    "name":        { "type": ["string", "null"] }
+    "namepaths": { "type": "array", "items": { "type": "string" } }
   },
-  "required": ["library"]
+  "required": ["namepaths"]
 }
 ```
 
@@ -1055,9 +1065,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "library": "geo",
-    "module_path": "shape",
-    "name": "area"
+    "namepaths": ["geo:shape:area", "geo:shape:perimeter"]
   }
 }
 ```
@@ -1067,8 +1075,11 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "source_path": "/abs/path/to/source/geo",
-      "created": ["/abs/path/to/source/geo/shape", "/abs/path/to/source/geo/shape/area.nu"]
+      "created": [
+        "/abs/path/to/source/geo/shape",
+        "/abs/path/to/source/geo/shape/area.nu",
+        "/abs/path/to/source/geo/shape/perimeter.nu"
+      ]
     },
     "content": []
   }
@@ -1078,11 +1089,12 @@ Output (partial):
 ### `commit()`
 *Commit the agent's library source-code to the MCP's repository for live use.*
 
-Re-reads the recorded source_path, validates (structure + the
-single-`main` contract + reserved terms + the summary-length rule),
-and rebuilds the generated index + docs. Idempotent (a no-change resync
+Re-reads the recorded source dir, validates (structure + the
+single-`main` contract + reserved terms + no root functions), and
+rebuilds the generated index + docs. Idempotent (a no-change resync
 returns all-empty). Returns the changed paths grouped by kind; rejects
-with `library::violations`.
+with `library::violations`. (The over-80-char summary rule is a warning,
+surfaced by `library(check)`, not a commit blocker.)
 
 #### arguments
 
@@ -1119,12 +1131,16 @@ Output (partial):
 }
 ```
 
-### `delete()`
-*Delete a library.*
+### `library()`
+*Library administration: new, install, check, uninstall.*
 
-Re-pass `source_path` as a sanity check (matched by PLAIN STRING against
-the recorded path). Removes the agent source too unless `mcp_only`.
-Returns `{removed: [{path, side: mcp|source}]}`.
+The admin tool over a whole library. `action` is one of `new` (establish a
+fresh empty library + register it), `install` (bring a complete shipped
+source in: establish + first commit, atomic), `check` (validate the
+in-source tree without committing - errors block a commit, warnings
+advise), `uninstall` (drop the library; the agent source is never touched;
+idempotent). `source_dir` is the "are you sure" cross-check on every
+action.
 
 #### arguments
 
@@ -1132,11 +1148,11 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "library":     { "type": "string" },
-    "source_path": { "type": "string" },
-    "mcp_only":    { "type": "boolean" }
+    "action":     { "type": "string" },
+    "library":    { "type": "string" },
+    "source_dir": { "type": "string" }
   },
-  "required": ["library", "source_path"]
+  "required": ["action", "library", "source_dir"]
 }
 ```
 
@@ -1145,19 +1161,28 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "library": "geo", "source_path": "/abs/path/to/source/geo" }
+  "arguments": { "action": "check", "library": "geo", "source_dir": "/abs/path/to/source/geo" }
 }
 ```
 
-Output (partial):
+#### Output
+
+Each action returns its own record under `summary` (`uninstall` returns no
+summary). `new` -> `{created}`; `install` -> `{added, modified, removed}`;
+`check` -> `{ok, num_errors, num_warnings, errors, warnings}`:
 ```json
 {
   "result": {
     "structuredContent": {
-      "removed": [
-        { "path": "/.../libraries/geo", "side": "mcp" },
-        { "path": "/abs/path/to/source/geo", "side": "source" }
-      ]
+      "summary": {
+        "ok": true,
+        "num_errors": 0,
+        "num_warnings": 1,
+        "errors": [],
+        "warnings": [
+          { "kind": "lint::summary_length", "path": "mod.nu", "position": [1, 1], "message": "doc summary line exceeds 80 characters" }
+        ]
+      }
     },
     "content": []
   }

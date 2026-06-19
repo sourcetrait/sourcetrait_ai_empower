@@ -9,9 +9,9 @@
 - [`kill()`](#kill) Cancel an in-flight usage by its nonce.
 - [`info()`](#info) Versions, plugins, and libraries summary.
 - [`inspect()`](#inspect) Detailed documentation of a specific callable library, module, function.
-- [`new()`](#new) Scaffold a callable library / module / function into the agent's source-code repository.
+- [`new()`](#new) Scaffold modules / functions (by namepath) into existing libraries.
 - [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
-- [`delete()`](#delete) Delete a library.
+- [`library()`](#library) Library administration: new, install, check, uninstall.
 - [`learn()`](#learn) Generate the latest `/nu` SKILL.md.
 
 
@@ -149,19 +149,21 @@ Output (partial):
 ## `call()`
 *Invoke a committed library function with typed args.*
 
+`namepath` is the function coordinate `library:module/path:function` (a
+callable always lives in a module - there are no root functions). Discover
+live targets + their schemas with [`info()`](#info) / [`inspect()`](#inspect).
+
 ### arguments
 
 Schema (partial):
 ```json
 {
   "properties": {
-    "library":     { "type": "string" },
-    "module_path": { "type": "string" },
-    "name":        { "type": "string" },
-    "args":        { "type": "object", "additionalProperties": true },
-    "timeout_ms":  { "type": ["integer", "null"], "format": "uint64", "minimum": 0 }
+    "namepath":   { "type": "string" },
+    "args":       { "type": "object", "additionalProperties": true },
+    "timeout_ms": { "type": ["integer", "null"], "format": "uint64", "minimum": 0 }
   },
-  "required": ["library", "module_path", "name", "args"]
+  "required": ["namepath", "args"]
 }
 ```
 
@@ -171,9 +173,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "library": "geo",
-    "module_path": "shape",
-    "name": "area",
+    "namepath": "geo:shape:area",
     "args": { "width": 3.0, "height": 4.0 }
   }
 }
@@ -377,17 +377,18 @@ Output (partial):
 ## `inspect()`
 *Detailed documentation of a specific callable library, module, function.*
 
+`namepath` is `library`, `library:module/path`, or
+`library:module/path:function` - inspect any of the three arities.
+
 ### arguments
 
 Schema (partial):
 ```json
 {
   "properties": {
-    "library":     { "type": "string" },
-    "module_path": { "type": ["string", "null"] },
-    "name":        { "type": ["string", "null"] }
+    "namepath": { "type": "string" }
   },
-  "required": ["library"]
+  "required": ["namepath"]
 }
 ```
 
@@ -396,7 +397,7 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "library": "geo", "module_path": "shape", "name": "area" }
+  "arguments": { "namepath": "geo:shape:area" }
 }
 ```
 
@@ -419,8 +420,13 @@ Output (partial):
 ```
 
 ## `new()`
-*Scaffold a callable library / module / function into the agent's source-code repository.*
+*Scaffold modules / functions (by namepath) into existing libraries.*
 
+Batch-scaffolds module (`library:module/path`) or function
+(`library:module/path:function`) skeletons into ALREADY-ESTABLISHED
+libraries (establish one with [`library()`](#library) `new`); the namepaths
+may span multiple libraries. Additive - refuses to scaffold over an
+existing leaf. Edit the files, then [`commit()`](#commit).
 
 ### arguments
 
@@ -428,12 +434,9 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "library":     { "type": "string" },
-    "source_path": { "type": ["string", "null"] },
-    "module_path": { "type": ["string", "null"] },
-    "name":        { "type": ["string", "null"] }
+    "namepaths": { "type": "array", "items": { "type": "string" } }
   },
-  "required": ["library"]
+  "required": ["namepaths"]
 }
 ```
 
@@ -443,9 +446,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "library": "geo",
-    "module_path": "shape",
-    "name": "area"
+    "namepaths": ["geo:shape:area", "geo:shape:perimeter"]
   }
 }
 ```
@@ -455,8 +456,11 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "source_path": "/abs/path/to/source/geo",
-      "created": ["/abs/path/to/source/geo/shape", "/abs/path/to/source/geo/shape/area.nu"]
+      "created": [
+        "/abs/path/to/source/geo/shape",
+        "/abs/path/to/source/geo/shape/area.nu",
+        "/abs/path/to/source/geo/shape/perimeter.nu"
+      ]
     },
     "content": []
   }
@@ -501,12 +505,21 @@ Output (partial):
 }
 ```
 
-## `delete()`
-*Delete a library.*
+## `library()`
+*Library administration: new, install, check, uninstall.*
 
-Re-pass `source_path` as a sanity check (matched by PLAIN STRING against
-the recorded path). Removes the agent source too unless `mcp_only`.
-Returns `{removed: [{path, side: mcp|source}]}`.
+The admin tool over a whole library. `action` is one of:
+- `new` - establish a fresh, empty library at `source_dir` + register it.
+- `install` - bring a complete/shipped source into the MCP (establish +
+  first commit, atomic: a validation failure registers nothing).
+- `check` - validate the in-source tree (the library's `cargo test`); no
+  mutation. Errors block a commit; warnings are advisory.
+- `uninstall` - remove the library from the MCP. The agent `source_dir` is
+  never touched. Idempotent: an absent library is success.
+
+`source_dir` is the universal "are you sure" cross-check on every action:
+for a registered library it must equal the recorded source path; for
+`new` / `install` it is the path recorded.
 
 ### arguments
 
@@ -514,11 +527,11 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "library":     { "type": "string" },
-    "source_path": { "type": "string" },
-    "mcp_only":    { "type": "boolean" }
+    "action":     { "type": "string" },
+    "library":    { "type": "string" },
+    "source_dir": { "type": "string" }
   },
-  "required": ["library", "source_path"]
+  "required": ["action", "library", "source_dir"]
 }
 ```
 
@@ -527,19 +540,28 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "library": "geo", "source_path": "/abs/path/to/source/geo" }
+  "arguments": { "action": "check", "library": "geo", "source_dir": "/abs/path/to/source/geo" }
 }
 ```
 
-Output (partial):
+### Output
+
+Each action returns its own record under `summary` (`uninstall` returns no
+summary). `new` -> `{created}`; `install` -> `{added, modified, removed}`;
+`check` -> the validation report:
 ```json
 {
   "result": {
     "structuredContent": {
-      "removed": [
-        { "path": "/.../libraries/geo", "side": "mcp" },
-        { "path": "/abs/path/to/source/geo", "side": "source" }
-      ]
+      "summary": {
+        "ok": true,
+        "num_errors": 0,
+        "num_warnings": 1,
+        "errors": [],
+        "warnings": [
+          { "kind": "lint::summary_length", "path": "mod.nu", "position": [1, 1], "message": "doc summary line exceeds 80 characters" }
+        ]
+      }
     },
     "content": []
   }

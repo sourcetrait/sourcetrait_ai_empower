@@ -94,12 +94,22 @@ exactly (see Nu Nuances: positional typecheck).
 
 ## Large payloads: shm IPC
 
-The structured tool channel (args + the `result` envelope) has a
-CLIENT-side size cap. An oversized result returns as an
+shm is the out-of-band channel for PASSING bulky DATA between your
+Read/Write tools and a run() / interact() / call() body - in EITHER
+direction - when the payload is too big for the structured tool channel
+(args + the `result` envelope, which has a CLIENT-side size cap). That is
+its ONLY purpose: moving data the channel can't carry between the agent
+and the MCP.
+
+shm is NOT a logging mechanism. A body's external-command stdout/stderr is
+already captured per-call by the MCP at its cache log dir (the server
+`instructions` advertise the path) - to read a command's full output,
+fetch that per-nonce log; never `save` command output to shm.
+
+The oversize tell: a result too big returns as an
 `Error: result (N characters) exceeds...` envelope that spilled the data
-to a file - that is the client truncating, NOT a nushell_mcp failure. For
-a payload too big for the channel (either direction), pass it out-of-band
-through a shared-memory file instead.
+to a file - the client truncating, NOT a nushell_mcp failure. That is when
+you reach for shm.
 
 The MCP host, its workers, and your Read/Write tools share one
 filesystem, so a file one writes another reads. The designated scratch

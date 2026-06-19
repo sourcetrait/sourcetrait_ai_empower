@@ -25,6 +25,10 @@ pub(crate) mod server {
         pub(crate) mod run;
     }
     pub(crate) mod worker_handle;
+    #[cfg(test)]
+    mod tests {
+        mod namepath;
+    }
 }
 pub(crate) mod worker {
     pub(crate) mod base;

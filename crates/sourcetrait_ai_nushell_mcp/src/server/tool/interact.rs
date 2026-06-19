@@ -28,7 +28,6 @@ impl NuSh {
                 None,
             ));
         }
-        let source = build_interact_source(&args_type, &result_type, &p.args, &p.body);
         let payload_bytes = match json::to_vec(&p) {
             Ok(b) => b,
             Err(e) => {
@@ -41,13 +40,17 @@ impl NuSh {
                 ));
             }
         };
+        // Mint the nonce BEFORE source synthesis so it can be embedded as
+        // $env.NONCE in the interact template.
+        let nonce = self.nonce_gen.next(&payload_bytes);
+        let source =
+            build_interact_source(&args_type, &result_type, &p.args, &p.body, &nonce.to_string());
         let args_json = serde_json::Value::Object(p.args.clone());
         let timeout_ms = p.timeout_ms;
         let outcome = match dispatch_interact(
             &self.interact_worker,
-            &self.nonce_gen,
             &self.in_flight,
-            &payload_bytes,
+            nonce,
             source,
             args_json,
             timeout_ms,

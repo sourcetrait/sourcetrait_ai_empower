@@ -111,21 +111,29 @@ pub(crate) fn build_run_source(
     result_type: &str,
     args: &mcp::JsonObject,
     body: &str,
+    nonce: &str,
 ) -> String {
     let lit = args_literal(args_type, args);
+    // $env.NONCE carries this call's nonce ambiently into the body + any
+    // helper it invokes (env reads inherit down the call tree). Set inside the
+    // `do {}`, before __run, so it is visible to __run yet does not escape:
+    // the do-block scopes env, and the stateless per-call clone is dropped
+    // after the reply anyway -- it ceases to exist when the call completes.
     formatdoc!(
         r#"
         do {{
+            $env.NONCE = "{nonce}"
             def __run [args: {at}]: nothing -> {rt} {{
                 {body}
             }}
             __run {lit}
         }}
     "#,
+        nonce = nonce,
         at = args_type,
         rt = result_type,
         lit = lit,
-        body = body
+        body = body,
     )
 }
 
@@ -144,17 +152,28 @@ pub(crate) fn build_run_source(
 ///
 /// Where: called by `server::tool::NuSh::call`; the rendered source ships
 /// through a pool worker exactly like run() / rerun().
-pub(crate) fn build_call_source(path: &str, name: &str, args: &mcp::JsonObject) -> String {
+pub(crate) fn build_call_source(
+    path: &str,
+    name: &str,
+    args: &mcp::JsonObject,
+    nonce: &str,
+) -> String {
     let lit = if args.is_empty() {
         "null".to_string()
     } else {
         args_to_nuon(args)
     };
+    // $env.NONCE carries this call's nonce ambiently into the committed `main`
+    // + any helper it `use`s (env reads inherit down). Set at top-level before
+    // the target; the stateless per-call clone is dropped after the reply, so
+    // it ceases to exist when the call completes.
     formatdoc!(
         r#"
+        $env.NONCE = "{nonce}"
         use {path}
         {name} {lit}
     "#,
+        nonce = nonce,
         path = path,
         name = name,
         lit = lit,
@@ -189,17 +208,31 @@ pub(crate) fn build_interact_source(
     result_type: &str,
     args: &mcp::JsonObject,
     body: &str,
+    nonce: &str,
 ) -> String {
     let lit = args_literal(args_type, args);
+    // $env.NONCE carries this call's nonce ambiently into the body + helpers.
+    // Set as the FIRST line of the `def --env` body (NOT at eval-top): a --env
+    // def does not inherit a stack-only var set in the enclosing `()`, but it
+    // does see a var its own body assigns, which then reaches helpers it calls.
+    // The call stays DIRECT (`__interact LIT`, never wrapped in `let (...)`,
+    // which would trap the body's --env writes in a nested scope and break
+    // persistence). The assignment escapes via --env, so -- UNLIKE the
+    // stateless paths -- the stateful worker strips $env.NONCE from the stack
+    // before `merge_env` (see worker/request_loop.rs eval_source): NONCE never
+    // persists into the next interact() call, while the body's own $env writes
+    // still do.
     formatdoc!(
         r#"
         (
             def --env __interact [args: {at}]: nothing -> {rt} {{
+                $env.NONCE = "{nonce}"
                 {body}
             }} ;
             __interact {lit}
         )
     "#,
+        nonce = nonce,
         at = args_type,
         rt = result_type,
         lit = lit,
@@ -234,8 +267,10 @@ mod tests {
             "record<out: int>",
             &obj(r#"{"x":5}"#),
             "{ out: ($args.x + 1) }",
+            "nonce123",
         );
         let expected = r#"do {
+    $env.NONCE = "nonce123"
     def __run [args: record<x: int>]: nothing -> record<out: int> {
         { out: ($args.x + 1) }
     }
@@ -251,8 +286,15 @@ mod tests {
 
     #[test]
     fn run_source_void_args() {
-        let got = build_run_source("nothing", "record<out: int>", &obj("{}"), "{ out: 0 }");
+        let got = build_run_source(
+            "nothing",
+            "record<out: int>",
+            &obj("{}"),
+            "{ out: 0 }",
+            "nonce123",
+        );
         let expected = r#"do {
+    $env.NONCE = "nonce123"
     def __run [args: nothing]: nothing -> record<out: int> {
         { out: 0 }
     }
@@ -273,8 +315,10 @@ mod tests {
             "record<out: int>",
             &obj(r#"{"x":3}"#),
             "let y = ($args.x * 2)\n{ out: $y }",
+            "nonce123",
         );
         let expected = r#"do {
+    $env.NONCE = "nonce123"
     def __run [args: record<x: int>]: nothing -> record<out: int> {
         let y = ($args.x * 2)
 { out: $y }
@@ -291,8 +335,13 @@ mod tests {
 
     #[test]
     fn call_source_typed_args() {
-        let got = build_call_source("/libs/calc/math/double.nu", "double", &obj(r#"{"x":6}"#));
-        let expected = "use /libs/calc/math/double.nu\ndouble {x: 6}\n";
+        let got = build_call_source(
+            "/libs/calc/math/double.nu",
+            "double",
+            &obj(r#"{"x":6}"#),
+            "nonce123",
+        );
+        let expected = "$env.NONCE = \"nonce123\"\nuse /libs/calc/math/double.nu\ndouble {x: 6}\n";
         assert_eq!(got, expected);
     }
 
@@ -300,8 +349,8 @@ mod tests {
     fn call_source_void_args() {
         // Void / no-arg main: empty args bind the bare `null` literal so the
         // `nothing` positional typechecks (a `{}` record would not).
-        let got = build_call_source("/libs/util/ping.nu", "ping", &obj("{}"));
-        let expected = "use /libs/util/ping.nu\nping null\n";
+        let got = build_call_source("/libs/util/ping.nu", "ping", &obj("{}"), "nonce123");
+        let expected = "$env.NONCE = \"nonce123\"\nuse /libs/util/ping.nu\nping null\n";
         assert_eq!(got, expected);
     }
 
@@ -312,8 +361,9 @@ mod tests {
             "record<out: int>",
             &obj(r#"{"x":5}"#),
             "{ out: ($args.x + 1) }",
+            "nonce123",
         );
-        let expected = "(\n    def --env __interact [args: record<x: int>]: nothing -> record<out: int> {\n        { out: ($args.x + 1) }\n    } ;\n    __interact {x: 5}\n)\n";
+        let expected = "(\n    def --env __interact [args: record<x: int>]: nothing -> record<out: int> {\n        $env.NONCE = \"nonce123\"\n        { out: ($args.x + 1) }\n    } ;\n    __interact {x: 5}\n)\n";
         assert_eq!(got, expected);
         assert!(
             parses_clean(&got),
@@ -323,8 +373,14 @@ mod tests {
 
     #[test]
     fn interact_source_void_args() {
-        let got = build_interact_source("nothing", "record<out: int>", &obj("{}"), "{ out: 0 }");
-        let expected = "(\n    def --env __interact [args: nothing]: nothing -> record<out: int> {\n        { out: 0 }\n    } ;\n    __interact null\n)\n";
+        let got = build_interact_source(
+            "nothing",
+            "record<out: int>",
+            &obj("{}"),
+            "{ out: 0 }",
+            "nonce123",
+        );
+        let expected = "(\n    def --env __interact [args: nothing]: nothing -> record<out: int> {\n        $env.NONCE = \"nonce123\"\n        { out: 0 }\n    } ;\n    __interact null\n)\n";
         assert_eq!(got, expected);
         assert!(
             parses_clean(&got),

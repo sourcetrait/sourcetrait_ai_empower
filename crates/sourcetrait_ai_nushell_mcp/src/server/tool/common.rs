@@ -328,17 +328,17 @@ pub(crate) struct DispatchError {
 /// stateless surfaces).
 pub(crate) async fn dispatch_pooled(
     pool: &Arc<Pool>,
-    nonce_gen: &Arc<lib_empower::NonceGen>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     log_kind: CacheKind,
-    payload_for_nonce: &[u8],
+    nonce: lib_empower::Nonce,
     source: String,
     tool_name: &'static str,
     args_json: serde_json::Value,
     kind: InFlightKind,
     timeout_ms: Option<u64>,
 ) -> Result<DispatchOutcome, DispatchError> {
-    let nonce = nonce_gen.next(&payload_for_nonce);
+    // The nonce is minted by the handler (before source synthesis) so it can be
+    // embedded as `$env.NONCE` in the template; dispatch just uses it.
     let nonce_str = nonce.to_string();
     let log_dir = cache_dir(log_kind, nonce);
     fs::create_dir_all(&log_dir).map_err(|e| DispatchError {
@@ -423,14 +423,13 @@ pub(crate) async fn dispatch_pooled(
 /// Where: called only by `NuSh::interact`.
 pub(crate) async fn dispatch_interact(
     interact: &Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
-    nonce_gen: &Arc<lib_empower::NonceGen>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
-    payload_for_nonce: &[u8],
+    nonce: lib_empower::Nonce,
     source: String,
     args_json: serde_json::Value,
     timeout_ms: Option<u64>,
 ) -> Result<DispatchOutcome, DispatchError> {
-    let nonce = nonce_gen.next(&payload_for_nonce);
+    // Nonce minted by the handler (before source synthesis); see dispatch_pooled.
     let nonce_str = nonce.to_string();
     let log_dir = cache_dir(CacheKind::Interacts, nonce);
     fs::create_dir_all(&log_dir).map_err(|e| DispatchError {

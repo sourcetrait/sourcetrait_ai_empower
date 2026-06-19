@@ -101,7 +101,6 @@ impl NuSh {
                 None,
             ));
         }
-        let source = build_call_source(&file_path.display().to_string(), &name, &p.args);
         let payload_bytes = match json::to_vec(&p) {
             Ok(b) => b,
             Err(e) => {
@@ -114,16 +113,20 @@ impl NuSh {
                 ));
             }
         };
+        // Mint the nonce BEFORE source synthesis so it can be embedded as
+        // $env.NONCE in the call template.
+        let nonce = self.nonce_gen.next(&payload_bytes);
+        let source =
+            build_call_source(&file_path.display().to_string(), &name, &p.args, &nonce.to_string());
         // The in-flight path IS the namepath (a function namepath is always
         // library:module/path:name; there are no root functions).
         let path_str = p.namepath.clone();
         let args_json = serde_json::Value::Object(p.args.clone());
         let outcome = match dispatch_pooled(
             &self.runs_pool,
-            &self.nonce_gen,
             &self.in_flight,
             CacheKind::Calls,
-            &payload_bytes,
+            nonce,
             source,
             "call",
             args_json,

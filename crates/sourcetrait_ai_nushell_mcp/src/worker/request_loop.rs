@@ -159,6 +159,11 @@ fn eval_source(
     // next interact() call. Stateless mode skips this -- the local clone
     // is about to be dropped anyway.
     if matches!(warm_base.mode, Mode::Stateful) {
+        // $env.NONCE is per-call ambient context, not session state: drop it
+        // from the stack before merging so it never persists into the next
+        // interact() call. The body already read it during eval above; the
+        // body's own $env writes are untouched and still merge through.
+        let _ = stack.remove_env_var(engine_state, "NONCE");
         engine_state
             .merge_env(&mut stack)
             .map_err(|e| format!("merge_env: {e}"))?;

@@ -65,19 +65,20 @@ impl NuSh {
         // Touch mtime for the LRU signal future pruning will use.
         // Idempotent overwrite -- content is deterministic.
         let _ = fs::write(&path, &cached_bytes);
+        let nonce = self.nonce_gen.next(&cached_bytes);
         let source = build_run_source(
             &cached.args_type,
             &cached.result_type,
             &p.args,
             &cached.body,
+            &nonce.to_string(),
         );
         let args_json = serde_json::Value::Object(p.args.clone());
         let outcome = match dispatch_pooled(
             &self.runs_pool,
-            &self.nonce_gen,
             &self.in_flight,
             CacheKind::Runs,
-            &cached_bytes,
+            nonce,
             source,
             "rerun",
             args_json,

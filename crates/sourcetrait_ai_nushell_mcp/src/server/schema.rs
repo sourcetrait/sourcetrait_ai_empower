@@ -26,70 +26,125 @@ use crate::*;
 // kind (JSON null, not a string); `any` is deliberately absent.
 // ============================================================================
 
-macro_rules! scalar_enum {
-    ($name:ident) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum $name {
-            Int,
-            Float,
-            String,
-            Bool,
-            Datetime,
-            Duration,
-            Filesize,
-            Binary,
-            Range,
-            Number,
-            Glob,
-            CellPath,
-            Path,
-            Directory,
-        }
-        impl $name {
-            pub(crate) fn name(self) -> &'static str {
-                match self {
-                    Self::Int => "int",
-                    Self::Float => "float",
-                    Self::String => "string",
-                    Self::Bool => "bool",
-                    Self::Datetime => "datetime",
-                    Self::Duration => "duration",
-                    Self::Filesize => "filesize",
-                    Self::Binary => "binary",
-                    Self::Range => "range",
-                    Self::Number => "number",
-                    Self::Glob => "glob",
-                    Self::CellPath => "cell-path",
-                    Self::Path => "path",
-                    Self::Directory => "directory",
-                }
-            }
-            fn from_name(s: &str) -> Result<Self, String> {
-                Ok(match s {
-                    "int" => Self::Int,
-                    "float" => Self::Float,
-                    "string" => Self::String,
-                    "bool" => Self::Bool,
-                    "datetime" => Self::Datetime,
-                    "duration" => Self::Duration,
-                    "filesize" => Self::Filesize,
-                    "binary" => Self::Binary,
-                    "range" => Self::Range,
-                    "number" => Self::Number,
-                    "glob" => Self::Glob,
-                    "cell-path" => Self::CellPath,
-                    "path" => Self::Path,
-                    "directory" => Self::Directory,
-                    "any" => return Err("`any` is not a grammar type".to_string()),
-                    other => return Err(format!("unknown scalar type `{other}`")),
-                })
-            }
-        }
-    };
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JsonScalarTypedef {
+    Int,
+    Float,
+    String,
+    Bool,
+    Datetime,
+    Duration,
+    Filesize,
+    Binary,
+    Range,
+    Number,
+    Glob,
+    CellPath,
+    Path,
+    Directory,
 }
 
-scalar_enum!(JsonScalarTypedef);
-scalar_enum!(NuScalarTypedef);
+impl JsonScalarTypedef {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Int => "int",
+            Self::Float => "float",
+            Self::String => "string",
+            Self::Bool => "bool",
+            Self::Datetime => "datetime",
+            Self::Duration => "duration",
+            Self::Filesize => "filesize",
+            Self::Binary => "binary",
+            Self::Range => "range",
+            Self::Number => "number",
+            Self::Glob => "glob",
+            Self::CellPath => "cell-path",
+            Self::Path => "path",
+            Self::Directory => "directory",
+        }
+    }
+
+    fn from_name(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "int" => Self::Int,
+            "float" => Self::Float,
+            "string" => Self::String,
+            "bool" => Self::Bool,
+            "datetime" => Self::Datetime,
+            "duration" => Self::Duration,
+            "filesize" => Self::Filesize,
+            "binary" => Self::Binary,
+            "range" => Self::Range,
+            "number" => Self::Number,
+            "glob" => Self::Glob,
+            "cell-path" => Self::CellPath,
+            "path" => Self::Path,
+            "directory" => Self::Directory,
+            "any" => return Err("`any` is not a grammar type".to_string()),
+            other => return Err(format!("unknown scalar type `{other}`")),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NuScalarTypedef {
+    Int,
+    Float,
+    String,
+    Bool,
+    Datetime,
+    Duration,
+    Filesize,
+    Binary,
+    Range,
+    Number,
+    Glob,
+    CellPath,
+    Path,
+    Directory,
+}
+
+impl NuScalarTypedef {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Int => "int",
+            Self::Float => "float",
+            Self::String => "string",
+            Self::Bool => "bool",
+            Self::Datetime => "datetime",
+            Self::Duration => "duration",
+            Self::Filesize => "filesize",
+            Self::Binary => "binary",
+            Self::Range => "range",
+            Self::Number => "number",
+            Self::Glob => "glob",
+            Self::CellPath => "cell-path",
+            Self::Path => "path",
+            Self::Directory => "directory",
+        }
+    }
+
+    fn from_name(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "int" => Self::Int,
+            "float" => Self::Float,
+            "string" => Self::String,
+            "bool" => Self::Bool,
+            "datetime" => Self::Datetime,
+            "duration" => Self::Duration,
+            "filesize" => Self::Filesize,
+            "binary" => Self::Binary,
+            "range" => Self::Range,
+            "number" => Self::Number,
+            "glob" => Self::Glob,
+            "cell-path" => Self::CellPath,
+            "path" => Self::Path,
+            "directory" => Self::Directory,
+            "any" => return Err("`any` is not a grammar type".to_string()),
+            other => return Err(format!("unknown scalar type `{other}`")),
+        })
+    }
+}
 
 // ============================================================================
 // Shared name newtypes -- a field/column name carries no representation

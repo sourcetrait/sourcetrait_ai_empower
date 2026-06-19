@@ -310,14 +310,15 @@ always re-reads through it, so you edit that tree and commit to promote.
   index + docs. Idempotent; returns the changed paths grouped as
   `{added, modified, removed}`.
 
-`commit` rejects with `library::violations` (capped, truncation-flagged)
-on: a malformed function contract, a `mod.nu` carrying anything but the
-allowed exports, reserved-term misuse, a parse error, a bare `record<>`
-skeleton, or a call-target at the library root (no root functions). The
-summary-over-80-chars rule is a WARNING (surfaced by `library(check)`),
-not a commit blocker. Authored bodies are NOT body-linted - you write
-them with intent; the hardcoded-path / denied-external lint below applies
-to the `run()` / `interact()` surface only.
+`commit` rejects on a validation failure - the error envelope's `errors`
+carry `library::*` diagnostics (capped silently): a malformed function
+contract, a `mod.nu` carrying anything but the allowed exports,
+reserved-term misuse, a parse error, a bare `record<>` skeleton, or a
+call-target at the library root (no root functions). The
+summary-over-80-chars rule is a WARNING (surfaced in `library(check)`'s
+`warnings`), not a commit blocker. Authored bodies are NOT body-linted -
+you write them with intent; the hardcoded-path / denied-external lint below
+applies to the `run()` / `interact()` surface only.
 
 ### Using a committed library from run() / interact()
 
@@ -331,9 +332,17 @@ the same library as ordinary nu code.
 
 `run()` and `interact()` bodies go through an AST lint that hard-throws
 on two violation classes BEFORE the body is evaluated; the rejection
-arrives as a `lint::violations` error in the standard envelope. (Library
-files promoted via `commit` are validated separately - structure +
-contract, above - and are not body-linted.)
+arrives in the standard error envelope's `errors` as `lint::*`
+diagnostics. (Library files promoted via `commit` are validated
+separately - structure + contract, above - and are not body-linted.)
+
+Every error response shares one shape: `{ "error": { "errors": [...],
+"warnings": [...], "nonce"? } }`. A diagnostic row is `{ "kind":
+"<namespaced>", "source": { "path": <string|null>, "position": [line,
+col] } | null, "message": "..." }` - the bucket (`errors` vs `warnings`)
+conveys severity. A body-lint diagnostic's `source.path` is null (it lives
+in the body, not a file); a library-validation diagnostic's `source.path`
+is libraries-dir-relative (`<library>/<file>`).
 
 ### Hardcoded paths
 
@@ -360,12 +369,14 @@ Error envelope:
 ```json
 {
   "error": {
-    "kind": "lint::violations",
-    "data": {
-      "violations": [
-        { "kind": "lint::hardcoded_variable", "position": [1, 4] }
-      ]
-    }
+    "errors": [
+      {
+        "kind": "lint::hardcoded_variable",
+        "source": { "path": null, "position": [1, 4] },
+        "message": "hardcoded path literal; lift it to args"
+      }
+    ],
+    "warnings": []
   }
 }
 ```
@@ -404,12 +415,14 @@ Error envelope:
 ```json
 {
   "error": {
-    "kind": "lint::violations",
-    "data": {
-      "violations": [
-        { "kind": "lint::denied_command", "position": [1, 1] }
-      ]
-    }
+    "errors": [
+      {
+        "kind": "lint::denied_command",
+        "source": { "path": null, "position": [1, 1] },
+        "message": "denied external command; use a nushell builtin"
+      }
+    ],
+    "warnings": []
   }
 }
 ```
@@ -1124,9 +1137,10 @@ Output (partial):
 Re-reads the recorded source dir, validates (structure + the
 single-`main` contract + reserved terms + no root functions), and
 rebuilds the generated index + docs. Idempotent (a no-change resync
-returns all-empty). Returns the changed paths grouped by kind; rejects
-with `library::violations`. (The over-80-char summary rule is a warning,
-surfaced by `library(check)`, not a commit blocker.)
+returns all-empty). Returns the changed paths grouped by kind; rejects on
+a validation failure with `library::*` diagnostics in the error envelope's
+`errors`. (The over-80-char summary rule is a warning, surfaced in
+`library(check)`'s `warnings`, not a commit blocker.)
 
 #### arguments
 
@@ -1201,18 +1215,17 @@ MCP (partial):
 
 Each action returns its own record under `summary` (`uninstall` returns no
 summary). `new` -> `{created}`; `install` -> `{added, modified, removed}`;
-`check` -> `{ok, num_errors, num_warnings, errors, warnings}`:
+`check` -> `{ok, errors, warnings}` (each a list of diagnostics; errors
+block a commit, warnings advise):
 ```json
 {
   "result": {
     "structuredContent": {
       "summary": {
         "ok": true,
-        "num_errors": 0,
-        "num_warnings": 1,
         "errors": [],
         "warnings": [
-          { "kind": "lint::summary_length", "path": "mod.nu", "position": [1, 1], "message": "doc summary line exceeds 80 characters" }
+          { "kind": "lint::summary_length", "source": { "path": "geo/mod.nu", "position": [1, 1] }, "message": "doc summary line exceeds 80 characters" }
         ]
       }
     },

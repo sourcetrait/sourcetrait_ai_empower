@@ -1,202 +1,325 @@
 use crate::*;
 
-/// What: discriminant-only Copy enum for the error kind taxonomy.
-/// One variant per `Error` variant; serialized as the colon-separated
-/// snake_case kind string (`"library::not_registered"`, etc.).
+/// What: severity bucket for a `Diagnostic`. `Error` rows block (a commit, a
+/// run) and land in the envelope's `errors`; `Warning` rows advise and land in
+/// `warnings`.
 ///
-/// Why: lets callers branch on / log the error kind without holding
-/// the typed data. `Error` carries the data; `ErrorKind` is the
-/// peel-it-off discriminant.
+/// Why: the wire conveys severity through the `errors[]` vs `warnings[]` split,
+/// so this field is `#[serde(skip)]` on `Diagnostic` (absent from the wire AND
+/// the emitted JSON schema). It exists only for the Rust-side `bucket`
+/// partition + `ValidationResult::is_empty` (errors block, warnings don't).
 ///
-/// Where: returned by `Error::kind()`; useful in match arms that
-/// don't bind the data fields, in logging, and in tests.
-#[allow(dead_code)]
-#[derive(
-    Copy, Clone, Debug, PartialEq, Eq, ser::Serialize, ser::Deserialize, schema::JsonSchema,
-)]
-pub enum ErrorKind {
-    #[serde(rename = "library::not_registered")]
-    LibraryNotRegistered,
-    #[serde(rename = "library::already_registered")]
-    LibraryAlreadyRegistered,
-    #[serde(rename = "library::invalid_name")]
-    LibraryInvalidName,
-    #[serde(rename = "library::invalid_module_path")]
-    LibraryInvalidModulePath,
-    #[serde(rename = "library::test_suffix_required")]
-    LibraryTestSuffixRequired,
-    #[serde(rename = "library::source_missing")]
-    LibrarySourceMissing,
-    #[serde(rename = "library::source_path_mismatch")]
-    LibrarySourcePathMismatch,
-    #[serde(rename = "library::violations")]
-    LibraryViolations,
-    #[serde(rename = "library::invalid_action")]
-    LibraryInvalidAction,
-    #[serde(rename = "function::not_defined")]
-    FunctionNotDefined,
-    #[serde(rename = "lint::violations")]
-    LintViolations,
-    #[serde(rename = "schema::invalid")]
-    SchemaInvalid,
-    #[serde(rename = "namepath::invalid")]
-    NamepathInvalid,
-    #[serde(rename = "closure::invalid_rerun_id")]
-    ClosureInvalidRerunId,
-    #[serde(rename = "closure::cache_missing")]
-    ClosureCacheMissing,
-    #[serde(rename = "closure::cache_decode")]
-    ClosureCacheDecode,
-    #[serde(rename = "worker::dispatch")]
-    WorkerDispatch,
-    #[serde(rename = "worker::timeout")]
-    WorkerTimeout,
-    #[serde(rename = "worker::returned_error")]
-    WorkerReturnedError,
-    #[serde(rename = "internal")]
-    Internal,
+/// Where: set by `Diagnostic::error` / `Diagnostic::warning`; read by
+/// `Diagnostic::bucket` and `library::ValidationResult::is_empty`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
 }
 
-/// What: fieldful error enum carrying the typed per-variant data
-/// shape. Variants are 1:1 with `ErrorKind`. Serde tag+content
-/// produces the wire shape `{"kind": "namespace::reason", "data":
-/// {...}}` on the wire, wrapped by `ErrorBody`/`ErrorEnvelope`.
+/// What: a diagnostic's location. `path` is the file RELATIVE TO THE LIBRARIES
+/// DIR (`<library>/<file>`, e.g. `geo/shape/area.nu`, `geo/mod.nu`) for a
+/// library-validation diagnostic, and `null` for a run/interact body
+/// diagnostic (located in the body, no file). `position` is `[line, col]`,
+/// 1-based; `[0, 0]` is file-level (no specific line).
 ///
-/// Why: every error site builds a typed `Error` value; the wire
-/// shape, the JsonSchema, and the Rust call site stay in lockstep.
-/// No stringly-keyed disambiguation, no rendered-text middle layer.
+/// Why: replaces the prior `Where` + `WhereSource` carrier with the flat wire
+/// shape the agent consumes. The whole `Source` is `null` (on the
+/// `Diagnostic`) for a non-located diagnostic (a worker timeout, an
+/// unregistered-library error).
 ///
-/// Where: every tool handler in `server::tool.rs` builds an `Error`
-/// when it would have built an `Err(ErrorData)` before, and routes
-/// through `error_to_call_result`.
+/// Where: built by the body lint (`server::lint`, `path: None`) and the
+/// library validator (`server::library`, `path: Some("<library>/<rel>")`);
+/// serialized as part of a `Diagnostic`.
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
-#[serde(tag = "kind", content = "data")]
+pub struct Source {
+    pub path: Option<String>,
+    pub position: [usize; 2],
+}
+
+/// What: one agent-facing diagnostic row. `kind` is the namespaced taxonomy
+/// string (`library::*`, `lint::*`, `worker::*`, ...); `source` is the
+/// location (`null` when non-located); `message` carries the human detail.
+/// `severity` selects the envelope bucket and is NOT serialized.
+///
+/// Why: the single unified diagnostic type collapses the former
+/// `library::Violation` (structural validator) and `lint::LintViolation`
+/// (body lint) into one shape. The former typed per-variant `data`
+/// (timeout_ms, passed/registered, reason, ...) folds into `message` -- no
+/// loss, it is text either way -- so there is no separate `data` field, and
+/// the bucket (`errors` vs `warnings`) carries severity instead of a row
+/// field.
+///
+/// Where: produced by `server::lint` (body lint, severity Error) and
+/// `server::library::validate_library_source` (structural Error +
+/// `lint::summary_length` Warning); carried by `Error::LibraryViolations` /
+/// `Error::LintViolations` and `tool::library::CheckSummary`; rendered to the
+/// wire by `error_to_call_result`.
+#[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
+pub struct Diagnostic {
+    pub kind: String,
+    #[serde(skip)]
+    pub severity: Severity,
+    pub source: Option<Source>,
+    pub message: String,
+}
+
+impl Diagnostic {
+    /// Build an Error-severity diagnostic (blocks; lands in `errors`).
+    pub(crate) fn error(
+        kind: impl Into<String>,
+        source: Option<Source>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: kind.into(),
+            severity: Severity::Error,
+            source,
+            message: message.into(),
+        }
+    }
+
+    /// Build a Warning-severity diagnostic (advisory; lands in `warnings`).
+    pub(crate) fn warning(
+        kind: impl Into<String>,
+        source: Option<Source>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: kind.into(),
+            severity: Severity::Warning,
+            source,
+            message: message.into(),
+        }
+    }
+
+    /// What: partition diagnostics into `(errors, warnings)` by severity,
+    /// preserving order within each bucket.
+    ///
+    /// Why: the wire envelope (`error_to_call_result`) and the `library(check)`
+    /// success summary both present diagnostics split by severity; this is the
+    /// single partition point.
+    ///
+    /// Where: called by `error_to_call_result` (the violation-bearing Error
+    /// variants) and `tool::library::check_summary_from`.
+    pub(crate) fn bucket(diagnostics: Vec<Diagnostic>) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+        for d in diagnostics {
+            match d.severity {
+                Severity::Error => errors.push(d),
+                Severity::Warning => warnings.push(d),
+            }
+        }
+        (errors, warnings)
+    }
+}
+
+/// What: typed error for ergonomic single-condition construction at the call
+/// sites. The two violation-bearing variants carry `Vec<Diagnostic>` (already
+/// the unified rows); every other variant carries its typed data and is
+/// rendered to ONE error-bucket `Diagnostic` at the wire seam.
+///
+/// Why: keeping a typed `Error` lets the impls build + bubble conditions with
+/// `?` and matchable values, while `error_to_call_result` is the single place
+/// that flattens any `Error` to the uniform `{ errors, warnings, nonce? }`
+/// wire shape. There is no longer a serde-tagged wire form on `Error` itself
+/// -- the kind strings live in `kind_str`, the human text in `message`.
+///
+/// Where: built by every tool handler + `server::library` impl on a failure
+/// path; consumed by `error_to_call_result`.
+#[derive(Debug, Clone)]
 pub enum Error {
-    #[serde(rename = "library::not_registered")]
-    LibraryNotRegistered { library: String },
-
-    #[serde(rename = "library::already_registered")]
-    LibraryAlreadyRegistered { library: String },
-
-    #[serde(rename = "library::invalid_name")]
-    LibraryInvalidName { library: String, reason: String },
-
-    #[serde(rename = "library::invalid_module_path")]
-    LibraryInvalidModulePath { module_path: String, reason: String },
-
-    #[serde(rename = "library::test_suffix_required")]
-    LibraryTestSuffixRequired { library: String },
-
-    #[serde(rename = "library::source_missing")]
-    LibrarySourceMissing { path: String },
-
-    #[serde(rename = "library::source_path_mismatch")]
+    LibraryNotRegistered {
+        library: String,
+    },
+    LibraryAlreadyRegistered {
+        library: String,
+    },
+    LibraryInvalidName {
+        library: String,
+        reason: String,
+    },
+    LibraryInvalidModulePath {
+        module_path: String,
+        reason: String,
+    },
+    LibraryTestSuffixRequired {
+        library: String,
+    },
+    LibrarySourceMissing {
+        path: String,
+    },
     LibrarySourcePathMismatch {
         library: String,
         passed: String,
         registered: String,
     },
-
-    #[serde(rename = "library::violations")]
+    /// commit() / library(check) validation: the unified validator diagnostics
+    /// (structural Error rows + `lint::summary_length` Warning rows). Buckets
+    /// at the wire seam.
     LibraryViolations {
-        structural: Vec<Violation>,
-        structural_more: bool,
-        lint: Vec<LintViolation>,
+        diagnostics: Vec<Diagnostic>,
     },
-
-    #[serde(rename = "library::invalid_action")]
-    LibraryInvalidAction { action: String },
-
-    #[serde(rename = "function::not_defined")]
+    LibraryInvalidAction {
+        action: String,
+    },
     FunctionNotDefined {
         library: String,
         module_path: String,
         name: String,
     },
-
-    #[serde(rename = "lint::violations")]
-    LintViolations { violations: Vec<LintViolation> },
-
-    #[serde(rename = "schema::invalid")]
-    SchemaInvalid { reason: String },
-
-    #[serde(rename = "namepath::invalid")]
-    NamepathInvalid { namepath: String, reason: String },
-
-    #[serde(rename = "closure::invalid_rerun_id")]
-    ClosureInvalidRerunId { rerun_id: String, reason: String },
-
-    #[serde(rename = "closure::cache_missing")]
-    ClosureCacheMissing { rerun_id: String },
-
-    #[serde(rename = "closure::cache_decode")]
-    ClosureCacheDecode { rerun_id: String, reason: String },
-
-    #[serde(rename = "worker::dispatch")]
-    WorkerDispatch { reason: String },
-
-    #[serde(rename = "worker::timeout")]
-    WorkerTimeout { timeout_ms: u64 },
-
-    #[serde(rename = "worker::returned_error")]
-    WorkerReturnedError { reason: String },
-
-    #[serde(rename = "internal")]
-    Internal { phase: String, reason: String },
+    /// run() / interact() body lint: the body-lint diagnostics (all severity
+    /// Error). Buckets at the wire seam (warnings empty).
+    LintViolations {
+        diagnostics: Vec<Diagnostic>,
+    },
+    SchemaInvalid {
+        reason: String,
+    },
+    NamepathInvalid {
+        namepath: String,
+        reason: String,
+    },
+    ClosureInvalidRerunId {
+        rerun_id: String,
+        reason: String,
+    },
+    ClosureCacheMissing {
+        rerun_id: String,
+    },
+    ClosureCacheDecode {
+        rerun_id: String,
+        reason: String,
+    },
+    WorkerDispatch {
+        reason: String,
+    },
+    WorkerTimeout {
+        timeout_ms: u64,
+    },
+    WorkerReturnedError {
+        reason: String,
+    },
+    Internal {
+        phase: String,
+        reason: String,
+    },
 }
 
 impl Error {
-    /// What: returns the `ErrorKind` discriminant for this `Error`
-    /// value. 1:1 mapping; no data peeled off.
+    /// What: the namespaced `kind` string for the single-condition variants
+    /// (`library::not_registered`, `worker::timeout`, ...).
     ///
-    /// Why: callers that want to log the kind, branch on the kind,
-    /// or compare two errors for kind-equality without binding the
-    /// per-variant data fields.
+    /// Why: with no serde tag on `Error`, the kind taxonomy lives here. The two
+    /// violation variants carry their own per-`Diagnostic` kinds and are
+    /// bucketed directly, so they never reach this method.
     ///
-    /// Where: not on the hot path; used by error logging seams +
-    /// integration tests that compare against `ErrorKind`.
-    #[allow(dead_code)]
-    pub fn kind(&self) -> ErrorKind {
-        use ErrorKind as K;
+    /// Where: called by `error_to_call_result` for every non-violation variant.
+    fn kind_str(&self) -> &'static str {
         match self {
-            Self::LibraryNotRegistered { .. } => K::LibraryNotRegistered,
-            Self::LibraryAlreadyRegistered { .. } => K::LibraryAlreadyRegistered,
-            Self::LibraryInvalidName { .. } => K::LibraryInvalidName,
-            Self::LibraryInvalidModulePath { .. } => K::LibraryInvalidModulePath,
-            Self::LibraryTestSuffixRequired { .. } => K::LibraryTestSuffixRequired,
-            Self::LibrarySourceMissing { .. } => K::LibrarySourceMissing,
-            Self::LibrarySourcePathMismatch { .. } => K::LibrarySourcePathMismatch,
-            Self::LibraryViolations { .. } => K::LibraryViolations,
-            Self::LibraryInvalidAction { .. } => K::LibraryInvalidAction,
-            Self::FunctionNotDefined { .. } => K::FunctionNotDefined,
-            Self::LintViolations { .. } => K::LintViolations,
-            Self::SchemaInvalid { .. } => K::SchemaInvalid,
-            Self::NamepathInvalid { .. } => K::NamepathInvalid,
-            Self::ClosureInvalidRerunId { .. } => K::ClosureInvalidRerunId,
-            Self::ClosureCacheMissing { .. } => K::ClosureCacheMissing,
-            Self::ClosureCacheDecode { .. } => K::ClosureCacheDecode,
-            Self::WorkerDispatch { .. } => K::WorkerDispatch,
-            Self::WorkerTimeout { .. } => K::WorkerTimeout,
-            Self::WorkerReturnedError { .. } => K::WorkerReturnedError,
-            Self::Internal { .. } => K::Internal,
+            Self::LibraryNotRegistered { .. } => "library::not_registered",
+            Self::LibraryAlreadyRegistered { .. } => "library::already_registered",
+            Self::LibraryInvalidName { .. } => "library::invalid_name",
+            Self::LibraryInvalidModulePath { .. } => "library::invalid_module_path",
+            Self::LibraryTestSuffixRequired { .. } => "library::test_suffix_required",
+            Self::LibrarySourceMissing { .. } => "library::source_missing",
+            Self::LibrarySourcePathMismatch { .. } => "library::source_path_mismatch",
+            Self::LibraryInvalidAction { .. } => "library::invalid_action",
+            Self::FunctionNotDefined { .. } => "function::not_defined",
+            Self::SchemaInvalid { .. } => "schema::invalid",
+            Self::NamepathInvalid { .. } => "namepath::invalid",
+            Self::ClosureInvalidRerunId { .. } => "closure::invalid_rerun_id",
+            Self::ClosureCacheMissing { .. } => "closure::cache_missing",
+            Self::ClosureCacheDecode { .. } => "closure::cache_decode",
+            Self::WorkerDispatch { .. } => "worker::dispatch",
+            Self::WorkerTimeout { .. } => "worker::timeout",
+            Self::WorkerReturnedError { .. } => "worker::returned_error",
+            Self::Internal { .. } => "internal",
+            Self::LibraryViolations { .. } | Self::LintViolations { .. } => {
+                unreachable!("violation variants render via bucket, not kind_str")
+            }
+        }
+    }
+
+    /// What: render the single-condition variant's typed data into the human
+    /// `message` string (the former per-variant `data` folds in here -- no
+    /// loss, it is text either way).
+    ///
+    /// Why: the unified `Diagnostic` carries one `message` instead of a typed
+    /// `data` object; the detail (timeout_ms, passed/registered, reason, ...)
+    /// goes into prose here.
+    ///
+    /// Where: called by `error_to_call_result` for every non-violation variant.
+    fn message(&self) -> String {
+        match self {
+            Self::LibraryNotRegistered { library } => {
+                format!("library `{library}` is not registered")
+            }
+            Self::LibraryAlreadyRegistered { library } => {
+                format!("library `{library}` is already registered")
+            }
+            Self::LibraryInvalidName { library, reason } => {
+                format!("invalid library name `{library}`: {reason}")
+            }
+            Self::LibraryInvalidModulePath {
+                module_path,
+                reason,
+            } => format!("invalid module path `{module_path}`: {reason}"),
+            Self::LibraryTestSuffixRequired { library } => {
+                format!("library `{library}` must end with `_test` on the test variant")
+            }
+            Self::LibrarySourceMissing { path } => {
+                format!("library source path is missing or not a directory: {path}")
+            }
+            Self::LibrarySourcePathMismatch {
+                library,
+                passed,
+                registered,
+            } => format!(
+                "source_dir mismatch for `{library}`: passed `{passed}`, registered `{registered}`"
+            ),
+            Self::LibraryInvalidAction { action } => format!("unknown library action `{action}`"),
+            Self::FunctionNotDefined {
+                library,
+                module_path,
+                name,
+            } => format!("function `{name}` is not defined in `{library}:{module_path}`"),
+            Self::SchemaInvalid { reason } => format!("invalid schema: {reason}"),
+            Self::NamepathInvalid { namepath, reason } => {
+                format!("invalid namepath `{namepath}`: {reason}")
+            }
+            Self::ClosureInvalidRerunId { rerun_id, reason } => {
+                format!("invalid rerun_id `{rerun_id}`: {reason}")
+            }
+            Self::ClosureCacheMissing { rerun_id } => {
+                format!("no cached closure for rerun_id `{rerun_id}`")
+            }
+            Self::ClosureCacheDecode { rerun_id, reason } => {
+                format!("failed to decode cached closure `{rerun_id}`: {reason}")
+            }
+            Self::WorkerDispatch { reason } => format!("worker dispatch failed: {reason}"),
+            Self::WorkerTimeout { timeout_ms } => format!("worker timed out after {timeout_ms} ms"),
+            Self::WorkerReturnedError { reason } => reason.clone(),
+            Self::Internal { phase, reason } => format!("internal error [{phase}]: {reason}"),
+            Self::LibraryViolations { .. } | Self::LintViolations { .. } => {
+                unreachable!("violation variants render via bucket, not message")
+            }
         }
     }
 }
 
-/// What: blanket `From<io::Error>` so library impls can use `?` on
-/// `fs::*` and `process::Command::*` operations to bubble io
-/// failures up as `Error::Internal { phase: "io", reason: ... }`
-/// without per-site `.map_err(...)`.
+/// What: blanket `From<io::Error>` so library impls can use `?` on `fs::*` and
+/// `process::Command::*` operations to bubble io failures up as
+/// `Error::Internal { phase: "io", reason: ... }` without per-site `.map_err`.
 ///
-/// Why: substrate operations (mkdir, fs::write, git commit
-/// subprocess, etc.) produce io::Error values whose message strings
-/// already carry enough context for the agent; collapsing them all
-/// to `Error::Internal` keeps the wire taxonomy tight. Callers that
-/// want a more specific `phase` field do an explicit `.map_err(|e|
-/// Error::Internal { phase: "<better>", reason: e.to_string() })`.
+/// Why: substrate operations (mkdir, fs::write, git commit subprocess) produce
+/// io::Error values whose message strings already carry enough context;
+/// collapsing them to `Error::Internal` keeps the taxonomy tight. Callers
+/// wanting a more specific `phase` do an explicit `.map_err`.
 ///
-/// Where: every `?` on an io-fallible call inside the `*_impl`
-/// functions in `server::library.rs`.
+/// Where: every `?` on an io-fallible call inside the `*_impl` functions in
+/// `server::library`.
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Error::Internal {
@@ -206,121 +329,68 @@ impl From<io::Error> for Error {
     }
 }
 
-/// What: top-of-wire envelope -- carries the structured error body
-/// keyed under the `error` field of `structured_content`.
+/// What: top-of-wire envelope -- the structured error body keyed under the
+/// `error` field of `structured_content`.
 ///
-/// Why: this is the single typed shape that lands in
-/// `CallToolResult::structured_content` for every tool-execution
-/// error. The seam (`error_to_call_result`) keeps the wire format
-/// uniform across handlers.
+/// Why: the single typed shape that lands in `CallToolResult::structured_content`
+/// for every tool-execution error; the `error` wrapper is the
+/// success-vs-error discriminator the agent branches on.
 ///
-/// Where: produced by `error_to_call_result`; consumed by
-/// integration tests asserting
-/// `resp["result"]["structuredContent"]["error"]`.
+/// Where: produced by `error_to_call_result`; consumed by integration tests
+/// asserting `result.structuredContent.error`.
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
 pub struct ErrorEnvelope {
     pub error: ErrorBody,
 }
 
+/// What: the unified error body -- `errors` + `warnings` diagnostic lists plus
+/// an optional `nonce`. Both lists are always present (possibly empty);
+/// `nonce` is omitted when absent.
+///
+/// Why: every failure response now carries the same `{ errors, warnings,
+/// nonce? }` shape regardless of the originating condition; the bucket split
+/// conveys severity without a per-row `severity` field.
+///
+/// Where: built by `error_to_call_result`.
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
 pub struct ErrorBody {
-    #[serde(flatten)]
-    pub error: Error,
+    pub errors: Vec<Diagnostic>,
+    pub warnings: Vec<Diagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>,
 }
 
-/// What: where an in-source violation lives. `position` is
-/// `[line, col]` (1-based). `source` is an optional typed tag for
-/// disambiguating across multiple violation contexts; absence means
-/// "body" (the default lint context for `run` / `interact`).
+/// What: builds a SUCCESS-shape `CallToolResult` carrying the unified error
+/// envelope (`{ error: { errors, warnings, nonce? } }`) in
+/// `structured_content`. The violation-bearing `Error` variants bucket their
+/// carried diagnostics; every other variant renders to a single error-bucket
+/// `Diagnostic` (`kind` from `kind_str`, `source: None`, `message` from
+/// `message`). No `is_error`; no `Err(ErrorData)`.
 ///
-/// Why: typed source replaces the prior `Option<String>` so the
-/// agent can branch on the source kind without parsing rendered
-/// text. Walker code passes `Where` values; LintViolation variants
-/// inline its fields on the wire (via the variant's own `position`
-/// + `source` fields rather than nesting under a `location` key).
+/// Why: one uniform `structured_content`-only wire shape across success and
+/// error semantics, so the agent reads `error.errors[]` / `error.warnings[]`
+/// from one place. The nonce is attached when the dispatch had already
+/// allocated a per-call log dir -- the agent can fetch
+/// `<cache>/<kind>/<nonce>/{stdout,stderr}`.
 ///
-/// Where: built by the lint walker in `server::lint.rs`; consumed
-/// when constructing `LintViolation::HardcodedVariable` /
-/// `DeniedCommand` variants.
-#[derive(Debug, Clone)]
-pub struct Where {
-    pub position: [usize; 2],
-    pub source: Option<WhereSource>,
-}
-
-/// What: typed lint-violation source tag. `Mod(rel_path)` for the
-/// library validator's per-file source; `Def(fn_name)` reserved for
-/// future per-function-body lints; `Other(free_text)` catch-all.
-///
-/// Why: distinct typed variants let the agent branch on the
-/// violation's source kind without parsing the rendered string.
-/// The wire shape is ALWAYS a plain string (via hand-rolled
-/// `Serialize` -> `Display`); the enum is internal Rust typing.
-///
-/// Where: stored in `Where::source`; rendered to wire by the lint
-/// validator emit sites.
-#[derive(Debug, Clone)]
-pub enum WhereSource {
-    #[allow(dead_code)]
-    Mod(String),
-    #[allow(dead_code)]
-    Def(String),
-    #[allow(dead_code)]
-    Other(String),
-}
-
-impl std::fmt::Display for WhereSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Mod(s) => write!(f, "mod {s}"),
-            Self::Def(s) => write!(f, "def {s}"),
-            Self::Other(s) => f.write_str(s),
-        }
-    }
-}
-
-impl ser::Serialize for WhereSource {
-    fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-impl schema::JsonSchema for WhereSource {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        std::borrow::Cow::Borrowed("WhereSource")
-    }
-    fn json_schema(g: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        <String as schema::JsonSchema>::json_schema(g)
-    }
-}
-
-/// What: builds a SUCCESS-shape `CallToolResult` carrying the typed
-/// error envelope in `structured_content`. No `is_error` set; no
-/// `Err(ErrorData)` returned. The agent receives a successful tool
-/// response with `structuredContent.error.kind == "<X>::<Y>"` and an
-/// empty `content` array. Domain error path; deviates from MCP
-/// 2025-11-25 `server/tools.md` SHOULD identically to
-/// `envelope_to_structured` -- see the "Content::text omission
-/// deviation note" block in `server/tool/common.rs` for the policy.
-///
-/// Why: pairs with `envelope_to_structured` to give one uniform
-/// `structured_content`-only wire shape across success and error
-/// semantics, so agents read fields from one place regardless of
-/// outcome. `Err(mcp::ErrorData)` JSON-RPC errors are reserved for
-/// genuine MCP-layer protocol failures (the current handler set
-/// never hits that path).
-///
-/// Where: called by every tool handler in `server::tool.rs` on any
-/// tool-execution error path.
+/// Where: called by every tool handler on a tool-execution error path.
 pub(crate) fn error_to_call_result(
     error: Error,
     nonce: Option<lib_empower::Nonce>,
 ) -> mcp::CallToolResult {
+    let (errors, warnings) = match error {
+        Error::LibraryViolations { diagnostics } | Error::LintViolations { diagnostics } => {
+            Diagnostic::bucket(diagnostics)
+        }
+        single => {
+            let diagnostic = Diagnostic::error(single.kind_str(), None, single.message());
+            (vec![diagnostic], Vec::new())
+        }
+    };
     let envelope = ErrorEnvelope {
         error: ErrorBody {
-            error,
+            errors,
+            warnings,
             nonce: nonce.map(|n| n.to_string()),
         },
     };

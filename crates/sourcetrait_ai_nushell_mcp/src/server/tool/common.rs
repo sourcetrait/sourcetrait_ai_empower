@@ -255,23 +255,22 @@ pub(crate) fn convert_schemas(
     Ok((args_type, result_type))
 }
 
-/// What: lint of a `RunParams` body -- a single pass over the agent's
-/// body returning the aggregated `LintViolation` vector with no source
-/// tag (the body is the only context).
+/// What: lint of a `RunParams` body -- a single pass over the agent's body
+/// returning the aggregated error-severity `Diagnostic` vector (a body
+/// diagnostic has no file, so each row's `source.path` is None).
 ///
-/// Why: keeping this as a thin wrapper around `lint_body` (rather
-/// than inlining into the handlers) leaves a clear seam for any
-/// future per-tool diff in lint coverage; today the wrapper is a
-/// straight pass-through.
+/// Why: keeping this as a thin wrapper around `lint_body` (rather than
+/// inlining into the handlers) leaves a clear seam for any future per-tool
+/// diff in lint coverage; today the wrapper is a straight pass-through.
 ///
-/// Where: called by `NuSh::run` and `NuSh::interact` before any
-/// template synthesis.
+/// Where: called by `NuSh::run` and `NuSh::interact` before any template
+/// synthesis.
 pub(crate) fn lint_run_params(
     engine: &ParseEngine,
     args_type: &str,
     body: &str,
-) -> Vec<LintViolation> {
-    lint_body(engine, args_type, body, None)
+) -> Vec<Diagnostic> {
+    lint_body(engine, args_type, body)
 }
 
 /// What: the shape returned by `dispatch_pooled` / `dispatch_interact`.
@@ -561,6 +560,6 @@ fn now_millis() -> u64 {
 
 // (import_error_to_mcp_error / format_violations / format_validation_result
 // retired -- errors are now typed `Error` values routed through
-// `error_to_call_result` rather than rendered as text JSON-RPC errors.
-// The structural `Violation` list and `LintViolation` list now live as
-// typed data inside `Error::LibraryViolations` and `Error::LintViolations`.)
+// `error_to_call_result`, which renders any error to the unified
+// `{ errors, warnings, nonce? }` envelope of `Diagnostic` rows. The
+// violation-bearing variants carry `Vec<Diagnostic>` directly.)

@@ -27,7 +27,9 @@ pub(crate) mod server {
     pub(crate) mod worker_handle;
     #[cfg(test)]
     mod tests {
+        mod lint;
         mod namepath;
+        mod schema;
     }
 }
 pub(crate) mod worker {
@@ -45,6 +47,11 @@ pub(crate) mod plugins;
 pub(crate) mod template;
 pub(crate) mod wire;
 
+#[cfg(test)]
+mod tests {
+    mod template;
+}
+
 pub(crate) use crate::{
     build_target::build_target,
     cli::parse_worker_mode,
@@ -54,14 +61,14 @@ pub(crate) use crate::{
     plugins::list_registered_plugins,
     server::{
         cache::{CacheKind, cache_dir, closure_cache_file, data_base_dir},
-        error::{Error, Where, WhereSource, error_to_call_result},
+        error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         library::{
-            LibraryInfo, LibraryLocks, ValidationResult, Violation, call_file_path, check_library,
+            LibraryInfo, LibraryLocks, ValidationResult, call_file_path, check_library,
             check_source_dir, commit_impl, ensure_substrate, enumerate_libraries, establish_library,
             index_node, inspect_impl, install_impl, is_valid_ident, is_valid_module_path,
             libraries_dir, load_index, scaffold_leaf, scaffold_leaf_exists, uninstall_impl,
         },
-        lint::{LINT_VIOLATION_CAP, LintViolation, lint_body},
+        lint::{LINT_VIOLATION_CAP, lint_body},
         namepath::{Namepath, NamepathRef},
         parse_engine::{ParseEngine, span_to_line_col, wrap_as_def_body, wrap_as_module},
         pool::Pool,
@@ -131,7 +138,7 @@ pub(crate) mod sys {
 }
 
 pub(crate) mod ser {
-    pub(crate) use ::serde::{Deserialize, Serialize, Serializer};
+    pub(crate) use ::serde::{Deserialize, Serialize};
 }
 
 pub(crate) mod schema {

@@ -173,6 +173,9 @@ fn envelope_error_kind(resp: &serde_json::Value) -> Option<&str> {
     resp.get("result")?
         .get("structuredContent")?
         .get("error")?
+        .get("errors")?
+        .as_array()?
+        .first()?
         .get("kind")?
         .as_str()
 }
@@ -245,8 +248,8 @@ fn install_rolls_back_on_validation_failure() {
     let resp = host.library_action("install", "badship", src.to_str().unwrap());
     assert_eq!(
         envelope_error_kind(&resp),
-        Some("library::violations"),
-        "install of an invalid source should fail with violations; got {resp}"
+        Some("library::root_function"),
+        "install of an invalid source should fail with a validation diagnostic; got {resp}"
     );
     assert!(
         !host.library_dir("badship").exists(),
@@ -272,14 +275,20 @@ fn check_reports_ok_for_clean_source() {
     assert!(!has_error_path(&resp), "check should not error; got {resp}");
     let summary = &structured(&resp)["summary"];
     assert_eq!(summary["ok"].as_bool(), Some(true), "got {summary}");
-    assert_eq!(summary["num_errors"].as_u64(), Some(0), "got {summary}");
-    assert_eq!(summary["num_warnings"].as_u64(), Some(0), "got {summary}");
+    assert!(
+        summary["errors"].as_array().expect("errors").is_empty(),
+        "got {summary}"
+    );
+    assert!(
+        summary["warnings"].as_array().expect("warnings").is_empty(),
+        "got {summary}"
+    );
 }
 
 #[test]
 fn check_reports_structural_errors() {
     // A structural defect in the in-source tree (a root call-target) surfaces
-    // as a check error with a namespaced `structure::` kind; ok is false.
+    // as a check error with a namespaced `library::` kind; ok is false.
     let mut host = Host::spawn();
     let src = host.source_dir("checkerrlib");
     let _ = host.library_new("checkerrlib", &src);
@@ -293,19 +302,16 @@ fn check_reports_structural_errors() {
     assert!(!has_error_path(&resp), "check itself should not error; got {resp}");
     let summary = &structured(&resp)["summary"];
     assert_eq!(summary["ok"].as_bool(), Some(false), "got {summary}");
-    assert!(
-        summary["num_errors"].as_u64().unwrap_or(0) >= 1,
-        "expected >=1 error; got {summary}"
-    );
     let err_kinds: Vec<&str> = summary["errors"]
         .as_array()
         .expect("errors array")
         .iter()
         .filter_map(|e| e["kind"].as_str())
         .collect();
+    assert!(!err_kinds.is_empty(), "expected >=1 error; got {summary}");
     assert!(
-        err_kinds.iter().any(|k| k.starts_with("structure::")),
-        "errors should carry namespaced structure:: kinds; got {err_kinds:?}"
+        err_kinds.iter().any(|k| k.starts_with("library::")),
+        "errors should carry namespaced library:: kinds; got {err_kinds:?}"
     );
 }
 

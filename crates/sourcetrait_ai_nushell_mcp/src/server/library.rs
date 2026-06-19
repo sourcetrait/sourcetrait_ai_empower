@@ -6,7 +6,7 @@ use crate::*;
 
 /// On-disk `<library>/.meta/library.json` shape (big meta): the call()
 /// surface INDEX. Git-tracked. Carries `source_path` (the agent's tree the
-/// MCP re-reads on `commit` + sanity-checks on `delete`) plus the recursive
+/// MCP re-reads on `commit` + cross-checks on `uninstall`) plus the recursive
 /// module -> function tree with schemas, SANS docs (docs live as sibling
 /// markdown under `.meta/docs/`). Built at commit during validation; read by
 /// info() / call() / inspect() on the hot path instead of re-walking +
@@ -119,11 +119,11 @@ pub(crate) fn allowed_signers_path() -> PathBuf {
 /// library.
 ///
 /// Why: one git repo for all libraries gives us a single audit log
-/// across all lifecycle ops (new / commit / delete); each library is a
+/// across all lifecycle ops (new / commit / uninstall); each library is a
 /// top-level subdir within it.
 ///
 /// Where: called by every git-aware helper (`new_impl`, `commit_impl`,
-/// `delete_impl`, etc.) to compose paths and by `run_git` callers to
+/// `uninstall_impl`, etc.) to compose paths and by `run_git` callers to
 /// set the `git -C` directory.
 pub(crate) fn libraries_dir() -> PathBuf {
     data_base_dir().join("libraries")
@@ -147,7 +147,7 @@ pub(crate) fn library_dir(library: &str) -> PathBuf {
 /// (`<library_dir>/.meta/library.json`).
 ///
 /// Why: the index carries `source_path` (re-read on commit, sanity-checked
-/// on delete) plus the call() surface tree (read by info / call / inspect).
+/// on uninstall) plus the call() surface tree (read by info / call / inspect).
 ///
 /// Where: written by `new_impl` (establish) + `commit_impl` (rebuild); read
 /// by `load_index`.
@@ -202,7 +202,7 @@ pub(crate) fn library_root_modnu_path(library: &str) -> PathBuf {
 ///
 /// - `call(library, ...)` acquires a READ lock on the entry, allowing
 ///   concurrent calls to the same library.
-/// - Writes (`commit`/`delete`) acquire a WRITE lock on the entry,
+/// - Writes (`commit`/`uninstall`) acquire a WRITE lock on the entry,
 ///   serializing within a library but not across libraries.
 /// - `new` (establish) holds the outer Mutex briefly to insert the
 ///   entry, then proceeds under the per-library write lock.
@@ -272,7 +272,7 @@ impl LibraryLocks {
     }
 
     /// Look up an existing lock; None if the library isn't registered.
-    /// Used by the call / commit / delete handlers and by
+    /// Used by the call / commit / uninstall handlers and by
     /// `enumerate_libraries` to take the per-library guard.
     pub(crate) async fn lookup(&self, name: &str) -> Option<Arc<tk::AsyncRwLock<()>>> {
         let map = self.map.lock().await;
@@ -683,11 +683,11 @@ pub(crate) fn is_valid_module_path(s: &str) -> bool {
 /// error if the file is malformed.
 ///
 /// Why: the index is the source of truth for `source_path` (commit re-read,
-/// delete sanity-check) and the call() surface tree (info / call / inspect).
+/// uninstall cross-check) and the call() surface tree (info / call / inspect).
 /// Wrapping JSON-decode errors as io::Error keeps the impl signature uniform
 /// with other library impls.
 ///
-/// Where: called by `commit_impl` + `delete_impl` + `new_impl` (source_path)
+/// Where: called by `commit_impl` + `check_library` (source_path)
 /// and `enumerate_libraries` + `call` + `inspect_impl` (the tree).
 pub(crate) fn load_index(library: &str) -> io::Result<LibraryIndex> {
     let bytes = fs::read(library_meta_path(library))?;
@@ -696,7 +696,7 @@ pub(crate) fn load_index(library: &str) -> io::Result<LibraryIndex> {
 }
 
 // ============================================================================
-// (define_function / undefine_function retired in 0.0.44 - new/commit/delete)
+// (define_function / undefine_function retired in 0.0.44 - new/commit/library)
 // ============================================================================
 
 /// Resolve `<library>/<module_path>/<name>.nu` into an absolute path
@@ -1025,45 +1025,73 @@ pub(crate) fn inspect_impl(
 // Strict library source validator (run by commit)
 // ============================================================================
 
-#[derive(Debug, Clone, ser::Serialize, ser::Deserialize, schema::JsonSchema)]
-pub struct Violation {
-    /// Namespaced diagnostic kind, e.g. `structure::parse_error`,
-    /// `structure::reserved`, `structure::root_function`.
-    pub kind: String,
-    /// Path relative to the source root.
-    pub path: String,
-    /// 1-based line number; 0 means "file-level" (no specific line).
-    pub line: usize,
-    /// Human-readable description of the violation.
-    pub message: String,
+/// Count the Error-severity diagnostics in a slice. Warnings (the doc
+/// `lint::summary_length`) advise and never block, so the validator's
+/// early-stop + the clean-to-commit check both key on this.
+fn error_count(diagnostics: &[Diagnostic]) -> usize {
+    diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count()
 }
 
-/// What: pairs the structural-validator findings with the body-lint
-/// findings from a single `validate_library_source` walk. Both vectors
-/// are independent; a library can fail one set, the other, or both.
+/// Cap each severity at `cap` independently, preserving order, silently (no
+/// truncation marker -- the collapsed envelope reports no internal-cap
+/// truncation). Up to `cap` Error rows and up to `cap` Warning rows survive.
+fn cap_diagnostics(diagnostics: Vec<Diagnostic>, cap: usize) -> Vec<Diagnostic> {
+    let mut errors = 0usize;
+    let mut warnings = 0usize;
+    let mut out = Vec::new();
+    for d in diagnostics {
+        match d.severity {
+            Severity::Error => {
+                if errors < cap {
+                    out.push(d);
+                    errors += 1;
+                }
+            }
+            Severity::Warning => {
+                if warnings < cap {
+                    out.push(d);
+                    warnings += 1;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Prepend the library name to every located diagnostic's `source.path`, so a
+/// walk-relative `<rel>` (e.g. `math/double.nu`, `mod.nu`) becomes the
+/// libraries-dir-relative `<library>/<rel>` the agent sees. The walk itself
+/// stays library-agnostic; this runs once at the `commit_impl` / `check_library`
+/// boundary where the library name is known.
+fn prefix_diagnostic_paths(result: &mut ValidationResult, library: &str) {
+    for d in &mut result.diagnostics {
+        if let Some(src) = &mut d.source {
+            if let Some(path) = &src.path {
+                src.path = Some(format!("{library}/{path}"));
+            }
+        }
+    }
+}
+
+/// What: the validator's findings from a single `validate_library_source`
+/// walk, plus the big-meta index + docs assembled in the same pass.
 ///
-/// Why: slice 5.2 broadens the strict library validator to also lint
-/// each function file's `export def main` body. Structural and lint
-/// violations have different render shapes (the former is
-/// `<path>:<line>: <message>` per `format_violations`; the latter is
-/// `lint::<class> [L:C] mod <rel_path>` per the skill format
-/// discipline), so they stay in separate vectors all the way to the
-/// rmcp-error mapping seam.
+/// Why: the unified `Diagnostic` collapses the former structural `Violation`
+/// list and the doc-lint list into one vector keyed by `severity` (Error rows
+/// block a commit; Warning rows -- `lint::summary_length` -- advise). The wire
+/// seam (`error_to_call_result` / `check_summary_from`) buckets them.
 ///
-/// Where: produced by `validate_library_source`; consumed by
-/// `commit_impl` (folded into `Error::LibraryViolations` when
-/// non-empty).
+/// Where: produced by `validate_library_source`; consumed by `commit_impl`
+/// (folded into `Error::LibraryViolations` when not clean) and `check_library`
+/// (bucketed into the `library(check)` summary).
 #[derive(Debug, Clone)]
 pub(crate) struct ValidationResult {
-    pub structural: Vec<Violation>,
-    /// leg 4: true when the structural list was capped at
-    /// `LINT_VIOLATION_CAP` and the walk early-stopped (there may be
-    /// more). `Error::LibraryViolations.structural_more` mirrors it.
-    pub structural_more: bool,
-    /// leg 4: doc `summary_length` lint violations (capped at
-    /// `LINT_VIOLATION_CAP` + a `More` sentinel). Populates the formerly
-    /// dormant `lint` field of `Error::LibraryViolations`.
-    pub lint: Vec<LintViolation>,
+    /// Validator diagnostics: structural Error rows + `lint::summary_length`
+    /// Warning rows. Capped per-severity (silent).
+    pub diagnostics: Vec<Diagnostic>,
     /// big meta: the library root's call-target functions, built during the
     /// validation walk. Only meaningful when the result is otherwise clean
     /// (commit_impl writes the index only after `is_empty()` passes).
@@ -1086,11 +1114,11 @@ pub(crate) struct DocEntry {
 }
 
 impl ValidationResult {
-    /// Errors (structural) gate a commit; warnings (the doc `lint`) are
-    /// advisory and do NOT block. A result is clean enough to commit iff it
-    /// carries no structural errors.
+    /// Error-severity rows gate a commit; Warning rows (the doc
+    /// `lint::summary_length`) advise and do NOT block. A result is clean
+    /// enough to commit iff it carries no Error-severity diagnostics.
     pub(crate) fn is_empty(&self) -> bool {
-        self.structural.is_empty()
+        error_count(&self.diagnostics) == 0
     }
 }
 
@@ -1168,28 +1196,34 @@ fn extract_doc(source: &str, marker: Option<&str>) -> (String, String, usize) {
     (summary, details, doc_idxs[0] + 1)
 }
 
-/// What: push a `LintViolation::SummaryLength` when a node's doc summary
-/// (via `extract_doc`) exceeds `SUMMARY_MAX_CHARS`; `position` is the
-/// summary line, `source` the file (`WhereSource::Mod`).
+/// What: push a `lint::summary_length` Warning `Diagnostic` when a node's doc
+/// summary (via `extract_doc`) exceeds `SUMMARY_MAX_CHARS`; `position` is the
+/// summary line, `source.path` the walk-relative file (`<library>/` prepended
+/// later by `prefix_diagnostic_paths`).
 ///
-/// Why: leg 4's only hard doc rule -- the one-liner is length-bounded so
-/// info() stays lean (details unconstrained). Lint (capped + More), not
-/// structural, so an over-long summary is agent-fixable.
+/// Why: the only hard doc rule -- the one-liner is length-bounded so info()
+/// stays lean (details unconstrained). Warning severity, not Error, so an
+/// over-long summary advises (surfaces in `library(check)`) without blocking a
+/// commit.
 ///
-/// Where: `validate_function_file_ast` (the `export def main` comment)
-/// and `validate_mod_nu_ast` (the mod.nu leading comment).
+/// Where: `validate_function_file_ast` (the `export def main` comment) and
+/// `validate_mod_nu_ast` (the mod.nu leading comment).
 fn check_summary_length(
     rel: &str,
     source: &str,
     marker: Option<&str>,
-    lint: &mut Vec<LintViolation>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) {
     let (summary, _details, line) = extract_doc(source, marker);
     if summary.chars().count() > SUMMARY_MAX_CHARS {
-        lint.push(LintViolation::summary_length(Where {
-            position: [line, 1],
-            source: Some(WhereSource::Mod(rel.to_string())),
-        }));
+        diagnostics.push(Diagnostic::warning(
+            "lint::summary_length",
+            Some(Source {
+                path: Some(rel.to_string()),
+                position: [line, 1],
+            }),
+            "doc summary line exceeds 80 characters",
+        ));
     }
 }
 
@@ -1215,9 +1249,7 @@ pub(crate) fn validate_library_source(
     engine: &ParseEngine,
 ) -> io::Result<ValidationResult> {
     let mut result = ValidationResult {
-        structural: Vec::new(),
-        structural_more: false,
-        lint: Vec::new(),
+        diagnostics: Vec::new(),
         functions: Vec::new(),
         modules: Vec::new(),
         docs: Vec::new(),
@@ -1225,19 +1257,11 @@ pub(crate) fn validate_library_source(
     let (modules, functions) = validate_walk(root, root, engine, "", &mut result)?;
     result.modules = modules;
     result.functions = functions;
-    // leg 4: cap both lists at LINT_VIOLATION_CAP. Structural early-stops
+    // Cap each severity at LINT_VIOLATION_CAP, silently. Error rows early-stop
     // the walk (see validate_walk) so a hard-broken tree rejects without
-    // parsing every file; truncate + flag `structural_more`. The doc
-    // `summary_length` lint accumulates across the walk; truncate + append
-    // the `More` sentinel (the body-lint truncation discipline).
-    if result.structural.len() > LINT_VIOLATION_CAP {
-        result.structural.truncate(LINT_VIOLATION_CAP);
-        result.structural_more = true;
-    }
-    if result.lint.len() > LINT_VIOLATION_CAP {
-        result.lint.truncate(LINT_VIOLATION_CAP);
-        result.lint.push(LintViolation::More);
-    }
+    // parsing every file; the doc `summary_length` warnings accumulate across
+    // the walk. Neither truncation is signaled on the wire.
+    result.diagnostics = cap_diagnostics(result.diagnostics, LINT_VIOLATION_CAP);
     Ok(result)
 }
 
@@ -1298,7 +1322,7 @@ fn validate_walk(
     // IndexFunction; a call-target yields one plus its docs at the function
     // coordinate.
     for (name, path) in &files {
-        if result.structural.len() > LINT_VIOLATION_CAP {
+        if error_count(&result.diagnostics) > LINT_VIOLATION_CAP {
             return Ok((modules, functions));
         }
         let stem = name.trim_end_matches(".nu");
@@ -1317,14 +1341,14 @@ fn validate_walk(
                     .unwrap_or(path)
                     .to_string_lossy()
                     .into_owned();
-                result.structural.push(Violation {
-                    kind: "structure::root_function".to_string(),
-                    path: rel,
-                    line: 0,
-                    message:
-                        "a call-target cannot live at the library root; move it into a module"
-                            .to_string(),
-                });
+                result.diagnostics.push(Diagnostic::error(
+                    "library::root_function",
+                    Some(Source {
+                        path: Some(rel),
+                        position: [0, 0],
+                    }),
+                    "a call-target cannot live at the library root; move it into a module",
+                ));
                 continue;
             }
             if !summary.is_empty() || !details.is_empty() {
@@ -1341,7 +1365,7 @@ fn validate_walk(
     // Subdirectory modules: only dirs carrying mod.nu are modules; only those
     // with a call-target below them survive the prune.
     for (name, path) in &dirs {
-        if result.structural.len() > LINT_VIOLATION_CAP {
+        if error_count(&result.diagnostics) > LINT_VIOLATION_CAP {
             return Ok((modules, functions));
         }
         if !path.join("mod.nu").exists() {
@@ -1386,30 +1410,14 @@ fn validate_one_file(
     // mod.nu validates but is no call-target (None); a function file yields the
     // IndexFunction + (summary, details) when it is a clean call-target.
     let extracted = if is_mod {
-        validate_mod_nu_ast(
-            &rel,
-            stem,
-            &source,
-            parent,
-            engine,
-            &mut result.structural,
-            &mut result.lint,
-        );
+        validate_mod_nu_ast(&rel, stem, &source, parent, engine, &mut result.diagnostics);
         None
     } else {
-        validate_function_file_ast(
-            &rel,
-            stem,
-            &source,
-            parent,
-            engine,
-            &mut result.structural,
-            &mut result.lint,
-        )
+        validate_function_file_ast(&rel, stem, &source, parent, engine, &mut result.diagnostics)
     };
     // the reserved-terms ban applies to EVERY .nu file -- `main` may appear
     // only as a call-target's exported sentinel.
-    scan_reserved_terms(&rel, stem, &source, parent, engine, &mut result.structural);
+    scan_reserved_terms(&rel, stem, &source, parent, engine, &mut result.diagnostics);
     Ok(extracted)
 }
 
@@ -1435,20 +1443,22 @@ fn scan_reserved_terms(
     source: &str,
     parent: &std::path::Path,
     engine: &ParseEngine,
-    violations: &mut Vec<Violation>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) {
     // 1. Path components: no module / directory / file named main.
     for comp in rel.split('/') {
         let bare = comp.strip_suffix(".nu").unwrap_or(comp);
         if is_reserved_term(bare) {
-            violations.push(Violation {
-                kind: "structure::reserved".to_string(),
-                path: rel.to_string(),
-                line: 0,
-                message: format!(
+            diagnostics.push(Diagnostic::error(
+                "library::reserved",
+                Some(Source {
+                    path: Some(rel.to_string()),
+                    position: [0, 0],
+                }),
+                format!(
                     "`{bare}` is reserved (the call-target sentinel) and cannot name a module, directory, or file",
                 ),
-            });
+            ));
         }
     }
 
@@ -1476,14 +1486,16 @@ fn scan_reserved_terms(
         if flag {
             let src_off = span.start.saturating_sub(prefix_len);
             let (line, _col) = span_to_line_col(source, src_off);
-            violations.push(Violation {
-                kind: "structure::reserved".to_string(),
-                path: rel.to_string(),
-                line,
-                message: format!(
+            diagnostics.push(Diagnostic::error(
+                "library::reserved",
+                Some(Source {
+                    path: Some(rel.to_string()),
+                    position: [line, 0],
+                }),
+                format!(
                     "`{content}` is reserved -- it may appear only as a call-target's exported `main`; rename this identifier",
                 ),
-            });
+            ));
         }
         // Parameter names live inside a single Signature token (flatten
         // does not tokenize them individually), so pull the top-level
@@ -1493,14 +1505,16 @@ fn scan_reserved_terms(
                 if is_reserved_term(&pname) {
                     let src_off = span.start.saturating_sub(prefix_len);
                     let (line, _col) = span_to_line_col(source, src_off);
-                    violations.push(Violation {
-                        kind: "structure::reserved".to_string(),
-                        path: rel.to_string(),
-                        line,
-                        message: format!(
+                    diagnostics.push(Diagnostic::error(
+                        "library::reserved",
+                        Some(Source {
+                            path: Some(rel.to_string()),
+                            position: [line, 0],
+                        }),
+                        format!(
                             "`{pname}` is reserved and cannot be a parameter name; rename it",
                         ),
-                    });
+                    ));
                 }
             }
         }
@@ -1601,12 +1615,11 @@ fn validate_mod_nu_ast(
     source: &str,
     parent: &std::path::Path,
     engine: &ParseEngine,
-    violations: &mut Vec<Violation>,
-    lint: &mut Vec<LintViolation>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) {
-    // leg 4: the module/library summary (the mod.nu leading comment's
-    // first line) must be <= 80 chars. Lint, not structural.
-    check_summary_length(rel, source, None, lint);
+    // The module/library summary (the mod.nu leading comment's first line)
+    // must be <= 80 chars. Warning, not structural.
+    check_summary_length(rel, source, None, diagnostics);
     let wrapper_name = format!("__v_{stem}");
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
     let engine_state = engine.engine_state_for_file(parent);
@@ -1617,12 +1630,14 @@ fn validate_mod_nu_ast(
     for err in &working_set.parse_errors {
         let span_start = err.span().start.saturating_sub(prefix_len);
         let (line, _col) = span_to_line_col(source, span_start);
-        violations.push(Violation {
-            kind: "structure::parse_error".to_string(),
-            path: rel.to_string(),
-            line,
-            message: format!("parse error: {err:?}"),
-        });
+        diagnostics.push(Diagnostic::error(
+            "library::parse_error",
+            Some(Source {
+                path: Some(rel.to_string()),
+                position: [line, 0],
+            }),
+            format!("parse error: {err:?}"),
+        ));
     }
 
     // 2. Locate the wrapper's body block via the outer `module` call's
@@ -1667,7 +1682,7 @@ fn validate_mod_nu_ast(
                 &working_set,
                 source,
                 prefix_len,
-                violations,
+                diagnostics,
             );
         }
     }
@@ -1685,7 +1700,7 @@ fn check_mod_nu_pipeline_element(
     working_set: &nu::StateWorkingSet,
     source: &str,
     prefix_len: usize,
-    violations: &mut Vec<Violation>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) {
     let span_start = expr.span.start.saturating_sub(prefix_len);
     let (line, _col) = span_to_line_col(source, span_start);
@@ -1702,28 +1717,32 @@ fn check_mod_nu_pipeline_element(
             ) {
                 return;
             }
-            violations.push(Violation {
-                kind: "structure::mod_nu".to_string(),
-                path: rel.to_string(),
-                line,
-                message: format!(
+            diagnostics.push(Diagnostic::error(
+                "library::mod_nu",
+                Some(Source {
+                    path: Some(rel.to_string()),
+                    position: [line, 0],
+                }),
+                format!(
                     "mod.nu may only contain `export use`, `export module`, `export const`, or `export def` statements; got call to `{name}`",
                 ),
-            });
+            ));
         }
         nu::Expr::Garbage => {
             // Parse error already surfaced; don't double-report.
         }
         other => {
-            violations.push(Violation {
-                kind: "structure::mod_nu".to_string(),
-                path: rel.to_string(),
-                line,
-                message: format!(
+            diagnostics.push(Diagnostic::error(
+                "library::mod_nu",
+                Some(Source {
+                    path: Some(rel.to_string()),
+                    position: [line, 0],
+                }),
+                format!(
                     "mod.nu may only contain `export use`, `export module`, `export const`, or `export def` statements; got `{}`",
                     short_expr_label(other),
                 ),
-            });
+            ));
         }
     }
 }
@@ -1775,12 +1794,11 @@ fn validate_function_file_ast(
     source: &str,
     parent: &std::path::Path,
     engine: &ParseEngine,
-    violations: &mut Vec<Violation>,
-    lint: &mut Vec<LintViolation>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<(IndexFunction, String, String)> {
-    // leg 4: the function summary (the doc one-liner above `export def
-    // main`) must be <= 80 chars. Lint (capped + More), not structural.
-    check_summary_length(rel, source, Some("export def main"), lint);
+    // The function summary (the doc one-liner above `export def main`) must be
+    // <= 80 chars. Warning (capped), not structural.
+    check_summary_length(rel, source, Some("export def main"), diagnostics);
     let wrapper_name = format!("__v_{stem}");
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
     let engine_state = engine.engine_state_for_file(parent);
@@ -1791,12 +1809,14 @@ fn validate_function_file_ast(
     for err in &working_set.parse_errors {
         let span_start = err.span().start.saturating_sub(prefix_len);
         let (line, _col) = span_to_line_col(source, span_start);
-        violations.push(Violation {
-            kind: "structure::parse_error".to_string(),
-            path: rel.to_string(),
-            line,
-            message: format!("parse error: {err:?}"),
-        });
+        diagnostics.push(Diagnostic::error(
+            "library::parse_error",
+            Some(Source {
+                path: Some(rel.to_string()),
+                position: [line, 0],
+            }),
+            format!("parse error: {err:?}"),
+        ));
     }
     if !working_set.parse_errors.is_empty() {
         // Don't try to walk a half-parsed AST. Leave structural checks
@@ -1810,12 +1830,14 @@ fn validate_function_file_ast(
     let module_id = match working_set.find_module(wrapper_name_bytes) {
         Some(id) => id,
         None => {
-            violations.push(Violation {
-                kind: "structure::internal".to_string(),
-                path: rel.to_string(),
-                line: 0,
-                message: "internal: wrapper module not found after parse".to_string(),
-            });
+            diagnostics.push(Diagnostic::error(
+                "library::internal",
+                Some(Source {
+                    path: Some(rel.to_string()),
+                    position: [0, 0],
+                }),
+                "internal: wrapper module not found after parse",
+            ));
             return None;
         }
     };
@@ -1844,8 +1866,9 @@ fn validate_function_file_ast(
     //    `args: nothing` positional, AND a `: nothing -> R` output whose R is
     //    a non-empty `record<...>` or `nothing`. The author owns the body --
     //    no AST-lock, since main IS the logic now.
-    check_args_record_positional(rel, &working_set, main_id, "main", source, prefix_len, violations);
-    let out_type = check_main_output_type(rel, &working_set, main_id, source, prefix_len, &wrapped, violations);
+    check_args_record_positional(rel, &working_set, main_id, "main", source, prefix_len, diagnostics);
+    let out_type =
+        check_main_output_type(rel, &working_set, main_id, source, prefix_len, &wrapped, diagnostics);
 
     // big meta: extract the IndexFunction + the function docs (main's native
     // description / extra_description). args come from main's positional
@@ -1882,7 +1905,7 @@ fn check_args_record_positional(
     fn_name: &str,
     source: &str,
     prefix_len: usize,
-    violations: &mut Vec<Violation>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<nu::VarId> {
     let decl = working_set.get_decl(decl_id);
     let sig = decl.signature();
@@ -1905,14 +1928,16 @@ fn check_args_record_positional(
     };
     if bad {
         let line = decl_line(working_set, decl_id, source, prefix_len);
-        violations.push(Violation {
-            kind: "structure::args".to_string(),
-            path: rel.to_string(),
-            line,
-            message: format!(
+        diagnostics.push(Diagnostic::error(
+            "library::args",
+            Some(Source {
+                path: Some(rel.to_string()),
+                position: [line, 0],
+            }),
+            format!(
                 "{fn_name} must take a typed positional `args: record<...>` with real fields (or `args: nothing` for void); an empty `record<>` is the unfleshed skeleton",
             ),
-        });
+        ));
     }
     var_id
 }
@@ -1938,7 +1963,7 @@ fn check_main_output_type(
     source: &str,
     prefix_len: usize,
     wrapped: &str,
-    violations: &mut Vec<Violation>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<String> {
     let sig = working_set.get_decl(decl_id).signature();
     let line = decl_line(working_set, decl_id, source, prefix_len);
@@ -1950,13 +1975,14 @@ fn check_main_output_type(
         .find(|(input, _)| matches!(input, nu::Type::Nothing))
         .map(|(_, out)| out.clone());
     let Some(output) = output else {
-        violations.push(Violation {
-            kind: "structure::output".to_string(),
-            path: rel.to_string(),
-            line,
-            message: "main must declare a `: nothing -> <record<...>|nothing>` output type"
-                .to_string(),
-        });
+        diagnostics.push(Diagnostic::error(
+            "library::output",
+            Some(Source {
+                path: Some(rel.to_string()),
+                position: [line, 0],
+            }),
+            "main must declare a `: nothing -> <record<...>|nothing>` output type",
+        ));
         return None;
     };
     match &output {
@@ -1972,23 +1998,27 @@ fn check_main_output_type(
             )
         }
         nu::Type::Record(_) => {
-            violations.push(Violation {
-                kind: "structure::skeleton".to_string(),
-                path: rel.to_string(),
-                line,
-                message: "main's output `record<>` is the unfleshed skeleton; give it real fields (or `nothing` for void)".to_string(),
-            });
+            diagnostics.push(Diagnostic::error(
+                "library::skeleton",
+                Some(Source {
+                    path: Some(rel.to_string()),
+                    position: [line, 0],
+                }),
+                "main's output `record<>` is the unfleshed skeleton; give it real fields (or `nothing` for void)",
+            ));
             None
         }
         other => {
-            violations.push(Violation {
-                kind: "structure::output".to_string(),
-                path: rel.to_string(),
-                line,
-                message: format!(
+            diagnostics.push(Diagnostic::error(
+                "library::output",
+                Some(Source {
+                    path: Some(rel.to_string()),
+                    position: [line, 0],
+                }),
+                format!(
                     "main's output type must be a non-empty `record<...>` or `nothing`; got `{other}`",
                 ),
-            });
+            ));
             None
         }
     }
@@ -2045,182 +2075,6 @@ fn decl_line(
         }
     }
     0
-}
-
-#[cfg(any())]
-fn validate_mod_nu(rel: &str, source: &str, violations: &mut Vec<Violation>) {
-    for (i, line) in source.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if trimmed.starts_with("export use ") || trimmed.starts_with("export module ") {
-            continue;
-        }
-        violations.push(Violation {
-            path: rel.to_string(),
-            line: i + 1,
-            message: format!(
-                "mod.nu may only contain `export use ./<file>.nu` or `export module <name>` lines (or comments / blanks); got: {trimmed}",
-            ),
-        });
-    }
-}
-
-#[cfg(any())]
-fn validate_function_file(rel: &str, source: &str, violations: &mut Vec<Violation>) {
-    let lines: Vec<&str> = source.lines().collect();
-
-    // Find all top-level `export def <name>` declarations by scanning lines.
-    // Lightweight: doesn't track string/comment context. Function files are
-    // small + author-curated; a `# export def fake` inside a comment is the
-    // author's tell-tale and gets flagged. Acceptable trade-off for v1.
-    let mut exports: Vec<(usize, String)> = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("export def ") {
-            let end = rest
-                .find(|c: char| c.is_whitespace() || c == '[')
-                .unwrap_or(rest.len());
-            exports.push((i + 1, rest[..end].to_string()));
-        }
-    }
-
-    let main_line = exports.iter().find(|(_, n)| n == "main").map(|(l, _)| *l);
-    let resolve_line = exports
-        .iter()
-        .find(|(_, n)| n == "resolve")
-        .map(|(l, _)| *l);
-
-    if main_line.is_none() {
-        violations.push(Violation {
-            path: rel.to_string(),
-            line: 0,
-            message: "function file must contain `export def main [args: record<...>]`".to_string(),
-        });
-    }
-    if resolve_line.is_none() {
-        violations.push(Violation {
-            path: rel.to_string(),
-            line: 0,
-            message:
-                "function file must contain `export def resolve [args: record<...>] { $args }`"
-                    .to_string(),
-        });
-    }
-    for (line, name) in &exports {
-        if name != "main" && name != "resolve" {
-            violations.push(Violation {
-                path: rel.to_string(),
-                line: *line,
-                message: format!(
-                    "function file may only export `main` and `resolve`; saw `export def {name}`",
-                ),
-            });
-        }
-    }
-
-    if let Some(line) = main_line {
-        let sig_line = lines.get(line - 1).copied().unwrap_or("");
-        if !sig_line.contains("args: record<") {
-            violations.push(Violation {
-                path: rel.to_string(),
-                line,
-                message: "main must take a typed positional `args: record<...>`".to_string(),
-            });
-        }
-    }
-
-    if let Some(line) = resolve_line {
-        let sig_line = lines.get(line - 1).copied().unwrap_or("");
-        if !sig_line.contains("args: record<") {
-            violations.push(Violation {
-                path: rel.to_string(),
-                line,
-                message: "resolve must take a typed positional `args: record<...>`".to_string(),
-            });
-        }
-        match extract_def_body(source, "resolve") {
-            Some(body) => {
-                if body.trim() != "$args" {
-                    violations.push(Violation {
-                        path: rel.to_string(),
-                        line,
-                        message: format!(
-                            "resolve's body must be exactly `$args`; got `{}`",
-                            body.trim(),
-                        ),
-                    });
-                }
-            }
-            None => {
-                violations.push(Violation {
-                    path: rel.to_string(),
-                    line,
-                    message: "resolve's body could not be located (parens/brackets imbalanced?)"
-                        .to_string(),
-                });
-            }
-        }
-    }
-}
-
-/// Extract the body content of an `export def <name>` block: everything
-/// between the body's opening `{` and its matching `}`. Skips the
-/// parameter list (handles balanced `[ ]`). Returns None if the
-/// brackets/braces are imbalanced or the def isn't found.
-#[cfg(any())]
-fn extract_def_body(source: &str, fn_name: &str) -> Option<String> {
-    let pat = format!("export def {fn_name}");
-    let pos = source.find(&pat)?;
-    let bytes = source.as_bytes();
-    let mut i = pos + pat.len();
-    // Skip whitespace until `[`.
-    while i < bytes.len() && bytes[i] != b'[' {
-        i += 1;
-    }
-    if i >= bytes.len() {
-        return None;
-    }
-    // Walk through the parameter list (balanced `[ ]`).
-    let mut depth = 1usize;
-    i += 1;
-    while i < bytes.len() && depth > 0 {
-        match bytes[i] {
-            b'[' => depth += 1,
-            b']' => depth -= 1,
-            _ => {}
-        }
-        i += 1;
-    }
-    // Skip whitespace until `{`.
-    while i < bytes.len() && bytes[i] != b'{' {
-        i += 1;
-    }
-    if i >= bytes.len() {
-        return None;
-    }
-    // Body opens at `{`; walk until matching `}`.
-    i += 1;
-    let body_start = i;
-    let mut depth = 1usize;
-    while i < bytes.len() && depth > 0 {
-        match bytes[i] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    if depth != 0 {
-        return None;
-    }
-    Some(source[body_start..i].to_string())
 }
 
 // ============================================================================
@@ -2356,12 +2210,14 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
             path: source_path.display().to_string(),
         });
     }
-    let result = validate_library_source(&source_path, engine)?;
+    let mut result = validate_library_source(&source_path, engine)?;
+    // Make every located diagnostic's path libraries-dir-relative
+    // (`<library>/<rel>`) before it reaches the agent; the walk stays
+    // library-agnostic, the name is prepended here at the boundary.
+    prefix_diagnostic_paths(&mut result, name);
     if !result.is_empty() {
         return Err(Error::LibraryViolations {
-            structural: result.structural,
-            structural_more: result.structural_more,
-            lint: result.lint,
+            diagnostics: result.diagnostics,
         });
     }
     // Rebuild the canonical subtree from the validated source. copy_dir_
@@ -2476,7 +2332,10 @@ pub(crate) fn check_library(
             path: source_path.display().to_string(),
         });
     }
-    Ok(validate_library_source(&source_path, engine)?)
+    let mut result = validate_library_source(&source_path, engine)?;
+    // Libraries-dir-relative paths for the agent (see commit_impl).
+    prefix_diagnostic_paths(&mut result, library);
+    Ok(result)
 }
 
 /// What: copies a directory tree recursively. Skips dotfile entries

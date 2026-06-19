@@ -548,18 +548,17 @@ MCP (partial):
 
 Each action returns its own record under `summary` (`uninstall` returns no
 summary). `new` -> `{created}`; `install` -> `{added, modified, removed}`;
-`check` -> the validation report:
+`check` -> the validation report `{ok, errors, warnings}` (errors block a
+commit, warnings advise; each is a list of diagnostics):
 ```json
 {
   "result": {
     "structuredContent": {
       "summary": {
         "ok": true,
-        "num_errors": 0,
-        "num_warnings": 1,
         "errors": [],
         "warnings": [
-          { "kind": "lint::summary_length", "path": "mod.nu", "position": [1, 1], "message": "doc summary line exceeds 80 characters" }
+          { "kind": "lint::summary_length", "source": { "path": "geo/mod.nu", "position": [1, 1] }, "message": "doc summary line exceeds 80 characters" }
         ]
       }
     },

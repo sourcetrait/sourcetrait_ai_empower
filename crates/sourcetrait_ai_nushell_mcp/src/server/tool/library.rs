@@ -27,26 +27,14 @@ pub(crate) struct InstallSummary {
     pub removed: Vec<String>,
 }
 
-/// One diagnostic row in a `check` result (an error or a warning). `kind` is
-/// namespaced (`structure::...` / `lint::...`); `position` is `[line, col]`.
-#[derive(Debug, ser::Serialize, schema::JsonSchema)]
-pub(crate) struct CheckDiagnostic {
-    pub kind: String,
-    pub path: String,
-    pub position: Vec<usize>,
-    pub message: String,
-}
-
-/// `check` summary: the library's `cargo test`. Errors block a commit;
-/// warnings are advisory. `num_errors` / `num_warnings` are the authoritative
-/// totals (the row vectors may be capped by the validator).
+/// `check` summary: the library's `cargo test`. Error-severity rows block a
+/// commit; Warning-severity rows advise. The rows are the unified
+/// `Diagnostic`s bucketed by severity; `ok` is true iff there are no errors.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct CheckSummary {
     pub ok: bool,
-    pub num_errors: usize,
-    pub num_warnings: usize,
-    pub errors: Vec<CheckDiagnostic>,
-    pub warnings: Vec<CheckDiagnostic>,
+    pub errors: Vec<Diagnostic>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 /// The per-action result, serialized as `{ summary: oneof<...> }`. `uninstall`
@@ -191,65 +179,16 @@ impl NuSh {
     }
 }
 
-/// Bucket a `ValidationResult` into the `check` summary: structural violations
-/// -> errors, the doc lint -> warnings. (Fine-grained per-emit `structure::*`
-/// kinds land with the diagnostic-unification leg; for now structural rows
-/// carry a coarse `structure::violation` kind. num_* are authoritative totals.)
+/// Bucket a `ValidationResult`'s diagnostics into the `check` summary:
+/// Error-severity rows -> `errors` (block a commit), Warning-severity rows ->
+/// `warnings` (advise). `ok` is true iff there are no Error rows. The rows
+/// already carry their namespaced `kind` + `source` + `message`, so no
+/// per-row mapping is needed.
 fn check_summary_from(result: &ValidationResult) -> CheckSummary {
-    let errors: Vec<CheckDiagnostic> = result
-        .structural
-        .iter()
-        .map(|v| CheckDiagnostic {
-            kind: v.kind.clone(),
-            path: v.path.clone(),
-            position: vec![v.line, 0],
-            message: v.message.clone(),
-        })
-        .collect();
-    let warnings: Vec<CheckDiagnostic> =
-        result.lint.iter().filter_map(lint_to_diagnostic).collect();
+    let (errors, warnings) = Diagnostic::bucket(result.diagnostics.clone());
     CheckSummary {
         ok: errors.is_empty(),
-        num_errors: errors.len(),
-        num_warnings: warnings.len(),
         errors,
         warnings,
     }
-}
-
-/// Map a `LintViolation` to a `check` warning row with its namespaced kind +
-/// a short message. The `More` truncation sentinel maps to None (the totals
-/// already convey truncation).
-fn lint_to_diagnostic(v: &LintViolation) -> Option<CheckDiagnostic> {
-    let (kind, position, source, message): (&str, [usize; 2], &Option<WhereSource>, &str) = match v {
-        LintViolation::SummaryLength { position, source } => (
-            "lint::summary_length",
-            *position,
-            source,
-            "doc summary line exceeds 80 characters",
-        ),
-        LintViolation::HardcodedVariable { position, source } => (
-            "lint::hardcoded_variable",
-            *position,
-            source,
-            "hardcoded path literal; lift it to args",
-        ),
-        LintViolation::DeniedCommand { position, source } => (
-            "lint::denied_command",
-            *position,
-            source,
-            "denied external command; use a nushell builtin",
-        ),
-        LintViolation::More => return None,
-    };
-    let path = match source {
-        Some(WhereSource::Mod(p)) => p.clone(),
-        _ => String::new(),
-    };
-    Some(CheckDiagnostic {
-        kind: kind.to_string(),
-        path,
-        position: position.to_vec(),
-        message: message.to_string(),
-    })
 }

@@ -271,8 +271,18 @@ fn smoke_9_timeout_fires() {
         .and_then(|r| r.get("structuredContent"))
         .and_then(|sc| sc.get("error"))
         .unwrap_or_else(|| panic!("expected error envelope; got {resp}"));
-    assert_eq!(env["kind"].as_str(), Some("worker::timeout"), "got {env}");
-    assert_eq!(env["data"]["timeout_ms"].as_u64(), Some(200), "got {env}");
+    assert_eq!(
+        env["errors"][0]["kind"].as_str(),
+        Some("worker::timeout"),
+        "got {env}"
+    );
+    assert!(
+        env["errors"][0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("200"),
+        "timeout message should carry the ms; got {env}"
+    );
     assert!(env["nonce"].as_str().is_some(), "expected nonce; got {env}");
     // Next call against the (respawned) pool worker should succeed.
     let args2 = serde_json::json!({

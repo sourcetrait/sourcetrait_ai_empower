@@ -138,14 +138,10 @@ fn envelope_error<'a>(resp: &'a serde_json::Value) -> Option<&'a serde_json::Val
     resp.get("result")?.get("structuredContent")?.get("error")
 }
 
-fn envelope_error_kind(resp: &serde_json::Value) -> Option<&str> {
-    envelope_error(resp)?.get("kind")?.as_str()
-}
-
+/// The diagnostic kinds in the unified envelope's `errors` bucket.
 fn lint_violation_kinds(resp: &serde_json::Value) -> Vec<String> {
     envelope_error(resp)
-        .and_then(|e| e.get("data"))
-        .and_then(|d| d.get("violations"))
+        .and_then(|e| e.get("errors"))
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -164,11 +160,6 @@ fn lint_rejects_closure_with_hardcoded_path() {
         "args": {"noop": 0},
         "body": "{ p: \"/home/box/proj/x\", out: 0 }",
     }));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("lint::violations"),
-        "got {resp}"
-    );
     let kinds = lint_violation_kinds(&resp);
     assert!(
         kinds.iter().any(|k| k == "lint::hardcoded_variable"),
@@ -185,11 +176,6 @@ fn lint_rejects_closure_with_denied_external() {
         "args": {"noop": 0},
         "body": "{ x: (^awk '{print $1}' | str trim), out: 0 }",
     }));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("lint::violations"),
-        "got {resp}"
-    );
     let kinds = lint_violation_kinds(&resp);
     assert!(
         kinds.iter().any(|k| k == "lint::denied_command"),
@@ -230,11 +216,6 @@ fn lint_aggregates_multiple_violations() {
 cd \"/a/b\"
 { out: 0 }",
     }));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("lint::violations"),
-        "got {resp}"
-    );
     let kinds = lint_violation_kinds(&resp);
     assert!(kinds.iter().any(|k| k == "lint::denied_command"), "got {kinds:?}");
     assert!(
@@ -256,11 +237,6 @@ fn lint_interact_rejects_hardcoded_path() {
         "args": {"noop": 0},
         "body": "{ p: \"/home/box/x\", out: 0 }",
     }));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("lint::violations"),
-        "got {resp}"
-    );
     let kinds = lint_violation_kinds(&resp);
     assert!(
         kinds.iter().any(|k| k == "lint::hardcoded_variable"),
@@ -277,11 +253,6 @@ fn lint_interact_rejects_denied_external() {
         "args": {"noop": 0},
         "body": "{ x: (^awk 'x' | str trim), out: 0 }",
     }));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("lint::violations"),
-        "got {resp}"
-    );
     let kinds = lint_violation_kinds(&resp);
     assert!(kinds.iter().any(|k| k == "lint::denied_command"), "got {kinds:?}");
 }

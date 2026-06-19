@@ -175,13 +175,17 @@ fn envelope_error(resp: &serde_json::Value) -> Option<&serde_json::Value> {
 }
 
 fn envelope_error_kind(resp: &serde_json::Value) -> Option<&str> {
-    envelope_error(resp)?.get("kind")?.as_str()
+    envelope_error(resp)?
+        .get("errors")?
+        .as_array()?
+        .first()?
+        .get("kind")?
+        .as_str()
 }
 
 fn structural_messages(resp: &serde_json::Value) -> Vec<String> {
     envelope_error(resp)
-        .and_then(|e| e.get("data"))
-        .and_then(|d| d.get("structural"))
+        .and_then(|e| e.get("errors"))
         .and_then(|s| s.as_array())
         .map(|arr| {
             arr.iter()
@@ -197,8 +201,7 @@ fn structural_messages(resp: &serde_json::Value) -> Vec<String> {
 
 fn structural_kinds(resp: &serde_json::Value) -> Vec<String> {
     envelope_error(resp)
-        .and_then(|e| e.get("data"))
-        .and_then(|d| d.get("structural"))
+        .and_then(|e| e.get("errors"))
         .and_then(|s| s.as_array())
         .map(|arr| {
             arr.iter()
@@ -531,11 +534,6 @@ fn commit_aggregates_multiple_violations() {
     );
 
     let resp = host.call("commit", serde_json::json!({"library": "badlib5"}));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("library::violations"),
-        "got {resp}"
-    );
     let messages = structural_messages(&resp);
     // At least three distinct violation messages should appear in the
     // structural section.
@@ -557,9 +555,9 @@ fn commit_aggregates_multiple_violations() {
 
 #[test]
 fn commit_caps_structural_violations() {
-    // structural violations cap at LINT_VIOLATION_CAP (3) and the walk
+    // error-severity diagnostics cap at LINT_VIOLATION_CAP (3) and the walk
     // early-stops -- a tree with more than 3 violations rejects with exactly
-    // 3 structural + structural_more = true (truthful truncation).
+    // 3 error rows, silently truncated (no `more` marker).
     let mut host = Host::spawn();
     let src = host.source_dir("caplib");
     let _ = host.library_new("caplib", &src);
@@ -572,35 +570,18 @@ fn commit_caps_structural_violations() {
     );
     write_source(&src, "a/mod.nu", "");
     let resp = host.call("commit", serde_json::json!({"library": "caplib"}));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("library::violations"),
-        "got {resp}"
-    );
-    let data = envelope_error(&resp)
-        .and_then(|e| e.get("data"))
-        .expect("violations data");
-    let structural = data
-        .get("structural")
+    let errors = envelope_error(&resp)
+        .and_then(|e| e.get("errors"))
         .and_then(|s| s.as_array())
-        .expect("structural array");
-    assert_eq!(
-        structural.len(),
-        3,
-        "structural should cap at 3; got {structural:?}"
-    );
-    assert_eq!(
-        data.get("structural_more").and_then(|v| v.as_bool()),
-        Some(true),
-        "structural_more should be true; got {data}"
-    );
+        .expect("errors array");
+    assert_eq!(errors.len(), 3, "errors should cap at 3; got {errors:?}");
 }
 
 #[test]
 fn commit_rejects_root_call_target() {
     // No root functions: a call-target cannot live at the library root; it
     // must sit inside a module. A valid `main` written directly at the source
-    // root is a `structure::root_function` violation.
+    // root is a `library::root_function` violation.
     let mut host = Host::spawn();
     let src = host.source_dir("rootfnlib");
     let _ = host.library_new("rootfnlib", &src);
@@ -611,16 +592,11 @@ fn commit_rejects_root_call_target() {
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "rootfnlib"}));
-    assert_eq!(
-        envelope_error_kind(&resp),
-        Some("library::violations"),
-        "got {resp}"
-    );
     assert!(
         structural_kinds(&resp)
             .iter()
-            .any(|k| k == "structure::root_function"),
-        "expected structure::root_function; got {:?}",
+            .any(|k| k == "library::root_function"),
+        "expected library::root_function; got {:?}",
         structural_kinds(&resp),
     );
     let messages = structural_messages(&resp);
@@ -636,7 +612,7 @@ fn commit_rejects_root_call_target() {
 fn commit_succeeds_then_check_warns_long_summary() {
     // A doc summary (here the mod.nu leading comment's first line) longer than
     // 80 chars is a WARNING, not an error: commit SUCCEEDS, and `library(check)`
-    // surfaces the `lint::summary_length` warning (num_warnings > 0; ok stays
+    // surfaces the `lint::summary_length` warning (warnings non-empty; ok stays
     // true since no structural error blocks).
     let mut host = Host::spawn();
     let src = host.source_dir("doclib");
@@ -668,10 +644,6 @@ fn commit_succeeds_then_check_warns_long_summary() {
         summary["ok"].as_bool(),
         Some(true),
         "warnings don't fail check; got {check}"
-    );
-    assert!(
-        summary["num_warnings"].as_u64().unwrap_or(0) >= 1,
-        "expected a warning; got {summary}"
     );
     let warn_kinds: Vec<&str> = summary["warnings"]
         .as_array()

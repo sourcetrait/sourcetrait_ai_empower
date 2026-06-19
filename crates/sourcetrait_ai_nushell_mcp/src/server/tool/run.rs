@@ -25,10 +25,10 @@ impl NuSh {
             Ok(t) => t,
             Err(reason) => return Ok(error_to_call_result(Error::SchemaInvalid { reason }, None)),
         };
-        let violations = lint_run_params(&self.lint_engine, &args_type, &p.body);
-        if !violations.is_empty() {
+        let diagnostics = lint_run_params(&self.lint_engine, &args_type, &p.body);
+        if !diagnostics.is_empty() {
             return Ok(error_to_call_result(
-                Error::LintViolations { violations },
+                Error::LintViolations { diagnostics },
                 None,
             ));
         }

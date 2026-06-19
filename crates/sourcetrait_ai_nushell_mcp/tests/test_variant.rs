@@ -171,6 +171,9 @@ fn envelope_error_kind(resp: &serde_json::Value) -> Option<&str> {
     resp.get("result")?
         .get("structuredContent")?
         .get("error")?
+        .get("errors")?
+        .as_array()?
+        .first()?
         .get("kind")?
         .as_str()
 }

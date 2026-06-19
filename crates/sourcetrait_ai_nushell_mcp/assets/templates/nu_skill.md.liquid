@@ -143,6 +143,28 @@ Conventions:
   is smallest / easiest to parse on the far side (`to nuon` / `to json` /
   `to yaml` out; `open` or `open --raw | decode` back).
 
+## Per-call $env.NONCE
+
+Every run() / interact() / call() body runs with `$env.NONCE` set to that
+call's nonce - the SAME value the result envelope returns in its `nonce`
+field, and the name of the per-call cache log dir
+(`<cache>/<kind>/<nonce>/`). It is ambient: the body reads it directly, and
+so does any helper `def`, `use`d module function, or committed call-target
+the body invokes (env reads inherit down the call tree) - you never thread
+it through args.
+
+```nu
+# the body and anything it calls can read it
+def tag [] { $env.NONCE }
+{ id: $env.NONCE, from_helper: (tag) }
+```
+
+Reach for it to correlate a body's work with its call: tag emitted
+records, name a unique scratch artifact (an shm filename, say), or fetch
+the call's captured stdout/stderr log by nonce. It is per-call and does
+NOT persist - a later call (even on the stateful interact worker) sees its
+own fresh nonce, never a prior one.
+
 ## Library authoring conventions
 
 A library is a directory tree the agent owns and edits, promoted into

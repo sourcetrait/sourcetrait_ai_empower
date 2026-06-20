@@ -1,9 +1,10 @@
 pub(crate) mod base62;
 pub(crate) mod error;
 pub(crate) mod markdown;
+pub(crate) mod claude_session_hash;
 pub mod consts;
-pub mod nonce;
-pub mod rerun;
+pub(crate) mod nonce;
+pub(crate) mod rerun;
 
 pub(crate) use std::{
     fmt::Display,
@@ -35,6 +36,7 @@ pub(crate) mod xxh3 {
 
 pub use crate::{
     base62::is_base62,
+    claude_session_hash::ClaudeSessionHash,
     error::{
         LibEmpowerError,
         LibEmpowerResult,

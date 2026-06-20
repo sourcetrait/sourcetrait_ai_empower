@@ -65,6 +65,57 @@ fn full_payload(sid: &str) -> String {
         .replace("SID", sid)
 }
 
+/// Like run_claudeline but also exports XDGX_SHM_DIR + XDGX_TMP_HOME so the
+/// transitive scratch setup + prune are exercised. ALT_TZ pinned to UTC.
+fn run_claudeline_scratch(
+    payload: &str,
+    cache: impl AsRef<Path>,
+    shm: impl AsRef<Path>,
+    tmp: impl AsRef<Path>,
+) -> String {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_claudeline"))
+        .env("XDG_CACHE_HOME", cache.as_ref())
+        .env("XDGX_SHM_DIR", shm.as_ref())
+        .env("XDGX_TMP_HOME", tmp.as_ref())
+        .env("ALT_TZ", "UTC")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn claudeline");
+    child
+        .stdin
+        .take()
+        .expect("stdin handle")
+        .write_all(payload.as_bytes())
+        .expect("write payload to stdin");
+    let out = child.wait_with_output().expect("wait for claudeline");
+    assert!(out.status.success(), "claudeline exited non-zero");
+    String::from_utf8(out.stdout).expect("stdout is utf-8")
+}
+
+/// The emptwo identity's SHM session-root under a test XDGX_SHM_DIR.
+fn shm_session_root(shm: impl AsRef<Path>) -> PathBuf {
+    shm.as_ref().join("ai").join("emptwo")
+}
+
+/// The emptwo identity's TMP session-root under a test XDGX_TMP_HOME.
+fn tmp_session_root(tmp: impl AsRef<Path>) -> PathBuf {
+    tmp.as_ref().join("ai").join("emptwo")
+}
+
+/// The current session nom, from status/latest.yaml's symlink target
+/// (`<nom>.yaml` -> `<nom>`).
+fn current_nom(cache: impl AsRef<Path>) -> String {
+    let target = std::fs::read_link(status_dir(&cache).join("latest.yaml"))
+        .expect("status latest.yaml is a symlink");
+    Path::new(&target)
+        .file_stem()
+        .expect("nom stem")
+        .to_string_lossy()
+        .into_owned()
+}
+
 #[tested]
 fn renders_fae_one_and_writes_status_and_context() {
     let test = testing::test!({
@@ -224,4 +275,84 @@ fn omits_absent_segments() {
     let payload = r#"{"model":{"display_name":"M"}}"#;
     let line = run_claudeline(payload, &cache, "UTC");
     assert_eq!(line, "M\n");
+}
+
+#[tested]
+fn new_session_provisions_shm_and_tmp() {
+    let test = testing::test!({
+        .using_temp_dir()
+    });
+    let base = test.temp_dir().to_path_buf();
+    let cache = base.join("cache");
+    let shm = base.join("shm");
+    let tmp = base.join("tmp");
+    std::fs::create_dir_all(&cache).expect("cache dir");
+    let sid = "5ee9d3bc-d9db-4b6f-b964-db91c214c80a";
+
+    run_claudeline_scratch(&full_payload(sid), &cache, &shm, &tmp);
+    let nom = current_nom(&cache);
+
+    assert!(
+        shm_session_root(&shm).join(&nom).is_dir(),
+        "shm session dir provisioned"
+    );
+    assert!(
+        tmp_session_root(&tmp).join(&nom).is_dir(),
+        "tmp session dir provisioned"
+    );
+}
+
+#[tested]
+fn new_session_prunes_old_scratch_keeps_previous() {
+    let test = testing::test!({
+        .using_temp_dir()
+    });
+    let base = test.temp_dir().to_path_buf();
+    let cache = base.join("cache");
+    let shm = base.join("shm");
+    let tmp = base.join("tmp");
+    std::fs::create_dir_all(&cache).expect("cache dir");
+
+    let sid_a = "aaaaaaaa-0000-0000-0000-000000000000";
+    let sid_b = "bbbbbbbb-1111-1111-1111-111111111111";
+    let sid_c = "cccccccc-2222-2222-2222-222222222222";
+
+    run_claudeline_scratch(&full_payload(sid_a), &cache, &shm, &tmp);
+    let nom_a = current_nom(&cache);
+    run_claudeline_scratch(&full_payload(sid_b), &cache, &shm, &tmp);
+    let nom_b = current_nom(&cache);
+    run_claudeline_scratch(&full_payload(sid_c), &cache, &shm, &tmp);
+    let nom_c = current_nom(&cache);
+
+    // current (C) + previous (B) survive; the older (A) is pruned, both roots.
+    for root in [shm_session_root(&shm), tmp_session_root(&tmp)] {
+        assert!(root.join(&nom_c).is_dir(), "current scratch kept in {root:?}");
+        assert!(root.join(&nom_b).is_dir(), "previous scratch kept in {root:?}");
+        assert!(!root.join(&nom_a).exists(), "older scratch pruned in {root:?}");
+    }
+}
+
+#[tested]
+fn scratch_prune_leaves_non_dir_strays() {
+    let test = testing::test!({
+        .using_temp_dir()
+    });
+    let base = test.temp_dir().to_path_buf();
+    let cache = base.join("cache");
+    let shm = base.join("shm");
+    let tmp = base.join("tmp");
+    std::fs::create_dir_all(&cache).expect("cache dir");
+
+    let sid_a = "aaaaaaaa-0000-0000-0000-000000000000";
+    let sid_b = "bbbbbbbb-1111-1111-1111-111111111111";
+
+    run_claudeline_scratch(&full_payload(sid_a), &cache, &shm, &tmp);
+    // a stray file alongside the session dirs survives the prune.
+    let stray = shm_session_root(&shm).join("stray.txt");
+    std::fs::write(&stray, "x").expect("write stray");
+
+    // a second session confirms a new-session transition (A kept as prev).
+    run_claudeline_scratch(&full_payload(sid_b), &cache, &shm, &tmp);
+
+    assert!(stray.exists(), "non-dir stray left for external cleanup");
 }

@@ -47,13 +47,19 @@ struct PrevSession {
 
 /// What: the whole cache side-write for a render that carries a session id -
 /// read the previous session, write the status mirror, build + write the
-/// context artifact (or the schema-change canary), and prune to {current,
-/// previous} on a new-session transition.
+/// context artifact (or the schema-change canary), provision this session's
+/// transitive scratch dirs, and prune the cache + scratch to {current,
+/// previous} on a confirmed new-session transition.
 ///
 /// Why: one entry point owns the ordering rules - read-prev BEFORE any write,
-/// status BEFORE the Input-consuming context build, prune LAST and only on a
-/// confidently-detected new session. Best-effort: run() swallows the error
-/// so the render never fails.
+/// status BEFORE the Input-consuming context build, the yamls BEFORE any
+/// scratch work (the agent's threshold read must never wait on it). Setup runs
+/// on any new session (current is always known, so mkdir-current is always
+/// safe); prune runs only when prev is known - prev == None is ambiguous (a
+/// genuine first session vs a failed read of a real prior), so we cannot form a
+/// safe keep-list and must not delete a prev we merely failed to read. Each
+/// transitive op is independent best-effort so one failing resource never skips
+/// the others; run() swallows the result so the render never fails.
 ///
 /// Where: run(), when both a session id and an identity are present.
 pub(crate) fn persist_session(
@@ -65,10 +71,18 @@ pub(crate) fn persist_session(
     let nom = lib::ClaudeSessionNom::from(sid);
     persist_status(&input, sid, &nom, identity)?;
     persist_context(ContextModel::try_from(input), &nom, identity)?;
-    if let Some(prev) = prev {
-        if prev.sid != sid {
-            prune(&[nom.to_string(), prev.nom], identity)?;
-        }
+
+    let new_session = prev.as_ref().is_none_or(|prev| prev.sid != sid);
+    if new_session {
+        let _ = ensure_shm(&nom, identity);
+        let _ = ensure_tmp(&nom, identity);
+    }
+    if let Some(prev) = prev.as_ref().filter(|prev| prev.sid != sid) {
+        let keep = [nom.to_string(), prev.nom.clone()];
+        let _ = prune_status(&keep, identity);
+        let _ = prune_context(&keep, identity);
+        let _ = prune_shm(&keep, identity);
+        let _ = prune_tmp(&keep, identity);
     }
     Ok(())
 }
@@ -184,21 +198,29 @@ fn top_level_scalar(
     Some(value.trim().trim_matches('"').to_string())
 }
 
-/// What: delete every cache entry under this identity's status/ and context/
-/// dirs whose session nom is not in `keep`.
+/// What: drop every entry in this identity's status/ dir whose session nom is
+/// not in `keep` - real <nom>.yaml files by stem, pointer symlinks by target.
 ///
-/// Why: a new session keeps only {current, previous}; older sessions' real
-/// files and pointer symlinks are dropped. Shaped around a nom keep-list so
-/// later rules can extend what survives. Where: persist_session on a
-/// new-session transition.
-fn prune(
+/// Why: a new session keeps only {current, previous}; older sessions' mirrors
+/// and their <sid>.yaml / latest.yaml pointers go. Named per-resource so the
+/// four prune targets (status, context, shm, tmp) read unambiguously at the
+/// call site. Where: persist_session on a confirmed new session.
+fn prune_status(
     keep: &[String],
     identity: &str,
 ) -> ClaudelineResult<()> {
-    for dir in [status_dir(identity)?, context_dir(identity)?] {
-        prune_dir(&dir, keep)?;
-    }
-    Ok(())
+    prune_dir(&status_dir(identity)?, keep)
+}
+
+/// What: the same nom keep-prune for this identity's context/ dir.
+///
+/// Why: the minimized artifact tracks the same {current, previous} window as
+/// the status mirror. Where: persist_session on a confirmed new session.
+fn prune_context(
+    keep: &[String],
+    identity: &str,
+) -> ClaudelineResult<()> {
+    prune_dir(&context_dir(identity)?, keep)
 }
 
 /// What: prune one directory - remove each entry whose nom is not kept (real
@@ -259,6 +281,145 @@ fn stem_kept(
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .is_some_and(|stem| keep.iter().any(|k| k.as_str() == stem))
+}
+
+/// What: this identity's session-root for a transitive scratch tree under the
+/// environment variable `env_var` - `<$env_var>/ai/<identity>/` - or None when
+/// the variable is unset.
+///
+/// Why: SHM and TMP scratch live outside the XDG cache (tmpfs + on-disk
+/// throwaway), keyed per identity then per session. None lets the caller skip
+/// that resource gracefully when its variable is absent rather than fail the
+/// whole side-write. Where: shm_root, tmp_root.
+fn session_root(
+    env_var: &str,
+    identity: &str,
+) -> Option<PathBuf> {
+    env::var(env_var)
+        .ok()
+        .map(|base| PathBuf::from(base).join("ai").join(identity))
+}
+
+/// What: the SHM session-root, `<$XDGX_SHM_DIR>/ai/<identity>/`.
+///
+/// Why: the tmpfs scratch home the agent passes large out-of-band payloads
+/// through. Where: ensure_shm, prune_shm.
+fn shm_root(identity: &str) -> Option<PathBuf> {
+    session_root("XDGX_SHM_DIR", identity)
+}
+
+/// What: the TMP session-root, `<$XDGX_TMP_HOME>/ai/<identity>/`.
+///
+/// Why: the on-disk throwaway scratch home. Where: ensure_tmp, prune_tmp.
+fn tmp_root(identity: &str) -> Option<PathBuf> {
+    session_root("XDGX_TMP_HOME", identity)
+}
+
+/// What: create this session's SHM scratch dir, `<shm_root>/<nom>`; a no-op
+/// when XDGX_SHM_DIR is unset.
+///
+/// Why: provisioning on the new-session edge means the agent never creates it
+/// on demand; create_dir_all is idempotent so a re-run or an already-present
+/// dir is harmless. Where: persist_session, on any new session.
+fn ensure_shm(
+    nom: &lib::ClaudeSessionNom,
+    identity: &str,
+) -> ClaudelineResult<()> {
+    let Some(root) = shm_root(identity) else {
+        return Ok(());
+    };
+    let dir = root.join(nom.to_string());
+    fs::create_dir_all(&dir).context(FsSnafu { path: dir })
+}
+
+/// What: create this session's TMP scratch dir, `<tmp_root>/<nom>`; a no-op
+/// when XDGX_TMP_HOME is unset.
+///
+/// Why: the on-disk twin of ensure_shm. Where: persist_session, on any new
+/// session.
+fn ensure_tmp(
+    nom: &lib::ClaudeSessionNom,
+    identity: &str,
+) -> ClaudelineResult<()> {
+    let Some(root) = tmp_root(identity) else {
+        return Ok(());
+    };
+    let dir = root.join(nom.to_string());
+    fs::create_dir_all(&dir).context(FsSnafu { path: dir })
+}
+
+/// What: remove every session dir under the SHM root whose nom is not in
+/// `keep`; a no-op when XDGX_SHM_DIR is unset.
+///
+/// Why: a confirmed new session keeps only {current, previous} scratch trees.
+/// Where: persist_session, on a confirmed new session.
+fn prune_shm(
+    keep: &[String],
+    identity: &str,
+) -> ClaudelineResult<()> {
+    match shm_root(identity) {
+        Some(root) => remove_session_dirs(&root, keep),
+        None => Ok(()),
+    }
+}
+
+/// What: the TMP twin of prune_shm.
+///
+/// Why: the same {current, previous} window over the on-disk scratch root.
+/// Where: persist_session, on a confirmed new session.
+fn prune_tmp(
+    keep: &[String],
+    identity: &str,
+) -> ClaudelineResult<()> {
+    match tmp_root(identity) {
+        Some(root) => remove_session_dirs(&root, keep),
+        None => Ok(()),
+    }
+}
+
+/// What: remove each immediate sub-DIRECTORY of `root` whose name (the session
+/// nom) is not in `keep`, recursively; leave files, symlinks, and unreadable
+/// entries untouched. A missing root is a no-op.
+///
+/// Why: scratch sessions are real <nom> dirs, so deleting one wholesale needs
+/// no inspection of its contents. The lstat dir-guard (symlink_metadata, not
+/// is_dir) refuses to follow a symlink into a remove_dir_all, and skipping
+/// non-dir / unreadable entries leaves genuine strays for external cleanup -
+/// the conservative "do not drop what we do not understand" rule.
+///
+/// Where: prune_shm, prune_tmp.
+fn remove_session_dirs(
+    root: &Path,
+    keep: &[String],
+) -> ClaudelineResult<()> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_real_dir = fs::symlink_metadata(&path)
+            .map(|meta| meta.file_type().is_dir())
+            .unwrap_or(false);
+        if is_real_dir && !name_kept(&path, keep) {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
+    Ok(())
+}
+
+/// What: is `path`'s file name (a scratch dir's session nom) in `keep`?
+///
+/// Why: scratch dirs are named by the bare nom (no extension), so the whole
+/// file name is the key - distinct from the yaml prune's stem match. Where:
+/// remove_session_dirs.
+fn name_kept(
+    path: &Path,
+    keep: &[String],
+) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| keep.iter().any(|k| k.as_str() == name))
 }
 
 /// What: (re)create `link` as a relative symlink to the sibling filename

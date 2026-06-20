@@ -44,7 +44,7 @@ pub(crate) enum LayoutKind {
 /// once per invocation.
 pub(crate) fn render(input: &RenderInput, layout: LayoutKind) -> String {
     match layout {
-        LayoutKind::FaeOne => fae_one(input),
+        LayoutKind::FaeOne => render_fae_one(input),
     }
 }
 
@@ -53,7 +53,7 @@ pub(crate) fn render(input: &RenderInput, layout: LayoutKind) -> String {
 /// scripts/sh/statusline.bash's jq render.
 ///
 /// Why: the one layout shipped today. Where: `render` for FaeOne.
-fn fae_one(input: &RenderInput) -> String {
+fn render_fae_one(input: &RenderInput) -> String {
     let mut segs: Vec<String> = Vec::new();
     if let Some(m) = &input.model {
         segs.push(m.clone());

@@ -5,10 +5,12 @@ members = [
   "crates/sourcetrait_ai_nu_plugin_empower",
   "crates/sourcetrait_ai_nushell_mcp",
   "crates/sourcetrait_ai_know_rust",
+  "crates/sourcetrait_ai_claudeline",
 ]
 
 [workspace.dependencies]
 chrono = { version = "0.4" }
+chrono-tz = { version = "0.10" }
 clap = { version = "4", features = ["derive"] }
 derive_builder = { version = "0.20" }
 directories = { version = "6" }
@@ -36,6 +38,7 @@ rmp-serde = { version = "1.3" }
 schemars = { version = "1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
+serde_norway = { version = "0.9" }
 shellexpand = { version = "3", features = ["path"] }
 snafu = "0.8"
 sourcetrait_chronox = { version = "1" }

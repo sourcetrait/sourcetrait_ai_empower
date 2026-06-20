@@ -1,11 +1,12 @@
 use crate::*;
 
 /// What: the claudeline entry point - read the Claude Code session JSON on
-/// stdin, mirror it to the session's YAML artifact (plus the latest
-/// pointer), and render the statusline to stdout.
+/// stdin, mirror it to this identity's cache (full status mirror + minimized
+/// context artifact, pruning superseded sessions), and render the statusline
+/// to stdout.
 ///
 /// Why: replaces scripts/sh/statusline.bash. The render is the primary,
-/// must-not-fail output; the YAML side-write is best-effort (its errors are
+/// must-not-fail output; the cache side-write is best-effort (its errors are
 /// swallowed) so a cache hiccup never blanks the statusline.
 ///
 /// Where: called by main().
@@ -14,14 +15,15 @@ pub fn run() {
     let _ = io::stdin().read_to_string(&mut raw);
 
     let input = Input::parse(&raw);
+    let render_input = input.as_ref().map(Input::render_input).unwrap_or_default();
 
-    if let Some(input) = &input {
-        let _ = match input.session_id() {
-            Some(sid) => persist(input, sid),
-            None => clear_latest(),
-        };
+    if let Some(input) = input {
+        let sid = input.session_id().map(str::to_string);
+        let identity = input.identity();
+        if let (Some(sid), Some(identity)) = (sid, identity) {
+            let _ = persist_session(input, &sid, &identity);
+        }
     }
 
-    let render_input = input.as_ref().map(Input::render_input).unwrap_or_default();
     println!("{}", render(&render_input, LayoutKind::default()));
 }

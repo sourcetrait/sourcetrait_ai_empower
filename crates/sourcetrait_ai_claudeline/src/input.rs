@@ -41,6 +41,21 @@ impl Input {
             })
     }
 
+    /// What: the agent identity that scopes the cache tree - the basename
+    /// of `workspace.project_dir` (e.g. `emptwo` for `/home/box/ai/emptwo`).
+    ///
+    /// Why: claudeline writes per-identity so multiple harnesses on one box
+    /// never collide. No path enforcement - just the leaf segment.
+    ///
+    /// Where: run(), to build this render's status + context dirs.
+    pub(crate) fn identity(&self) -> Option<String> {
+        self.value
+            .get("workspace")
+            .and_then(|w| w.get("project_dir"))
+            .and_then(serde_json::Value::as_str)
+            .map(basename)
+    }
+
     /// What: pull the render-relevant fields out of the payload into a
     /// RenderInput (project basename, model, effort, context %, the
     /// five-hour window, the seven-day %).

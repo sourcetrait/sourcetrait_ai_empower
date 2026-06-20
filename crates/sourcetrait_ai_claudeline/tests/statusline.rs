@@ -13,8 +13,8 @@ static TESTING: testing::Module = testing::module!(Integration, {
     .using_temp_dir()
 });
 
-/// Spawn the built claudeline binary with `payload` on stdin under the
-/// given XDG_CACHE_HOME + ALT_TZ; return its stdout, asserting a clean exit.
+/// Spawn the built claudeline binary with `payload` on stdin under the given
+/// XDG_CACHE_HOME + ALT_TZ; return its stdout, asserting a clean exit.
 fn run_claudeline(
     payload: &str,
     cache: impl AsRef<Path>,
@@ -39,69 +39,179 @@ fn run_claudeline(
     String::from_utf8(out.stdout).expect("stdout is utf-8")
 }
 
-fn statusline_dir(cache: impl AsRef<Path>) -> PathBuf {
+/// The emptwo identity's status/ dir under a test cache root.
+fn status_dir(cache: impl AsRef<Path>) -> PathBuf {
+    claudeline_dir(cache).join("status")
+}
+
+/// The emptwo identity's context/ dir under a test cache root.
+fn context_dir(cache: impl AsRef<Path>) -> PathBuf {
+    claudeline_dir(cache).join("context")
+}
+
+fn claudeline_dir(cache: impl AsRef<Path>) -> PathBuf {
     cache
         .as_ref()
         .join("sourcetrait")
         .join("empower")
-        .join("statusline")
+        .join("claudeline")
+        .join("emptwo")
+}
+
+/// A full, schema-current payload for session `sid` (project emptwo). The
+/// SID placeholder avoids format!-brace doubling; sids never contain "SID".
+fn full_payload(sid: &str) -> String {
+    r#"{"session_id":"SID","workspace":{"project_dir":"/home/box/ai/emptwo"},"model":{"display_name":"Opus 4.8"},"effort":{"level":"max"},"context_window":{"used_percentage":10,"total_input_tokens":135109,"total_output_tokens":42,"context_window_size":1000000},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1781933400},"seven_day":{"used_percentage":1}}}"#
+        .replace("SID", sid)
 }
 
 #[tested]
-fn renders_fae_one_and_writes_artifacts() {
+fn renders_fae_one_and_writes_status_and_context() {
     let test = testing::test!({
         .using_temp_dir()
     });
     let cache = test.temp_dir().to_path_buf();
     let sid = "5ee9d3bc-d9db-4b6f-b964-db91c214c80a";
-    let payload = r#"{"session_id":"5ee9d3bc-d9db-4b6f-b964-db91c214c80a","workspace":{"project_dir":"/home/box/ai/emptwo"},"model":{"display_name":"Opus 4.8"},"effort":{"level":"max"},"context_window":{"used_percentage":10},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1781933400},"seven_day":{"used_percentage":1}}}"#;
 
     // 1781933400 == 2026-06-20 05:30:00 UTC -> "0530" under ALT_TZ=UTC.
-    let line = run_claudeline(payload, &cache, "UTC");
+    let line = run_claudeline(&full_payload(sid), &cache, "UTC");
     assert_eq!(line, "emptwo: Opus 4.8 (max) 10% [3% 0530] {1%}\n");
 
-    let sl = statusline_dir(&cache);
-    let latest = sl.join("latest.yaml");
-    let sid_link = sl.join(format!("{sid}.yaml"));
-
-    // Both pointers are RELATIVE symlinks aimed at the same {nom}.yaml file.
-    let latest_target = std::fs::read_link(&latest).expect("latest.yaml is a symlink");
-    let sid_target = std::fs::read_link(&sid_link).expect("{sid}.yaml is a symlink");
+    // status/: full lossless mirror + relative pointers at one real file.
+    let status = status_dir(&cache);
+    let latest_target =
+        std::fs::read_link(status.join("latest.yaml")).expect("status latest.yaml is a symlink");
+    let sid_target = std::fs::read_link(status.join(format!("{sid}.yaml")))
+        .expect("status {sid}.yaml is a symlink");
     assert!(
         latest_target.is_relative(),
         "symlink target must be relative: {latest_target:?}"
     );
-    assert_eq!(latest_target, sid_target, "both pointers target one real file");
-    assert!(latest_target.to_string_lossy().ends_with(".yaml"));
-
-    // The real file mirrors the full payload and carries the injected nom.
-    let yaml = std::fs::read_to_string(&latest).expect("read through latest.yaml");
-    assert!(yaml.contains("session_nom:"), "yaml carries session_nom: {yaml}");
+    assert_eq!(latest_target, sid_target, "both status pointers target one file");
+    let status_yaml =
+        std::fs::read_to_string(status.join("latest.yaml")).expect("read status latest.yaml");
+    assert!(status_yaml.contains("session_nom:"), "status carries session_nom: {status_yaml}");
     assert!(
-        yaml.contains("display_name: Opus 4.8"),
-        "yaml mirrors the model payload: {yaml}"
+        status_yaml.contains("display_name: Opus 4.8"),
+        "status mirrors the full payload: {status_yaml}"
+    );
+
+    // context/: minimized model + its own latest.yaml, no {sid}.yaml.
+    let context = context_dir(&cache);
+    assert!(
+        std::fs::read_link(context.join("latest.yaml"))
+            .expect("context latest.yaml is a symlink")
+            .is_relative()
+    );
+    assert!(
+        !context.join(format!("{sid}.yaml")).exists(),
+        "context has no per-sid pointer"
+    );
+    let context_yaml =
+        std::fs::read_to_string(context.join("latest.yaml")).expect("read context latest.yaml");
+    assert!(context_yaml.contains("session_nom:"), "context carries nom: {context_yaml}");
+    assert!(
+        context_yaml.contains("total_input_tokens: 135109"),
+        "context has input tokens: {context_yaml}"
+    );
+    assert!(
+        context_yaml.contains("total_output_tokens: 42"),
+        "context has output tokens: {context_yaml}"
+    );
+    assert!(
+        context_yaml.contains("context_window_size: 1000000"),
+        "context has window size: {context_yaml}"
+    );
+    assert!(
+        !context_yaml.contains("display_name"),
+        "context is minimized, not the full payload: {context_yaml}"
+    );
+    assert!(
+        !context_yaml.contains("used_percentage"),
+        "context omits used_percentage: {context_yaml}"
     );
 }
 
 #[tested]
-fn missing_session_id_removes_latest_and_still_renders() {
+fn new_session_prunes_older_keeps_previous() {
     let test = testing::test!({
         .using_temp_dir()
     });
     let cache = test.temp_dir().to_path_buf();
-    let sl = statusline_dir(&cache);
-    std::fs::create_dir_all(&sl).unwrap();
-    let latest = sl.join("latest.yaml");
-    std::fs::write(&latest, "stale").unwrap();
-    assert!(latest.exists(), "precondition: a stale latest.yaml exists");
+    let status = status_dir(&cache);
+    let context = context_dir(&cache);
 
-    let payload = r#"{"model":{"display_name":"M"},"context_window":{"used_percentage":5}}"#;
+    let sid_a = "aaaaaaaa-0000-0000-0000-000000000000";
+    let sid_b = "bbbbbbbb-1111-1111-1111-111111111111";
+    let sid_c = "cccccccc-2222-2222-2222-222222222222";
+
+    run_claudeline(&full_payload(sid_a), &cache, "UTC");
+    let nom_a = std::fs::read_link(status.join("latest.yaml")).expect("latest -> a");
+    run_claudeline(&full_payload(sid_b), &cache, "UTC");
+    let nom_b = std::fs::read_link(status.join("latest.yaml")).expect("latest -> b");
+    run_claudeline(&full_payload(sid_c), &cache, "UTC");
+    let nom_c = std::fs::read_link(status.join("latest.yaml")).expect("latest -> c");
+
+    // current (C) + previous (B) survive; the older (A) is pruned, both dirs.
+    for dir in [&status, &context] {
+        assert!(dir.join(&nom_c).exists(), "current session kept in {dir:?}");
+        assert!(dir.join(&nom_b).exists(), "previous session kept in {dir:?}");
+        assert!(!dir.join(&nom_a).exists(), "older session pruned in {dir:?}");
+    }
+    // status sid pointers: A dropped, B + C kept; latest still points at C.
+    assert!(!status.join(format!("{sid_a}.yaml")).exists(), "A sid pointer pruned");
+    assert!(status.join(format!("{sid_b}.yaml")).exists(), "B sid pointer kept");
+    assert!(status.join(format!("{sid_c}.yaml")).exists(), "C sid pointer kept");
+    assert_eq!(std::fs::read_link(status.join("latest.yaml")).unwrap(), nom_c);
+}
+
+#[tested]
+fn schema_change_writes_context_canary() {
+    let test = testing::test!({
+        .using_temp_dir()
+    });
+    let cache = test.temp_dir().to_path_buf();
+    let sid = "dddddddd-3333-3333-3333-333333333333";
+
+    // context_window present but missing the depended-on token fields.
+    let payload = r#"{"session_id":"SID","workspace":{"project_dir":"/home/box/ai/emptwo"},"context_window":{"used_percentage":7}}"#
+        .replace("SID", sid);
+    run_claudeline(&payload, &cache, "UTC");
+
+    // context degrades to the canary; status still holds the full payload.
+    let context_yaml = std::fs::read_to_string(context_dir(&cache).join("latest.yaml"))
+        .expect("read context latest.yaml");
+    assert_eq!(context_yaml, "error: statusline JSON schema has changed\n");
+    let status_yaml = std::fs::read_to_string(status_dir(&cache).join("latest.yaml"))
+        .expect("read status latest.yaml");
+    assert!(
+        status_yaml.contains("used_percentage: 7"),
+        "status mirrors the drifted payload for diffing: {status_yaml}"
+    );
+}
+
+#[tested]
+fn no_session_id_writes_nothing_and_still_renders() {
+    let test = testing::test!({
+        .using_temp_dir()
+    });
+    let cache = test.temp_dir().to_path_buf();
+
+    // pre-seed a status latest.yaml for the emptwo identity.
+    let status = status_dir(&cache);
+    std::fs::create_dir_all(&status).unwrap();
+    let seeded = status.join("latest.yaml");
+    std::fs::write(&seeded, "stale").unwrap();
+
+    // a payload with an identity (project_dir) but NO session id.
+    let payload = r#"{"workspace":{"project_dir":"/home/box/ai/emptwo"},"model":{"display_name":"M"},"context_window":{"used_percentage":5}}"#;
     let line = run_claudeline(payload, &cache, "UTC");
 
-    assert_eq!(line, "M 5%\n");
-    assert!(
-        std::fs::symlink_metadata(&latest).is_err(),
-        "latest.yaml is removed when the payload carries no session id"
+    assert_eq!(line, "emptwo: M 5%\n");
+    assert_eq!(
+        std::fs::read_to_string(&seeded).unwrap(),
+        "stale",
+        "no-sid render leaves files untouched"
     );
 }
 

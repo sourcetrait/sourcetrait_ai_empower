@@ -1,23 +1,23 @@
 use crate::*;
 
-/// What: deterministic base62 id derived from a Claude Code session id
-/// (SID) by xxh3-hashing the SID string. Wraps the resulting u64 and
-/// renders base62 via the shared `base62::fmt_base62` formatter.
+/// What: deterministic base62 "nom" (the workspace term for a base62-hashed
+/// identifier / key) derived from a Claude Code session id (SID) by
+/// xxh3-hashing the SID string. Wraps the resulting u64 and renders base62
+/// via the shared `base62::fmt_base62` formatter.
 ///
 /// Why: distinct from `Nonce` (per-call: counter + time + payload, used
-/// once) - a `ClaudeSessionHash` is REPRODUCED on every render of the
-/// same session, so it can name that session's statusline artifact and a
-/// stable pointer to it without storing a SID->name map. Same mechanism
-/// as `RerunHash` (a content hash) but a separate domain type so the two
-/// uses do not get conflated.
+/// once) - a `ClaudeSessionNom` is REPRODUCED on every render of the same
+/// session, so it can name that session's statusline artifact and a stable
+/// pointer to it without storing a SID->name map. Same mechanism as
+/// `RerunHash` (a content hash) but a separate domain type.
 ///
-/// Where: produced by `ClaudeSessionHash::from(sid)` in
-/// `sourcetrait_ai_claudeline`; rendered into the YAML `session_hash`
-/// field and the `<cache>/statusline/{hash}.yaml` filename via `Display`.
+/// Where: produced by `ClaudeSessionNom::from(sid)` in
+/// `sourcetrait_ai_claudeline`; rendered into the YAML `session_nom` field
+/// and the `<cache>/statusline/{nom}.yaml` filename via `Display`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ClaudeSessionHash(u64);
+pub struct ClaudeSessionNom(u64);
 
-impl ClaudeSessionHash {
+impl ClaudeSessionNom {
     /// What: returns the underlying u64 value, bypassing the base62
     /// `Display` impl.
     ///
@@ -32,14 +32,14 @@ impl ClaudeSessionHash {
     }
 }
 
-impl From<&str> for ClaudeSessionHash {
+impl From<&str> for ClaudeSessionNom {
     /// What: xxh3_64-hashes the session id string and wraps the result.
     /// No counter, no timestamp - the same SID always produces the same
-    /// hash.
+    /// nom.
     ///
     /// Why: determinism is the whole point. claudeline writes a session's
-    /// statusline payload to `{hash}.yaml` and points `latest.yaml` +
-    /// `{sid}.yaml` symlinks at it; the hash must be stable across renders
+    /// statusline payload to `{nom}.yaml` and points `latest.yaml` +
+    /// `{sid}.yaml` symlinks at it; the nom must be stable across renders
     /// for those pointers to stay coherent.
     ///
     /// Where: called by `sourcetrait_ai_claudeline` once it reads the SID
@@ -51,7 +51,7 @@ impl From<&str> for ClaudeSessionHash {
     }
 }
 
-impl Display for ClaudeSessionHash {
+impl Display for ClaudeSessionNom {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,

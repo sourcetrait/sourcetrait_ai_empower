@@ -1,7 +1,7 @@
 pub(crate) mod base62;
 pub(crate) mod error;
 pub(crate) mod markdown;
-pub(crate) mod claude_session_hash;
+pub(crate) mod claude_session_nom;
 pub mod consts;
 pub(crate) mod nonce;
 pub(crate) mod rerun;
@@ -36,7 +36,7 @@ pub(crate) mod xxh3 {
 
 pub use crate::{
     base62::is_base62,
-    claude_session_hash::ClaudeSessionHash,
+    claude_session_nom::ClaudeSessionNom,
     error::{
         LibEmpowerError,
         LibEmpowerResult,

@@ -451,7 +451,7 @@ Good - most denied names are also nushell builtins; drop the
 `^python3`:
 
 ```nu
-ls /etc                                       # builtin ls (no ^)
+ls                                            # builtin ls (no ^)
 cp $src $dst                                  # builtin cp
 open f.txt | lines | where {|l| $l | str contains "pattern"}
 glob "*.rs"                                   # for find

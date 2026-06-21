@@ -311,6 +311,30 @@ whatever a caller needs once the summary has told them whether they care.
 `library(new)`'s establishing call records the source dir; `commit`
 always re-reads through it, so you edit that tree and commit to promote.
 
+### Library files: code + data (.assets/) + docs (.docs/)
+
+A library carries more than `.nu`. `commit` accepts (and promotes into the
+signed store) exactly:
+
+- `.nu` modules + helpers (the cascade above).
+- ROOT-only metadata: `library.nu.toml` (a manifest; not parsed yet),
+  `README.md`, `LEGAL.md`, `LICENSE.txt`, `LICENSE-*.txt`.
+- `.gitignore` at ANY depth - your own repo hygiene. It governs what `commit`
+  stages into the signed repo, but does NOT exempt a file from validation.
+- A root `.assets/` dir - opaque static DATA, validated recursively: any
+  structure (e.g. `.assets/locale/en/main.ftl`) but no executable/script
+  extensions (`.sh .py .nu .js ...`). It ships beside your code, so a
+  call-target can load it at runtime.
+- A root `.docs/` dir - prose only: `.md` / `.txt` (+ `.gitignore`).
+
+Universal rule: NOTHING carried may be executable (`+x`). Anything off this
+set (a stray `.json` at the root, a non-`.md` in `.docs/`, a `.sh` in
+`.assets/`, a `+x` file) rejects at commit with a
+`library::{source,doc,asset}_{extension,executable}_denied` diagnostic.
+`.meta/` is MCP-generated; `.git` + other dotfiles are skipped (never
+carried). Library NAMES `docs` / `tools` / `bin` / `target` are reserved
+(`library::name_denied`).
+
 ### The lifecycle tools
 
 - `library(action, library, source_dir)` - the admin tool. `new`
@@ -333,8 +357,9 @@ always re-reads through it, so you edit that tree and commit to promote.
 `commit` rejects on a validation failure - the error envelope's `errors`
 carry `library::*` diagnostics (capped silently): a malformed function
 contract, a `mod.nu` carrying anything but the allowed exports,
-reserved-term misuse, a parse error, a bare `record<>` skeleton, or a
-call-target at the library root (no root functions). The
+reserved-term misuse, a parse error, a bare `record<>` skeleton, a
+call-target at the library root (no root functions), or a file outside the
+carried set / an executable file (Library files above). The
 summary-over-80-chars rule is a WARNING (surfaced in `library(check)`'s
 `warnings`), not a commit blocker. Authored bodies are NOT body-linted -
 you write them with intent; the hardcoded-path / denied-external lint below

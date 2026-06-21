@@ -140,6 +140,9 @@ pub enum Error {
         library: String,
         reason: String,
     },
+    LibraryNameDenied {
+        library: String,
+    },
     LibraryInvalidModulePath {
         module_path: String,
         reason: String,
@@ -221,6 +224,7 @@ impl Error {
             Self::LibraryNotRegistered { .. } => "library::not_registered",
             Self::LibraryAlreadyRegistered { .. } => "library::already_registered",
             Self::LibraryInvalidName { .. } => "library::invalid_name",
+            Self::LibraryNameDenied { .. } => "library::name_denied",
             Self::LibraryInvalidModulePath { .. } => "library::invalid_module_path",
             Self::LibraryTestSuffixRequired { .. } => "library::test_suffix_required",
             Self::LibrarySourceMissing { .. } => "library::source_missing",
@@ -261,6 +265,9 @@ impl Error {
             }
             Self::LibraryInvalidName { library, reason } => {
                 format!("invalid library name `{library}`: {reason}")
+            }
+            Self::LibraryNameDenied { library } => {
+                format!("library name `{library}` is reserved and cannot be used")
             }
             Self::LibraryInvalidModulePath {
                 module_path,

@@ -463,6 +463,11 @@ fn validate_new_coordinate(
                 .to_string(),
         });
     }
+    if NAME_DENYLIST.contains(&library) {
+        return Err(Error::LibraryNameDenied {
+            library: library.to_string(),
+        });
+    }
     if build_target().is_test() && !library.ends_with("_test") {
         return Err(Error::LibraryTestSuffixRequired {
             library: library.to_string(),
@@ -1227,6 +1232,207 @@ fn check_summary_length(
     }
 }
 
+// ============================================================================
+// Carried-file zones (.assets/ + .docs/ + the sanctioned root files)
+// ============================================================================
+
+/// Library names reserved because they collide with layout / distribution
+/// conventions; rejected at establish / scaffold time. Extensible.
+const NAME_DENYLIST: &[&str] = &["docs", "tools", "bin", "target"];
+
+/// Executable / script extensions a `.assets/` data file may NOT carry
+/// (belt-and-suspenders behind the universal `+x` check). Matched against the
+/// lowercased parsed extension, so a dotfile with no real extension
+/// (`.gitignore`, `.foo`) passes while `.foo.sh` (extension `sh`) is denied.
+/// Extensible.
+const ASSET_EXT_DENYLIST: &[&str] = &[
+    "nu", "sh", "bash", "zsh", "fish", "ksh", "py", "rb", "pl", "js", "ts", "lua", "ps1", "bat",
+    "cmd", "com", "exe",
+];
+
+/// The carried-content zone a non-`.nu` file lives in. Each zone has its own
+/// allowed-extension rule; the `+x` (executable-bit) rule is universal across
+/// all three. The zone selects which `library::<zone>_*_denied` kind a
+/// violation reports.
+#[derive(Copy, Clone)]
+enum Zone {
+    /// The library source tree (root + module dirs): `.nu` + the sanctioned
+    /// root files + `.gitignore`.
+    Source,
+    /// `.docs/`: `.md` / `.txt` (+ `.gitignore`).
+    Doc,
+    /// `.assets/`: any non-executable data file.
+    Asset,
+}
+
+impl Zone {
+    fn ext_kind(self) -> &'static str {
+        match self {
+            Zone::Source => "library::source_extension_denied",
+            Zone::Doc => "library::doc_extension_denied",
+            Zone::Asset => "library::asset_extension_denied",
+        }
+    }
+
+    fn exec_kind(self) -> &'static str {
+        match self {
+            Zone::Source => "library::source_executable_denied",
+            Zone::Doc => "library::doc_executable_denied",
+            Zone::Asset => "library::asset_executable_denied",
+        }
+    }
+}
+
+/// True if `path` carries the executable bit for any class (user/group/other).
+/// Unix-only (`mode & 0o111`); the box is Linux, so this is the real guarantee
+/// behind the per-zone extension hygiene. Referenced by path (no `use`) per the
+/// crate's lib.rs-manifest convention.
+fn is_executable(path: &std::path::Path) -> bool {
+    fs::metadata(path)
+        .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// A file's lowercased parsed extension (`Path::extension`), or None when it
+/// has none (incl. a leading-dot-only name like `.gitignore`).
+fn ext_lower(path: &std::path::Path) -> Option<String> {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+}
+
+/// The non-`.nu` files allowed at the LIBRARY ROOT (root-only; the same name
+/// deeper in the tree is denied). `.gitignore` is handled separately (allowed
+/// at any depth).
+fn is_sanctioned_root_file(name: &str) -> bool {
+    matches!(
+        name,
+        "library.nu.toml" | "README.md" | "LEGAL.md" | "LICENSE.txt"
+    ) || (name.starts_with("LICENSE-") && name.ends_with(".txt"))
+}
+
+/// Push a located `library::<zone>_extension_denied` Error diagnostic for
+/// `path` (walk-relative; `<library>/` is prefixed later).
+fn push_ext_denied(
+    root: &std::path::Path,
+    path: &std::path::Path,
+    zone: Zone,
+    message: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let rel = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned();
+    diagnostics.push(Diagnostic::error(
+        zone.ext_kind(),
+        Some(Source {
+            path: Some(rel),
+            position: [0, 0],
+        }),
+        message.to_string(),
+    ));
+}
+
+/// Push a located `library::<zone>_executable_denied` Error diagnostic when
+/// `path` carries the executable bit; no-op otherwise. The `+x` rule is the
+/// universal "nothing carried is executable" invariant.
+fn check_not_executable(
+    root: &std::path::Path,
+    path: &std::path::Path,
+    zone: Zone,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if !is_executable(path) {
+        return;
+    }
+    let rel = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned();
+    diagnostics.push(Diagnostic::error(
+        zone.exec_kind(),
+        Some(Source {
+            path: Some(rel),
+            position: [0, 0],
+        }),
+        "library files must not be executable (+x); clear the executable bit",
+    ));
+}
+
+/// Recursively validate `.assets/` content (any depth, dotfiles included): each
+/// file must be non-`+x` and its parsed extension must NOT be on
+/// `ASSET_EXT_DENYLIST`. Structure is otherwise opaque.
+fn validate_assets_tree(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    result: &mut ValidationResult,
+) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        if error_count(&result.diagnostics) > LINT_VIOLATION_CAP {
+            return Ok(());
+        }
+        let entry = entry?;
+        let path = entry.path();
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            validate_assets_tree(root, &path, result)?;
+        } else if ft.is_file() {
+            check_not_executable(root, &path, Zone::Asset, &mut result.diagnostics);
+            if let Some(ext) = ext_lower(&path)
+                && ASSET_EXT_DENYLIST.contains(&ext.as_str())
+            {
+                push_ext_denied(
+                    root,
+                    &path,
+                    Zone::Asset,
+                    ".assets/ must not contain executable/script file types (.sh, .py, .nu, ...)",
+                    &mut result.diagnostics,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Recursively validate `.docs/` content (any depth, dotfiles included): each
+/// file must be non-`+x` and either `.md` / `.txt` or the exact name
+/// `.gitignore`.
+fn validate_docs_tree(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    result: &mut ValidationResult,
+) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        if error_count(&result.diagnostics) > LINT_VIOLATION_CAP {
+            return Ok(());
+        }
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            validate_docs_tree(root, &path, result)?;
+        } else if ft.is_file() {
+            check_not_executable(root, &path, Zone::Doc, &mut result.diagnostics);
+            let allowed = name == ".gitignore"
+                || matches!(ext_lower(&path).as_deref(), Some("md") | Some("txt"));
+            if !allowed {
+                push_ext_denied(
+                    root,
+                    &path,
+                    Zone::Doc,
+                    ".docs/ accepts only .md and .txt files (and .gitignore)",
+                    &mut result.diagnostics,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Walk every `.nu` under `root`. Apply the strict per-file shape:
 /// - `mod.nu`: only `export use ./<file>.nu` or `export module <name>` lines
 ///   (plus blank lines and `#` comments). Body-lint NOT applied (no agent
@@ -1295,21 +1501,54 @@ fn validate_walk(
         }
     }
 
-    // Collect + sort entries (dotfiles skipped, incl. the MCP `.meta/`).
+    // Collect + classify entries. The source tree carries `.nu` + the
+    // sanctioned root files + `.gitignore` (any depth); the root `.assets/` +
+    // `.docs/` dirs are validated by their own recursive walkers; every other
+    // dotfile (`.git`, `.meta/`, a nested `.assets`/`.docs`, a stray
+    // `.DS_Store`) is skipped (author repo hygiene, never carried). A non-`.nu`
+    // source file outside the sanctioned set is denied; every carried file is
+    // `+x`-checked.
+    let is_root = module_path.is_empty();
     let mut dirs: Vec<(String, PathBuf)> = Vec::new();
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
         let path = entry.path();
         let ft = entry.file_type()?;
         if ft.is_dir() {
-            dirs.push((name, path));
-        } else if ft.is_file() && path.extension().map(|e| e == "nu").unwrap_or(false) {
-            files.push((name, path));
+            if is_root && name == ".assets" {
+                validate_assets_tree(root, &path, result)?;
+            } else if is_root && name == ".docs" {
+                validate_docs_tree(root, &path, result)?;
+            } else if name.starts_with('.') {
+                // .git, .meta/, a nested .assets/.docs: skip (never carried).
+            } else {
+                dirs.push((name, path));
+            }
+        } else if ft.is_file() {
+            let is_nu = path.extension().map(|e| e == "nu").unwrap_or(false);
+            if is_nu {
+                check_not_executable(root, &path, Zone::Source, &mut result.diagnostics);
+                files.push((name, path));
+            } else if name == ".gitignore" {
+                // Carried at any depth; only the +x rule applies (the author's
+                // own repo-hygiene file).
+                check_not_executable(root, &path, Zone::Source, &mut result.diagnostics);
+            } else if name.starts_with('.') {
+                // Stray source-tree dotfile (.DS_Store, ...): skipped, not denied.
+            } else {
+                check_not_executable(root, &path, Zone::Source, &mut result.diagnostics);
+                if !(is_root && is_sanctioned_root_file(&name)) {
+                    push_ext_denied(
+                        root,
+                        &path,
+                        Zone::Source,
+                        "only .nu files are allowed in the library tree (plus root README.md / LEGAL.md / LICENSE.txt / LICENSE-*.txt / library.nu.toml, .gitignore, and the .assets/ + .docs/ dirs)",
+                        &mut result.diagnostics,
+                    );
+                }
+            }
         }
     }
     dirs.sort();
@@ -2338,30 +2577,64 @@ pub(crate) fn check_library(
     Ok(result)
 }
 
-/// What: copies a directory tree recursively. Skips dotfile entries
-/// at every level (so a client `.git` doesn't bleed into the MCP
-/// repo). Creates `dst` and all parents if needed.
+/// What: rebuilds the canonical library subtree from the authored source,
+/// carrying exactly the validator's set: `.nu` + the sanctioned non-`.nu`
+/// files + `.gitignore` (any depth) + the root `.assets/` / `.docs/` dirs
+/// verbatim; every other dotfile is skipped. Thin entry over
+/// `copy_library_tree` (is_root = true). Creates `dst` + parents.
 ///
-/// Why: commit copies the authored source tree into the canonical
-/// repo; dotfile skipping is mandatory to keep client-side VCS
-/// metadata out of our git history. Recursive walk handles arbitrary
-/// nesting without bookkeeping.
+/// Why: validation has already vetted the tree, so copy trusts it and just
+/// mirrors the carried set; skipping stray dotfiles keeps client VCS /
+/// generated state (`.git`, `.meta/`) out of the signed canonical.
 ///
 /// Where: called by `commit_impl` after validation succeeds and the
 /// pre-existing subtree has been wiped.
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> io::Result<()> {
+    copy_library_tree(src, dst, true)
+}
+
+/// Source-tree carry mirroring the validator's carried set: `.nu` + the
+/// (already-validated) sanctioned non-`.nu` files + `.gitignore` (any depth);
+/// the root `.assets/` + `.docs/` dirs VERBATIM (all contents, dotfiles
+/// included); recurses module dirs; skips every other dotfile (`.git`,
+/// `.meta/`, a nested `.assets`/`.docs`, a stray `.DS_Store`). Runs only AFTER
+/// validation passes, so a non-dotfile file here is already a sanctioned one.
+fn copy_library_tree(src: &std::path::Path, dst: &std::path::Path, is_root: bool) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
-        let name = entry.file_name();
-        if name.to_string_lossy().starts_with('.') {
-            continue;
-        }
+        let name = entry.file_name().to_string_lossy().into_owned();
         let src_path = entry.path();
         let dst_path = dst.join(&name);
         let ft = entry.file_type()?;
         if ft.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
+            if is_root && (name == ".assets" || name == ".docs") {
+                copy_tree_all(&src_path, &dst_path)?;
+            } else if name.starts_with('.') {
+                continue;
+            } else {
+                copy_library_tree(&src_path, &dst_path, false)?;
+            }
+        } else if ft.is_file() && (name == ".gitignore" || !name.starts_with('.')) {
+            fs::copy(&src_path, &dst_path)?;
+        }
+        // other source-tree dotfiles: skipped (never carried).
+    }
+    Ok(())
+}
+
+/// Carry an entire subtree verbatim (every file + dir, dotfiles included). Used
+/// for the root `.assets/` + `.docs/` dirs, whose contents the validator has
+/// already vetted.
+fn copy_tree_all(src: &std::path::Path, dst: &std::path::Path) -> io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            copy_tree_all(&src_path, &dst_path)?;
         } else if ft.is_file() {
             fs::copy(&src_path, &dst_path)?;
         }

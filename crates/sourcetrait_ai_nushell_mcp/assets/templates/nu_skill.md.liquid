@@ -112,29 +112,49 @@ to a file - the client truncating, NOT a nushell_mcp failure. That is when
 you reach for shm.
 
 The MCP host, its workers, and your Read/Write tools share one
-filesystem, so a file one writes another reads. The designated scratch
-space is the tmpfs dir (`<identity>` = your agent identity):
+filesystem, so a file one writes another reads. The tmpfs IPC filesystem
+is available at `$env.XDGX_SHM_DIR` - RAM-backed, CONTENTS transient
+(don't rely on shm files across sessions). Build every path under it from
+the env var; never write a hardcoded path literal. Pass only the path
+RELATIVE to `$env.XDGX_SHM_DIR` in a field whose name carries `shm` (both
+sides know the root). The sub-namespace depends on which side writes:
 
+TO you (a body writes, you read via Read tool) - the body namespaces by
+its surface + this call's `$env.NONCE`:
 ```
-/dev/shm/box/ai/<identity>/
+run():      $env.XDGX_SHM_DIR | path join 'mcp/run' | path join $env.NONCE
+interact(): $env.XDGX_SHM_DIR | path join 'mcp/interact' | path join $env.NONCE
+call():     $env.XDGX_SHM_DIR | path join '<lib>/<module>' | path join $env.NONCE
+            (first 2-3 namepath segments incl. the library, e.g. 'empower/know/rust')
 ```
 
-The environment provides this dir (created at each login), so you do not
-create it; it is tmpfs - its CONTENTS are transient (don't rely on shm
-files across sessions). `/dev/` is on the hardcoded-path lint allowlist, so a
-`/dev/shm/...` literal in a body does NOT trip the lint (still lift a
-variable filename to args).
+FROM you (you write via the Write tool, a body reads) - no `$env.NONCE`
+exists before the call, so namespace under your own provisioned
+per-session dir:
+```
+ai/{infer:ai_identity}/{infer:session_nom}/<name>
+```
 
-Large result OUT - write the data, return only the PATH:
+OUT (body -> you):
 ```nu
-# args_schema { shm_out: string }  result_schema { shm_out: string, rows: int }
-let data = (ls /etc | select name size)        # stand-in for a big result
-$data | to json | save -f $args.shm_out
-{ shm_out: $args.shm_out, rows: ($data | length) }
+# args_schema {}  result_schema { shm_out: string, rows: int }
+let data = (1..1000 | each {|i| {n: $i, sq: ($i * $i)}})  # stand-in for a big result
+let dir = ('mcp/run' | path join $env.NONCE)
+mkdir ($env.XDGX_SHM_DIR | path join $dir)
+let rel = ($dir | path join 'data.json')
+$data | to json | save -f ($env.XDGX_SHM_DIR | path join $rel)
+{ shm_out: $rel, rows: ($data | length) }
 ```
-The caller passes e.g. `shm_out: "/dev/shm/box/ai/<identity>/etc.json"`,
-then reads that file with the Read tool. Large input IN: Write the data to
-a shm file, pass its path (`shm_in`), and `open` it in the body.
+Read `$env.XDGX_SHM_DIR` joined with `shm_out` via the Read tool.
+
+IN (you -> body): with your Write tool, write the payload to
+`ai/{infer:ai_identity}/{infer:session_nom}/input.json` under
+`$env.XDGX_SHM_DIR` (that dir is already provisioned), then pass that
+relative path in an `shm`-named arg:
+```nu
+# args_schema { shm_in: string }  result_schema { rows: int }
+{ rows: (open ($env.XDGX_SHM_DIR | path join $args.shm_in) | length) }
+```
 
 Conventions:
 - Name any arg/result field carrying a shm path with a `shm_` prefix or
@@ -346,15 +366,14 @@ is libraries-dir-relative (`<library>/<file>`).
 
 ### Hardcoded paths
 
-Quoted string literals starting with `/`, `~/`, `./`, or `../`
-flag `hardcoded_variable`. Allowlist (prefix match): `/etc/`,
-`/dev/`, `/proc/`, `/sys/`.
+Hardcoded paths are forbidden via the lint: a quoted string literal
+starting with `/`, `~/`, `./`, or `../` flags `lint::hardcoded_variable`.
+Lift it to args, or build it from `$env`.
 
 The rule fires on the STRING PREFIX, not on path-likeness or
 length. A bare `"/"` separator trips it the same as a full
-`/home/box/...` path. Lift anything that starts with any of the
-four prefixes to args, even single-character literals used as
-glue.
+`/home/box/...` path. Lift anything that starts with one of the
+four prefixes, even single-character literals used as glue.
 
 Bad - lint fires:
 ```nu

@@ -319,8 +319,10 @@ signed store) exactly:
 - `.nu` modules + helpers (the cascade above).
 - ROOT-only metadata: `library.nu.toml` (a manifest; not parsed yet),
   `README.md`, `LEGAL.md`, `LICENSE.txt`, `LICENSE-*.txt`.
-- `.gitignore` at ANY depth - your own repo hygiene. It governs what `commit`
-  stages into the signed repo, but does NOT exempt a file from validation.
+- `.gitignore` at any depth - your repo hygiene. It affects only STAGING (a
+  `commit` won't git-track a file it ignores), never VALIDATION: the validator
+  walks the whole tree, so an ignored file is still checked and still rejects
+  if it breaks a rule.
 - A root `.assets/` dir - static DATA the MCP carries but never interprets,
   validated recursively for file TYPE: any structure (e.g.
   `.assets/locale/en/main.ftl`), but no executable/script extensions

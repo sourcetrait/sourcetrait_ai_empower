@@ -1,9 +1,13 @@
 # ai - the fae relay toolkit (host side of the bare-relay flow).
 #
-# Commands: `ai relay from|to|up`. Run from inside the target repo, on your own
-# branch draft/<handle>. Per-repo convention: remote `relayed` = the on-box bare;
-# your branch `draft/<handle>`; the fae's branch `draft/ai/<handle>`; `dev` on
-# `origin`. <handle> is read from git config (portable). Requires the `gstat` plugin.
+# First time in a repo: apply the relay .git/config (adds the `relayed` remote +
+# branch tracking), then run `ai relay setup` once. After that, from your own
+# branch (draft/<handle>): `ai relay from|to|up`.
+#
+# Convention: remote `relayed` = the on-box bare; your branch `draft/<handle>`;
+# the fae's branch `draft/ai/<handle>`; `dev` on `origin`. <handle> is read from
+# git config (portable). Requires the `gstat` plugin. Assumes the repo is already
+# set up against `origin`, with `dev` and `draft/<handle>` tracking it.
 
 # principal handle, from git config (your host user.name is your handle)
 def handle []: nothing -> string { ^git config user.name | str trim }
@@ -29,14 +33,25 @@ def ensure-clean []: nothing -> nothing {
     }
 }
 
-# pull my work in: mirror draft/ai/<handle> (no checkout), rebase yours onto it
+# one-time: create the local checkout-able mirror of the fae's branch. Re-run to
+# refresh that local snapshot (the from/up commands always use the live ref).
+export def "relay setup" []: nothing -> nothing {
+    if not ("relayed" in (^git remote | lines)) {
+        print -e $"(ansi red)error:(ansi reset) no (ansi cyan)relayed(ansi reset) remote - apply the relay .git/config first"
+        return
+    }
+    let h = (handle)
+    ^git fetch relayed
+    ^git branch --force $"draft/ai/($h)" $"relayed/draft/ai/($h)"
+}
+
+# pull my work in: fetch the bare, rebase your branch onto my latest
 export def "relay from" []: nothing -> nothing {
     if not (on-branch) { return }
     ensure-clean
     let h = (handle)
     ^git fetch relayed
-    ^git branch -f $"draft/ai/($h)" $"relayed/draft/ai/($h)"
-    ^git rebase $"draft/ai/($h)" $"draft/($h)"
+    ^git rebase $"relayed/draft/ai/($h)" $"draft/($h)"
 }
 
 # hand your work to the relay so I can rebase onto it
@@ -46,14 +61,13 @@ export def "relay to" []: nothing -> nothing {
     ^git push --force-with-lease relayed $"draft/($h)"
 }
 
-# publish to GitHub: refresh my mirror, push yours + mine (forced) + dev (plain)
+# publish to GitHub: my latest (off the bare) + your branch (forced) + dev (plain)
 export def "relay up" []: nothing -> nothing {
     if not (on-branch) { return }
     let h = (handle)
     ^git fetch relayed
-    ^git branch -f $"draft/ai/($h)" $"relayed/draft/ai/($h)"
     ^git fetch origin
-    ^git push --force-with-lease origin $"draft/ai/($h)"
+    ^git push --force-with-lease origin $"relayed/draft/ai/($h):draft/ai/($h)"
     ^git push --force-with-lease origin $"draft/($h)"
     ^git push origin dev
 }

@@ -61,19 +61,47 @@ impl ParseEngine {
         &self.engine_state
     }
 
-    /// Build a per-file engine state with `$env.PWD` set to the file's
-    /// parent directory. nu_parser resolves `export use ./<file>.nu`
-    /// and `export module <name>` relative to `$env.PWD`; without this
-    /// guard, parsing a `mod.nu` standalone produces noisy
-    /// `ModuleNotFound` diagnostics for files that DO exist on disk
-    /// (slice 4.5 experiment: probe_modnu_parse confirmed). Clone is
-    /// cheap-ish because EngineState's data shares via Arc internally.
+    /// Build a per-file engine state for library validation, with two env
+    /// vars layered so module `use`s resolve exactly as they will at serve
+    /// time:
+    ///
+    /// - `$env.PWD` = the file's parent dir, so a RELATIVE `use ./<file>.nu`
+    ///   / `export module <name>` / `use ../<sibling>` resolves against the
+    ///   source tree (without it, parsing a `mod.nu` standalone produces noisy
+    ///   `ModuleNotFound` diagnostics for files that DO exist; slice 4.5
+    ///   probe_modnu_parse confirmed).
+    /// - `$env.NU_LIB_DIRS` = `[libraries_dir()]` (the canonical store), so a
+    ///   BY-NAME `use <sibling-library>` resolves an already-committed sibling
+    ///   during validation. This mirrors `worker::base::seed_lib_dirs` (which
+    ///   the host passes to the worker at serve time): without it, a
+    ///   cross-library `use pelos` fails `ModuleNotFound` at commit even though
+    ///   it resolves fine once the library is served. Aligning the validator's
+    ///   lib path with the worker's is the point - a library that serves must
+    ///   validate. Must be a list Value (the parser reads NU_LIB_DIRS as a
+    ///   list). A library's own first commit predates its appearance in the
+    ///   store, so a by-name SELF-reference (`use <self>`) still won't resolve
+    ///   during that commit - intra-library refs use the relative form, which
+    ///   PWD covers.
+    ///
+    /// Validation-only: the body lint borrows the base via `engine_state()`,
+    /// so this env layering never touches lint. Clone is cheap-ish because
+    /// EngineState's data shares via Arc internally.
     pub(crate) fn engine_state_for_file(&self, file_parent: &std::path::Path) -> nu::EngineState {
         let mut clone = self.engine_state.clone();
         clone.add_env_var(
             "PWD".to_string(),
             nu::Value::string(
                 file_parent.to_string_lossy().into_owned(),
+                nu::Span::unknown(),
+            ),
+        );
+        clone.add_env_var(
+            "NU_LIB_DIRS".to_string(),
+            nu::Value::list(
+                vec![nu::Value::string(
+                    libraries_dir().to_string_lossy().into_owned(),
+                    nu::Span::unknown(),
+                )],
                 nu::Span::unknown(),
             ),
         );

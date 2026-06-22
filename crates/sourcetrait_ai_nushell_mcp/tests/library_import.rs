@@ -818,6 +818,61 @@ fn committed_library_invokable_via_standalone_driver() {
 }
 
 #[test]
+fn commit_validates_by_name_cross_library_use() {
+    // A library whose source `use`s ANOTHER already-committed library BY NAME
+    // (`use baselib ...`) must validate at commit: the validator seeds
+    // $env.NU_LIB_DIRS with the canonical libraries store (mirroring the
+    // worker's seed_lib_dirs), so a committed sibling resolves during
+    // validation exactly as it does at serve. Without that, `use baselib`
+    // failed ModuleNotFound at commit though it runs fine once served.
+    let mut host = Host::spawn();
+
+    // baselib: a committed call-target `baselib:m:double` (x -> x*2).
+    let base = host.source_dir("baselib");
+    let _ = host.library_new("baselib", &base);
+    write_source(&base, "mod.nu", "export module m\n");
+    write_source(&base, "m/mod.nu", "export use ./double.nu\n");
+    write_source(
+        &base,
+        "m/double.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+    let committed_base = host.call("commit", serde_json::json!({"library": "baselib"}));
+    assert!(
+        !has_error_path(&committed_base),
+        "baselib commit should succeed; got {committed_base}"
+    );
+
+    // consumer: its call-target `use`s baselib BY NAME at the file top, the
+    // same shape a game library uses to consume the shared `pelos` loader.
+    let consumer = host.source_dir("consumer");
+    let _ = host.library_new("consumer", &consumer);
+    write_source(&consumer, "mod.nu", "export module app\n");
+    write_source(&consumer, "app/mod.nu", "export use ./compute.nu\n");
+    write_source(
+        &consumer,
+        "app/compute.nu",
+        "use baselib m *\nexport def main [args: record<x: int>]: nothing -> record<out: int> {\n    double {x: $args.x}\n}\n",
+    );
+    let committed = host.call("commit", serde_json::json!({"library": "consumer"}));
+    assert!(
+        !has_error_path(&committed),
+        "a library using a committed sibling by name should commit; got {committed}"
+    );
+
+    // And the by-name cross-library `use` resolves + runs at serve time too.
+    let called = host.call(
+        "call",
+        serde_json::json!({"namepath": "consumer:app:compute", "args": {"x": 5}}),
+    );
+    assert_eq!(
+        called["result"]["structuredContent"]["result"]["out"].as_i64(),
+        Some(10),
+        "cross-library call-target should resolve + run; got {called}",
+    );
+}
+
+#[test]
 fn commit_accepts_organizational_file() {
     // A file with no `main` sentinel is ORGANIZATIONAL: helper defs
     // + export const, unconstrained signatures, no contract. A helper file at

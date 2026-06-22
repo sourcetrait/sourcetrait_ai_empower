@@ -56,12 +56,13 @@ pub fn run_server(target: BuildTarget) {
             .await
             .expect("spawn interact worker");
         let nonce_gen = Arc::new(lib_empower::NonceGen::new());
-        // Slice 5.1 substrate: a full-shell `ParseEngine` shared across
-        // every body-lint pass. The slice 4.x function-file validator's
-        // lang-only ParseEngine is still constructed per-invocation
-        // inside `library::validate_library_source`; the lint variant
-        // gets its own field because the regex-receiver skip set
-        // requires the full shell decl table (slice 5.0 probe).
+        // A full-shell `ParseEngine` shared by BOTH the body-lint pass
+        // (`engine_state()`) and the library validator
+        // (`engine_state_for_file()`, threaded through commit_impl /
+        // check_library / install_impl). Full shell (not lang-only) so the
+        // lint's regex-receiver skip set resolves `str replace --regex` et al.
+        // as Calls (slice 5.0 probe); the validator clones it per file to
+        // layer $env.PWD + NU_LIB_DIRS for module resolution (parse_engine.rs).
         let lint_engine = Arc::new(ParseEngine::new_full());
         let server = NuSh::new(
             runs_pool,

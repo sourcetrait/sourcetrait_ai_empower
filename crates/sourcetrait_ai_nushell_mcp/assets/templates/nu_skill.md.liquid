@@ -334,8 +334,8 @@ Universal rule: NOTHING carried may be executable (`+x`). Anything off this
 set (a stray `.json` at the root, a non-`.md` in `.docs/`, a `.sh` in
 `.assets/`, a `+x` file) rejects at commit with a
 `library::{source,doc,asset}_{extension,executable}_denied` diagnostic.
-`.meta/` is MCP-generated; `.git` + other dotfiles are skipped (never
-carried). A library's own NAME may not be `docs` / `tools` / `bin` /
+`.meta/` is MCP-generated; any dotfile NOT in the carried set above (`.git`,
+a stray `.foo`, a nested non-root `.assets`/`.docs`) is skipped (not carried). A library's own NAME may not be `docs` / `tools` / `bin` /
 `target` (`library::name_denied`).
 
 ### The lifecycle tools

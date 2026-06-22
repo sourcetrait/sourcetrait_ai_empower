@@ -321,10 +321,11 @@ signed store) exactly:
   `README.md`, `LEGAL.md`, `LICENSE.txt`, `LICENSE-*.txt`.
 - `.gitignore` at ANY depth - your own repo hygiene. It governs what `commit`
   stages into the signed repo, but does NOT exempt a file from validation.
-- A root `.assets/` dir - opaque static DATA, validated recursively: any
-  structure (e.g. `.assets/locale/en/main.ftl`) but no executable/script
-  extensions (`.sh .py .nu .js ...`). It ships beside your code, so a
-  call-target can load it at runtime.
+- A root `.assets/` dir - static DATA the MCP carries but never interprets,
+  validated recursively for file TYPE: any structure (e.g.
+  `.assets/locale/en/main.ftl`), but no executable/script extensions
+  (`.sh .py .nu .js ...`). It ships beside your code so a call-target can
+  load it at runtime.
 - A root `.docs/` dir - prose only: `.md` / `.txt` (+ `.gitignore`).
 
 Universal rule: NOTHING carried may be executable (`+x`). Anything off this
@@ -332,8 +333,8 @@ set (a stray `.json` at the root, a non-`.md` in `.docs/`, a `.sh` in
 `.assets/`, a `+x` file) rejects at commit with a
 `library::{source,doc,asset}_{extension,executable}_denied` diagnostic.
 `.meta/` is MCP-generated; `.git` + other dotfiles are skipped (never
-carried). Library NAMES `docs` / `tools` / `bin` / `target` are reserved
-(`library::name_denied`).
+carried). A library's own NAME may not be `docs` / `tools` / `bin` /
+`target` (`library::name_denied`).
 
 ### The lifecycle tools
 

@@ -237,6 +237,56 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
 }
 
 #[test]
+fn commit_accepts_path_self_call_target() {
+    // followup #26: `const SELF = (path self)` is valid nu that const-resolves
+    // at parse. The validator registers the file's real ABSOLUTE path as the
+    // nu::parse fname so it resolves during commit too -- a relative fname
+    // errored "Couldn't find current file" (serve already loads real files via
+    // NU_LIB_DIRS). A call-target self-locating via `path self` must commit.
+    let mut host = Host::spawn();
+    let src = host.source_dir("selflib");
+    let _ = host.library_new("selflib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./whereami.nu\n");
+    write_source(
+        &src,
+        "m/whereami.nu",
+        "export def main [args: record<noop: int>]: nothing -> record<here: string> {\n    const SELF = (path self)\n    { here: $SELF }\n}\n",
+    );
+    let resp = host.call("commit", serde_json::json!({"library": "selflib"}));
+    assert!(
+        !has_error_path(&resp),
+        "a call-target using `path self` should commit; got {resp}"
+    );
+}
+
+#[test]
+fn commit_accepts_path_self_in_mod_nu_const() {
+    // followup #26 covers all three parse sites: a module-level `export const`
+    // using `path self` exercises validate_mod_nu_ast + scan_reserved_terms
+    // (not just the function-file validator) and must also commit clean.
+    let mut host = Host::spawn();
+    let src = host.source_dir("modselflib");
+    let _ = host.library_new("modselflib", &src);
+    write_source(
+        &src,
+        "mod.nu",
+        "export const HERE = (path self)\nexport module m\n",
+    );
+    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(
+        &src,
+        "m/thing.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+    let resp = host.call("commit", serde_json::json!({"library": "modselflib"}));
+    assert!(
+        !has_error_path(&resp),
+        "a mod.nu `export const` using `path self` should commit; got {resp}"
+    );
+}
+
+#[test]
 fn commit_happy_path_writes_repo_and_meta() {
     let mut host = Host::spawn();
     let src = host.source_dir("happylib");

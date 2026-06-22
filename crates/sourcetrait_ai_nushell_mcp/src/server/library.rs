@@ -1640,6 +1640,12 @@ fn validate_one_file(
         .unwrap_or(path)
         .to_string_lossy()
         .into_owned();
+    // Absolute on-disk path, registered as the nu::parse fname so a parse-time
+    // `const SELF = (path self)` resolves during validation -- a relative fname
+    // errors "Couldn't find current file" (followup #26; serve already loads
+    // real files via NU_LIB_DIRS). Diagnostics keep `rel` (libraries-relative);
+    // only the parse fname changes.
+    let fname = path.to_string_lossy().into_owned();
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -1649,14 +1655,14 @@ fn validate_one_file(
     // mod.nu validates but is no call-target (None); a function file yields the
     // IndexFunction + (summary, details) when it is a clean call-target.
     let extracted = if is_mod {
-        validate_mod_nu_ast(&rel, stem, &source, parent, engine, &mut result.diagnostics);
+        validate_mod_nu_ast(&rel, &fname, stem, &source, parent, engine, &mut result.diagnostics);
         None
     } else {
-        validate_function_file_ast(&rel, stem, &source, parent, engine, &mut result.diagnostics)
+        validate_function_file_ast(&rel, &fname, stem, &source, parent, engine, &mut result.diagnostics)
     };
     // the reserved-terms ban applies to EVERY .nu file -- `main` may appear
     // only as a call-target's exported sentinel.
-    scan_reserved_terms(&rel, stem, &source, parent, engine, &mut result.diagnostics);
+    scan_reserved_terms(&rel, &fname, stem, &source, parent, engine, &mut result.diagnostics);
     Ok(extracted)
 }
 
@@ -1675,9 +1681,12 @@ fn validate_one_file(
 /// `InternalCall`/`External` (skipped), and a quoted `"main"` keeps its
 /// quotes in the token content so it never matches `main`. Parameter names
 /// hide inside the `Signature` token, so they are walked separately;
-/// module/dir/file names are checked on the path.
+/// module/dir/file names are checked on the path. `fname` is the file's
+/// ABSOLUTE path (the parse fname) so a parse-time `path self` resolves
+/// (followup #26); `rel` is the libraries-relative diagnostics path.
 fn scan_reserved_terms(
     rel: &str,
+    fname: &str,
     stem: &str,
     source: &str,
     parent: &std::path::Path,
@@ -1706,7 +1715,10 @@ fn scan_reserved_terms(
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
     let engine_state = engine.engine_state_for_file(parent);
     let mut working_set = nu::StateWorkingSet::new(&engine_state);
-    let block = nu::parse(&mut working_set, Some(rel), wrapped.as_bytes(), false);
+    // Push the file onto the FileStack so a parse-time `path self` resolves
+    // (followup #26; see validate_mod_nu_ast). add_file registers spans only.
+    let _ = working_set.files.push(PathBuf::from(fname), nu::Span::unknown());
+    let block = nu::parse(&mut working_set, Some(fname), wrapped.as_bytes(), false);
     if !working_set.parse_errors.is_empty() {
         // Parse errors are surfaced by the structural validator; don't
         // scan a half-parsed token stream.
@@ -1847,9 +1859,12 @@ fn signature_param_names(sig: &str) -> Vec<String> {
 /// This replaces the prior text-based `validate_mod_nu`. Empower is
 /// source-of-truth -- the validator walks the same AST the parser
 /// produces, so it can't drift from nushell's grammar (the_user
-/// 2026-05-31 slice 4.6).
+/// 2026-05-31 slice 4.6). `fname` is the file's ABSOLUTE path, registered as
+/// the parse fname so a parse-time `path self` resolves (followup #26); `rel`
+/// stays the libraries-relative path used in diagnostics.
 fn validate_mod_nu_ast(
     rel: &str,
+    fname: &str,
     stem: &str,
     source: &str,
     parent: &std::path::Path,
@@ -1863,7 +1878,14 @@ fn validate_mod_nu_ast(
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
     let engine_state = engine.engine_state_for_file(parent);
     let mut working_set = nu::StateWorkingSet::new(&engine_state);
-    let outer_block = nu::parse(&mut working_set, Some(rel), wrapped.as_bytes(), false);
+    // Push the file onto the FileStack so a parse-time `path self` resolves via
+    // files.top() (followup #26): the parse fname only registers content for
+    // spans (add_file); `path self` reads the FileStack, which a bare parse()
+    // never populates. Fresh stack -> no cyclic-import error. Mirrors nu's own
+    // module-file load (parse_keywords.rs). The file's parent == the $env.PWD
+    // set above, so relative `use` resolution is unchanged.
+    let _ = working_set.files.push(PathBuf::from(fname), nu::Span::unknown());
+    let outer_block = nu::parse(&mut working_set, Some(fname), wrapped.as_bytes(), false);
 
     // 1. Surface parse errors with source-relative lines.
     for err in &working_set.parse_errors {
@@ -2026,9 +2048,12 @@ fn short_expr_label(expr: &nu::Expr) -> &'static str {
 /// A file WITHOUT `main` is ORGANIZATIONAL (helper `export def` /
 /// `export const`, unconstrained): parse-correctness only, no contract.
 /// `main` IS the call-target -- the author owns the whole body (no
-/// resolve / main-body AST-lock).
+/// resolve / main-body AST-lock). `fname` is the file's ABSOLUTE path
+/// (the parse fname) so a parse-time `path self` resolves (followup #26);
+/// `rel` is the libraries-relative path used in diagnostics.
 fn validate_function_file_ast(
     rel: &str,
+    fname: &str,
     stem: &str,
     source: &str,
     parent: &std::path::Path,
@@ -2042,7 +2067,10 @@ fn validate_function_file_ast(
     let (wrapped, prefix_len) = wrap_as_module(source, &wrapper_name);
     let engine_state = engine.engine_state_for_file(parent);
     let mut working_set = nu::StateWorkingSet::new(&engine_state);
-    let _ = nu::parse(&mut working_set, Some(rel), wrapped.as_bytes(), false);
+    // Push the file onto the FileStack so a parse-time `path self` resolves
+    // (followup #26; see validate_mod_nu_ast). add_file registers spans only.
+    let _ = working_set.files.push(PathBuf::from(fname), nu::Span::unknown());
+    let _ = nu::parse(&mut working_set, Some(fname), wrapped.as_bytes(), false);
 
     // 1. Surface parse errors with source-relative line numbers.
     for err in &working_set.parse_errors {

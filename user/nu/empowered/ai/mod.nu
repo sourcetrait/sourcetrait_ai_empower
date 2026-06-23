@@ -1,21 +1,22 @@
-# ai - the fae relay toolkit (host side of the bare-relay flow).
+# ai - the fae relay toolkit (principal/host side of the bare-relay flow).
 #
 # First time in a repo: apply the relay .git/config (adds the `relayed` remote +
-# branch tracking), then run `ai relay setup` once. After that, from your own
-# branch (draft/<handle>): `ai relay from|to|up`.
+# branch tracking), then run `ai relay setup` once. After that, from the
+# principal branch (draft/<handle>): `ai relay from|to|up`.
 #
-# Convention: remote `relayed` = the on-box bare; your branch `draft/<handle>`;
-# the fae's branch `draft/ai/<handle>`; `dev` on `origin`. <handle> is read from
-# git config (portable). Requires the `gstat` plugin. Assumes the repo is already
-# set up against `origin`, with `dev` and `draft/<handle>` tracking it.
+# Convention: remote `relayed` = the on-box bare; the principal branch is
+# `draft/<handle>`; the fae branch is `draft/ai/<handle>`; `dev` on `origin`.
+# <handle> is the principal's git handle (the host user.name), read from git
+# config (portable). Requires the `gstat` plugin. Assumes the repo is already set
+# up against `origin`, with `dev` and `draft/<handle>` tracking it.
 #
 # INVARIANT - every relay hop is fast-forward only. Nothing here force-pushes:
-# not the bare, and never origin. The fae rebases its work onto your branch
-# before pushing to the bare, so your side only ever fast-forwards. A non-ff hop
-# is a STOP - it aborts loudly rather than overwrite history (origin is
-# immutable). If a relay stops, reconcile by hand; never add --force here.
+# not the bare, and never origin. The fae rebases its work onto the principal
+# branch before pushing to the bare, so this side only ever fast-forwards. A
+# non-ff hop is a STOP - it aborts loudly rather than overwrite history (origin
+# is immutable). If a relay stops, reconcile by hand; never add --force here.
 
-# principal handle, from git config (your host user.name is your handle)
+# the principal handle, from git config (the host user.name is the handle)
 def handle []: nothing -> string { ^git config user.name | str trim }
 
 # colorize a noun (branch / remote) cyan for the progress lines.
@@ -35,14 +36,14 @@ def step [label: string, args: list<string>]: nothing -> nothing {
     print $"(ansi green)done(ansi reset)"
 }
 
-# relay commands only run from your own branch; print + abort otherwise
+# relay commands only run on the principal branch; print + abort otherwise
 def on-branch []: nothing -> bool {
     let h = (handle)
     let b = (gstat).branch
     if $b == $"draft/($h)" {
         true
     } else {
-        print -e $"(ansi red)error:(ansi reset) you must switch to (cy $"draft/($h)") to relay"
+        print -e $"(ansi red)error:(ansi reset) relay must run on (cy $"draft/($h)")"
         false
     }
 }
@@ -57,68 +58,72 @@ def ensure-clean []: nothing -> nothing {
 }
 
 # the closing structured summary: current branch + tip, divergence vs origin, the
-# fae branch tip and whether it is merged into your branch.
+# fae branch tip and whether it is merged into the principal branch.
 def relay-summary [h: string]: nothing -> nothing {
     let s = (gstat)
-    let mine = $"draft/ai/($h)"
+    let fae = $"draft/ai/($h)"
     let head = (^git rev-parse --short HEAD | str trim)
-    let fae = (^git rev-parse --short $"relayed/($mine)" | complete | get stdout | str trim)
-    let merged = ((^git merge-base --is-ancestor $"relayed/($mine)" HEAD | complete).exit_code == 0)
+    let fae_tip = (^git rev-parse --short $"relayed/($fae)" | complete | get stdout | str trim)
+    let merged = ((^git merge-base --is-ancestor $"relayed/($fae)" HEAD | complete).exit_code == 0)
     print ""
     print $"(ansi blue)[relay] summary(ansi reset)"
     print $"  branch     (cy $s.branch) @ ($head)   ahead ($s.ahead), behind ($s.behind) vs origin"
-    print $"  ai branch  (cy $mine) @ ($fae)   merged in: (if $merged { 'yes' } else { 'no' })"
+    print $"  fae branch (cy $fae) @ ($fae_tip)   merged in: (if $merged { 'yes' } else { 'no' })"
 }
 
-# one-time: create the local checkout-able mirror of the fae's branch. Re-run to
-# refresh that local snapshot (the from/up commands always use the live ref).
+# one-time: create the local checkout-able mirror of the fae branch. Re-run to
+# refresh it (the from/up commands keep it current each run).
 export def "relay setup" []: nothing -> nothing {
     if not ("relayed" in (^git remote | lines)) {
         print -e $"(ansi red)error:(ansi reset) no (cy relayed) remote - apply the relay .git/config first"
         return
     }
     let h = (handle)
-    ^git fetch relayed
-    # a local read-only mirror that tracks the bare; it never carries your own
-    # commits and is never pushed, so refreshing it with --force is safe.
-    ^git branch --force $"draft/ai/($h)" $"relayed/draft/ai/($h)"
+    let fae = $"draft/ai/($h)"
+    step $"fetching remote (cy relayed)" ["fetch" "relayed"]
+    # the local mirror only ever fast-forwards from the bare (the fae's published
+    # branch moves forward); a non-ff here is a STOP, never a force.
+    step $"updating local (cy $fae)" ["fetch" "relayed" $"($fae):($fae)"]
 }
 
-# pull the fae's work in: fetch the bare, then FAST-FORWARD your branch onto the
-# fae's. The fae has already rebased its work on top of yours, so this is a ff;
-# if not, something is wrong upstream - it STOPS (never rebase/force here).
+# pull the fae's work in: fetch the bare, refresh the local fae mirror, then
+# FAST-FORWARD the principal branch onto the fae branch. The fae has already
+# rebased its work on top of the principal branch, so this is a ff; if not,
+# something is wrong upstream - it STOPS (never rebase/force here).
 export def "relay from" []: nothing -> nothing {
     if not (on-branch) { return }
     ensure-clean
     let h = (handle)
-    let mine = $"draft/ai/($h)"
-    let theirs = $"draft/($h)"
+    let fae = $"draft/ai/($h)"
+    let principal = $"draft/($h)"
     step $"fetching remote (cy relayed)" ["fetch" "relayed"]
-    step $"fast-forwarding (cy $theirs) onto (cy $mine)" ["merge" "--ff-only" $"relayed/($mine)"]
+    step $"updating local (cy $fae)" ["fetch" "relayed" $"($fae):($fae)"]
+    step $"fast-forwarding (cy $principal) onto (cy $fae)" ["merge" "--ff-only" $"relayed/($fae)"]
     relay-summary $h
 }
 
-# hand your work to the relay: a plain (fast-forward) push of your branch to the
-# bare, so the fae can rebase its next work on top of it.
+# hand the principal's work to the relay: a plain (fast-forward) push of the
+# principal branch to the bare, so the fae can rebase its next work on top of it.
 export def "relay to" []: nothing -> nothing {
     if not (on-branch) { return }
     let h = (handle)
-    let theirs = $"draft/($h)"
-    step $"pushing (cy $theirs) to remote (cy relayed)" ["push" "relayed" $theirs]
+    let principal = $"draft/($h)"
+    step $"pushing (cy $principal) to remote (cy relayed)" ["push" "relayed" $principal]
     relay-summary $h
 }
 
-# publish to GitHub, fast-forward only: the fae's branch (off the bare), your
-# branch, then dev. Any non-ff aborts before it can touch origin's history.
+# publish to GitHub, fast-forward only: the fae branch (off the bare), the
+# principal branch, then dev. Any non-ff aborts before it can touch origin.
 export def "relay up" []: nothing -> nothing {
     if not (on-branch) { return }
     let h = (handle)
-    let mine = $"draft/ai/($h)"
-    let theirs = $"draft/($h)"
+    let fae = $"draft/ai/($h)"
+    let principal = $"draft/($h)"
     step $"fetching remote (cy relayed)" ["fetch" "relayed"]
+    step $"updating local (cy $fae)" ["fetch" "relayed" $"($fae):($fae)"]
     step $"fetching remote (cy origin)" ["fetch" "origin"]
-    step $"publishing (cy $mine) to remote (cy origin)" ["push" "origin" $"relayed/($mine):($mine)"]
-    step $"publishing (cy $theirs) to remote (cy origin)" ["push" "origin" $theirs]
+    step $"publishing (cy $fae) to remote (cy origin)" ["push" "origin" $"relayed/($fae):($fae)"]
+    step $"publishing (cy $principal) to remote (cy origin)" ["push" "origin" $principal]
     step $"publishing (cy dev) to remote (cy origin)" ["push" "origin" "dev"]
     relay-summary $h
 }

@@ -76,20 +76,16 @@ export def relay-sync-core [h: string]: nothing -> record<their_branch: string, 
         ^git rebase --abort | complete
         error make { msg: $"relay stopped: rebase ($mine) onto ($theirs) conflicted, aborted: ($rb.stdout | str trim)" }
     }
-    let has_bare = (ref-exists $bare_mine)
-    if $has_bare {
-        let anc = (^git merge-base --is-ancestor $bare_mine HEAD | complete)
-        if $anc.exit_code != 0 {
-            error make { msg: $"relay STOP: ($bare_mine) is not an ancestor of ($mine) - push would not fast-forward; reconcile by hand, never force" }
-        }
-    }
+    # ff-push my rebased branch back to the bare so local == bare (synced). a
+    # plain push is ff-only - a non-ff is rejected and grun STOPS, never forces.
+    grun ["push" "relayed" $mine] $"fast-forward ($mine) to the bare"
     let d = (rev-delta $theirs $mine)
     {
         their_branch: $theirs,
         mine_branch: $mine,
         their_tip: (^git rev-parse --short $theirs | str trim),
         mine_tip: (^git rev-parse --short HEAD | str trim),
-        bare_mine_tip: (if $has_bare { (^git rev-parse --short $bare_mine | str trim) } else { "" }),
+        bare_mine_tip: (^git rev-parse --short $bare_mine | str trim),
         ahead: $d.ahead,
         behind: $d.behind,
     }

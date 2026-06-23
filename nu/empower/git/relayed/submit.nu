@@ -30,7 +30,6 @@ export def main [args: record<repo: directory, msg_shm: string>]: nothing -> rec
         $committed = true
     }
     let t = (common relay-sync-core $h)
-    common grun ["push" "relayed" $mine] $"push ($mine) to the bare"
     {
         handle: $h,
         committed: $committed,

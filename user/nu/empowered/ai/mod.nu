@@ -10,11 +10,12 @@
 # config (portable). Requires the `gstat` plugin. Assumes the repo is already set
 # up against `origin`, with `dev` and `draft/<handle>` tracking it.
 #
-# INVARIANT - every relay hop is fast-forward only. Nothing here force-pushes:
-# not the bare, and never origin. The fae rebases its work onto the principal
-# branch before pushing to the bare, so this side only ever fast-forwards. A
-# non-ff hop is a STOP - it aborts loudly rather than overwrite history (origin
-# is immutable). If a relay stops, reconcile by hand; never add --force here.
+# INVARIANT - every relay hop to the bare or origin is fast-forward only. Nothing
+# here force-pushes: not the bare, and never origin. The local fae mirror is kept
+# current by REBASE (a plain ff breaks if the bare's fae branch was rewritten -
+# e.g. a recovery; rebase replays the mirror's commits, dropping redundant ones
+# as empty, and never blind-forces). A non-ff push/merge or a rebase conflict is
+# a STOP - it aborts loudly rather than overwrite history (origin is immutable).
 
 # the principal handle, from git config (the host user.name is the handle)
 def handle []: nothing -> string { ^git config user.name | str trim }
@@ -33,6 +34,38 @@ def step [label: string, args: list<string>]: nothing -> nothing {
         if not ($r.stdout | is-empty) { print -e ($r.stdout | str trim) }
         error make { msg: $"relay stopped at: ($label)" }
     }
+    print $"(ansi green)done(ansi reset)"
+}
+
+# bring the local fae mirror (draft/ai/<h>) to the bare's fae branch. Created if
+# missing; otherwise REBASED onto the bare - a plain ff would break when the bare
+# was rewritten (a recovery), so rebase replays the mirror's commits, dropping
+# now-redundant ones as empty, and never blind-forces. A rebase conflict STOPS.
+# Switches in to rebase and back to the principal branch; assumes a clean tree.
+def update-fae-mirror [h: string]: nothing -> nothing {
+    let fae = $"draft/ai/($h)"
+    let principal = $"draft/($h)"
+    print -n $"(ansi blue)[relay](ansi reset) updating local (cy $fae) ... "
+    if not ($fae in (^git for-each-ref "--format=%(refname:short)" "refs/heads" | lines)) {
+        let br = (^git branch $fae $"relayed/($fae)" | complete)
+        if $br.exit_code != 0 {
+            print $"(ansi red)failed(ansi reset)"
+            if not ($br.stderr | is-empty) { print -e ($br.stderr | str trim) }
+            error make { msg: $"relay stopped: creating local ($fae)" }
+        }
+        print $"(ansi green)done(ansi reset)"
+        return
+    }
+    let rb = (^git rebase $"relayed/($fae)" $fae | complete)
+    if $rb.exit_code != 0 {
+        ^git rebase --abort | complete
+        ^git switch $principal | complete
+        print $"(ansi red)failed(ansi reset)"
+        if not ($rb.stdout | is-empty) { print -e ($rb.stdout | str trim) }
+        if not ($rb.stderr | is-empty) { print -e ($rb.stderr | str trim) }
+        error make { msg: $"relay stopped: rebasing local ($fae) onto the bare (conflict)" }
+    }
+    ^git switch $principal | complete
     print $"(ansi green)done(ansi reset)"
 }
 
@@ -72,24 +105,22 @@ def relay-summary [h: string]: nothing -> nothing {
 }
 
 # one-time: create the local checkout-able mirror of the fae branch. Re-run to
-# refresh it (the from/up commands keep it current each run).
+# refresh it (the from command keeps it current each run).
 export def "relay setup" []: nothing -> nothing {
     if not ("relayed" in (^git remote | lines)) {
         print -e $"(ansi red)error:(ansi reset) no (cy relayed) remote - apply the relay .git/config first"
         return
     }
+    ensure-clean
     let h = (handle)
-    let fae = $"draft/ai/($h)"
     step $"fetching remote (cy relayed)" ["fetch" "relayed"]
-    # the local mirror only ever fast-forwards from the bare (the fae's published
-    # branch moves forward); a non-ff here is a STOP, never a force.
-    step $"updating local (cy $fae)" ["fetch" "relayed" $"($fae):($fae)"]
+    update-fae-mirror $h
 }
 
-# pull the fae's work in: fetch the bare, refresh the local fae mirror, then
-# FAST-FORWARD the principal branch onto the fae branch. The fae has already
-# rebased its work on top of the principal branch, so this is a ff; if not,
-# something is wrong upstream - it STOPS (never rebase/force here).
+# pull the fae's work in: fetch the bare, rebase the local fae mirror onto it,
+# then FAST-FORWARD the principal branch onto the fae branch. The fae has already
+# rebased its work on top of the principal branch, so the merge is a ff; if not,
+# something is wrong upstream - it STOPS (never rebase/force the principal here).
 export def "relay from" []: nothing -> nothing {
     if not (on-branch) { return }
     ensure-clean
@@ -97,30 +128,34 @@ export def "relay from" []: nothing -> nothing {
     let fae = $"draft/ai/($h)"
     let principal = $"draft/($h)"
     step $"fetching remote (cy relayed)" ["fetch" "relayed"]
-    step $"updating local (cy $fae)" ["fetch" "relayed" $"($fae):($fae)"]
+    update-fae-mirror $h
     step $"fast-forwarding (cy $principal) onto (cy $fae)" ["merge" "--ff-only" $"relayed/($fae)"]
     relay-summary $h
 }
 
-# hand the principal's work to the relay: a plain (fast-forward) push of the
-# principal branch to the bare, so the fae can rebase its next work on top of it.
+# publish the principal's work to the bare: ff-push the principal branch, then
+# fast-forward the bare's fae ref up to it so BOTH bare refs converge before `up`
+# (Flow 2 - you changed). Both are ff; a non-ff means not synced -> STOP. The fae
+# then catches its local branch up on its next sync.
 export def "relay to" []: nothing -> nothing {
     if not (on-branch) { return }
     let h = (handle)
     let principal = $"draft/($h)"
+    let fae = $"draft/ai/($h)"
     step $"pushing (cy $principal) to remote (cy relayed)" ["push" "relayed" $principal]
+    step $"fast-forwarding (cy $fae) to (cy $principal) on (cy relayed)" ["push" "relayed" $"($principal):($fae)"]
     relay-summary $h
 }
 
 # publish to GitHub, fast-forward only: the fae branch (off the bare), the
 # principal branch, then dev. Any non-ff aborts before it can touch origin.
+# (The local fae mirror is maintained by `relay from`; up publishes off the bare.)
 export def "relay up" []: nothing -> nothing {
     if not (on-branch) { return }
     let h = (handle)
     let fae = $"draft/ai/($h)"
     let principal = $"draft/($h)"
     step $"fetching remote (cy relayed)" ["fetch" "relayed"]
-    step $"updating local (cy $fae)" ["fetch" "relayed" $"($fae):($fae)"]
     step $"fetching remote (cy origin)" ["fetch" "origin"]
     step $"publishing (cy $fae) to remote (cy origin)" ["push" "origin" $"relayed/($fae):($fae)"]
     step $"publishing (cy $principal) to remote (cy origin)" ["push" "origin" $principal]

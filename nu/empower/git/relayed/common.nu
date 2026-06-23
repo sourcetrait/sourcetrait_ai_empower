@@ -64,17 +64,30 @@ export def rev-delta [a: string, b: string]: nothing -> record<behind: int, ahea
 export def relay-sync-core [h: string]: nothing -> record<their_branch: string, mine_branch: string, their_tip: string, mine_tip: string, bare_mine_tip: string, ahead: int, behind: int> {
     let theirs = $"draft/($h)"
     let mine = $"draft/ai/($h)"
+    let bare_theirs = $"relayed/($theirs)"
     let bare_mine = $"relayed/($mine)"
     grun ["fetch" "relayed"] "fetch the bare"
+    # update the local principal mirror by rebase (robust to a rewritten bare - a
+    # plain ff breaks on a recovery; rebase replays, dropping redundant commits as
+    # empty, and never blind-forces; a conflict STOPS). create it if missing.
+    if not (ref-exists $theirs) {
+        grun ["branch" $theirs $bare_theirs] $"create ($theirs) from the bare"
+    } else {
+        let rbt = (^git rebase $bare_theirs $theirs | complete)
+        if $rbt.exit_code != 0 {
+            ^git rebase --abort | complete
+            error make { msg: $"relay stopped: rebasing local ($theirs) onto the bare (conflict): ($rbt.stdout | str trim)" }
+        }
+    }
+    # get onto my branch (create if missing), rebase it onto the principal branch
     if not (ref-exists $mine) {
         grun ["branch" $mine $bare_mine] $"create ($mine) from the bare"
     }
     grun ["switch" $mine] $"switch to ($mine)"
-    grun ["fetch" "relayed" $"($theirs):($theirs)"] $"fast-forward ($theirs) from the bare"
     let rb = (^git rebase $theirs | complete)
     if $rb.exit_code != 0 {
         ^git rebase --abort | complete
-        error make { msg: $"relay stopped: rebase ($mine) onto ($theirs) conflicted, aborted: ($rb.stdout | str trim)" }
+        error make { msg: $"relay stopped: rebasing ($mine) onto ($theirs) conflicted, aborted: ($rb.stdout | str trim)" }
     }
     # ff-push my rebased branch back to the bare so local == bare (synced). a
     # plain push is ff-only - a non-ff is rejected and grun STOPS, never forces.

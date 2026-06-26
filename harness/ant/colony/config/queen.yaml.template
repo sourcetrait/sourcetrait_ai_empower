@@ -1,0 +1,11 @@
+ai_identity: "%{ai_identity}%"
+fae_identity: "%{fae_identity}%"
+ai_shm_dir: "/dev/shm/box/ai/{infer:ai_identity}/{infer:session_nom}"
+fae_shm_dir: "/dev/shm/box/ai/{infer:fae_identity}/{infer:fae_session_nom}"
+queen_channel_input_file: "{infer:ai_shm_dir}/queen/channel/input.txt"
+queen_channel_input_dir: "{infer:ai_shm_dir}/queen/channel/input"
+fae_channel_output_file: "{infer:fae_shm_dir}/colony/channel/input.txt"
+fae_channel_output_dir: "{infer:fae_shm_dir}/colony/channel/input"
+env:
+  XDG_CACHE_HOME: ~/.sys/.xdg/cache
+  XDGX_SHM_DIR: /dev/shm/box

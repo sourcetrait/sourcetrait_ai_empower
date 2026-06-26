@@ -1,17 +1,8 @@
 ---
 name: nu
 description: |
-  nushell_mcp tool surface plus the out-of-band library-authoring
-  conventions. Covers the 12 MCP tools (run, interact, call, rerun,
-  processes, kill, info, inspect, new, commit, library, learn) and the
-  new -> edit -> commit flow agents use to build libraries the MCP
-  validates, indexes, and serves.
-
-  Invoke this skill when invoking nushell_mcp tools (`mcp__nushell__*`),
-  when authoring or maintaining a nushell library, or when looking up a
-  tool's args/result shape. Library-authoring conventions cover the
-  single-main function contract, the mod.nu cascade, node
-  documentation, and the new -> edit -> commit lifecycle.
+  Load this skill to learn how to correctly use `nushell_mcp` tools as well as
+  to learn how to make use of and author within its library ecosystem.
 ---
 # nu
 
@@ -185,7 +176,27 @@ the call's captured stdout/stderr log by nonce. It is per-call and does
 NOT persist - a later call (even on the stateful interact worker) sees its
 own fresh nonce, never a prior one.
 
-## Library authoring conventions
+## Library Ecosystem 
+
+Nu ecosystem libraries are custom authored Nu module heirarchies that export:
+- `main` endpoint definitions that are exposed to MCP `call()` by namepath.
+- Utility definitions and consts that are exported for general use within
+  any other other library and within MCP `run()/call()/interact()` bodies.
+- Private definitions and consts that are used internally by the library itself.
+
+Libraries are installed system-wide and made available via `$nu.NU_LIB_DIRS`.
+Their exports can be accessed anywhere, simply:
+```nu
+use <library name>
+<library name> <module 1> <module 2> <export 1> <params>
+```
+
+The library ecosystem is what makes Nushell MCP a powerful tool. It allows
+agents and users to author reusable and consistent tools at will. Their
+definition signatures are automatically docmented via the Nushell MCP's `info()`
+ensuring that agents are aware of tools at their disposal on each session.
+
+## Library Authoring 
 
 A library is a directory tree the agent owns and edits, promoted into
 the MCP's signed canonical store by `commit`. The lifecycle over that
@@ -1334,4 +1345,5 @@ subagent) learns exactly which `call()` targets exist now - then
 `inspect()` for a node's full details - rather than trusting a static
 index that drifts.
 
-Run `mcp__nushell__info()` on every bootstrap so the session knows its full toolset.
+Agents should use `mcp__nushell__info()` on every session so they knows the full
+toolset.

@@ -176,15 +176,15 @@ the call's captured stdout/stderr log by nonce. It is per-call and does
 NOT persist - a later call (even on the stateful interact worker) sees its
 own fresh nonce, never a prior one.
 
-## Library Ecosystem 
+## Library Ecosystem
 
-Nu ecosystem libraries are custom authored Nu module heirarchies that export:
+Nu ecosystem libraries are custom authored Nu module hierarchies that export:
 - `main` endpoint definitions that are exposed to MCP `call()` by namepath.
 - Utility definitions and consts that are exported for general use within
-  any other other library and within MCP `run()/call()/interact()` bodies.
+  any other library and within MCP `run()/call()/interact()` bodies.
 - Private definitions and consts that are used internally by the library itself.
 
-Libraries are installed system-wide and made available via `$nu.NU_LIB_DIRS`.
+Libraries are installed system-wide and made available via `$env.NU_LIB_DIRS`.
 Their exports can be accessed anywhere, simply:
 ```nu
 use <library name>
@@ -193,10 +193,10 @@ use <library name>
 
 The library ecosystem is what makes Nushell MCP a powerful tool. It allows
 agents and users to author reusable and consistent tools at will. Their
-definition signatures are automatically docmented via the Nushell MCP's `info()`
+definition signatures are automatically documented via the Nushell MCP's `info()`
 ensuring that agents are aware of tools at their disposal on each session.
 
-## Library Authoring 
+## Library Authoring
 
 A library is a directory tree the agent owns and edits, promoted into
 the MCP's signed canonical store by `commit`. The lifecycle over that
@@ -1345,5 +1345,5 @@ subagent) learns exactly which `call()` targets exist now - then
 `inspect()` for a node's full details - rather than trusting a static
 index that drifts.
 
-Agents should use `mcp__nushell__info()` on every session so they knows the full
-toolset.
+Agents should use `mcp__nushell__info()` on every session so that they are
+aware of the full toolset.

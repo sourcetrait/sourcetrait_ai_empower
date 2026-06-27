@@ -419,3 +419,22 @@ fn context_usage_renders_compact() {
         assert_eq!(line, format!("emptwo: M {expected}\n"), "tokens={tokens}");
     }
 }
+
+#[tested]
+fn model_filter_strips_m_context() {
+    let test = testing::test!({
+        .using_temp_dir()
+    });
+    let cache = test.temp_dir().to_path_buf();
+    let cases = [
+        ("Opus 4.8 (1M context)", "Opus 4.8 (1M)"),
+        ("Opus 4.8 (10M context)", "Opus 4.8 (10M)"),
+        ("Sonnet 4.6", "Sonnet 4.6"),
+    ];
+    for (display, expected) in cases {
+        let payload = r#"{"workspace":{"project_dir":"/home/box/ai/emptwo"},"model":{"display_name":"DISPLAY"}}"#
+            .replace("DISPLAY", display);
+        let line = run_claudeline(&payload, &cache, "UTC");
+        assert_eq!(line, format!("emptwo: {expected}\n"), "display={display}");
+    }
+}

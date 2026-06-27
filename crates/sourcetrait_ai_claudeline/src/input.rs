@@ -68,7 +68,7 @@ impl Input {
             .get("model")
             .and_then(|m| m.get("display_name"))
             .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
+            .map(apply_model_filters);
         let effort = v
             .get("effort")
             .and_then(|e| e.get("level"))
@@ -135,6 +135,16 @@ fn basename(p: &str) -> String {
     Path::new(p)
         .file_name()
         .map_or_else(|| p.to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// Run the model display name through each display filter in turn.
+fn apply_model_filters(name: &str) -> String {
+    filter_m_context(name)
+}
+
+/// Drop " context" after a context-window size, e.g. "1M context" -> "1M".
+fn filter_m_context(name: &str) -> String {
+    name.replace("M context", "M")
 }
 
 /// What: render-ready pieces of a rate-limit window (used % floored, plus

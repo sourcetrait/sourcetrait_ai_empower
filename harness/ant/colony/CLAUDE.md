@@ -16,4 +16,5 @@ Use your Read tool to read files, your Write tool to write files, your Search to
 
 Conditionally, once your role has been locked as `queen`: Use your Read tool to fully read, understand, and abide by: `./queen/CLAUDE.queen.md`
 
+Conditionally, once your role has been locked as `drone`: Use your Read tool to fully read, understand, and abide by: `./drone/CLAUDE.drone.md`
 

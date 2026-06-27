@@ -38,6 +38,7 @@ with their values inferred by you and filled out as literals:
 ```yaml
 ---
 session_nom: {infer:session_nom}
+drone_name: {infer:drone_name}
 ---
 ```
 

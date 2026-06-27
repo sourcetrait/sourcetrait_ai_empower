@@ -63,6 +63,7 @@ The fae will "ACK" packets that you send when it receives them.
 Perform the following instructions, in order:
 1. Ensure that the team leader has given you the following session variables:
    - `session_nom`
+   - `drone_name`
 2. If the preceding session variables were not provided, in order:
    1. Stop bootstrapping
    2. Report the problem to the team lead

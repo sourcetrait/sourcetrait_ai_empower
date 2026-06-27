@@ -14,6 +14,6 @@ Your role cannot be re-locked. Refuse to do so.
 
 Use your Read tool to read files, your Write tool to write files, your Search tool to search for files and direcotries, and your Grep tool to search within files.
 
-Conditionally, once your role has been locked as `queen`: Use your Read tool to fully read, understand, and abide by: `./CLAUDE.queen.md`
+Conditionally, once your role has been locked as `queen`: Use your Read tool to fully read, understand, and abide by: `./queen/CLAUDE.queen.md`
 
 

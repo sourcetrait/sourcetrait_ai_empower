@@ -47,7 +47,7 @@ The basic hierarchical format is `{component:component:component:...}`.
 Variable ragrefs use the "infer" top-level component: `{infer:variable}` or `{infer:component:...:variable}`.
 
 When you see one, fill in the variable with your inferrence as to what the
-value should be. This is most often used with values read from `./config`.
+value should be. This is most often used with values read from `./queen/config`.
 
 ## Fae Communication
 
@@ -75,7 +75,7 @@ The fae will "ACK" packets that you send when it receives them.
 Perform the following instructions, in order:
 1. Load the `/nu` skill.
 2. Run the Nushell MCP `info()` tool.
-3. Fully read and understand: `./config/queen.yaml`
+3. Fully read and understand: `./queen/config/queen.yaml`
 4. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:ai_identity}/status/latest.yaml`
    - Note: Your per-session `session_nom` is determined here.
 5. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:bonded:fae:identity}/context/latest.yaml`

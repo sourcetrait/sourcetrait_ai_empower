@@ -3,16 +3,16 @@
 export def "main ant colony new" [fae: string]: nothing -> nothing {
     let ant_dir = (pwd)
     if not ($ant_dir | path exists) {
-        error make $"Directory is does not exist: ($ant_dir)"
+        error make $"Directory does not exist: ($ant_dir)"
     }
 
     check_ant_repo
     cd (^git rev-parse --show-toplevel)
 
     let colony_branch = $"colony/($fae)"
-    if ($colony_branch in git_branches) {
+    if ($colony_branch in (git_branches)) {
         error make $"Colony branch already exists: ($colony_branch)"
-    } else if (pwd | path join $colony_branch | exists) {
+    } else if (pwd | path join $colony_branch | path exists) {
         error make $"Colony directory already exists: ($colony_branch)"
     }
 
@@ -28,7 +28,7 @@ export def "main ant colony new" [fae: string]: nothing -> nothing {
             return
         }
 
-        retire dir $colony_claude_project_dir ~/tmp/retired/claude/projects
+        retire dir $colony_claude_project_dir ($env.HOME | path join 'tmp/retired/claude/projects')
             | do { $"Retired to: (ansi cyan)($in)(ansi reset)" }
             | report info
     }
@@ -56,12 +56,12 @@ def "report warn" []: string -> nothing {
 
 def "retire dir" [dir: directory, to: directory]: nothing -> directory {
     mut retired_to: oneof<directory, nothing> = null 
-    while not $retired_to {
+    while $retired_to == null {
         let to_rando: directory = $to | path join (random chars -l 4) 
         if ($to_rando | path exists) { continue }
         mkdir $to_rando
         mv $dir $to_rando
-        $retired_to = $to_rando | path join ($dir | path dirname)
+        $retired_to = $to_rando | path join ($dir | path basename)
     }
 
     $retired_to
@@ -83,7 +83,7 @@ def "slugify path" []: string -> string {
 # Creates a new ant harness repository, which is a collection of colonies.
 export def "main ant new" [ant_dir: directory, harness_templates_dir?: directory]: nothing -> nothing {
     if (($ant_dir | path exists) and (ls -a $ant_dir | is-not-empty)) {
-        error make $"Directory is NOT empty: ($ant_dir)"
+        error make $"Directory is not empty: ($ant_dir)"
     }
     let harness_templates_dir = if ($harness_templates_dir == null) {
         find_harness_templates_dir

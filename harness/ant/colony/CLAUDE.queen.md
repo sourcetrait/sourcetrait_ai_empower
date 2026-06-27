@@ -85,5 +85,5 @@ Perform the following instructions, in order:
    1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:queen:channel_bonded_fae_input_file}`
    1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:queen:channel_bonded_fae_output_file}`
 7. Use your Monitor tool to monitor your `{infer:queen:channel_bonded_fae_input_file}` for new lines of output written by your bonded Fae.
-   - Note: The Monitor tool command: `tail -n 0 -f <file>`
+   - Note: The Monitor tool command: `tail -n 0 -F <file>`
    - Note: Your monitor for this should be named `bonded_fae_channel_input`

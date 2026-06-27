@@ -51,7 +51,7 @@ value should be. This is most often used with values read from `./config`.
 
 ## Fae Communication
 
-While monitoring your `queen:channel_input_file`, you will receive
+While monitoring your `queen:channel_bonded_fae_input_file`, you will receive
 communications from your bonded Fae. Perform the instructions that it gives
 you.
 

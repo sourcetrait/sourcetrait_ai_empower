@@ -20,10 +20,12 @@
 
 ## law: sourcetrait_code
 - `code_well_formed` Write well-formed source-code
-- `code_well_documented` Document each module, type, and function with three 1-2 short-sentence summary paragraphs describing:
-  - (What) it does
-  - (Why) it exists
-  - (Where) it is used or intended to be used
+- `code_well_documented` Document each module, type, and function:
+  - As a thought process, establish what it does, why it exists, and where it
+    is used.
+  - From that, write a single-line, well-formed summary.
+  - Beyond the summary, cover only what is not obvious from the module path,
+    item name, and arguments - in the following paragraph(s), if any.
 - `code_well_tested` Write integration tests to ensure proper function over time. Write unit tests to verify small internals.
 
 ## law: sourcetrait_rust

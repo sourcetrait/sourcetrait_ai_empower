@@ -41,19 +41,14 @@ impl Input {
             })
     }
 
-    /// What: the agent identity that scopes the cache tree - the basename
-    /// of `workspace.project_dir` (e.g. `emptwo` for `/home/box/ai/emptwo`).
-    ///
-    /// Why: claudeline writes per-identity so multiple harnesses on one box
-    /// never collide. No path enforcement - just the leaf segment.
-    ///
-    /// Where: run(), to build this render's status + context dirs.
+    /// This render's cache-scoping identity, derived from
+    /// `workspace.project_dir` by `ai_identity`; None when that field is absent.
     pub(crate) fn identity(&self) -> Option<String> {
         self.value
             .get("workspace")
             .and_then(|w| w.get("project_dir"))
             .and_then(serde_json::Value::as_str)
-            .map(basename)
+            .map(ai_identity)
     }
 
     /// What: pull the render-relevant fields out of the payload into a
@@ -68,7 +63,7 @@ impl Input {
             .get("workspace")
             .and_then(|w| w.get("project_dir"))
             .and_then(serde_json::Value::as_str)
-            .map(basename);
+            .map(ai_identity);
         let model = v
             .get("model")
             .and_then(|m| m.get("display_name"))
@@ -105,9 +100,37 @@ impl Input {
     }
 }
 
-/// What: last path segment of a project dir (jq `split("/") | last`).
-/// Why: the statusline prefix shows the project's leaf name. Where:
-/// render_input.
+/// The cache-scoping identity for `project_dir`: the dir basename, except a
+/// colony worktree (home-relative `.../ant/colony/<fae>`) maps to `ant_<fae>`
+/// so it never collides with its bonded fae's own `<fae>` identity.
+///
+/// The `$HOME` strip only reduces the path before the suffix check; harnesses
+/// outside `$HOME` are unsupported, so a non-home path falls through to the
+/// basename.
+fn ai_identity(project_dir: &str) -> String {
+    const ANT: &str = "ant";
+    const COLONY: &str = "colony";
+
+    let home = env::var("HOME").unwrap_or_default();
+    let relative = Path::new(project_dir)
+        .strip_prefix(&home)
+        .unwrap_or_else(|_| Path::new(project_dir));
+    let segments: Vec<&str> = relative
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => s.to_str(),
+            _ => None,
+        })
+        .collect();
+    if let [.., class, convention, fae] = segments.as_slice() {
+        if *class == ANT && *convention == COLONY {
+            return format!("{}_{}", ANT, fae);
+        }
+    }
+    basename(project_dir)
+}
+
+/// The last path segment of `p`; the non-colony fallback for `ai_identity`.
 fn basename(p: &str) -> String {
     Path::new(p)
         .file_name()

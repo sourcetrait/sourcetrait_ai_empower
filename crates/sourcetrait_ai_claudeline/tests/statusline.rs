@@ -50,12 +50,20 @@ fn context_dir(cache: impl AsRef<Path>) -> PathBuf {
 }
 
 fn claudeline_dir(cache: impl AsRef<Path>) -> PathBuf {
+    claudeline_dir_for(cache, "emptwo")
+}
+
+/// The cache root for an explicit identity (the colony test uses ant_<fae>).
+fn claudeline_dir_for(
+    cache: impl AsRef<Path>,
+    identity: &str,
+) -> PathBuf {
     cache
         .as_ref()
         .join("sourcetrait")
         .join("empower")
         .join("claudeline")
-        .join("emptwo")
+        .join(identity)
 }
 
 /// A full, schema-current payload for session `sid` (project emptwo). The
@@ -355,4 +363,35 @@ fn scratch_prune_leaves_non_dir_strays() {
     run_claudeline_scratch(&full_payload(sid_b), &cache, &shm, &tmp);
 
     assert!(stray.exists(), "non-dir stray left for external cleanup");
+}
+
+#[tested]
+fn colony_project_dir_maps_to_ant_identity() {
+    let test = testing::test!({
+        .using_temp_dir()
+    });
+    let cache = test.temp_dir().to_path_buf();
+    let sid = "eeeeeeee-4444-4444-4444-444444444444";
+
+    // A colony worktree (home-relative .../ant/colony/<fae>): its basename
+    // (emptwo) would collide with the bonded fae's own identity, so it must
+    // scope to ant_emptwo - for both the cache tree and the rendered prefix.
+    let payload = r#"{"session_id":"SID","workspace":{"project_dir":"/home/box/ai/ant/colony/emptwo"},"model":{"display_name":"M"},"context_window":{"used_percentage":5,"total_input_tokens":100,"total_output_tokens":2,"context_window_size":1000000}}"#
+        .replace("SID", sid);
+    let line = run_claudeline(&payload, &cache, "UTC");
+    assert_eq!(line, "ant_emptwo: M 5%\n", "render prefix is the ant identity");
+
+    let colony = claudeline_dir_for(&cache, "ant_emptwo");
+    assert!(
+        colony.join("status").join("latest.yaml").exists(),
+        "status tree under ant_emptwo"
+    );
+    assert!(
+        colony.join("context").join("latest.yaml").exists(),
+        "context tree under ant_emptwo"
+    );
+    assert!(
+        !claudeline_dir_for(&cache, "emptwo").exists(),
+        "no bare-fae collision tree"
+    );
 }

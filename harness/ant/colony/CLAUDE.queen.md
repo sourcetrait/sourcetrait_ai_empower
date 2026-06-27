@@ -61,14 +61,14 @@ The fae's output to you will, on your channel input file, will consist of:
 - "FAE SYN <input filename>" The fae has sent a new packet to you.
 - "FAE ACK <output filename>" The fae acknowledges a packet you sent to it.
 
-Input packet filenames will be relative to your `queen:channel_input_dir`.
+Input packet filenames will be relative to your `queen:channel_bonded_fae_input_dir`.
 
 Once a packet has been received from the Fae, acknowledge its receipt by
-appending, with your Write tool, to its `bonded:fae:channel_output_file`: "COLONY ACK <input filename>".
+appending, with your Write tool, to its `queen:channel_bonded_fae_output_file`: "COLONY ACK <input filename>".
 
 Conversely, when you wish to send the Fae a packet:
-1. Use your Write tool to write a uniquely named filename within the `bonded:fae:channel_output_dir` with your intended message.
-2. Append to the `bonded:fae:channel_output_file` using your Write tool with: "COLONY SYN <output filename>"
+1. Use your Write tool to write a uniquely named filename within the `queen:channel_bonded_fae_output_dir` with your intended message.
+2. Append to the `queen:channel_bonded_fae_output_file` using your Write tool with: "COLONY SYN <output filename>"
 
 The fae will "ACK" packets that you send when it receives them.
 
@@ -82,6 +82,6 @@ Perform the following instructions, in order:
 5. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:bonded:fae:identity}/context/latest.yaml`
    - Note: Your bonded fae's per-session `bonded:fae:session_nom` is determined here (vis a vis its `session_nom`).
 6. Initiate your fae communication channels, in order:
-   1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:queen:channel_input_file}`
-   1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:bonded:fae:channel_output_file}`
-7. Monitor your `{infer:queen:channel_input_file}` for new lines of output written by your bonded Fae.
+   1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:queen:channel_bonded_fae_input_file}`
+   1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:queen:channel_bonded_fae_output_file}`
+7. Monitor your `{infer:queen:channel_bonded_fae_input_file}` for new lines of output written by your bonded Fae.

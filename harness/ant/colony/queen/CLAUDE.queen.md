@@ -51,23 +51,27 @@ value should be. This is most often used with values read from `./queen/config`.
 
 ## Fae Communication
 
-While monitoring your `queen:channel_bonded_fae_input_file`, you will receive
-communications from your bonded Fae. Perform the instructions that it gives
-you.
+You begin communication with your bonded fae by calling `empower:queen/channel:open`.
+
+While monitoring your bonded channel input file, you will receive communications from
+your bonded Fae. Perform the instructions that it gives you.
 
 The fae's output to you will, on your channel input file, will consist of:
-- "FAE ONLINE <fae session_nom>" The fae has started a new session.
+- "FAE ONLINE <fae_session_nom>" The fae has started a new session.
 - "FAE OFFLINE" The fae's session has ended.
-- "FAE SYN <input filename>" The fae has sent a new packet to you.
-- "FAE ACK <output filename>" The fae acknowledges a packet you sent to it.
+- "FAE SYN <(fae_session_nom)_(rx_id).txt>" The fae has sent a new packet to you.
+- "FAE SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id)>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
+- "FAE ACK <packet>" The fae acknowledges a packet you sent to it.
 
 Input packet filenames will be relative to your `queen:channel_bonded_fae_input_dir`.
 
-Once a packet has been received from the Fae, acknowledge its receipt by calling `empower:channel:ack`.
+Once a packet has been received from the Fae, acknowledge its receipt by calling `empower:queen/channel:ack`.
 
 Conversely, when you wish to send the Fae a packet:
 1. Use your Write tool to create a uniquely named packet file within the `queen:channel_bonded_fae_output_dir` with your intended message.
-2. Call `empower:channel:syn` for the packet file. 
+2. Call `empower:queen/channel:syn` for the packet file. 
+
+If you are replying to a packet that made a request for data, specify the original request in the 'response_to_rx_id' field when callying 'syn'.
 
 The fae will "ACK" packets that you send when it receives them.
 
@@ -81,10 +85,13 @@ Perform the following instructions, in order:
 5. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:bonded:fae:identity}/context/latest.yaml`
    - Note: Your bonded fae's per-session `bonded:fae:session_nom` is determined here (vis a vis its `session_nom`).
 7. Run Nushell MCP `inspect()` for the following calls:
-   - `empower:channel:syn`
-   - `empower:channel:ack`
+   - `empower:queen/channel:open`
+   - `empower:queen/channel:syn`
+   - `empower:queen/channel:ack`
+   - `empower:queen/channel:close`
 6. Initiate your bonded fae communication channels, in order:
-   1. Use your Write tool to initialize `{infer:queen:channel_bonded_fae_input_file}` with "COLONY ONLINE {infer:session_nom}".
-7. Use your Monitor tool to monitor your `{infer:queen:channel_bonded_fae_input_file}` for new lines of output written by your bonded Fae.
-   - Note: The Monitor tool command: `tail -n 0 -f <file>`
-   - Note: Your monitor for this should be named `bonded_fae_channel_input`
+   1. Use your Write tool to initialize an empty `{infer:queen:channel_bonded_fae_input_file}`.
+   2. Use your Monitor tool to monitor your `{infer:queen:channel_bonded_fae_input_file}` for new lines of output written by your bonded Fae.
+      - Note: The Monitor tool command: `tail -n 0 -f <file>`
+      - Note: Your monitor for this should be named `bonded_fae_channel_input`
+   3. Call `empower:queen/channel:open`.

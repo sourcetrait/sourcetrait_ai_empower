@@ -18,7 +18,7 @@ export def "main ant colony new" [fae: string]: nothing -> nothing {
     ^git worktree add $colony_branch $colony_branch    
     cd $colony_branch
     open --raw config/queen.yaml.template
-        | templation [[ai_identity $"ant_($fae)"] [fae_identity $fae]]
+        | templation [[ai_identity $"ant_($fae)"] [bonded_fae_identity $fae]]
         | save config/queen.yaml
     rm config/queen.yaml.template
     ^git add .

@@ -12,6 +12,25 @@ export def "main ant colony new" [fae: string]: nothing -> nothing {
     let colony_branch = $"colony/($fae)"
     if ($colony_branch in git_branches) {
         error make $"Colony branch already exists: ($colony_branch)"
+    } else if (pwd | path join $colony_branch | exists) {
+        error make $"Colony directory already exists: ($colony_branch)"
+    }
+
+    let colony_claude_project_dir = (
+        $env.CLAUDE_CONFIG_DIR | path join 'projects'
+        | path join (pwd | path join $colony_branch | slugify path)
+    )
+    if ($colony_claude_project_dir | path exists) {
+        $"Previous claude project exists: (ansi cyan)($colony_claude_project_dir)(ansi reset)" | report warn
+        let yn: string = input $"(ansi red_bold)Retire(ansi reset) previous claude project? [yes/(ansi d)no(ansi rst_d)]: " | str downcase
+        if ($yn != 'yes') {
+            $"(ansi bo)aborted(ansi rst_bo)" | report warn
+            return
+        }
+
+        retire dir $colony_claude_project_dir ~/tmp/retired/claude/projects
+            | do { $"Retired to: (ansi cyan)($in)(ansi reset)" }
+            | report info
     }
 
     ^git branch $colony_branch template/colony/default
@@ -23,6 +42,29 @@ export def "main ant colony new" [fae: string]: nothing -> nothing {
     rm config/queen.yaml.template
     ^git add .
     ^git commit -m$"init ($colony_branch)"
+    
+    $"(ansi green)done(ansi reset)" | report info
+}
+
+def "report info" []: string -> nothing {
+    print $"(ansi blue)[empwr](ansi reset) ($in)"
+}
+
+def "report warn" []: string -> nothing {
+    print $"(ansi yellow)[empwr](ansi reset) ($in)"
+}
+
+def "retire dir" [dir: directory, to: directory]: nothing -> directory {
+    mut retired_to: oneof<directory, nothing> = null 
+    while not $retired_to {
+        let to_rando: directory = $to | path join (random chars -l 4) 
+        if ($to_rando | path exists) { continue }
+        mkdir $to_rando
+        mv $dir $to_rando
+        $retired_to = $to_rando | path join ($dir | path dirname)
+    }
+
+    $retired_to
 }
 
 def templation [fill: list<list<string>>]: string -> string {
@@ -32,6 +74,10 @@ def templation [fill: list<list<string>>]: string -> string {
     }
 
     $s
+}
+
+def "slugify path" []: string -> string {
+    $in | str replace --all --regex '[^a-zA-Z0-9]' '-'
 }
 
 # Creates a new ant harness repository, which is a collection of colonies.

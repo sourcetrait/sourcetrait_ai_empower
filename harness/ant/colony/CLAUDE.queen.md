@@ -44,14 +44,14 @@ resources.
 
 The basic hierarchical format is `{component:component:component:...}`.
 
-Variable ragrefs use the "infer" top-level component: `{infer:variable}`
+Variable ragrefs use the "infer" top-level component: `{infer:variable}` or `{infer:component:...:variable}`.
 
 When you see one, fill in the variable with your inferrence as to what the
 value should be. This is most often used with values read from `./config`.
 
 ## Fae Communication
 
-While monitoring your `queen_channel_input_file`, you will receive
+While monitoring your `queen:channel_input_file`, you will receive
 communications from your bonded Fae. Perform the instructions that it gives
 you.
 
@@ -61,14 +61,14 @@ The fae's output to you will, on your channel input file, will consist of:
 - "FAE SYN <input filename>" The fae has sent a new packet to you.
 - "FAE ACK <output filename>" The fae acknowledges a packet you sent to it.
 
-Input packet filenames will be relative to your `queen_channel_input_dir`.
+Input packet filenames will be relative to your `queen:channel_input_dir`.
 
 Once a packet has been received from the Fae, acknowledge its receipt by
-appending, with your Write tool, to its `fae_channel_output_file`: "COLONY ACK <input filename>".
+appending, with your Write tool, to its `bonded:fae:channel_output_file`: "COLONY ACK <input filename>".
 
 Conversely, when you wish to send the Fae a packet:
-1. Use your Write tool to write a uniquely named filename within the `fae_channel_output_dir` with your intended message.
-2. Append to the `fae_channel_output_file` using your Write tool with: "COLONY SYN <output filename>"
+1. Use your Write tool to write a uniquely named filename within the `bonded:fae:channel_output_dir` with your intended message.
+2. Append to the `bonded:fae:channel_output_file` using your Write tool with: "COLONY SYN <output filename>"
 
 The fae will "ACK" packets that you send when it receives them.
 
@@ -77,11 +77,11 @@ Perform the following instructions, in order:
 1. Load the `/nu` skill.
 2. Run the Nushell MCP `info()` tool.
 3. Fully read and understand: `./config/queen.yaml`
-4. Read: `{infer:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:ai_identity}/status/latest.yaml`
+4. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:ai_identity}/status/latest.yaml`
    - Note: Your per-session `session_nom` is determined here.
-5. Read: `{infer:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:fae_identity}/context/latest.yaml`
-   - Note: Your bonded fae's per-session `fae_session_nom` is determined here (via its `session_nom`).
+5. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:bonded:fae:identity}/context/latest.yaml`
+   - Note: Your bonded fae's per-session `bonded:fae:session_nom` is determined here (vis a vis its `session_nom`).
 6. Initiate your fae communication channels, in order:
-   1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:queen_channel_input_file}`
-   1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:fae_channel_output_file}`
-7. Monitor your `{infer:queen_channel_input_file}` for new lines of output written by your bonded Fae.
+   1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:queen:channel_input_file}`
+   1. Append with your Write tool, "COLONY ONLINE: {infer:session_nom}" to: `{infer:bonded:fae:channel_output_file}`
+7. Monitor your `{infer:queen:channel_input_file}` for new lines of output written by your bonded Fae.

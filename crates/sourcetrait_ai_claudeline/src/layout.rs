@@ -48,11 +48,8 @@ pub(crate) fn render(input: &RenderInput, layout: LayoutKind) -> String {
     }
 }
 
-/// What: the current line - `proj: model (effort) ctx% [5h% HHMM] {7d%}`,
-/// each segment present only when its field is. A byte-faithful port of
-/// scripts/sh/statusline.bash's jq render.
-///
-/// Why: the one layout shipped today. Where: `render` for FaeOne.
+/// The current line - `proj: model (effort) ctx [5h% HHMM] {7d%}`, each
+/// segment present only when its field is.
 fn render_fae_one(input: &RenderInput) -> String {
     let mut segs: Vec<String> = Vec::new();
     if let Some(m) = &input.model {
@@ -62,7 +59,7 @@ fn render_fae_one(input: &RenderInput) -> String {
         segs.push(format!("({e})"));
     }
     if let Some(c) = &input.ctx {
-        segs.push(format!("{c}%"));
+        segs.push(c.clone());
     }
     if let Some(fh) = &input.five_hour {
         let mut s = format!("[{}%", fh.used_pct);

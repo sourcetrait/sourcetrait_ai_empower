@@ -76,9 +76,9 @@ impl Input {
             .map(str::to_string);
         let ctx = v
             .get("context_window")
-            .and_then(|c| c.get("used_percentage"))
-            .and_then(serde_json::Value::as_f64)
-            .map(fmt_pct);
+            .and_then(|c| c.get("total_input_tokens"))
+            .and_then(serde_json::Value::as_i64)
+            .map(fmt_context_tokens);
         let five_hour = v
             .get("rate_limits")
             .and_then(|r| r.get("five_hour"))
@@ -153,12 +153,13 @@ fn rate_window(v: &serde_json::Value) -> Option<RateWindow> {
     Some(RateWindow { used_pct, hhmm })
 }
 
-/// What: format a percentage like jq interpolation - integer if integral,
-/// otherwise the plain float. Why: context % is printed raw (unfloored) by
-/// the bash. Where: render_input.
-fn fmt_pct(n: f64) -> String {
-    if n.fract() == 0.0 {
-        format!("{}", n as i64)
+/// Format a context-usage token count compactly, capped at 3 digits: `<n>` up
+/// to 999, floored thousands `<n>k` up to 999999, else rounded millions `<n>M`.
+fn fmt_context_tokens(n: i64) -> String {
+    if n >= 1_000_000 {
+        format!("{}M", (n + 500_000) / 1_000_000)
+    } else if n > 999 {
+        format!("{}k", n / 1000)
     } else {
         format!("{n}")
     }

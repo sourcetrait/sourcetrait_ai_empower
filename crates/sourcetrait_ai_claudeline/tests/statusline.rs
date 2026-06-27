@@ -134,7 +134,7 @@ fn renders_fae_one_and_writes_status_and_context() {
 
     // 1781933400 == 2026-06-20 05:30:00 UTC -> "0530" under ALT_TZ=UTC.
     let line = run_claudeline(&full_payload(sid), &cache, "UTC");
-    assert_eq!(line, "emptwo: Opus 4.8 (max) 10% [3% 0530] {1%}\n");
+    assert_eq!(line, "emptwo: Opus 4.8 (max) 135k [3% 0530] {1%}\n");
 
     // status/: full lossless mirror + relative pointers at one real file.
     let status = status_dir(&cache);
@@ -263,10 +263,10 @@ fn no_session_id_writes_nothing_and_still_renders() {
     std::fs::write(&seeded, "stale").unwrap();
 
     // a payload with an identity (project_dir) but NO session id.
-    let payload = r#"{"workspace":{"project_dir":"/home/box/ai/emptwo"},"model":{"display_name":"M"},"context_window":{"used_percentage":5}}"#;
+    let payload = r#"{"workspace":{"project_dir":"/home/box/ai/emptwo"},"model":{"display_name":"M"},"context_window":{"total_input_tokens":5000}}"#;
     let line = run_claudeline(payload, &cache, "UTC");
 
-    assert_eq!(line, "emptwo: M 5%\n");
+    assert_eq!(line, "emptwo: M 5k\n");
     assert_eq!(
         std::fs::read_to_string(&seeded).unwrap(),
         "stale",
@@ -379,7 +379,7 @@ fn colony_project_dir_maps_to_ant_identity() {
     let payload = r#"{"session_id":"SID","workspace":{"project_dir":"/home/box/ai/ant/colony/emptwo"},"model":{"display_name":"M"},"context_window":{"used_percentage":5,"total_input_tokens":100,"total_output_tokens":2,"context_window_size":1000000}}"#
         .replace("SID", sid);
     let line = run_claudeline(&payload, &cache, "UTC");
-    assert_eq!(line, "ant_emptwo: M 5%\n", "render prefix is the ant identity");
+    assert_eq!(line, "ant_emptwo: M 100\n", "render prefix is the ant identity");
 
     let colony = claudeline_dir_for(&cache, "ant_emptwo");
     assert!(
@@ -394,4 +394,28 @@ fn colony_project_dir_maps_to_ant_identity() {
         !claudeline_dir_for(&cache, "emptwo").exists(),
         "no bare-fae collision tree"
     );
+}
+
+#[tested]
+fn context_usage_renders_compact() {
+    let test = testing::test!({
+        .using_temp_dir()
+    });
+    let cache = test.temp_dir().to_path_buf();
+    // total_input_tokens -> compact form: raw <=999, floored k, rounded M.
+    let cases = [
+        (0_i64, "0"),
+        (999, "999"),
+        (1000, "1k"),
+        (135109, "135k"),
+        (999_999, "999k"),
+        (1_000_000, "1M"),
+        (1_600_000, "2M"),
+    ];
+    for (tokens, expected) in cases {
+        let payload = r#"{"workspace":{"project_dir":"/home/box/ai/emptwo"},"model":{"display_name":"M"},"context_window":{"total_input_tokens":TOKENS}}"#
+            .replace("TOKENS", &tokens.to_string());
+        let line = run_claudeline(&payload, &cache, "UTC");
+        assert_eq!(line, format!("emptwo: M {expected}\n"), "tokens={tokens}");
+    }
 }

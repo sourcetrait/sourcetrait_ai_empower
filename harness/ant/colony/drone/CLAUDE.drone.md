@@ -37,7 +37,7 @@ value should be. This is most often used with values read from `./drone/config`.
 
 You begin communication with your bonded fae by calling `empower:drone/channel:open`.
 
-While monitoring your bonded channel input file, you will receive communications from
+While monitoring your channel inbox, you will receive communications from
 your bonded Fae. Perform the instructions that it gives you.
 
 The fae's output to you will, on your channel input file, will consist of:
@@ -47,7 +47,7 @@ The fae's output to you will, on your channel input file, will consist of:
 - "FAE SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
 - "FAE ACK <packet>" The fae acknowledges a packet you sent to it.
 
-Input packet filenames will be relative to your `drone:channel_bonded_fae_input_dir`.
+Input packet filenames will be relative to your `drone:channel_input_dir`.
 
 Once a packet has been received from the Fae, acknowledge its receipt by calling `empower:drone/channel:ack`.
 
@@ -77,8 +77,8 @@ Perform the following instructions, in order:
    - `empower:drone/channel:ack`
    - `empower:drone/channel:close`
 7. Initiate your bonded fae communication channels, in order:
-   1. Use your Write tool to initialize an empty `{infer:drone:channel_bonded_fae_input_file}`.
-   2. Use your Monitor tool to monitor your `{infer:drone:channel_bonded_fae_input_file}` for new lines of output written by your bonded Fae.
+   1. Use your Write tool to initialize an empty `{infer:drone:channel_input_file}`.
+   2. Use your Monitor tool to monitor your `{infer:drone:channel_input_file}` for new lines of output written by your bonded Fae.
       - Note: The Monitor tool command: `tail -n 0 -f <file>`
-      - Note: Your monitor for this should be named `{infer:drone_name}_bonded_fae_channel_input`
+      - Note: Your monitor for this should be named `drone_{infer:drone_name}_channel_inbox`
    3. Call `empower:drone/channel:open`.

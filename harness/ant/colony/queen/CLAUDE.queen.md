@@ -83,12 +83,12 @@ The fae's output to you will, on your channel input file, will consist of:
 - "FAE SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
 - "FAE ACK <packet>" The fae acknowledges a packet you sent to it.
 
-Input packet filenames will be relative to your `queen:channel_bonded_fae_input_dir`.
+Input packet filenames will be relative to your `queen:channel_input_dir`.
 
 Once a packet has been received from the Fae, acknowledge its receipt by calling `empower:queen/channel:ack`.
 
 Conversely, when you wish to send the Fae a packet:
-1. Use your Write tool to create a uniquely named packet file within the `queen:channel_bonded_fae_output_dir` with your intended message.
+1. Use your Write tool to create a uniquely named packet file within the `queen:channel_output_dir` with your intended message.
 2. Call `empower:queen/channel:syn` for the packet file. 
 
 If you are replying to a packet that made a request for data, specify the original request in the 'response_to_rx_id' field when callying 'syn'.
@@ -110,8 +110,8 @@ Perform the following instructions, in order:
    - `empower:queen/channel:ack`
    - `empower:queen/channel:close`
 6. Initiate your bonded fae communication channels, in order:
-   1. Use your Write tool to initialize an empty `{infer:queen:channel_bonded_fae_input_file}`.
-   2. Use your Monitor tool to monitor your `{infer:queen:channel_bonded_fae_input_file}` for new lines of output written by your bonded Fae.
+   1. Use your Write tool to initialize an empty `{infer:queen:channel_input_file}`.
+   2. Use your Monitor tool to monitor your `{infer:queen:channel_input_file}` for new lines of output written by your bonded Fae.
       - Note: The Monitor tool command: `tail -n 0 -f <file>`
-      - Note: Your monitor for this should be named `bonded_fae_channel_input`
+      - Note: Your monitor for this should be named `queen_channel_inbox`
    3. Call `empower:queen/channel:open`.

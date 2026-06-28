@@ -5,8 +5,8 @@ bonded:
         identity: "%{bonded_fae_identity}%"
 drone:
     shm_dir: "{infer:ai_shm_dir}/drone/{infer:drone_name}"
-    channel_bonded_fae_input_file: "{infer:drone:shm_dir}/channel/fae/bond/input.txt"
-    channel_bonded_fae_input_dir: "{infer:drone:shm_dir}/channel/fae/bond/input"
+    channel_input_file: "{infer:drone:shm_dir}/channel/input.txt"
+    channel_input_dir: "{infer:drone:shm_dir}/channel/input"
 env:
   XDG_CACHE_HOME: ~/.sys/.xdg/cache
   XDGX_SHM_DIR: /dev/shm/box

@@ -60,12 +60,27 @@ If you are replying to a packet that made a request for data, specify the origin
 
 The fae will "ACK" packets that you send when it receives them.
 
+## Persitence
+
+Your team leader will indicate at startup whether you are persistent (`persist`)
+or not.
+
+If you are persistent: Once your bootstrap is complete and you have completed
+initial prompting, render "**READY**". Message your team leader with this as
+well. Your team leader will notify your Fae via channel as well as other
+teammates. You will then be open to receiving further requests.
+
+If you are not persistent: Complete your prompt and then shut down. Message your
+team leader with "**DONE**" once shut down is complete. Your team leader will
+notify your Fae via channel as well as other teammates.
+
 ## Bootstrap: Drone
 Perform the following instructions, in order:
 1. Ensure that the team leader has given you the following session variables:
    - `session_nom`
    - `drone_name`
    - `channel_output_dir`
+   - `persist`
 2. If the preceding session variables were not provided, in order:
    1. Stop bootstrapping
    2. Report the problem to the team lead

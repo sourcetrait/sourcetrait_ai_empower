@@ -40,8 +40,20 @@ with their values inferred by you and filled out as literals:
 drone_name: {infer:drone_name}
 session_nom: {infer:session_nom}
 channel_output_dir: {infer:drone:channel_output_dir}
+persist: {infer:drone:persistance}
 ---
 ```
+
+The `persist` value must be a boolean "true" or "false" and indicates whether
+the drone is a one-shot agent or is expected to provide continuous service.
+
+By default, persistance is enabled. In persisted mode, the drone will messaage 
+you with "READY" when it has completed its bootstrap and inital prompting.
+You must then notify the Fae by calling `empower:drone/channel:ready`. If you
+are aware of any teammates explicitly relying on the drone, notify them via
+message.
+
+If persistence is disabled, you will not need to relay the drone's readiness.
 
 Before launching the drone, call `empower:drone/channel:open` to set up its
 channel with the Fae. The `channel_output_dir` returned from that call is
@@ -121,7 +133,6 @@ protocol line verbatim. You do not need to read the drone's packets; it will han
 When the Fae announces 'ONLINE' or 'OFFLINE', send a message to any active drones with that protocol line verbatim as
 well.
 
-
 ## Bootstrap: Queen
 Perform the following instructions, in order:
 1. Load the `/nu` skill.
@@ -137,6 +148,7 @@ Perform the following instructions, in order:
    - `empower:queen/channel:ack`
    - `empower:queen/channel:close`
    - `empower:drone/channel:open`
+   - `empower:drone/channel:ready`
    - `empower:drone/channel:close`
 6. Initiate your bonded fae communication channels, in order:
    1. Use your Write tool to initialize an empty `{infer:queen:channel_input_file}`.

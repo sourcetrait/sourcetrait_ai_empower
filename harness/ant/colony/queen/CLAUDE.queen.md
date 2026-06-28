@@ -42,6 +42,9 @@ session_nom: {infer:session_nom}
 ---
 ```
 
+The drone will automatically read and bootstrap from its CLAUDE.drone.md on its
+own if this procedure is followed. You can skip reading that file.
+
 ### Teardown
 
 When asked to "teardown" a drone teammate, do so.

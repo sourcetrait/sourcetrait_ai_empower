@@ -39,15 +39,23 @@ with their values inferred by you and filled out as literals:
 ---
 drone_name: {infer:drone_name}
 session_nom: {infer:session_nom}
+channel_output_dir: {infer:drone:channel_output_dir}
 ---
 ```
+
+Before launching the drone, call `empower:drone/channel:open` to set up its
+channel with the Fae. The `channel_output_dir` returned from that call is
+what you will pass to the drone as a variable.
 
 The drone will automatically read and bootstrap from its CLAUDE.drone.md on its
 own if this procedure is followed. You can skip reading that file.
 
+
 ### Teardown
 
 When asked to "teardown" a drone teammate, do so.
+
+Call `empower:drone/channel:close` to formally close its channel with the Fae.
 
 ### Communication
 
@@ -71,21 +79,25 @@ value should be. This is most often used with values read from `./queen/config`.
 
 ## Fae Communication
 
-You begin communication with your bonded fae by calling `empower:queen/channel:open`.
+You begin communication with your bonded Fae by monitoring your bonded channel
+input file and then calling `empower:queen/channel:open`.
 
-While monitoring your bonded channel input file, you will receive communications from
+While monitoring your channel input file, you will receive communications from
 your bonded Fae. Perform the instructions that it gives you.
 
-The fae's output to you will, on your channel input file, will consist of:
+Your Fae's output to you will, on your channel input file, will consist of:
 - "FAE ONLINE <fae_session_nom>" The fae has started a new session.
 - "FAE OFFLINE" The fae's session has ended.
 - "FAE SYN <(fae_session_nom)_(rx_id).txt>" The fae has sent a new packet to you.
 - "FAE SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
 - "FAE ACK <packet>" The fae acknowledges a packet you sent to it.
+- "FAE DRONE <drone_name> SYN <(fae_session_nom)_(rx_id).txt>" The fae has sent a new packet to one of your drones.
+- "FAE DRONE <drone_name> SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to one of your drones and it contains a response to one of your drones' previous packets sent directly to the fae.
+- "FAE DRONE <drone_name> ACK <packet>" The fae acknowledges a packet one of your drones sent to it.
 
-Input packet filenames will be relative to your `queen:channel_input_dir`.
+Input packets sent directly to you will have filenames relative to your `queen:channel_input_dir`.
 
-Once a packet has been received from the Fae, acknowledge its receipt by calling `empower:queen/channel:ack`.
+Once a packet sent directly to you has been received from the Fae, immediately acknowledge its receipt by calling `empower:queen/channel:ack`.
 
 Conversely, when you wish to send the Fae a packet:
 1. Use your Write tool to create a uniquely named packet file within the `queen:channel_output_dir` with your intended message.
@@ -93,7 +105,22 @@ Conversely, when you wish to send the Fae a packet:
 
 If you are replying to a packet that made a request for data, specify the original request in the 'response_to_rx_id' field when callying 'syn'.
 
-The fae will "ACK" packets that you send when it receives them.
+The Fae will "ACK" packets that you send when it receives them.
+
+### Drone Communication with the Fae
+
+Input packets sent to a drone will have filenames relative to the drone's `drone:channel_input_dir`.
+
+The drone is responsible for acknowledging its packet's receipt and making any outbound communications to the Fae.
+
+You are responsible for relaying inbox input from the Fae to the drone. Drones do not have their own inbox file.
+
+When a "FAE DRONE <drone_name> SYN" or "FAE DRONE <drone_name> ACK" inbox entry appears, send a message to that existing drone teammate with the
+protocol line verbatim. You do not need to read the drone's packets; it will handle that.
+
+When the Fae announces 'ONLINE' or 'OFFLINE', send a message to any active drones with that protocol line verbatim as
+well.
+
 
 ## Bootstrap: Queen
 Perform the following instructions, in order:
@@ -109,6 +136,8 @@ Perform the following instructions, in order:
    - `empower:queen/channel:syn`
    - `empower:queen/channel:ack`
    - `empower:queen/channel:close`
+   - `empower:drone/channel:open`
+   - `empower:drone/channel:close`
 6. Initiate your bonded fae communication channels, in order:
    1. Use your Write tool to initialize an empty `{infer:queen:channel_input_file}`.
    2. Use your Monitor tool to monitor your `{infer:queen:channel_input_file}` for new lines of output written by your bonded Fae.

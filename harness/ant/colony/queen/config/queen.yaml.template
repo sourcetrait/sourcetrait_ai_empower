@@ -8,8 +8,8 @@ queen:
     shm_dir: "{infer:ai_shm_dir}/queen"
     channel_input_file: "{infer:queen:shm_dir}/channel/input.txt"
     channel_input_dir: "{infer:queen:shm_dir}/channel/input"
-    channel_output_file: "{infer:bonded:fae:shm_dir}/channel/ant/queen/input.txt"
-    channel_output_dir: "{infer:bonded:fae:shm_dir}/channel/ant/queen/input"
+    channel_output_file: "{infer:bonded:fae:shm_dir}/channel/ant/colony/input.txt"
+    channel_output_dir: "{infer:bonded:fae:shm_dir}/channel/ant/colony/input"
 drone:
     shm_dir: "{infer:ai_shm_dir}/drone/{infer:drone_name}"
     channel_input_file: "{infer:drone:shm_dir}/channel/input.txt"

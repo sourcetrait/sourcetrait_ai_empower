@@ -37,9 +37,8 @@ The prompt given to a drone teammate must always include the following variables
 with their values inferred by you and filled out as literals:
 ```yaml
 ---
+drone_name: {infer:drone_name}
 session_nom: {infer:session_nom}
-drone:
-  name: {infer:drone:name}
 ---
 ```
 

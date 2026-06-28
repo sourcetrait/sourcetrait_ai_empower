@@ -4,7 +4,7 @@
 # shared control file <shm>/ai/<ai_identity>/<fae_nom>/channel/ant/input.txt (the
 # fae monitors it; every COLONY line from the queen AND its drones lands here),
 # with the queen's packets in the per-sender dir
-# <shm>/ai/<ai_identity>/<fae_nom>/channel/ant/queen/input. The fae sends FAE
+# <shm>/ai/<ai_identity>/<fae_nom>/channel/ant/colony/input. The fae sends FAE
 # lines to the queen's own inbox <shm>/ai/ant_<ai_identity>/<colony_nom>/queen/
 # channel (input.txt control + input/ packets).
 
@@ -29,7 +29,7 @@ export def fae-control-file [ai_identity: string, fae_session_nom: string]: noth
 
 # the fae's per-sender packet dir for the queen (fae reads queen packets here).
 export def fae-queen-packet-dir [ai_identity: string, fae_session_nom: string]: nothing -> string {
-    $env.XDGX_SHM_DIR | path join "ai" $ai_identity $fae_session_nom "channel" "ant" "queen" "input"
+    $env.XDGX_SHM_DIR | path join "ai" $ai_identity $fae_session_nom "channel" "ant" "colony" "input"
 }
 
 # the queen's own inbox base (fae writes, queen reads): control <base>/input.txt,

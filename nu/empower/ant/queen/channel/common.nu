@@ -7,7 +7,7 @@
 # <shm>/ai/ant_<fae>/<colony_nom>/queen/channel (input.txt control, input/
 # packets). The queen sends to the fae's SINGLE shared control file
 # <shm>/ai/<fae>/<fae_nom>/channel/ant/input.txt (all COLONY lines), with its
-# packets in the per-sender dir <shm>/ai/<fae>/<fae_nom>/channel/ant/queen/input.
+# packets in the per-sender dir <shm>/ai/<fae>/<fae_nom>/channel/ant/colony/input.
 
 # the colony's ai_identity, derived from the bonded fae's identity.
 export def colony-identity [fae: string]: nothing -> string {
@@ -38,5 +38,5 @@ export def fae-control-file [fae: string, fae_session_nom: string]: nothing -> s
 
 # the fae's per-sender packet dir for the queen (queen writes packets here).
 export def fae-queen-packet-dir [fae: string, fae_session_nom: string]: nothing -> string {
-    $env.XDGX_SHM_DIR | path join "ai" $fae $fae_session_nom "channel" "ant" "queen" "input"
+    $env.XDGX_SHM_DIR | path join "ai" $fae $fae_session_nom "channel" "ant" "colony" "input"
 }

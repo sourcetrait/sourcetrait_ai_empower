@@ -80,5 +80,5 @@ Perform the following instructions, in order:
    1. Use your Write tool to initialize an empty `{infer:drone:channel_bonded_fae_input_file}`.
    2. Use your Monitor tool to monitor your `{infer:drone:channel_bonded_fae_input_file}` for new lines of output written by your bonded Fae.
       - Note: The Monitor tool command: `tail -n 0 -f <file>`
-      - Note: Your monitor for this should be named `bonded_fae_channel_input`
+      - Note: Your monitor for this should be named `{infer:drone_name}_bonded_fae_channel_input`
    3. Call `empower:drone/channel:open`.

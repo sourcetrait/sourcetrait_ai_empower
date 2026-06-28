@@ -26,15 +26,18 @@ All of your teammates are `drone` roles. Your are the only `queen` role.
 
 ### Setup
 
-When asked by the user to "launch drone <name> with: <prompt>", do so.
+When asked by the bonded user or fae to launch a drone with a specified name and
+a provided prompt, spawn a full teammate (subagent_type: claude) as described
+below.
 
 The prompt given to a drone teammate must always be prefixed with, verbatim:
 ```md
 Your role is `drone`.
 ```
 
-The prompt given to a drone teammate must always include the following variables
-with their values inferred by you and filled out as literals:
+The prompt given to a drone teammate must always include the following content,
+as formatted (including yaml header/footer) with their values inferred by you and
+filled out as literals:
 ```yaml
 ---
 drone_name: {infer:drone_name}

@@ -1,0 +1,28 @@
+ai:
+  identity: "%{ai_identity}%"
+  dir: "~/ai/%{ai_identity}%"
+session:
+  tmp_dir: "~/tmp/ai/%{ai_identity}%/{infer:session_nom}"
+  shm_dir: "~/tmp/ai/%{ai_identity}%/{infer:session_nom}"
+fae:
+  config_dir: ./config
+  constitution_dir: ./constitution
+  data_dir: ./data
+  docs_dir: ./docs
+  iter_dir: ./iter
+  mem_dir: ./mem
+  nu_dir: ./nu
+  offload_dir: ./offload
+  scripts_dir: ./scripts
+  skills_dir: ./skills
+  state_dir: ./state
+box:
+  projects_home: ~/proj
+  repositories_home: ~/repo
+env:
+  XDG_CACHE_HOME: ~/.sys/.xdg/cache
+  XDG_DATA_HOME: ~/.sys/.xdg/data
+  XDG_STATE_HOME: ~/.sys/.xdg/state
+  XDGX_TMP_HOME: ~/tmp
+  XDGX_SHM_DIR: /dev/shm/box
+  CLAUDE_CONFIG_DIR: ~/.sys/.claude

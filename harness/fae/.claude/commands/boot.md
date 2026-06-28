@@ -1,1 +1,1 @@
-follow your constitutional bootstrap. then, follow your implied bootstrap. afterwards, await instruction.
+Follow your constitutional bootstrap. Then, follow your implied bootstrap. Afterwards, await instruction.

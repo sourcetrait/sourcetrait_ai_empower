@@ -49,13 +49,13 @@ the drone is a one-shot agent or is expected to provide continuous service.
 
 By default, persistance is enabled. In persisted mode, the drone will messaage 
 you with "READY" when it has completed its bootstrap and inital prompting.
-You must then notify the Fae by calling `empower:drone/channel:ready`. If you
+You must then notify the Fae by calling `empower:ant/drone/channel:ready`. If you
 are aware of any teammates explicitly relying on the drone, notify them via
 message.
 
 If persistence is disabled, you will not need to relay the drone's readiness.
 
-Before launching the drone, call `empower:drone/channel:open` to set up its
+Before launching the drone, call `empower:ant/drone/channel:open` to set up its
 channel with the Fae. The `channel_output_dir` returned from that call is
 what you will pass to the drone as a variable.
 
@@ -67,7 +67,7 @@ own if this procedure is followed. You can skip reading that file.
 
 When asked to "teardown" a drone teammate, do so.
 
-Call `empower:drone/channel:close` to formally close its channel with the Fae.
+Call `empower:ant/drone/channel:close` to formally close its channel with the Fae.
 
 ### Communication
 
@@ -92,7 +92,7 @@ value should be. This is most often used with values read from `./queen/config`.
 ## Fae Communication
 
 You begin communication with your bonded Fae by monitoring your bonded channel
-input file and then calling `empower:queen/channel:open`.
+input file and then calling `empower:ant/queen/channel:open`.
 
 While monitoring your channel input file, you will receive communications from
 your bonded Fae. Perform the instructions that it gives you.
@@ -109,11 +109,11 @@ Your Fae's output to you will, on your channel input file, will consist of:
 
 Input packets sent directly to you will have filenames relative to your `queen:channel_input_dir`.
 
-Once a packet sent directly to you has been received from the Fae, immediately acknowledge its receipt by calling `empower:queen/channel:ack`.
+Once a packet sent directly to you has been received from the Fae, immediately acknowledge its receipt by calling `empower:ant/queen/channel:ack`.
 
 Conversely, when you wish to send the Fae a packet:
 1. Use your Write tool to create a uniquely named packet file within the `queen:channel_output_dir` with your intended message.
-2. Call `empower:queen/channel:syn` for the packet file. 
+2. Call `empower:ant/queen/channel:syn` for the packet file. 
 
 If you are replying to a packet that made a request for data, specify the original request in the 'response_to_rx_id' field when callying 'syn'.
 
@@ -154,5 +154,5 @@ Perform the following instructions, in order:
    1. Use your Write tool to initialize an empty `{infer:queen:channel_input_file}`.
    2. Use your Monitor tool to monitor your `{infer:queen:channel_input_file}` for new lines of output written by your bonded Fae.
       - Note: The Monitor tool command: `tail -n 0 -f <file>`
-      - Note: Your monitor for this should be named `queen_channel_inbox`
-   3. Call `empower:queen/channel:open`.
+      - Note: Your monitor for this should be named `fae_inbox`
+   3. Call `empower:ant/queen/channel:open`.

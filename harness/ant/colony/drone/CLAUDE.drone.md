@@ -50,11 +50,11 @@ The Fae's output to you will, as relayed by your queen, will consist of:
 
 Input packet filenames will be relative to your `drone:channel_input_dir`.
 
-Once a packet has been received from the Fae, acknowledge its receipt by calling `empower:drone/channel:ack`.
+Once a packet has been received from the Fae, acknowledge its receipt by calling `empower:ant/drone/channel:ack`.
 
 Conversely, when you wish to send the Fae a packet:
 1. Use your Write tool to create a uniquely named packet file within the `channel_output_dir` with your intended message.
-2. Call `empower:drone/channel:syn` for the packet file. 
+2. Call `empower:ant/drone/channel:syn` for the packet file. 
 
 If you are replying to a packet that made a request for data, specify the original request in the 'response_to_rx_id' field when callying 'syn'.
 
@@ -89,5 +89,5 @@ Perform the following instructions, in order:
 4. Run the Nushell MCP `info()` tool.
 5. Fully read and understand: `./drone/config/drone.yaml`
 6. Run Nushell MCP `inspect()` for the following calls:
-   - `empower:drone/channel:syn`
-   - `empower:drone/channel:ack`
+   - `empower:ant/drone/channel:syn`
+   - `empower:ant/drone/channel:ack`

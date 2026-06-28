@@ -44,7 +44,7 @@ The fae's output to you will, on your channel input file, will consist of:
 - "FAE ONLINE <fae_session_nom>" The fae has started a new session.
 - "FAE OFFLINE" The fae's session has ended.
 - "FAE SYN <(fae_session_nom)_(rx_id).txt>" The fae has sent a new packet to you.
-- "FAE SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id)>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
+- "FAE SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
 - "FAE ACK <packet>" The fae acknowledges a packet you sent to it.
 
 Input packet filenames will be relative to your `drone:channel_bonded_fae_input_dir`.
@@ -63,7 +63,7 @@ The fae will "ACK" packets that you send when it receives them.
 Perform the following instructions, in order:
 1. Ensure that the team leader has given you the following session variables:
    - `session_nom`
-   - `drone_name`
+   - `drone:name`
 2. If the preceding session variables were not provided, in order:
    1. Stop bootstrapping
    2. Report the problem to the team lead

@@ -143,13 +143,13 @@ Perform the following instructions, in order:
 5. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:bonded:fae:identity}/context/latest.yaml`
    - Note: Your bonded fae's per-session `bonded:fae:session_nom` is determined here (vis a vis its `session_nom`).
 7. Run Nushell MCP `inspect()` for the following calls:
-   - `empower:queen/channel:open`
-   - `empower:queen/channel:syn`
-   - `empower:queen/channel:ack`
-   - `empower:queen/channel:close`
-   - `empower:drone/channel:open`
-   - `empower:drone/channel:ready`
-   - `empower:drone/channel:close`
+   - `empower:ant/queen/channel:open`
+   - `empower:ant/queen/channel:syn`
+   - `empower:ant/queen/channel:ack`
+   - `empower:ant/queen/channel:close`
+   - `empower:ant/drone/channel:open`
+   - `empower:ant/drone/channel:ready`
+   - `empower:ant/drone/channel:close`
 6. Initiate your bonded fae communication channels, in order:
    1. Use your Write tool to initialize an empty `{infer:queen:channel_input_file}`.
    2. Use your Monitor tool to monitor your `{infer:queen:channel_input_file}` for new lines of output written by your bonded Fae.

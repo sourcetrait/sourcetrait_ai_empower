@@ -8,9 +8,11 @@ use ../../../pid/list_ai.nu
 # colony_channel_input_dir, colony_channel_output_dir (the drone's packet output dir
 # on the fae side - the fae owns and creates it), and colony_channel_outbox (the
 # fae's inbox the drone writes its COLONY DRONE lines to). The queen passes these to
-# the drone as session variables. Errors if the colony or the bonded fae has no live
-# session.
-export def main [args: record<fae: string, drone_name: string>]: nothing -> record<colony_channel_input_dir: string, colony_channel_output_dir: string, colony_channel_outbox: string> {
+# the drone as session variables. When persist is false (a one-shot drone, which
+# never reports ready) it also announces COLONY DRONE <name> ONLINE on both inboxes -
+# for a one-shot the signal that matters is just that it is running. Errors if the
+# colony or the bonded fae has no live session.
+export def main [args: record<fae: string, drone_name: string, persist: bool>]: nothing -> record<colony_channel_input_dir: string, colony_channel_output_dir: string, colony_channel_outbox: string> {
     let colony_identity = (common colony_identity $args.fae)
     let colony_session_nom = (common session_nom $colony_identity)
     if $colony_session_nom == null {
@@ -24,5 +26,8 @@ export def main [args: record<fae: string, drone_name: string>]: nothing -> reco
     mkdir $in_dir
     let out_dir = (common drone_output_dir $args.fae $fae_session_nom $args.drone_name)
     let outbox = (common colony_outbox $args.fae $fae_session_nom)
+    if not $args.persist {
+        common announce_drone $args.fae $args.drone_name $colony_identity $colony_session_nom $fae_session_nom "ONLINE"
+    }
     { colony_channel_input_dir: $in_dir, colony_channel_output_dir: $out_dir, colony_channel_outbox: $outbox }
 }

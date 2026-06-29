@@ -1,11 +1,12 @@
 use ./common.nu
 
-# Take a drone offline and close communications (COLONY DRONE <name> OFFLINE).
+# Announce a drone is offline and communications are closed (drone self-teardown).
 #
-# Queen-invoked - the manual teardown interface; the same operation a persisted
-# drone runs itself via :done. Appends COLONY DRONE <name> OFFLINE to both inboxes
-# (the colony inbox always, the fae inbox if it exists). Errors if the colony has no
-# live session. Void return.
+# Drone-invoked - a drone tearing itself down (a one-shot when finished, or a
+# persisted drone ending). Appends COLONY DRONE <name> OFFLINE to both inboxes (the
+# colony inbox always, the fae inbox if it exists). The same operation as the queen's
+# :close - either the drone (here) or the queen tears the drone down. Errors if the
+# colony has no live session. Void return.
 export def main [args: record<fae: string, drone_name: string>]: nothing -> nothing {
     let colony_identity = (common colony_identity $args.fae)
     let colony_session_nom = (common session_nom $colony_identity)

@@ -1,8 +1,9 @@
 # Shared derivation for the drone-side channel tools (empower:ant/drone/channel).
 #
 # A drone is a queen-launched teammate of the ant colony; it shares the colony's
-# ai_identity (ant_<fae>) and session_nom. The queen invokes open/ready/close to
-# manage the drone's channel; the drone invokes syn/ack for its own outbound. The
+# ai_identity (ant_<fae>) and session_nom. The queen invokes open/close to manage
+# the drone's channel; the drone invokes ready/done/syn/ack for its lifecycle and
+# outbound. The
 # drone has no inbox file and does not monitor - the queen relays inbound lines to
 # it. The drone reads fae-sent packets from its input dir
 # <colony_shm>/channel/colony/drone/<name>. The drone writes its COLONY DRONE lines
@@ -41,4 +42,34 @@ export def colony_outbox [fae: string, fae_session_nom: string]: nothing -> stri
 # the fae here).
 export def drone_output_dir [fae: string, fae_session_nom: string, drone_name: string]: nothing -> string {
     $env.XDGX_SHM_DIR | path join "ai" $fae $fae_session_nom "channel" "colony" "drone" $drone_name
+}
+
+# the colony's inbox file (the queen monitors it). The drone also appends its
+# lifecycle lines here so the queen learns ONLINE/OFFLINE directly.
+export def colony_inbox [colony_identity: string, colony_session_nom: string]: nothing -> string {
+    $env.XDGX_SHM_DIR | path join "ai" $colony_identity $colony_session_nom "channel" "colony" "inbox.txt"
+}
+
+# announce a drone lifecycle status as "COLONY DRONE <name> <status>" on BOTH inboxes:
+# the colony inbox (the queen's) and the colony outbox (the fae's inbox). Each is
+# written only if it exists; a null fae_session_nom (fae offline) skips the fae side.
+export def announce_drone [
+    fae: string,
+    drone_name: string,
+    colony_identity: string,
+    colony_session_nom: string,
+    fae_session_nom: oneof<string, nothing>,
+    status: string,
+]: nothing -> nothing {
+    let line = $"COLONY DRONE ($drone_name) ($status)(char nl)"
+    let c_inbox = (colony_inbox $colony_identity $colony_session_nom)
+    if ($c_inbox | path exists) {
+        $line | save --append $c_inbox
+    }
+    if $fae_session_nom != null {
+        let outbox = (colony_outbox $fae $fae_session_nom)
+        if ($outbox | path exists) {
+            $line | save --append $outbox
+        }
+    }
 }

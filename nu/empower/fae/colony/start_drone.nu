@@ -1,4 +1,5 @@
 use ./channel/common.nu
+use ../../pid/list_ai.nu
 
 # Request the bonded colony's queen to start a drone (fae-side).
 #
@@ -16,7 +17,7 @@ export def main [args: record<ai_identity: string, channel_tx_id: int, drone_nam
         error make { msg: $"fae has no live session: no context for ($args.ai_identity)" }
     }
     let queen_identity = (common queen_identity $args.ai_identity)
-    let queen_session_nom = (common session_nom $queen_identity)
+    let queen_session_nom = ((list_ai null).sessions | where ai_identity == $queen_identity | get -i 0.session_nom)
     if $queen_session_nom == null {
         error make { msg: $"bonded colony ($queen_identity) is not online" }
     }

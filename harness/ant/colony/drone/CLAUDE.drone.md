@@ -44,8 +44,8 @@ Your responsibility is to handle outbound communication with the Fae.
 The Fae's output to you will, as relayed by your queen, will consist of:
 - "FAE ONLINE <fae_session_nom>" The fae has started a new session.
 - "FAE OFFLINE" The fae's session has ended.
-- "FAE DRONE <your_drone_name> SYN <(fae_session_nom)_(rx_id).txt>" The fae has sent a new packet to you.
-- "FAE DRONE <your_drone_name> SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
+- "FAE DRONE <your_drone_name> SYN <(fae_session_nom)_(rx_id).md>" The fae has sent a new packet to you.
+- "FAE DRONE <your_drone_name> SYN <(fae_session_nom)_(rx_id).md> RE <(your_session_nom)_(tx_id).md>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
 - "FAE DRONE <your_drone_name> ACK <packet>" The fae acknowledges a packet you sent to it.
 
 Input packet filenames will be relative to your `drone:colony_channel_input_dir`.
@@ -79,7 +79,6 @@ Perform the following instructions, in order:
 1. Ensure that the team leader has given you the following session variables:
    - `session_nom`
    - `drone_name`
-   - `fae_sesson_nom`
    - `colony_channel_input_dir`
    - `colony_channel_output_dir`
    - `persist`

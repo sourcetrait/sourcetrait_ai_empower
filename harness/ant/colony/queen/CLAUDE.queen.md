@@ -105,11 +105,11 @@ directly gives you.
 Your Fae's output to you will, on your channel input file, will consist of:
 - "FAE ONLINE <fae_session_nom>" The fae has started a new session.
 - "FAE OFFLINE" The fae's session has ended.
-- "FAE SYN <(fae_session_nom)_(rx_id).txt>" The fae has sent a new packet to you.
-- "FAE SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
+- "FAE SYN <(fae_session_nom)_(rx_id).md>" The fae has sent a new packet to you.
+- "FAE SYN <(fae_session_nom)_(rx_id).md> RE <(your_session_nom)_(tx_id).md>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
 - "FAE ACK <packet>" The fae acknowledges a packet you sent to it.
-- "FAE DRONE <drone_name> SYN <(fae_session_nom)_(rx_id).txt>" The fae has sent a new packet to one of your drones.
-- "FAE DRONE <drone_name> SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to one of your drones and it contains a response to one of your drones' previous packets sent directly to the fae.
+- "FAE DRONE <drone_name> SYN <(fae_session_nom)_(rx_id).md>" The fae has sent a new packet to one of your drones.
+- "FAE DRONE <drone_name> SYN <(fae_session_nom)_(rx_id).md> RE <(your_session_nom)_(tx_id).md>" The fae has sent a new packet to one of your drones and it contains a response to one of your drones' previous packets sent directly to the fae.
 - "FAE DRONE <drone_name> ACK <packet>" The fae acknowledges a packet one of your drones sent to it.
 
 Input packets sent from your Fae directly to you will have packet filenames relative to your `queen:colony_channel_input_dir`.

@@ -2,34 +2,34 @@ use ./common.nu
 
 # Bring the queen's bonded-fae channel online and report the fae's state.
 #
-# mkdirs the queen's own inbox (queen/channel + input/), appends COLONY ONLINE to
-# its own control file, and (passive) to the fae's colony control file only if it
-# already exists. Returns the queen's own input paths, and fae_online: null when
-# the fae has no live session, else its session_nom plus the fae's colony control
-# file (channel_output_file) and packet dir (channel_output_dir). Errors if the
-# colony itself has no live session.
-export def main [args: record<fae: string>]: nothing -> record<channel_input_file: string, channel_input_dir: string, fae_online: oneof<nothing, record<session_nom: string, channel_output_file: string, channel_output_dir: string>>> {
+# Ensures the queen's own receive infrastructure exists (the colony inbox file the
+# queen monitors + the queen packet input dir), appends COLONY ONLINE to the colony
+# outbox (the fae's inbox) only if it already exists (passive), and reports the
+# fae's state. Returns the queen's own colony inbox + input dir, and fae_online:
+# null when the fae has no live session, else its session_nom plus the colony outbox
+# (the fae's inbox) and the queen's output dir on the fae side. Errors if the colony
+# has no live session.
+export def main [args: record<fae: string>]: nothing -> record<colony_inbox: string, queen_input_dir: string, fae_online: oneof<nothing, record<session_nom: string, colony_outbox: string, queen_output_dir: string>>> {
     let colony_identity = (common colony_identity $args.fae)
     let colony_session_nom = (common session_nom $colony_identity)
     if $colony_session_nom == null {
         error make { msg: $"colony has no live session: no context for ($colony_identity)" }
     }
-    let in_base = (common queen_inbox_base $colony_identity $colony_session_nom)
-    let in_dir = ($in_base | path join "input")
-    let in_file = ($in_base | path join "input.txt")
+    let inbox = (common colony_inbox $colony_identity $colony_session_nom)
+    let in_dir = (common queen_input_dir $colony_identity $colony_session_nom)
     mkdir $in_dir
-    $"COLONY ONLINE ($colony_session_nom)(char nl)" | save --append $in_file
+    touch $inbox
 
     let fae_session_nom = (common session_nom $args.fae)
     let fae_online = if $fae_session_nom == null {
         null
     } else {
-        let fae_control = (common fae_colony_control_file $args.fae $fae_session_nom)
-        let fae_packets = (common fae_colony_packet_dir $args.fae $fae_session_nom)
-        if ($fae_control | path exists) {
-            $"COLONY ONLINE ($colony_session_nom)(char nl)" | save --append $fae_control
+        let outbox = (common colony_outbox $args.fae $fae_session_nom)
+        let out_dir = (common queen_output_dir $args.fae $fae_session_nom)
+        if ($outbox | path exists) {
+            $"COLONY ONLINE ($colony_session_nom)(char nl)" | save --append $outbox
         }
-        { session_nom: $fae_session_nom, channel_output_file: $fae_control, channel_output_dir: $fae_packets }
+        { session_nom: $fae_session_nom, colony_outbox: $outbox, queen_output_dir: $out_dir }
     }
-    { channel_input_file: $in_file, channel_input_dir: $in_dir, fae_online: $fae_online }
+    { colony_inbox: $inbox, queen_input_dir: $in_dir, fae_online: $fae_online }
 }

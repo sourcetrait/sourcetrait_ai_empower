@@ -2,10 +2,10 @@
 #
 # A queen-launched drone shares the colony identity (ant_<fae>). The queen invokes
 # open/ready/close to manage the drone's channel; the drone invokes syn/ack for its
-# own outbound packets. The drone writes COLONY DRONE lines to the fae's per-drone
-# inbox (channel/ant/drone/<name>/input); the fae writes to the drone's own inbox
-# (drone/<name>/channel/input). Call targets: open, ready, syn, ack, close; shared
-# derivation in common.nu.
+# own outbound. The drone has no inbox and does not monitor (the queen relays inbound
+# to it). The drone writes its COLONY DRONE lines to the colony outbox (the fae's
+# inbox) and its packets to its output dir on the fae side. Call targets: open,
+# ready, syn, ack, close; shared derivation in common.nu.
 export use ./open.nu
 export use ./ready.nu
 export use ./syn.nu

@@ -42,10 +42,16 @@ filled out as literals:
 ---
 drone_name: {infer:drone_name}
 session_nom: {infer:session_nom}
-channel_output_dir: {infer:drone:channel_output_dir}
+colony_channel_input_dir: {infer:drone:colony_channel_input_dir}
+colony_channel_output_dir: {infer:drone:colony_channel_output_dir}
+colony_channel_outbox: {infer:colony:channel_outbox}
 persist: {infer:drone:persistance}
 ---
 ```
+
+Before launching the drone, call `empower:ant/drone/channel:open` to set up its
+channel with the Fae. The colony channel input and output directories returned
+from that call are the values used in the preceding yaml.
 
 The `persist` value must be a boolean "true" or "false" and indicates whether
 the drone is a one-shot agent or is expected to provide continuous service.
@@ -58,13 +64,8 @@ message.
 
 If persistence is disabled, you will not need to relay the drone's readiness.
 
-Before launching the drone, call `empower:ant/drone/channel:open` to set up its
-channel with the Fae. The `channel_output_dir` returned from that call is
-what you will pass to the drone as a variable.
-
 The drone will automatically read and bootstrap from its CLAUDE.drone.md on its
 own if this procedure is followed. You can skip reading that file.
-
 
 ### Teardown
 
@@ -94,11 +95,12 @@ value should be. This is most often used with values read from `./queen/config`.
 
 ## Fae Communication
 
-You begin communication with your bonded Fae by monitoring your bonded channel
-input file and then calling `empower:ant/queen/channel:open`.
+You begin communication with your bonded Fae by monitoring the colony channel
+inbox file and then calling `empower:ant/queen/channel:open`.
 
-While monitoring your channel input file, you will receive communications from
-your bonded Fae. Perform the instructions that it gives you.
+While monitoring the colony inbox file, you will receive communications from
+your bonded Fae to both you and your drones. Perform the instructions that it
+directly gives you.
 
 Your Fae's output to you will, on your channel input file, will consist of:
 - "FAE ONLINE <fae_session_nom>" The fae has started a new session.
@@ -110,12 +112,13 @@ Your Fae's output to you will, on your channel input file, will consist of:
 - "FAE DRONE <drone_name> SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to one of your drones and it contains a response to one of your drones' previous packets sent directly to the fae.
 - "FAE DRONE <drone_name> ACK <packet>" The fae acknowledges a packet one of your drones sent to it.
 
-Input packets sent directly to you will have filenames relative to your `queen:channel_input_dir`.
+Input packets sent from your Fae directly to you will have packet filenames relative to your `queen:colony_channel_input_dir`.
+Input packets sent from your Fae directly to a drone will have packet filenames relative to the drone's `drone:colony_channel_input_dir`.
 
 Once a packet sent directly to you has been received from the Fae, immediately acknowledge its receipt by calling `empower:ant/queen/channel:ack`.
 
 Conversely, when you wish to send the Fae a packet:
-1. Use your Write tool to create a uniquely named packet file within the `queen:channel_output_dir` with your intended message.
+1. Use your Write tool to create a uniquely named packet file within the `queen:colony_channel_output_dir` with your intended message.
 2. Call `empower:ant/queen/channel:syn` for the packet file. 
 
 If you are replying to a packet that made a request for data, specify the original request in the 'response_to_rx_id' field when callying 'syn'.
@@ -124,11 +127,10 @@ The Fae will "ACK" packets that you send when it receives them.
 
 ### Drone Communication with the Fae
 
-Input packets sent to a drone will have filenames relative to the drone's `drone:channel_input_dir`.
+The drone is responsible for acknowledging its packet's receipt (directly to the Fae) and making any other outbound communications to the Fae.
 
-The drone is responsible for acknowledging its packet's receipt and making any outbound communications to the Fae.
-
-You are responsible for relaying inbox input from the Fae to the drone. Drones do not have their own inbox file.
+You are responsible for relaying inbox input from the Fae to the drone. Drones do not have their own inbox file and they do not monitor
+the colony's inbox file.
 
 When a "FAE DRONE <drone_name> SYN" or "FAE DRONE <drone_name> ACK" inbox entry appears, send a message to that existing drone teammate with the
 protocol line verbatim. You do not need to read the drone's packets; it will handle that.
@@ -154,8 +156,8 @@ Perform the following instructions, in order:
    - `empower:ant/drone/channel:ready`
    - `empower:ant/drone/channel:close`
 6. Initiate your bonded fae communication channels, in order:
-   1. Use your Write tool to initialize an empty `{infer:queen:channel_input_file}`.
-   2. Use your Monitor tool to monitor your `{infer:queen:channel_input_file}` for new lines of output written by your bonded Fae.
+   1. Use your Write tool to initialize an empty `{infer:colony:channel_inbox}`.
+   2. Use your Monitor tool to monitor your `{infer:colony:channel_inbox}` for new lines of output written by your bonded Fae.
       - Note: The Monitor tool command: `tail -n 0 -f <file>`
-      - Note: Your monitor for this should be named `fae_inbox`
+      - Note: Your monitor for this should be named `colony_inbox`
    3. Call `empower:ant/queen/channel:open`.

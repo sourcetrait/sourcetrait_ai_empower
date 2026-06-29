@@ -48,12 +48,12 @@ The Fae's output to you will, as relayed by your queen, will consist of:
 - "FAE DRONE <your_drone_name> SYN <(fae_session_nom)_(rx_id).txt> RE <(your_session_nom)_(tx_id).txt>" The fae has sent a new packet to you and it contains a response to one of your previous packets sent to it.
 - "FAE DRONE <your_drone_name> ACK <packet>" The fae acknowledges a packet you sent to it.
 
-Input packet filenames will be relative to your `drone:channel_input_dir`.
+Input packet filenames will be relative to your `drone:colony_channel_input_dir`.
 
 Once a packet has been received from the Fae, acknowledge its receipt by calling `empower:ant/drone/channel:ack`.
 
 Conversely, when you wish to send the Fae a packet:
-1. Use your Write tool to create a uniquely named packet file within the `channel_output_dir` with your intended message.
+1. Use your Write tool to create a uniquely named packet file within the `colony_channel_output_dir` with your intended message.
 2. Call `empower:ant/drone/channel:syn` for the packet file. 
 
 If you are replying to a packet that made a request for data, specify the original request in the 'response_to_rx_id' field when callying 'syn'.
@@ -79,7 +79,9 @@ Perform the following instructions, in order:
 1. Ensure that the team leader has given you the following session variables:
    - `session_nom`
    - `drone_name`
-   - `channel_output_dir`
+   - `fae_sesson_nom`
+   - `colony_channel_input_dir`
+   - `colony_channel_output_dir`
    - `persist`
 2. If the preceding session variables were not provided, in order:
    1. Stop bootstrapping

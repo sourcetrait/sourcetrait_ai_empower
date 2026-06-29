@@ -1,21 +1,21 @@
 ai_identity: "%{ai_identity}%"
 ai_shm_dir: "{infer:env:XDGX_SHM_DIR}/ai/{infer:ai_identity}/{infer:session_nom}"
-bonded:
-    fae:
-        identity: "%{bonded_fae_identity}%"
-        shm_dir: "{infer:env:XDGX_SHM_DIR}/ai/{infer:bonded:fae:identity}/{infer:bonded:fae:session_nom}"
+fae:
+    identity: "%{fae_identity}%"
+    shm_dir: "{infer:env:XDGX_SHM_DIR}/ai/{infer:fae:identity}/{infer:fae:session_nom}"
+    colony_channel_shm_dir: "{infer:fae:shm_dir}/channel/colony"
+colony:
+    channel_shm_dir: "{infer:ai_shm_dir}/channel/colony"
+    channel_inbox: "{infer:colony:channel_shm_dir}/inbox.txt" 
+    channel_outbox: "{infer:fae:colony_channel_shm_dir}/channel/colony/inbox.txt"
 queen:
     shm_dir: "{infer:ai_shm_dir}/queen"
-    channel_input_file: "{infer:queen:shm_dir}/channel/input.txt"
-    channel_input_dir: "{infer:queen:shm_dir}/channel/input"
-    channel_output_file: "{infer:bonded:fae:shm_dir}/channel/ant/colony/input.txt"
-    channel_output_dir: "{infer:bonded:fae:shm_dir}/channel/ant/colony/input"
+    colony_channel_input_dir: "{infer:colony:channel_shm_dir}/queen"
+    colony_channel_output_dir: "{infer:fae:clolony_channel_shm_dir}/queen"
 drone:
     shm_dir: "{infer:ai_shm_dir}/drone/{infer:drone_name}"
-    channel_input_file: "{infer:drone:shm_dir}/channel/input.txt"
-    channel_input_dir: "{infer:drone:shm_dir}/channel/input"
-    channel_output_file: "{infer:bonded:fae:shm_dir}/channel/ant/drone/{infer:drone_name}/input.txt"
-    channel_output_dir: "{infer:bonded:fae:shm_dir}/channel/ant/drone/{infer:drone_name}/input"
+    colony_channel_input_dir: "{infer:colony:channel_shm_dir}/drone/{infer:drone_name}"
+    colony_channel_output_dir: "{infer:fae:colony_channel_shm_dir}/drone/{infer:drone_name}"
 env:
   XDG_CACHE_HOME: ~/.sys/.xdg/cache
   XDGX_SHM_DIR: /dev/shm/box

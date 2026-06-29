@@ -1,11 +1,9 @@
 ai_identity: "%{ai_identity}%"
 ai_shm_dir: "{infer:env:XDGX_SHM_DIR}/ai/{infer:ai_identity}/{infer:session_nom}"
-bonded:
-    fae:
-        identity: "%{bonded_fae_identity}%"
+fae:
+    identity: "%{fae_identity}%"
 drone:
     shm_dir: "{infer:ai_shm_dir}/drone/{infer:drone_name}"
-    channel_input_dir: "{infer:drone:shm_dir}/channel/input"
 env:
   XDG_CACHE_HOME: ~/.sys/.xdg/cache
   XDGX_SHM_DIR: /dev/shm/box

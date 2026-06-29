@@ -19,7 +19,7 @@ Perform the following iter bootstrap instructions, in order:
   - `journal.md` Historical meta-data
   - `operation.md` Rolling operational information (how-to)
   - `historical/` Historical `findings/` and `resolved/` tasks
-  - `operational/` Operational tools as described by `operation.md`
+  - `operational/` Operational resources as described by `operation.md`
   - `understood/` Rolling understanding of topic
 - This Iter's `operation.md` documents operational how-tos against the harness itself.
   - The constitution, implied memories, and adhoc memories inherently provide the larger operational information for the harness at large.

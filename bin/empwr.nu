@@ -38,12 +38,12 @@ export def "main ant colony new" [fae: string]: nothing -> nothing {
     cd $colony_branch
     
     open --raw queen/config/queen.yaml.template
-        | templation [[ai_identity $"ant_($fae)"] [bonded_fae_identity $fae]]
+        | templation [[ai_identity $"ant_($fae)"] [fae_identity $fae]]
         | save queen/config/queen.yaml
     rm queen/config/queen.yaml.template
     
     open --raw drone/config/drone.yaml.template
-        | templation [[ai_identity $"ant_($fae)"] [bonded_fae_identity $fae]]
+        | templation [[ai_identity $"ant_($fae)"] [fae_identity $fae]]
         | save drone/config/drone.yaml
     rm drone/config/drone.yaml.template
     

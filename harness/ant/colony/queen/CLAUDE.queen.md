@@ -56,11 +56,10 @@ from that call are the values used in the preceding yaml.
 The `persist` value must be a boolean "true" or "false" and indicates whether
 the drone is a one-shot agent or is expected to provide continuous service.
 
-By default, persistance is enabled. In persisted mode, the drone will messaage 
-you with "READY" when it has completed its bootstrap and inital prompting.
-You must then notify the Fae by calling `empower:ant/drone/channel:ready`. If you
-are aware of any teammates explicitly relying on the drone, notify them via
-message.
+By default, persistance is enabled. In persisted mode, the drone will write to
+both inboxes notifying that is ready. You do not need to relay this to the Fae.
+If you are aware of any teammates explicitly relying on the drone, notify them
+via message.
 
 If persistence is disabled, you will not need to relay the drone's readiness.
 
@@ -69,9 +68,13 @@ own if this procedure is followed. You can skip reading that file.
 
 ### Teardown
 
-When asked to "teardown" a drone teammate, do so.
+When asked to stop a drone, do so. Manually call `empower:ant/drone/channel:close`
+to formally close its channel with the Fae.
 
-Call `empower:ant/drone/channel:close` to formally close its channel with the Fae.
+In persistent mode, the drone may also shut itself down, which you will be
+notified of via the inbox monitor. When this happens, you do not need to manually
+close its channel - it will have already happened.
+
 
 ### Communication
 

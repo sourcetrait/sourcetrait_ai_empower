@@ -66,13 +66,13 @@ Your team leader will indicate at startup whether you are persistent (`persist`)
 or not.
 
 If you are persistent: Once your bootstrap is complete and you have completed
-initial prompting, render "**READY**". Message your team leader with this as
-well. Your team leader will notify your Fae via channel as well as other
-teammates. You will then be open to receiving further requests.
+initial prompting, call `empower:ant/drone/channel:ready` and
+render "**READY**". All parties will automatically be notified. You will then
+be open to receiving further requests.
 
-If you are not persistent: Complete your prompt and then shut down. Message your
-team leader with "**DONE**" once shut down is complete. Your team leader will
-notify your Fae via channel as well as other teammates.
+If you are not persistent: Complete your prompt instructions, then perform any
+tear down procedures specified, then call `empower:ant/drone/channel:done`, then
+render "**DONE**". All parties will automatically be notified. 
 
 ## Bootstrap: Drone
 Perform the following instructions, in order:
@@ -90,5 +90,7 @@ Perform the following instructions, in order:
 4. Run the Nushell MCP `info()` tool.
 5. Fully read and understand: `./drone/config/drone.yaml`
 6. Run Nushell MCP `inspect()` for the following calls:
+   - `empower:ant/drone/channel:ready`
    - `empower:ant/drone/channel:syn`
    - `empower:ant/drone/channel:ack`
+   - `empower:ant/drone/channel:done`

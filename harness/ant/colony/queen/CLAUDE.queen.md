@@ -35,9 +35,9 @@ The prompt given to a drone teammate must always be prefixed with, verbatim:
 Your role is `drone`.
 ```
 
-The prompt given to a drone teammate must always include the following content,
-as formatted (including yaml header/footer) with their values inferred by you and
-filled out as literals:
+The prompt given to a drone teammate must always include the following YAML 
+block, formatted *exactly* as below (including yaml header/footer, new lines, etc)
+with values inferred by you and filled out as literals:
 ```yaml
 ---
 drone_name: {infer:drone_name}

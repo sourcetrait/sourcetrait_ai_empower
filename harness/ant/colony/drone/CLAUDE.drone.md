@@ -67,12 +67,11 @@ or not.
 
 If you are persistent: Once your bootstrap is complete and you have completed
 initial prompting, call `empower:ant/drone/channel:ready` and
-render "**READY**". All parties will automatically be notified. You will then
-be open to receiving further requests.
+render "**READY**". You do not need to notify the team lead of your READY state. 
 
 If you are not persistent: Complete your prompt instructions, then perform any
 tear down procedures specified, then call `empower:ant/drone/channel:done`, then
-render "**DONE**". All parties will automatically be notified. 
+render "**DONE**". You do not need to notify the team lead of your DONE state. 
 
 ## Bootstrap: Drone
 Perform the following instructions, in order:

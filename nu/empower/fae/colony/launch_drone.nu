@@ -3,14 +3,14 @@ use ./channel/common.nu
 # Request the bonded colony's queen to launch a drone (fae-side).
 #
 # Write the drone's prompt to a normal shm file first (NOT a packet), then pass its
-# path as drone_prompt_shm (relative to XDGX_SHM_DIR). This call does the packet
-# writing: it writes the launch-request packet (drone_name, persist, and the prompt's
-# canonical path) to the queen's input dir, announces it to the colony inbox as a
-# FAE SYN, and provisions the fae's drone-packet receive dir so the drone can respond.
-# Returns the tx_id, the launch packet's canonical path, and the fae's drone-receive
-# dir. Errors if the fae or the colony has no live session, or the prompt shm file is
-# missing.
-export def main [args: record<ai_identity: string, drone_name: string, persist: bool, drone_prompt_shm: string>]: nothing -> record<tx_id: int, packet_path: string, drone_receive_dir: string> {
+# path as drone_prompt_shm (relative to XDGX_SHM_DIR) plus a caller-chosen
+# channel_tx_id. This call does the packet writing: it writes the launch-request
+# packet (drone_name, persist, and the prompt's canonical path) to the queen's input
+# dir as <fae_nom>_<channel_tx_id>.md, announces it to the colony inbox as a FAE SYN,
+# and provisions the fae's drone-packet receive dir so the drone can respond. Returns
+# the launch packet's canonical path and the fae's drone-receive dir. Errors if the
+# fae or the colony has no live session, or the prompt shm file is missing.
+export def main [args: record<ai_identity: string, channel_tx_id: int, drone_name: string, persist: bool, drone_prompt_shm: string>]: nothing -> record<packet_path: string, drone_receive_dir: string> {
     let fae_session_nom = (common session_nom $args.ai_identity)
     if $fae_session_nom == null {
         error make { msg: $"fae has no live session: no context for ($args.ai_identity)" }
@@ -32,8 +32,7 @@ export def main [args: record<ai_identity: string, drone_name: string, persist: 
     let drone_receive_dir = ($env.XDGX_SHM_DIR | path join "ai" $args.ai_identity $fae_session_nom "channel" "colony" "drone" $args.drone_name)
     mkdir $drone_receive_dir
     # write the launch-request packet to the queen's input dir.
-    let tx_id = (date now | into int)
-    let packet = $"($fae_session_nom)_($tx_id).md"
+    let packet = $"($fae_session_nom)_($args.channel_tx_id).md"
     let queen_in = (common queen_input_dir $queen_identity $queen_session_nom)
     mkdir $queen_in
     let packet_path = ($queen_in | path join $packet)
@@ -47,5 +46,5 @@ export def main [args: record<ai_identity: string, drone_name: string, persist: 
     $body | save -f $packet_path
     # announce the launch request to the colony inbox (the queen reads it + spawns).
     $"FAE SYN ($packet)(char nl)" | save --append $c_inbox
-    { tx_id: $tx_id, packet_path: $packet_path, drone_receive_dir: $drone_receive_dir }
+    { packet_path: $packet_path, drone_receive_dir: $drone_receive_dir }
 }

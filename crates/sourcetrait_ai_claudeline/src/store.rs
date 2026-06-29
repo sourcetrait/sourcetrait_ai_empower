@@ -109,6 +109,9 @@ fn persist_status(
             "session_nom".to_string(),
             serde_json::Value::String(nom.to_string()),
         );
+        if let Some(pid) = pid::detect_pid(identity) {
+            obj.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
+        }
     }
     let yaml = serde_norway::to_string(&value).context(SerializeYamlSnafu)?;
 

@@ -1,4 +1,5 @@
 use ./common.nu
+use ../../../pid/list_ai.nu
 
 # Bring the fae's bonded-colony channel online and report the queen's state.
 #
@@ -19,7 +20,7 @@ export def main [args: record<ai_identity: string>]: nothing -> record<fae_inbox
     touch $inbox
 
     let queen_identity = (common queen_identity $args.ai_identity)
-    let queen_session_nom = (common session_nom $queen_identity)
+    let queen_session_nom = ((list_ai null).sessions | where ai_identity == $queen_identity | get -i 0.session_nom)
     let queen_online = if $queen_session_nom == null {
         null
     } else {

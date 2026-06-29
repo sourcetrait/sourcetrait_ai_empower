@@ -2,6 +2,7 @@ pub(crate) mod context;
 pub(crate) mod error;
 pub(crate) mod input;
 pub(crate) mod layout;
+pub(crate) mod pid;
 pub(crate) mod run;
 pub(crate) mod store;
 
@@ -35,7 +36,10 @@ pub(crate) use crate::{
         FsSnafu,
         SerializeYamlSnafu,
     },
-    input::Input,
+    input::{
+        Input,
+        ai_identity,
+    },
     layout::{
         LayoutKind,
         RateWindow,
@@ -46,3 +50,8 @@ pub(crate) use crate::{
 };
 
 pub use crate::run::run;
+
+#[cfg(test)]
+mod tests {
+    mod pid;
+}

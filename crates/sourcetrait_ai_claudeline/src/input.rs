@@ -107,7 +107,7 @@ impl Input {
 /// The `$HOME` strip only reduces the path before the suffix check; harnesses
 /// outside `$HOME` are unsupported, so a non-home path falls through to the
 /// basename.
-fn ai_identity(project_dir: &str) -> String {
+pub(crate) fn ai_identity(project_dir: &str) -> String {
     const ANT: &str = "ant";
     const COLONY: &str = "colony";
 

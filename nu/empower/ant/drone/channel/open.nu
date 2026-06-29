@@ -1,4 +1,5 @@
 use ./common.nu
+use ../../../pid/list_ai.nu
 
 # Set up a drone's bonded-fae channel (queen-invoked, before launch).
 #
@@ -15,7 +16,7 @@ export def main [args: record<fae: string, drone_name: string>]: nothing -> reco
     if $colony_session_nom == null {
         error make { msg: $"colony has no live session: no context for ($colony_identity)" }
     }
-    let fae_session_nom = (common session_nom $args.fae)
+    let fae_session_nom = ((list_ai null).sessions | where ai_identity == $args.fae | get -i 0.session_nom)
     if $fae_session_nom == null {
         error make { msg: $"bonded fae ($args.fae) is not online" }
     }

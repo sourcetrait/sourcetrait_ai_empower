@@ -7,11 +7,11 @@ fae:
 colony:
     channel_shm_dir: "{infer:ai_shm_dir}/channel/colony"
     channel_inbox: "{infer:colony:channel_shm_dir}/inbox.txt" 
-    channel_outbox: "{infer:fae:colony_channel_shm_dir}/channel/colony/inbox.txt"
+    channel_outbox: "{infer:fae:colony_channel_shm_dir}/inbox.txt"
 queen:
     shm_dir: "{infer:ai_shm_dir}/queen"
     colony_channel_input_dir: "{infer:colony:channel_shm_dir}/queen"
-    colony_channel_output_dir: "{infer:fae:clolony_channel_shm_dir}/queen"
+    colony_channel_output_dir: "{infer:fae:colony_channel_shm_dir}/queen"
 drone:
     shm_dir: "{infer:ai_shm_dir}/drone/{infer:drone_name}"
     colony_channel_input_dir: "{infer:colony:channel_shm_dir}/drone/{infer:drone_name}"

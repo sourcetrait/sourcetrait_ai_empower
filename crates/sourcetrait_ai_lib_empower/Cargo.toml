@@ -11,7 +11,5 @@ categories = []
 keywords = ["sourcetrait", "empower", "lib"]
 
 [dependencies]
-regex.workspace = true
 snafu.workspace = true
 sourcetrait_testing.workspace = true
-xxhash-rust.workspace = true

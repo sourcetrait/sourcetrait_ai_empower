@@ -17,31 +17,14 @@ use crate::*;
 /// `sourcetrait_ai_nushell_mcp::server::cache::cache_dir` as the leaf path segment
 /// for per-call log dirs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Nonce(u64);
-
-impl Nonce {
-    /// What: returns the underlying u64 value, bypassing the base62
-    /// `Display` impl.
-    ///
-    /// Why: most callers want the base62 string form (for filenames,
-    /// envelope fields, agent display); this accessor exists for the
-    /// few callers that need the raw bits (hashing into a larger key,
-    /// comparing two Nonces by integer value, tests).
-    ///
-    /// Where: not used in sourcetrait_ai_nushell_mcp's hot path; reserved for future
-    /// internal helpers and tests that need to assert specific
-    /// integer values.
-    pub fn to_u64(self) -> u64 {
-        self.0
-    }
-}
+pub(crate) struct Nonce(u64);
 
 impl Display for Nonce {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        base62::fmt_base62(self.0, f)
+        lib_empower::base62::fmt_base62(self.0, f)
     }
 }
 
@@ -58,7 +41,7 @@ impl Display for Nonce {
 /// wrapped in `Arc<NonceGen>`, and shared across all rmcp tool
 /// handlers in `NuSh`. Each handler calls `next` once per
 /// dispatched worker round-trip.
-pub struct NonceGen {
+pub(crate) struct NonceGen {
     counter: AtomicUsize,
 }
 
@@ -79,7 +62,7 @@ impl NonceGen {
     /// Where: called once during `sourcetrait_ai_nushell_mcp::server::run::run_server`'s
     /// startup, before workers are spawned. Tests construct their own
     /// instances per-Host.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             counter: AtomicUsize::new(0),
         }
@@ -103,7 +86,7 @@ impl NonceGen {
     /// at the start of every run/interact/rerun/call. The returned
     /// `Nonce` becomes the per-call log dir name and the envelope's
     /// `nonce` field.
-    pub fn next<T: Hash>(
+    pub(crate) fn next<T: Hash>(
         &self,
         payload: &T,
     ) -> Nonce {

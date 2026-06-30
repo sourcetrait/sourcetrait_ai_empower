@@ -15,22 +15,7 @@ use crate::*;
 /// `sourcetrait_ai_claudeline`; rendered into the YAML `session_nom` field
 /// and the `<cache>/statusline/{nom}.yaml` filename via `Display`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ClaudeSessionNom(u64);
-
-impl ClaudeSessionNom {
-    /// What: returns the underlying u64 value, bypassing the base62
-    /// `Display` impl.
-    ///
-    /// Why: mirrors `Nonce::to_u64` / `RerunHash::to_u64` for the few
-    /// callers that want the raw bits (comparing by integer value,
-    /// hashing into a larger key, asserting exact values in tests).
-    ///
-    /// Where: not used in claudeline's hot path; reserved for tests and
-    /// future internal helpers.
-    pub fn to_u64(self) -> u64 {
-        self.0
-    }
-}
+pub(crate) struct ClaudeSessionNom(u64);
 
 impl From<&str> for ClaudeSessionNom {
     /// What: xxh3_64-hashes the session id string and wraps the result.
@@ -56,6 +41,6 @@ impl Display for ClaudeSessionNom {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        base62::fmt_base62(self.0, f)
+        lib::base62::fmt_base62(self.0, f)
     }
 }

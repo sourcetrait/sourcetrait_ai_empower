@@ -19,8 +19,8 @@ liquid.workspace = true
 nu-parser.workspace = true
 nu-plugin.workspace = true
 nu-protocol.workspace = true
+regex.workspace = true
 snafu.workspace = true
-sourcetrait_ai_lib_empower.workspace = true
 
 # [dev-dependencies] left empty for now -- nu-plugin-test-support 0.113 pulls
 # in nu-plugin-engine 0.113.1 which has a non-exhaustive-match upstream bug

@@ -23,6 +23,7 @@ serde_json.workspace = true
 serde_norway.workspace = true
 snafu.workspace = true
 sourcetrait_ai_lib_empower.workspace = true
+xxhash-rust.workspace = true
 
 [dev-dependencies]
 sourcetrait_testing.workspace = true

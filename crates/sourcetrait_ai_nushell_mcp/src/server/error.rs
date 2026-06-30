@@ -383,7 +383,7 @@ pub struct ErrorBody {
 /// Where: called by every tool handler on a tool-execution error path.
 pub(crate) fn error_to_call_result(
     error: Error,
-    nonce: Option<lib_empower::Nonce>,
+    nonce: Option<Nonce>,
 ) -> mcp::CallToolResult {
     let (errors, warnings) = match error {
         Error::LibraryViolations { diagnostics } | Error::LintViolations { diagnostics } => {

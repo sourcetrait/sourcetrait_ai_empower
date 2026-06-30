@@ -67,7 +67,7 @@ impl NuSh {
             Ok(o) => o,
             Err(de) => return Ok(error_to_call_result(de.error, de.nonce)),
         };
-        let computed_rerun_id = lib_empower::RerunHash::of(&(
+        let computed_rerun_id = RerunHash::of(&(
             args_type.as_str(),
             result_type.as_str(),
             p.body.as_str(),

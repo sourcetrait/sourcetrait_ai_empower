@@ -68,7 +68,7 @@ pub(crate) fn persist_session(
     identity: &str,
 ) -> ClaudelineResult<()> {
     let prev = read_prev_session(identity);
-    let nom = lib::ClaudeSessionNom::from(sid);
+    let nom = ClaudeSessionNom::from(sid);
     persist_status(&input, sid, &nom, identity)?;
     persist_context(ContextModel::try_from(input), &nom, identity)?;
 
@@ -97,7 +97,7 @@ pub(crate) fn persist_session(
 fn persist_status(
     input: &Input,
     sid: &str,
-    nom: &lib::ClaudeSessionNom,
+    nom: &ClaudeSessionNom,
     identity: &str,
 ) -> ClaudelineResult<()> {
     let dir = status_dir(identity)?;
@@ -136,7 +136,7 @@ fn persist_status(
 /// latest.yaml. Where: persist_session, after persist_status.
 fn persist_context(
     model: Result<ContextModel, ContextSchemaChanged>,
-    nom: &lib::ClaudeSessionNom,
+    nom: &ClaudeSessionNom,
     identity: &str,
 ) -> ClaudelineResult<()> {
     let dir = context_dir(identity)?;
@@ -325,7 +325,7 @@ fn tmp_root(identity: &str) -> Option<PathBuf> {
 /// on demand; create_dir_all is idempotent so a re-run or an already-present
 /// dir is harmless. Where: persist_session, on any new session.
 fn ensure_shm(
-    nom: &lib::ClaudeSessionNom,
+    nom: &ClaudeSessionNom,
     identity: &str,
 ) -> ClaudelineResult<()> {
     let Some(root) = shm_root(identity) else {
@@ -341,7 +341,7 @@ fn ensure_shm(
 /// Why: the on-disk twin of ensure_shm. Where: persist_session, on any new
 /// session.
 fn ensure_tmp(
-    nom: &lib::ClaudeSessionNom,
+    nom: &ClaudeSessionNom,
     identity: &str,
 ) -> ClaudelineResult<()> {
     let Some(root) = tmp_root(identity) else {

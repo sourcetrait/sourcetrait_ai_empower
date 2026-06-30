@@ -62,7 +62,7 @@ impl TryFrom<Input> for ContextModel {
     /// to store's persist_context.
     fn try_from(input: Input) -> Result<Self, Self::Error> {
         let sid = input.session_id().ok_or(ContextSchemaChanged)?;
-        let session_nom = lib::ClaudeSessionNom::from(sid).to_string();
+        let session_nom = ClaudeSessionNom::from(sid).to_string();
         let cw = input
             .value
             .get("context_window")

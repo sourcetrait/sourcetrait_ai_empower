@@ -45,7 +45,7 @@ impl nu::SimplePluginCommand for Command {
     ) -> Result<nu::Value, nu::LabeledError> {
         let pattern: String = call.req(0)?;
         let path: PathBuf = call.req(1)?;
-        let matches = lib::md::find(&path, &pattern).map_err(|e| {
+        let matches = find(&path, &pattern).map_err(|e| {
             nu::LabeledError::new(e.to_string()).with_label(e.to_string(), call.head)
         })?;
         Ok(nu::Value::list(

@@ -55,7 +55,7 @@ pub fn run_server(target: BuildTarget) {
         let interact_worker = WorkerHandle::spawn(Mode::Stateful)
             .await
             .expect("spawn interact worker");
-        let nonce_gen = Arc::new(lib_empower::NonceGen::new());
+        let nonce_gen = Arc::new(NonceGen::new());
         // A full-shell `ParseEngine` shared by BOTH the body-lint pass
         // (`engine_state()`) and the library validator
         // (`engine_state_for_file()`, threaded through commit_impl /

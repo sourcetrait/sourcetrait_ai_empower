@@ -130,7 +130,7 @@ pub(crate) fn cache_kind_dir(kind: CacheKind) -> PathBuf {
 /// dir, includes it in the RunRequest's `log_dir` field). The worker
 /// opens `<log_dir>/stdout` and `<log_dir>/stderr` for engine
 /// redirect.
-pub(crate) fn cache_dir(kind: CacheKind, nonce: lib_empower::Nonce) -> PathBuf {
+pub(crate) fn cache_dir(kind: CacheKind, nonce: Nonce) -> PathBuf {
     cache_kind_dir(kind).join(nonce.to_string())
 }
 

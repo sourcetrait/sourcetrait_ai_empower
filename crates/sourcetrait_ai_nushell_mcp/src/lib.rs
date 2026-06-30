@@ -4,8 +4,10 @@ pub(crate) mod server {
     pub(crate) mod library;
     pub(crate) mod lint;
     pub(crate) mod namepath;
+    pub(crate) mod nonce;
     pub(crate) mod parse_engine;
     pub(crate) mod pool;
+    pub(crate) mod rerun;
     pub(crate) mod run;
     pub(crate) mod schema;
     pub(crate) mod tool {
@@ -70,8 +72,10 @@ pub(crate) use crate::{
         },
         lint::{LINT_VIOLATION_CAP, lint_body},
         namepath::{Namepath, NamepathRef},
+        nonce::{Nonce, NonceGen},
         parse_engine::{ParseEngine, span_to_line_col, wrap_as_def_body, wrap_as_module},
         pool::Pool,
+        rerun::RerunHash,
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},
         tool::common::{
             ClosureCacheBody, InFlightKind, NuSh, RunParams, convert_schemas, dispatch_interact,
@@ -86,8 +90,10 @@ pub(crate) use crate::{
 
 pub(crate) use std::{
     collections::HashMap,
+    fmt::Display,
     fs, io,
     io::{Read, Write},
+    hash::{Hash, Hasher},
     ops::ControlFlow,
     panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
@@ -102,6 +108,10 @@ pub(crate) use std::{
 pub(crate) use clap::Parser;
 
 pub(crate) use sourcetrait_ai_lib_empower as lib_empower;
+
+pub(crate) mod xxh3 {
+    pub(crate) use xxhash_rust::xxh3::Xxh3;
+}
 
 pub(crate) mod dirs {
     pub(crate) use directories::BaseDirs;

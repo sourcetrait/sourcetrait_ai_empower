@@ -50,6 +50,7 @@ serde.workspace = true
 serde_json.workspace = true
 sourcetrait_ai_lib_empower.workspace = true
 tokio.workspace = true
+xxhash-rust.workspace = true
 
 [dev-dependencies]
 sourcetrait_testing.workspace = true

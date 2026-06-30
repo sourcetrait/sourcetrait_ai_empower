@@ -55,7 +55,7 @@ pub(crate) struct ClosureCacheBody {
 pub struct NuSh {
     pub(crate) runs_pool: Arc<Pool>,
     pub(crate) interact_worker: Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
-    pub(crate) nonce_gen: Arc<lib_empower::NonceGen>,
+    pub(crate) nonce_gen: Arc<NonceGen>,
     pub(crate) library_locks: Arc<LibraryLocks>,
     pub(crate) lint_engine: Arc<ParseEngine>,
     pub(crate) in_flight: Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
@@ -123,7 +123,7 @@ impl NuSh {
     pub(crate) fn new(
         runs_pool: Arc<Pool>,
         interact_worker: WorkerHandle,
-        nonce_gen: Arc<lib_empower::NonceGen>,
+        nonce_gen: Arc<NonceGen>,
         library_locks: Arc<LibraryLocks>,
         lint_engine: Arc<ParseEngine>,
     ) -> Self {
@@ -285,7 +285,7 @@ pub(crate) fn lint_run_params(
 /// Where: returned by `dispatch_pooled` / `dispatch_interact` to
 /// each `#[mcp::tool]` handler that wraps it into a typed envelope.
 pub(crate) struct DispatchOutcome {
-    pub(crate) nonce: lib_empower::Nonce,
+    pub(crate) nonce: Nonce,
     pub(crate) result: json::Value,
 }
 
@@ -306,7 +306,7 @@ pub(crate) struct DispatchOutcome {
 /// into the wire envelope.
 pub(crate) struct DispatchError {
     pub(crate) error: Error,
-    pub(crate) nonce: Option<lib_empower::Nonce>,
+    pub(crate) nonce: Option<Nonce>,
 }
 
 /// What: dispatch one tool call against the stateless `runs_pool`.
@@ -329,7 +329,7 @@ pub(crate) async fn dispatch_pooled(
     pool: &Arc<Pool>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     log_kind: CacheKind,
-    nonce: lib_empower::Nonce,
+    nonce: Nonce,
     source: String,
     tool_name: &'static str,
     args_json: serde_json::Value,
@@ -423,7 +423,7 @@ pub(crate) async fn dispatch_pooled(
 pub(crate) async fn dispatch_interact(
     interact: &Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
-    nonce: lib_empower::Nonce,
+    nonce: Nonce,
     source: String,
     args_json: serde_json::Value,
     timeout_ms: Option<u64>,

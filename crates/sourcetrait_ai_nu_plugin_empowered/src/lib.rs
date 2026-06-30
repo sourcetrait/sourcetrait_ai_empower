@@ -14,6 +14,13 @@ pub(crate) mod liquid {
     pub(crate) mod from;
     pub(crate) mod soak;
 }
+pub(crate) mod md {
+    pub(crate) mod find;
+    #[cfg(test)]
+    mod tests {
+        mod find;
+    }
+}
 /*pub(crate) mod shm {
     pub(crate) mod dir;
     pub(crate) mod file;
@@ -26,12 +33,18 @@ pub(crate) mod error;
 pub(crate) mod plugin;
 
 pub(crate) use crate::{
-    error::{labeled_error, nu_plugin_error, NuPluginEmpowerResult},
+    error::{
+        InvalidPatternSnafu, MarkdownResult, NuPluginEmpowerResult, ReadFileSnafu, labeled_error,
+        nu_plugin_error,
+    },
     liquid::{
         render::render_template,
         schema::validate_fill,
     },
+    md::find::find,
 };
+
+pub(crate) use snafu::ResultExt;
 
 pub(crate) use std::{
     fs,
@@ -69,8 +82,6 @@ pub(crate) mod nu {
         },
     };
 }
-
-pub(crate) use sourcetrait_ai_lib_empower as lib;
 
 pub use crate::{
     plugin::EmpowerPlugin,

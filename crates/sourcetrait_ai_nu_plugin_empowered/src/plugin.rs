@@ -12,7 +12,7 @@ impl nu::Plugin for EmpowerPlugin {
 
     fn commands(&self) -> Vec<Box<dyn nu::PluginCommand<Plugin = Self>>> {
         vec![
-            Box::new(crate::peek::md::find::Command),
+            Box::new(crate::eye::md::find::Command),
             //todo:ai: Box::new(crate::shm::dir::Command),
             //todo:ai: Box::new(crate::shm::file::Command),
             //todo:ai: Box::new(crate::shm::path::Command),

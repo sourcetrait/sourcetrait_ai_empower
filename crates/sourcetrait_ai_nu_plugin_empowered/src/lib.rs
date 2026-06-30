@@ -1,6 +1,6 @@
 // Plugin commands are not re-exported; referenced long-hand via `crate::...`.
 
-pub(crate) mod peek {
+pub(crate) mod eye {
     pub(crate) mod md {
         pub(crate) mod find;
     }

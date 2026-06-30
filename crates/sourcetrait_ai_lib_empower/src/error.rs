@@ -45,7 +45,7 @@ pub enum LibEmpowerError {
 /// without re-spelling the error type.
 ///
 /// Where: returned by `markdown::find` (re-exported as `md::find`);
-/// consumed by `nu_plugin_empower`'s md commands through the
+/// consumed by `nu_plugin_empowered`'s md commands through the
 /// crate's `md` module.
 pub type MarkdownResult<T> = Result<T, MarkdownError>;
 

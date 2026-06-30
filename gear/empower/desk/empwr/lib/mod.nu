@@ -1,12 +1,7 @@
-# empowered - the user's host-side toolkit (shipped via the empower project).
-# Named `empowered` (not `empower`) so it can't collide with the `empower` nu
-# library if the container ever loads this toolkit too (testing/controlling a
-# sub-container).
-#
-# Wire from config.nu (replaces the old `source me.nu; use me *`):
-#   const empowered = ($nu.default-config-dir | path join empowered mod.nu)
-#   use $empowered *
-# The `*` brings submodules into scope flat -> `ai relay from|to|up` (you never
-# see the `empowered` name). Drop the `*` for `empowered ai relay ...`.
+# The empwr desk gear's lib - the principal/host-side relay toolkit. Installed as
+# the `empwr` desk gear on the host (a nu lib on NU_LIB_DIRS); wire from config.nu
+# with `use empwr *` (the `*` flattens the submodules -> `ai relay from|to|up`;
+# drop it for `empwr ai relay ...`). The module exports `ai`; it is NOT named
+# `empowered` (an older label, since dropped).
 
 export module ai

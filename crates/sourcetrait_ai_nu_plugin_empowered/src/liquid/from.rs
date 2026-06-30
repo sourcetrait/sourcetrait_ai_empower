@@ -6,7 +6,7 @@ impl nu::SimplePluginCommand for Command {
     type Plugin = EmpowerPlugin;
 
     fn name(&self) -> &str {
-        "empowered from liquid"
+        "from empowered liquid"
     }
 
     fn description(&self) -> &str {
@@ -14,7 +14,7 @@ impl nu::SimplePluginCommand for Command {
     }
 
     fn signature(&self) -> nu::Signature {
-        nu::Signature::build("empowered from liquid")
+        nu::Signature::build("from empowered liquid")
             .required(
                 "fill",
                 nu::SyntaxShape::Record(vec![]),
@@ -26,7 +26,7 @@ impl nu::SimplePluginCommand for Command {
 
     fn examples(&self) -> Vec<nu::Example<'_>> {
         vec![nu::Example {
-            example: r#"'hello {{ name }}' | empowered from liquid { name: "world" }"#,
+            example: r#"'hello {{ name }}' | from empowered liquid { name: "world" }"#,
             description: "Render an inline template against a fill record.",
             result: None,
         }]

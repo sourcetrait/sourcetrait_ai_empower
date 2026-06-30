@@ -11,9 +11,7 @@ email = "development@sourcetrait.com"
 name = "github"
 
 [common]
-gear = [
-    "empowered"
-]
+gear = []
 
 [desk]
 gear = [

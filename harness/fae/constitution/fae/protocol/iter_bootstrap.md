@@ -14,6 +14,12 @@ in pattern order:
 - `Cargo.toml`
 - src, tests, benches dirs: `*.rs` (start with `lib.rs` files if they exist)
 
+### protocol: iter_nu_bootstrap
+
+Fully read and understand every source file in the library specified,
+in pattern order:
+- `*.nu` (start with `mod.nu` files if they exist)
+
 ### protocol: iter_understood_bootstrap
 
 Fully read and and undertsand every `*.md` in the `working` directory for

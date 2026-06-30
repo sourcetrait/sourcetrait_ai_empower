@@ -6,7 +6,7 @@ impl nu::SimplePluginCommand for Command {
     type Plugin = EmpowerPlugin;
 
     fn name(&self) -> &str {
-        "eye md find"
+        "empowered eye md find"
     }
 
     fn description(&self) -> &str {
@@ -14,7 +14,7 @@ impl nu::SimplePluginCommand for Command {
     }
 
     fn signature(&self) -> nu::Signature {
-        nu::Signature::build("eye md find")
+        nu::Signature::build("empowered eye md find")
             .required(
                 "pattern",
                 nu::SyntaxShape::String,
@@ -30,7 +30,7 @@ impl nu::SimplePluginCommand for Command {
 
     fn examples(&self) -> Vec<nu::Example<'_>> {
         vec![nu::Example {
-            example: r#"eye md find '^#### ' SKILL.md"#,
+            example: r#"empowered eye md find '^#### ' SKILL.md"#,
             description: "Find all H4 heading offsets in SKILL.md.",
             result: None,
         }]

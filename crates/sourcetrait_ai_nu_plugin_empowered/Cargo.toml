@@ -15,6 +15,8 @@ name = "nu_plugin_empowered"
 path = "src/main.rs"
 
 [dependencies]
+liquid.workspace = true
+nu-parser.workspace = true
 nu-plugin.workspace = true
 nu-protocol.workspace = true
 snafu.workspace = true

@@ -1,9 +1,18 @@
 // Plugin commands are not re-exported; referenced long-hand via `crate::...`.
+//
+// `liquid` below is THIS crate's templating-command module; the external liquid
+// crate is referenced as `::liquid` (leading colon) where needed, to disambiguate.
 
 pub(crate) mod eye {
     pub(crate) mod md {
         pub(crate) mod find;
     }
+}
+pub(crate) mod liquid {
+    pub(crate) mod render;
+    pub(crate) mod schema;
+    pub(crate) mod from;
+    pub(crate) mod soak;
 }
 /*pub(crate) mod shm {
     pub(crate) mod dir;
@@ -17,28 +26,47 @@ pub(crate) mod error;
 pub(crate) mod plugin;
 
 pub(crate) use crate::{
-    //shm::shared::*,
+    error::{labeled_error, nu_plugin_error, NuPluginEmpowerResult},
+    liquid::{
+        render::render_template,
+        schema::validate_fill,
+    },
 };
 
 pub(crate) use std::{
-    path::{Path, PathBuf}
+    fs,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 pub(crate) mod nu {
+    pub(crate) use nu_parser::parse;
     pub(crate) use nu_plugin::{
-        Plugin,
-        PluginCommand,
         EngineInterface,
         EvaluatedCall,
+        Plugin,
+        PluginCommand,
         SimplePluginCommand,
     };
     pub(crate) use nu_protocol::{
         Category,
         Example,
         LabeledError,
+        Record,
         Signature,
         SyntaxShape,
+        Type,
         Value,
+        ast::{
+            Block,
+            Expr,
+        },
+        engine::{
+            EngineState,
+            StateWorkingSet,
+        },
     };
 }
 

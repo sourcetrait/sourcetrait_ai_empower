@@ -1307,7 +1307,7 @@ fn ext_lower(path: &std::path::Path) -> Option<String> {
 fn is_sanctioned_root_file(name: &str) -> bool {
     matches!(
         name,
-        "library.nu.toml" | "README.md" | "LEGAL.md" | "LICENSE.txt"
+        "library.rig.toml" | "README.md" | "LEGAL.md" | "LICENSE.txt"
     ) || (name.starts_with("LICENSE-") && name.ends_with(".txt"))
 }
 
@@ -1544,7 +1544,7 @@ fn validate_walk(
                         root,
                         &path,
                         Zone::Source,
-                        "only .nu files are allowed in the library tree (plus root README.md / LEGAL.md / LICENSE.txt / LICENSE-*.txt / library.nu.toml, .gitignore, and the .assets/ + .docs/ dirs)",
+                        "only .nu files are allowed in the library tree (plus root README.md / LEGAL.md / LICENSE.txt / LICENSE-*.txt / library.rig.toml, .gitignore, and the .assets/ + .docs/ dirs)",
                         &mut result.diagnostics,
                     );
                 }

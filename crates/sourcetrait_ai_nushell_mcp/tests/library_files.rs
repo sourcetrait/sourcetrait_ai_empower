@@ -1,7 +1,7 @@
 //! Library file-set tests (followup #26): which non-`.nu` content a library may
 //! carry, and how it is validated.
 //!
-//! Carried set = `.nu` + root `{library.nu.toml, README.md, LEGAL.md,
+//! Carried set = `.nu` + root `{library.rig.toml, README.md, LEGAL.md,
 //! LICENSE.txt, LICENSE-*.txt}` + `.gitignore` (any depth) + root `.assets/`
 //! (deny exec extensions) + root `.docs/` (`.md`/`.txt` + `.gitignore`).
 //! Universal: nothing carried is `+x`. Library name not in
@@ -417,11 +417,11 @@ fn root_sanctioned_files_carried() {
     write_source(&src, "LEGAL.md", "legal\n");
     write_source(&src, "LICENSE.txt", "license\n");
     write_source(&src, "LICENSE-MIT.txt", "mit\n");
-    write_source(&src, "library.nu.toml", "name = \"rootlib\"\n");
+    write_source(&src, "library.rig.toml", "name = \"rootlib\"\n");
     let resp = host.commit("rootlib");
     assert!(!has_error_path(&resp), "root files should commit; got {resp}");
     let canon = host.canonical_dir("rootlib");
-    for f in ["README.md", "LEGAL.md", "LICENSE.txt", "LICENSE-MIT.txt", "library.nu.toml"] {
+    for f in ["README.md", "LEGAL.md", "LICENSE.txt", "LICENSE-MIT.txt", "library.rig.toml"] {
         assert!(canon.join(f).exists(), "{f} should be carried");
     }
 }

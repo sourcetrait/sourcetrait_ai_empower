@@ -1,0 +1,20 @@
+# iter: {{ iter }}: bootstrap.md
+> USER
+## ref
+## bootstrap: {{ iter }}
+Perform the following iter bootstrap instructions, in order:
+1. Perform `{protocol:iter_working_bootstrap}` for: `./iter/harness/{{ iter }}/working`
+2. Upon completion, await instruction.
+## info: {{ iter }}
+- Meta in `./iter/{{ iter }}/`
+  - `config.yaml` Configuration data points
+  - `debt.md` Rolling technical debt
+  - `design.yaml` Authorative user design intentions
+  - `followups.md` Rolling planned followup tasks
+  - `journal.md` Historical meta-data
+  - `operation.md` Rolling operational information (how-to)
+  - `historical/` Historical `findings/` and `resolved/` tasks
+  - `operational/` Operational resources as described by `operation.md`
+  - `working/` Rolling understanding of topic
+- Probe and test data is read-on-demand.
+  - Check filesize to determine how to read. Data files can be large.

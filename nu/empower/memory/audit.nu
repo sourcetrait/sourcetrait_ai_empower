@@ -9,7 +9,7 @@
 export def main [args: record<live: string, repo: string>]: nothing -> record<counts: record<memories: int, indexed: int>, p1_frontmatter: record<bad_frontmatter: list<string>, name_missing: list<string>, name_mismatch: table<file: string, name: string, snake: string>, desc_missing: list<string>, desc_tripledash: list<string>, meta_incomplete: list<string>>, p2_refs: record<dangling: table<from: string, base: string>, orphan_count: int, orphans: list<string>>, p3_index: record<unindexed: list<string>, broken: table<idx: string, missing: string>>, p4_mirror: record<only_live: list<string>, only_repo: list<string>, sha_mismatch: table<file: string>>, p5_sizes: record<memory_md_bytes: int, over_cap: bool>> {
     const DEFAULT_MEMORY_CAP = 24576
 
-    def mem-files [dir: string] {
+    def mem_files [dir: string] {
         glob ($dir | path join "*.md")
         | each {|p| $p | path basename }
         | where {|x| $x != "MEMORY.md" }
@@ -19,7 +19,7 @@ export def main [args: record<live: string, repo: string>]: nothing -> record<co
     # Implied/adhoc ragref tokens from a doc's `## ref` bullets only (the
     # canonical cross-refs). Scoping to the bullets between `## ref` and the next
     # `## ` header excludes body example tokens and granularity self-anchors.
-    def ref-tokens [raw: string] {
+    def ref_tokens [raw: string] {
         let lns = ($raw | lines)
         let ref_idx = ($lns | enumerate | where {|r| ($r.item | str trim) == "## ref" } | get index.0?)
         if $ref_idx == null {
@@ -36,7 +36,7 @@ export def main [args: record<live: string, repo: string>]: nothing -> record<co
 
     # Ragref token inner (e.g. "adhoc:rule:nu:not_transactional") -> base memory
     # snake. Handles `::` shard (-> `__`) before `:` split; drops granularity.
-    def token-base [inner: string] {
+    def token_base [inner: string] {
         let parts = ($inner | split row "::")
         if (($parts | length) > 1) {
             let base = ($parts | first | split row ":" | first 3 | str join "_")
@@ -47,7 +47,7 @@ export def main [args: record<live: string, repo: string>]: nothing -> record<co
         }
     }
 
-    def parse-memory [dir: string, file: string] {
+    def parse_memory [dir: string, file: string] {
         let raw = (open --raw ([$dir $file] | path join) | decode)
         let lns = ($raw | lines)
         let fences = ($lns | enumerate | where {|r| ($r.item | str trim) == "---" } | get index)
@@ -73,13 +73,13 @@ export def main [args: record<live: string, repo: string>]: nothing -> record<co
             desc_tripledash: ($desc =~ '-{3}'),
             meta_complete: (["node_type:" "type:" "revision:" "date:"]
                 | all {|k| not ((do $getf $k) | is-empty) }),
-            ref_bases: ((ref-tokens $raw) | each {|t| token-base $t } | uniq),
+            ref_bases: ((ref_tokens $raw) | each {|t| token_base $t } | uniq),
             sha: ($raw | hash sha256)
         }
     }
 
-    let files = (mem-files $args.live)
-    let parsed = ($files | each {|f| parse-memory $args.live $f })
+    let files = (mem_files $args.live)
+    let parsed = ($files | each {|f| parse_memory $args.live $f })
     let snakes = ($parsed | get snake)
 
     let all_refs = ($parsed | each {|p| $p.ref_bases | each {|b| {from: $p.file, base: $b} } } | flatten)
@@ -90,12 +90,12 @@ export def main [args: record<live: string, repo: string>]: nothing -> record<co
     let orphans = ($parsed | where {|p| $p.snake not-in $inbound } | get file)
 
     let mem_raw = (open --raw ($args.live | path join "MEMORY.md") | decode)
-    let idx_bases = ((ref-tokens $mem_raw) | each {|t| token-base $t } | uniq)
+    let idx_bases = ((ref_tokens $mem_raw) | each {|t| token_base $t } | uniq)
     let indexed_files = ($idx_bases | each {|b| $b + ".md" })
     let unindexed = ($files | where {|f| $f not-in $indexed_files })
     let broken = ($idx_bases | where {|b| ($b + ".md") not-in $files } | each {|b| {idx: "MEMORY.md", missing: ($b + ".md")} })
 
-    let repo_files = (mem-files $args.repo)
+    let repo_files = (mem_files $args.repo)
     let common = ($files | where {|f| $f in $repo_files })
     let only_live = ($files | where {|f| $f not-in $repo_files })
     let only_repo = ($repo_files | where {|f| $f not-in $files })

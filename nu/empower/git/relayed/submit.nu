@@ -10,8 +10,8 @@ use ./common.nu
 # principal's tip, and how many of my commits now sit on the bare ahead of theirs.
 export def main [args: record<repo: directory, msg_shm: string>]: nothing -> record<handle: string, committed: bool, commit: string, mine_tip: string, their_tip: string, ahead: int> {
     cd $args.repo
-    common relay-ensure-remote
-    let h = (common relay-handle)
+    common relay_ensure_remote
+    let h = (common relay_handle)
     let mine = $"draft/ai/($h)"
     let msg_path = ($env.XDGX_SHM_DIR | path join $args.msg_shm)
     if not ($msg_path | path exists) {
@@ -29,7 +29,7 @@ export def main [args: record<repo: directory, msg_shm: string>]: nothing -> rec
         common grun ["commit" "-S" "-F" $msg_path] "commit (signed)"
         $committed = true
     }
-    let t = (common relay-sync-core $h)
+    let t = (common relay_sync_core $h)
     {
         handle: $h,
         committed: $committed,

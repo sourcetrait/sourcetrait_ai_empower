@@ -10,10 +10,10 @@ use ./common.nu
 # branch names, short tips, and how far my branch is ahead/behind theirs.
 export def main [args: record<repo: directory>]: nothing -> record<handle: string, mine_branch: string, their_branch: string, mine_tip: string, their_tip: string, bare_mine_tip: string, ahead: int, behind: int> {
     cd $args.repo
-    common relay-ensure-remote
-    let h = (common relay-handle)
-    common relay-ensure-clean
-    let t = (common relay-sync-core $h)
+    common relay_ensure_remote
+    let h = (common relay_handle)
+    common relay_ensure_clean
+    let t = (common relay_sync_core $h)
     {
         handle: $h,
         mine_branch: $t.mine_branch,

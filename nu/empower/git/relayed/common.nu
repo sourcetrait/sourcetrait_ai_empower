@@ -17,7 +17,7 @@ export def grun [args: list<string>, what: string]: nothing -> nothing {
 
 # the principal handle, from the single draft/ai/<h> ref (local or on the bare).
 # the handle is the principal's, never mine; error unless exactly one exists.
-export def relay-handle []: nothing -> string {
+export def relay_handle []: nothing -> string {
     let hs = (^git for-each-ref "--format=%(refname:short)"
         | lines
         | parse --regex 'draft/ai/(?<h>[^/]+)$'
@@ -30,7 +30,7 @@ export def relay-handle []: nothing -> string {
 }
 
 # error unless the repo has the `relayed` remote configured.
-export def relay-ensure-remote []: nothing -> nothing {
+export def relay_ensure_remote []: nothing -> nothing {
     if not ("relayed" in (^git remote | lines)) {
         error make { msg: "relay: no `relayed` remote configured in this repo" }
     }
@@ -38,7 +38,7 @@ export def relay-ensure-remote []: nothing -> nothing {
 
 # error if the working tree is dirty (modified/staged/deleted/conflicted);
 # untracked files are fine.
-export def relay-ensure-clean []: nothing -> nothing {
+export def relay_ensure_clean []: nothing -> nothing {
     let s = (gstat)
     let dirty = ($s.conflicts + $s.wt_modified + $s.wt_deleted + $s.idx_added_staged + $s.idx_modified_staged + $s.idx_deleted_staged)
     if $dirty > 0 {
@@ -47,12 +47,12 @@ export def relay-ensure-clean []: nothing -> nothing {
 }
 
 # true if a ref with this short name exists in the repo.
-export def ref-exists [name: string]: nothing -> bool {
+export def ref_exists [name: string]: nothing -> bool {
     $name in (^git for-each-ref "--format=%(refname:short)" | lines)
 }
 
 # ahead/behind counts of <b> relative to <a>: {behind, ahead} (a...b left/right).
-export def rev-delta [a: string, b: string]: nothing -> record<behind: int, ahead: int> {
+export def rev_delta [a: string, b: string]: nothing -> record<behind: int, ahead: int> {
     let c = (^git rev-list --left-right --count $"($a)...($b)" | str trim | split row --regex '\s+')
     {behind: ($c | get 0 | into int), ahead: ($c | get 1 | into int)}
 }
@@ -61,7 +61,7 @@ export def rev-delta [a: string, b: string]: nothing -> record<behind: int, ahea
 # get onto my branch, ff-update the local principal branch, rebase mine onto it,
 # and assert the result is fast-forward-pushable. returns the resolved structured
 # state: branch names, short tips, and how far mine is ahead/behind theirs.
-export def relay-sync-core [h: string]: nothing -> record<their_branch: string, mine_branch: string, their_tip: string, mine_tip: string, bare_mine_tip: string, ahead: int, behind: int> {
+export def relay_sync_core [h: string]: nothing -> record<their_branch: string, mine_branch: string, their_tip: string, mine_tip: string, bare_mine_tip: string, ahead: int, behind: int> {
     let theirs = $"draft/($h)"
     let mine = $"draft/ai/($h)"
     let bare_theirs = $"relayed/($theirs)"
@@ -70,7 +70,7 @@ export def relay-sync-core [h: string]: nothing -> record<their_branch: string, 
     # update the local principal mirror by rebase (robust to a rewritten bare - a
     # plain ff breaks on a recovery; rebase replays, dropping redundant commits as
     # empty, and never blind-forces; a conflict STOPS). create it if missing.
-    if not (ref-exists $theirs) {
+    if not (ref_exists $theirs) {
         grun ["branch" $theirs $bare_theirs] $"create ($theirs) from the bare"
     } else {
         let rbt = (^git rebase $bare_theirs $theirs | complete)
@@ -80,7 +80,7 @@ export def relay-sync-core [h: string]: nothing -> record<their_branch: string, 
         }
     }
     # get onto my branch (create if missing), rebase it onto the principal branch
-    if not (ref-exists $mine) {
+    if not (ref_exists $mine) {
         grun ["branch" $mine $bare_mine] $"create ($mine) from the bare"
     }
     grun ["switch" $mine] $"switch to ($mine)"
@@ -92,7 +92,7 @@ export def relay-sync-core [h: string]: nothing -> record<their_branch: string, 
     # ff-push my rebased branch back to the bare so local == bare (synced). a
     # plain push is ff-only - a non-ff is rejected and grun STOPS, never forces.
     grun ["push" "relayed" $mine] $"fast-forward ($mine) to the bare"
-    let d = (rev-delta $theirs $mine)
+    let d = (rev_delta $theirs $mine)
     {
         their_branch: $theirs,
         mine_branch: $mine,

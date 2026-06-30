@@ -1,0 +1,11 @@
+name = "empwr"
+tile = "empwr"
+version = "0.0.1"
+
+[author]
+name = "sourcetrait"
+title = "SourceTrait"
+email = "development@sourcetrait.com"
+
+[provider]
+name = "github"

@@ -1,0 +1,19 @@
+name = "empower"
+tile = "Empower"
+version = "0.0.1"
+
+[author]
+name = "sourcetrait"
+title = "SourceTrait"
+email = "development@sourcetrait.com"
+
+[provider]
+name = "github"
+
+libraries = [
+    "empower"
+]
+
+[dev]
+libraries = []
+

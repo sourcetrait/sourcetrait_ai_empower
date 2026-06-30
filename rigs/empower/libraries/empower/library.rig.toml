@@ -1,0 +1,32 @@
+name = "empower"
+title = "Empower"
+version = "0.0.1"
+
+[nushell]
+version = "0.113.1"
+
+[description]
+summary = "Empower rig library"
+keywords = []
+
+[author]
+name = "sourcetrait"
+title = "SourceTrait"
+email = "development@sourcetrait.com"
+
+[license]
+spdx = "agpl3"
+file = "LICENSE-AGPL-3.txt"
+
+[provider]
+name = "github"
+
+[mcp]
+calls = [
+  "empower:memory:audit",
+]
+
+[[bin]]
+name = "emptwo.nu"
+
+[dependencies]

@@ -14,7 +14,7 @@ in pattern order:
 - `Cargo.toml`
 - src, tests, benches dirs: `*.rs` (start with `lib.rs` files if they exist)
 
-### protocol: iter_working_bootstrap
+### protocol: iter_understood_bootstrap
 
 Fully read and and undertsand every `*.md` in the `working` directory for
 the Iter topic specified (in order if chapter numbers appear in file names).

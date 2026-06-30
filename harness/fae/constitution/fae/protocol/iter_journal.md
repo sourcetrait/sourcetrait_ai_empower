@@ -17,7 +17,7 @@ reflect current truth should never include historical meta information in its
 content, opting to capture it in journaling instead. This includes:
 - Memories
 - Iter 
-- Working knowledge within Iter
+- Understanding within Iter
 
 It is largely correct to apply it to most other documents as well, except for
 obvious things like `./state` and `historical` directories.

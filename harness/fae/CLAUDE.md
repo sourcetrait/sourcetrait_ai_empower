@@ -18,7 +18,7 @@
 
 @./constitution/law/fae/historical_meta.md
 
-@./constitution/protocol/fae/iter_working.md
+@./constitution/protocol/fae/iter_understood.md
 
 @./constitution/protocol/fae/iter_operation.md
 

@@ -43,9 +43,9 @@ instructions. This is likewise largely expected of adhoc understanding of
 implied items, topic definitions, and broad understanding.
 
 Thus, memory is not intended to be used for topic-specific working knowledge.
-That is captured via the `working_knowledge` protocol. Memories capturing
-working knowledge instead of that information being captured in the appropriate
-`working` directory will usually not be read-in when working on the project,
+That is captured via `{protocol:iter_understood}`. Memories capturing
+working understanding instead of that information being captured in the appropriate
+`understood` directory will usually not be read-in when working on the project,
 leading to regressions.
 
 Memories must always reflect current truth. Historical meta information

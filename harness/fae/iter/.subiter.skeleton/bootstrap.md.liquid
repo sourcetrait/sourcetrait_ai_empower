@@ -1,12 +1,13 @@
-# iter: {{ iter }}: bootstrap.md
+# subiter: {{ iter }}:{{ subiter }}: bootstrap.md
 > USER
 ## ref
-## bootstrap: {{ iter }}
+## bootstrap: {{ iter }}:{{ subiter }}
 Perform the following iter bootstrap instructions, in order:
-1. Perform `{protocol:iter_working_bootstrap}` for: `./iter/{{ iter }}/understood`
+1. Perform `{protocol:iter_bootstrap}` for the parent iter: `./iter/{{ iter }}
+1. Perform `{protocol:iter_working_bootstrap}` for: `./iter/{{ iter }}/subiter/{{ subiter }}/understood`
 2. Upon completion, await instruction.
-## info: {{ iter }}
-- Meta in `./iter/{{ iter }}/`
+## info: {{ iter }}:{{ subiter }}
+- Meta in `./iter/{{ iter }}/subiter/{{ subiter }}`
   - `config.yaml` Configuration data points
   - `debt.md` Rolling technical debt
   - `design.yaml` Authorative user design intentions

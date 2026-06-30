@@ -1,5 +1,5 @@
-name = "empwr"
-tile = "empwr"
+name = "empower"
+tile = "empower"
 version = "0.0.1"
 
 [author]
@@ -10,6 +10,11 @@ email = "development@sourcetrait.com"
 [provider]
 name = "github"
 
+[common]
+gear = [
+    "empowered"
+]
+
 [desk]
 gear = [
     "empwr"
@@ -19,3 +24,4 @@ gear = [
 gear = [
     "empwr"
 ]
+

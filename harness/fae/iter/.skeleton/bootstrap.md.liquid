@@ -16,3 +16,13 @@ Perform the following iter bootstrap instructions, in order:
 - `historical/` Historical `findings/` and `resolved/` tasks
 - `operational/` Operational resources as described by `operation.md`
 - `understood/` Rolling understanding of topic
+
+{%- if subiters != empty -%}
+## subiters: {{ iter }}
+subiters:
+{%- for subiter in subiters -%}
+  - name: {{ subiter.name }}
+    summary: >
+        {{ subiter.summary }}
+{%- endfor -%}
+{%- endif -%}

@@ -1,11 +1,13 @@
-iter: {{ iter }}
+liquid:
+  iter: {{ iter }}
 {%- if subiters == empty -%}
-subiters: []
+  subiters: []
 {%- else -%}
-subiters:
+  subiters:
 {%- for subiter in subiters -%}
-  - name: {{ subiter.name }}
-    summary: >
+    - name: {{ subiter.name }}
+      summary: >
         {{ subiter.summary }}
-{%- endfor -%}
+{%- endor -%}
 {%- endif -%}
+  

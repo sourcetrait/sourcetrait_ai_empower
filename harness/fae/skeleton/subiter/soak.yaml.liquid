@@ -1,11 +1,2 @@
+subiter {{ subiter }}
 iter: {{ iter }}
-{%- if subiters == empty %}
-subiters: []
-{% else %}
-subiters:
-{%- for subiter in subiters %}
-  - name: {{ subiter.name }}
-    summary: >
-      {{ subiter.summary }}
-{%- endfor -%}
-{%- endif -%}

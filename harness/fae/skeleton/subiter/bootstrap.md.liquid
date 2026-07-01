@@ -4,7 +4,7 @@
 ## bootstrap: {{ iter }}:{{ subiter }}
 Perform the following iter bootstrap instructions, in order:
 1. Perform `{protocol:iter_bootstrap}` for the parent iter: `./iter/{{ iter }}
-1. Perform `{protocol:iter_working_bootstrap}` for: `./iter/{{ iter }}/subiter/{{ subiter }}/understood`
+1. Perform `{protocol:iter_working_bootstrap}` for this subiter: `./iter/{{ iter }}/subiter/{{ subiter }}/understood`
 2. Upon completion, await instruction.
 
 ## subiter: {{ iter }}:{{ subiter }}

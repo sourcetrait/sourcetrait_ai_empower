@@ -1,4 +1,4 @@
 
 export def process_dir []: nothing -> directory {
-    (^readlink /proc/self/cwd | str trim)
+    ^pwdx $nu.pid | parse '{pid}: {dir}' | get dir.0
 }

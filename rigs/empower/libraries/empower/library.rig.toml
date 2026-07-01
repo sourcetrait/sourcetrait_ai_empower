@@ -1,6 +1,6 @@
 name = "empower"
 title = "Empower"
-version = "0.0.1"
+version = "0.0.0-1"
 
 [nushell]
 version = "0.113.1"

@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_ai_claudeline"
-version = "0.0.1"
+version = "0.0.0-1"
 edition = "2024"
 description = "Claude Code statusline renderer + session payload mirror"
 authors = ["SourceTrait <development@sourcetrait.com>"]

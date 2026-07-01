@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_ai_lib_empower"
-version = "0.0.1"
+version = "0.0.0-1"
 edition = "2024"
 description = "Shared library for sourcetrait_ai_empower"
 authors = ["SourceTrait <development@sourcetrait.com>"]

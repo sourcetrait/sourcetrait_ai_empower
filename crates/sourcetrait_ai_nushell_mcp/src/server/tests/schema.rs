@@ -63,8 +63,14 @@ fn deny_any() {
 }
 
 #[test]
-fn deny_nested_empty_record() {
-    assert!(args_schema_to_nu(&obj(r#"{"x":{}}"#)).is_err());
+fn args_allow_open_record_field() {
+    // item 27: an empty `{}` field in ARGS is an open record (`record<>`);
+    // result still denies it.
+    assert_eq!(
+        args_schema_to_nu(&obj(r#"{"x":{}}"#)).unwrap(),
+        "record<x: record<>>"
+    );
+    assert!(result_schema_to_nu(&obj(r#"{"x":{}}"#)).is_err());
 }
 
 #[test]
@@ -215,9 +221,52 @@ fn emit_rejects_bare_table_and_record() {
 }
 
 #[test]
-fn emit_rejects_nested_empty_record_and_table() {
-    assert!(nu_to_args_schema("record<x: record<>>").is_err());
+fn emit_open_record_field_and_empty_table() {
+    // item 27: a `record<>` field emits `{}` in ARGS; `table<>` stays denied;
+    // result still denies the open record.
+    assert_eq!(
+        nu_to_args_schema("record<x: record<>>").unwrap(),
+        obj(r#"{"x":{}}"#)
+    );
     assert!(nu_to_args_schema("record<x: table<>>").is_err());
+    assert!(nu_to_result_schema("record<x: record<>>").is_err());
+}
+
+#[test]
+fn args_open_record_oneof_member_and_table_column() {
+    // record<> allowed as a oneof member and a table column in args (both round-trip).
+    assert_eq!(
+        args_schema_to_nu(&obj(r#"{"u":{"oneof<>":[{},"string"]}}"#)).unwrap(),
+        "record<u: oneof<record<>, string>>"
+    );
+    assert_eq!(
+        nu_to_args_schema("record<u: oneof<record<>, string>>").unwrap(),
+        obj(r#"{"u":{"oneof<>":[{},"string"]}}"#)
+    );
+    assert_eq!(
+        args_schema_to_nu(&obj(r#"{"t":[{"x":{}}]}"#)).unwrap(),
+        "record<t: table<x: record<>>>"
+    );
+    assert_eq!(
+        nu_to_args_schema("record<t: table<x: record<>>>").unwrap(),
+        obj(r#"{"t":[{"x":{}}]}"#)
+    );
+}
+
+#[test]
+fn args_fence_open_record_list_element() {
+    // `list<record<>>` (JSON `[{}]`) collides with an empty table and is fenced
+    // in args on both sides (item 27).
+    assert!(nu_to_args_schema("record<xs: list<record<>>>").is_err());
+    assert!(args_schema_to_nu(&obj(r#"{"xs":[{}]}"#)).is_err());
+}
+
+#[test]
+fn args_open_record_roundtrip() {
+    for s in [r#"{"fill":{}}"#, r#"{"a":"int","fill":{}}"#] {
+        let nu = args_schema_to_nu(&obj(s)).unwrap();
+        assert_eq!(nu_to_args_schema(&nu).unwrap(), obj(s), "roundtrip {s}");
+    }
 }
 
 #[test]

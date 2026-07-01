@@ -394,7 +394,7 @@ const ONEOF_KEY: &str = "oneof<>";
 /// Classify a nested JSON schema node into its grammar kind (the one
 /// place the object/array disambiguation lives). Nested only: a nested
 /// empty object {} is denied (Void is top-level; see parse_json_args).
-fn json_typedef_kind(v: &json::Value) -> Result<JsonTypedefKind, String> {
+fn json_typedef_kind(v: &json::Value, allow_open_record: bool) -> Result<JsonTypedefKind, String> {
     match v {
         json::Value::Null => Ok(JsonTypedefKind::Nothing),
         json::Value::String(_) => Ok(JsonTypedefKind::Scalar),
@@ -402,7 +402,14 @@ fn json_typedef_kind(v: &json::Value) -> Result<JsonTypedefKind, String> {
             if map.contains_key(ONEOF_KEY) {
                 Ok(JsonTypedefKind::Oneof)
             } else if map.is_empty() {
-                Err("nested empty record {} is not allowed".to_string())
+                // An empty object is an OPEN record (`record<>`): allowed only in
+                // an args position (item 27), denied in a result position and as
+                // a bare list element (see parse_json_typedef's List arm).
+                if allow_open_record {
+                    Ok(JsonTypedefKind::Record)
+                } else {
+                    Err("nested empty record {} is not allowed".to_string())
+                }
             } else {
                 Ok(JsonTypedefKind::Record)
             }
@@ -429,20 +436,26 @@ fn json_typedef_kind(v: &json::Value) -> Result<JsonTypedefKind, String> {
     }
 }
 
-fn parse_json_record_fields(map: &mcp::JsonObject) -> Result<Vec<JsonRecordFieldTypedef>, String> {
+fn parse_json_record_fields(
+    map: &mcp::JsonObject,
+    allow_open_record: bool,
+) -> Result<Vec<JsonRecordFieldTypedef>, String> {
     let mut fields = Vec::with_capacity(map.len());
     for (k, v) in map {
         fields.push(JsonRecordFieldTypedef {
             name: FieldName(k.clone()),
-            typedef: parse_json_typedef(v)?,
+            typedef: parse_json_typedef(v, allow_open_record)?,
         });
     }
     Ok(fields)
 }
 
-/// Parse a nested JSON schema node into a JsonTypedef.
-fn parse_json_typedef(v: &json::Value) -> Result<JsonTypedef, String> {
-    Ok(match json_typedef_kind(v)? {
+/// Parse a nested JSON schema node into a JsonTypedef. `allow_open_record`
+/// carries the args-vs-result context down the recursion: it permits an empty
+/// `{}` (open record) in a record field / oneof member / table column, but is
+/// dropped to `false` for a bare list element (the List arm below).
+fn parse_json_typedef(v: &json::Value, allow_open_record: bool) -> Result<JsonTypedef, String> {
+    Ok(match json_typedef_kind(v, allow_open_record)? {
         JsonTypedefKind::Nothing => JsonTypedef::Nothing,
         JsonTypedefKind::Scalar => {
             let s = v.as_str().expect("classified Scalar");
@@ -464,14 +477,14 @@ fn parse_json_typedef(v: &json::Value) -> Result<JsonTypedef, String> {
             }
             let mut members = Vec::with_capacity(arr.len());
             for m in arr {
-                members.push(parse_json_typedef(m)?);
+                members.push(parse_json_typedef(m, allow_open_record)?);
             }
             JsonTypedef::Oneof(JsonOneofTypedef { members })
         }
         JsonTypedefKind::Record => {
             let map = v.as_object().expect("classified Record");
             JsonTypedef::Record(JsonRecordTypedef {
-                fields: parse_json_record_fields(map)?,
+                fields: parse_json_record_fields(map, allow_open_record)?,
             })
         }
         JsonTypedefKind::Table => {
@@ -484,15 +497,20 @@ fn parse_json_typedef(v: &json::Value) -> Result<JsonTypedef, String> {
             for (k, cv) in map {
                 columns.push(JsonTableColumnTypedef {
                     name: ColumnName(k.clone()),
-                    typedef: parse_json_typedef(cv)?,
+                    typedef: parse_json_typedef(cv, allow_open_record)?,
                 });
             }
             JsonTypedef::Table(JsonTableTypedef { columns })
         }
         JsonTypedefKind::List => {
             let arr = v.as_array().expect("classified List");
+            // FENCE: a list element does NOT inherit the open-record allowance.
+            // `list<record<>>` (JSON `[{}]`) collides with an empty table and
+            // would not round-trip, so an open record is never a bare list
+            // element (item 27). A `[{}]` here is already classified as a table
+            // and denied above; this keeps the nu side symmetric.
             JsonTypedef::List(JsonListTypedef {
-                element: Box::new(parse_json_typedef(&arr[0])?),
+                element: Box::new(parse_json_typedef(&arr[0], false)?),
             })
         }
     })
@@ -504,7 +522,8 @@ fn parse_json_args(map: &mcp::JsonObject) -> Result<JsonArgsTypedef, String> {
         Ok(JsonArgsTypedef::Void)
     } else {
         Ok(JsonArgsTypedef::Record(JsonRecordTypedef {
-            fields: parse_json_record_fields(map)?,
+            // args permit an open record (`record<>`) as a nested type.
+            fields: parse_json_record_fields(map, true)?,
         }))
     }
 }
@@ -514,7 +533,8 @@ fn parse_json_result(map: &mcp::JsonObject) -> Result<JsonResultTypedef, String>
         Ok(JsonResultTypedef::Void)
     } else {
         Ok(JsonResultTypedef::Record(JsonRecordTypedef {
-            fields: parse_json_record_fields(map)?,
+            // result denies an open record - every result field is concretely typed.
+            fields: parse_json_record_fields(map, false)?,
         }))
     }
 }
@@ -626,20 +646,28 @@ fn nu_typedef_kind(tok: &str) -> Result<NuTypedefKind, String> {
     }
 }
 
-fn parse_nu_record_fields(inner: &str) -> Result<Vec<NuRecordFieldTypedef>, String> {
+fn parse_nu_record_fields(
+    inner: &str,
+    allow_open_record: bool,
+) -> Result<Vec<NuRecordFieldTypedef>, String> {
     let mut fields = Vec::new();
     for field in split_top_level(inner, ',') {
         let (name, ty) = split_field(&field)?;
         fields.push(NuRecordFieldTypedef {
             name: FieldName(name),
-            typedef: parse_nu_typedef(ty)?,
+            typedef: parse_nu_typedef(ty, allow_open_record)?,
         });
     }
     Ok(fields)
 }
 
-/// Parse a nested nu typedef token into a NuTypedef.
-fn parse_nu_typedef(tok: &str) -> Result<NuTypedef, String> {
+/// Parse a nested nu typedef token into a NuTypedef. `allow_open_record` carries
+/// the args-vs-result context: it permits an empty `record<>` (open record) in a
+/// record field / oneof member / table column, but is dropped to `false` for a
+/// bare list element (the List arm below). Bare `record` stays denied in
+/// `nu_typedef_kind` regardless - it is not valid arg syntax; the author writes
+/// `record<>`.
+fn parse_nu_typedef(tok: &str, allow_open_record: bool) -> Result<NuTypedef, String> {
     let tok = tok.trim();
     Ok(match nu_typedef_kind(tok)? {
         NuTypedefKind::Nothing => NuTypedef::Nothing,
@@ -648,10 +676,15 @@ fn parse_nu_typedef(tok: &str) -> Result<NuTypedef, String> {
             let inner = bracketed(tok, "record<")
                 .ok_or_else(|| format!("malformed record type `{tok}`"))?;
             if inner.trim().is_empty() {
+                // `record<>` = OPEN record: allowed in an args position (item 27),
+                // denied in a result position.
+                if allow_open_record {
+                    return Ok(NuTypedef::Record(NuRecordTypedef { fields: Vec::new() }));
+                }
                 return Err("nested empty record<> is not allowed".to_string());
             }
             NuTypedef::Record(NuRecordTypedef {
-                fields: parse_nu_record_fields(inner)?,
+                fields: parse_nu_record_fields(inner, allow_open_record)?,
             })
         }
         NuTypedefKind::Oneof => {
@@ -663,7 +696,7 @@ fn parse_nu_typedef(tok: &str) -> Result<NuTypedef, String> {
             }
             let mut members = Vec::with_capacity(parts.len());
             for p in &parts {
-                members.push(parse_nu_typedef(p)?);
+                members.push(parse_nu_typedef(p, allow_open_record)?);
             }
             NuTypedef::Oneof(NuOneofTypedef { members })
         }
@@ -678,7 +711,7 @@ fn parse_nu_typedef(tok: &str) -> Result<NuTypedef, String> {
                 let (name, ty) = split_field(&col)?;
                 columns.push(NuTableColumnTypedef {
                     name: ColumnName(name),
-                    typedef: parse_nu_typedef(ty)?,
+                    typedef: parse_nu_typedef(ty, allow_open_record)?,
                 });
             }
             NuTypedef::Table(NuTableTypedef { columns })
@@ -686,8 +719,11 @@ fn parse_nu_typedef(tok: &str) -> Result<NuTypedef, String> {
         NuTypedefKind::List => {
             let inner =
                 bracketed(tok, "list<").ok_or_else(|| format!("malformed list type `{tok}`"))?;
+            // FENCE: a list element does NOT inherit the open-record allowance
+            // (symmetric with the JSON side) - `list<record<>>` would emit `[{}]`,
+            // an empty table, and not round-trip (item 27).
             NuTypedef::List(NuListTypedef {
-                element: Box::new(parse_nu_typedef(inner)?),
+                element: Box::new(parse_nu_typedef(inner, false)?),
             })
         }
     })
@@ -704,7 +740,7 @@ fn parse_nu_args(tok: &str) -> Result<NuArgsTypedef, String> {
             return Err("top-level record<> is not allowed; use {} (void)".to_string());
         }
         Ok(NuArgsTypedef::Record(NuRecordTypedef {
-            fields: parse_nu_record_fields(inner)?,
+            fields: parse_nu_record_fields(inner, true)?,
         }))
     } else {
         Err(format!(
@@ -722,7 +758,7 @@ fn parse_nu_result(tok: &str) -> Result<NuResultTypedef, String> {
             return Err("top-level record<> is not allowed; use {} (void)".to_string());
         }
         Ok(NuResultTypedef::Record(NuRecordTypedef {
-            fields: parse_nu_record_fields(inner)?,
+            fields: parse_nu_record_fields(inner, false)?,
         }))
     } else {
         Err(format!(

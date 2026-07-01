@@ -2147,7 +2147,14 @@ fn validate_function_file_ast(
     let main_sig = working_set.get_decl(main_id).signature();
     let summary = main_sig.description.clone();
     let details = main_sig.extra_description.clone();
-    let args_str = main_sig.required_positional.first()?.shape.to_string();
+    // Read the args annotation from SOURCE TEXT (like the result side's
+    // extract_main_output_text), NOT `shape.to_string()`: nushell's SyntaxShape
+    // Display is a lossy view of the author's syntax - an empty-field record
+    // renders as the bare word `record` (nu-protocol syntax_shape.rs), which is
+    // not valid arg syntax - whereas the source carries the literal `record<>`
+    // (an open record, item 27) and, like the result side, preserves the
+    // SyntaxShape-flavored scalars (path/directory/glob/cell-path) verbatim.
+    let args_str = extract_main_args_text(&working_set, main_id, &wrapped)?;
     let result_str = out_type?;
     let args_schema = nu_to_args_schema(&args_str).ok()?;
     let result_schema = nu_to_result_schema(&result_str).ok()?;
@@ -2316,6 +2323,41 @@ fn extract_main_output_text(
         None
     } else {
         Some(r.to_string())
+    }
+}
+
+/// Read `main`'s args positional type annotation (the `A` of `[args: A]`)
+/// verbatim from the wrapped source, mirroring `extract_main_output_text` on the
+/// result side and used for the same reason: nushell's `SyntaxShape` `Display`
+/// (what `shape.to_string()` returns) is a LOSSY view of the author's syntax -
+/// an empty-field record shape renders as the bare word `record` (nu-protocol
+/// syntax_shape.rs), which is not valid arg syntax, whereas the source carries
+/// the author's literal `record<>` (an open record, item 27). Source likewise
+/// keeps the SyntaxShape-flavored scalars (path/directory/glob/cell-path) that
+/// the parsed `Type` would collapse. Anchors on main's output `->` (which sits
+/// after any doc comment AND the param list): the param-list `]` is the last `]`
+/// before it, the `[` is its match, and the type is the text after the first `:`
+/// inside. None if any anchor is unlocatable (the structural checks already
+/// recorded the corresponding defect).
+fn extract_main_args_text(
+    working_set: &nu::StateWorkingSet,
+    decl_id: nu::DeclId,
+    wrapped: &str,
+) -> Option<String> {
+    let block_id = working_set.get_decl(decl_id).block_id()?;
+    let body_start = working_set.get_block(block_id).span?.start;
+    let before = wrapped.get(..body_start)?;
+    let arrow = before.rfind("->")?;
+    let head = &before[..arrow];
+    let close = head.rfind(']')?;
+    let open = head[..close].rfind('[')?;
+    let params = &head[open + 1..close];
+    let colon = params.find(':')?;
+    let type_text = params[colon + 1..].trim();
+    if type_text.is_empty() {
+        None
+    } else {
+        Some(type_text.to_string())
     }
 }
 

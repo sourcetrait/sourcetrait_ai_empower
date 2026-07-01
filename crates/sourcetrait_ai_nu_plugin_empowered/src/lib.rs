@@ -7,6 +7,11 @@ pub(crate) mod eye {
     pub(crate) mod md {
         pub(crate) mod find;
     }
+    pub(crate) mod tree;
+    #[cfg(test)]
+    mod tests {
+        mod tree;
+    }
 }
 pub(crate) mod liquid {
     pub(crate) mod render;
@@ -34,8 +39,8 @@ pub(crate) mod plugin;
 
 pub(crate) use crate::{
     error::{
-        InvalidPatternSnafu, MarkdownResult, NuPluginEmpowerResult, ReadFileSnafu, labeled_error,
-        nu_plugin_error,
+        GlobSnafu, InvalidPatternSnafu, MarkdownResult, NuPluginEmpowerResult, ReadFileSnafu,
+        ReadSnafu, TreeResult, labeled_error, nu_plugin_error,
     },
     liquid::{
         render::render_template,

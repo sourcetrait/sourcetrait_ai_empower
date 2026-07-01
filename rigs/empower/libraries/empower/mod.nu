@@ -1,5 +1,6 @@
 export module ai
 export module ant
+export module eye
 export module fae
 export module git
 export module know

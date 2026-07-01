@@ -16,13 +16,17 @@ path = "src/main.rs"
 
 [dependencies]
 liquid.workspace = true
+nu-glob.workspace = true
 nu-parser.workspace = true
 nu-plugin.workspace = true
 nu-protocol.workspace = true
 regex.workspace = true
 snafu.workspace = true
 
-# [dev-dependencies] left empty for now -- nu-plugin-test-support 0.113 pulls
-# in nu-plugin-engine 0.113.1 which has a non-exhaustive-match upstream bug
-# (ServerCommunicationIo::LocalSocket arm missing in init.rs); re-add when an
-# upstream release ships the fix. Phase 3 verifies end-to-end via warm_nushell.
+[dev-dependencies]
+tempfile.workspace = true
+
+# nu-plugin-test-support stays out -- 0.113 pulls nu-plugin-engine 0.113.1 with a
+# non-exhaustive-match upstream bug (ServerCommunicationIo::LocalSocket arm
+# missing in init.rs); re-add when an upstream release ships the fix. The tree /
+# md cores are unit-tested directly; plugin-level end-to-end is verified live.

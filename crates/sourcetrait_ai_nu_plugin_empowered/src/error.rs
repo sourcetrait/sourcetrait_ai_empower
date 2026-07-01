@@ -70,3 +70,29 @@ pub(crate) enum MarkdownError {
         source: regex::Error,
     },
 }
+
+/// Result alias for the tree renderer surface; `TreeError` is the error half.
+pub(crate) type TreeResult<T> = Result<T, TreeError>;
+
+/// Failure rendering a file tree: a filesystem read/stat error (carrying the
+/// offending path) or an invalid ignore/regard glob pattern.
+///
+/// Errors live in `error.rs` regardless of the module they represent; snafu
+/// derives Display + the `.context()` selectors (`ReadSnafu` / `GlobSnafu`)
+/// consumed at the `eye::tree` call sites. Mapped to a nushell `LabeledError` by
+/// the `empowered eye tree` command.
+#[derive(Debug, snafu::Snafu)]
+#[snafu(visibility(pub(crate)))]
+pub(crate) enum TreeError {
+    #[snafu(display("could not read: {}", path.display()))]
+    Read {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+
+    #[snafu(display("invalid glob pattern: {pattern}"))]
+    Glob {
+        pattern: String,
+        source: nu_glob::PatternError,
+    },
+}

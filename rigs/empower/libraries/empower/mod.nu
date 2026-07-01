@@ -6,3 +6,4 @@ export module git
 export module know
 export module memory
 export module pid
+export module liquid 

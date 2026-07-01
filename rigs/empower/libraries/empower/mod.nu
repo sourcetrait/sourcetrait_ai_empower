@@ -2,6 +2,7 @@ export module ai
 export module ant
 export module eye
 export module fae
+export module fs
 export module git
 export module know
 export module memory

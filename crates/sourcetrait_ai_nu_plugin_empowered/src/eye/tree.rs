@@ -175,26 +175,25 @@ impl nu::SimplePluginCommand for Command {
     }
 
     fn extra_description(&self) -> &str {
-        // The verbatim spec docblock body (~/info/idea/eye_tree.md); the example
-        // is illustrative, the render rules are the contract. Left-aligned so the
-        // help output carries it exactly.
-        r#"``fs
+        // An fs listing and the tree it renders, then the ignore / regard notes.
+        // Left-aligned (column 0) so the help text carries it verbatim.
+        r#"```fs
 /path/dir
 /path/dir/.gitignore
 /path/dir/subdir
 /path/dir/subdir/file1.txt
 /path/dir/subdir/somedir/.file2
 /path/dir/subdir/otherdir
-``
-``tree
+```
+```tree
 /path/dir/
  .gitignore 0
  subdir/
-  file.txt 32mb
+  file1.txt 32mb
+  otherdir/
   somedir/
    .file2 40b
-  otherdir/
-``
+```
 
 Ignored unless regarded: ['.git']
 

@@ -100,3 +100,37 @@ fn git_default_ignored_but_regardable() {
     assert!(regarded.contains(".git/"));
     assert!(regarded.contains("config")); // its children still render
 }
+
+// The command's doc-comment example must stay a true golden: this builds its
+// exact fs structure and asserts the render matches byte-for-byte.
+#[test]
+fn renders_the_docblock_example() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = fs::canonicalize(tmp.path()).expect("canonicalize root");
+
+    write(&root.join(".gitignore"), 0);
+    let subdir = root.join("subdir");
+    fs::create_dir(&subdir).unwrap();
+    fs::File::create(subdir.join("file1.txt"))
+        .unwrap()
+        .set_len(32 * 1024 * 1024)
+        .unwrap();
+    fs::create_dir(subdir.join("otherdir")).unwrap();
+    let somedir = subdir.join("somedir");
+    fs::create_dir(&somedir).unwrap();
+    write(&somedir.join(".file2"), 40);
+
+    let r = root.display().to_string();
+    let expected = [
+        format!("{r}/"),
+        " .gitignore 0".to_string(),
+        " subdir/".to_string(),
+        "  file1.txt 32mb".to_string(),
+        "  otherdir/".to_string(),
+        "  somedir/".to_string(),
+        "   .file2 40b".to_string(),
+    ]
+    .join("\n");
+
+    assert_eq!(tree(&root, &[], &[]).unwrap(), expected);
+}

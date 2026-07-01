@@ -59,8 +59,10 @@ impl nu::SimplePluginCommand for Command {
     }
 }
 
-/// FILE mode (a `.liquid` source) renders to `to`. DIR mode validates the fill
-/// against an optional `<from>/liquid.schema.nutype`, then walks the tree.
+/// FILE mode (a `.liquid` source) renders to `to`. DIR mode reads soak config
+/// from a `.soak` dir at the root of `from`: it validates the fill against an
+/// optional `.soak/soak.schema.nutype`, then walks the tree (the whole `.soak`
+/// dir is omitted from the output).
 fn soak(
     from: &Path,
     to: &Path,
@@ -70,7 +72,7 @@ fn soak(
     if from.is_file() {
         soak_file(from, to, fill_record)
     } else if from.is_dir() {
-        let schema_path = from.join("liquid.schema.nutype");
+        let schema_path = from.join(".soak").join("soak.schema.nutype");
         if schema_path.exists() {
             let schema = read_file(&schema_path)?;
             validate_fill(fill, schema.trim())?;
@@ -97,8 +99,8 @@ fn soak_file(from: &Path, to: &Path, fill_record: &nu::Record) -> NuPluginEmpowe
 }
 
 /// Walk `from` recursively, mirroring into `to`: `.liquid` files render (the
-/// extension dropped), other files copy as-is; `.git` dirs and
-/// `liquid.schema.nutype` are skipped.
+/// extension dropped), other files copy as-is; `.git` and the `.soak` config
+/// dir (the soak meta home, holding `soak.schema.nutype`) are skipped.
 fn soak_dir(from: &Path, to: &Path, fill_record: &nu::Record) -> NuPluginEmpowerResult<()> {
     mkdir(to)?;
     let entries = fs::read_dir(from)
@@ -109,7 +111,7 @@ fn soak_dir(from: &Path, to: &Path, fill_record: &nu::Record) -> NuPluginEmpower
         })?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name == ".git" || name == "liquid.schema.nutype" {
+        if name == ".git" || name == ".soak" {
             continue;
         }
         let src = entry.path();

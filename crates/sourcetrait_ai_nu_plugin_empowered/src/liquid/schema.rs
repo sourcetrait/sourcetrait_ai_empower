@@ -1,6 +1,6 @@
 use crate::*;
 
-/// Validate a fill record against a `liquid.schema.nutype` type expression.
+/// Validate a fill record against a `soak.schema.nutype` type expression.
 ///
 /// The schema is a nushell type (e.g. `record<iter: string>`), parsed via
 /// nu-parser into a `nu_protocol::Type` and checked with `Value::is_subtype_of`
@@ -24,23 +24,23 @@ pub(crate) fn validate_fill(fill: &nu::Value, schema: &str) -> NuPluginEmpowerRe
             .collect::<Vec<_>>()
             .join("; ");
         return Err(nu_plugin_error(format!(
-            "invalid liquid.schema.nutype `{schema}`: {detail}"
+            "invalid soak.schema.nutype `{schema}`: {detail}"
         )));
     }
     let Some(ty) = closure_param_type(&working_set, &block) else {
         return Err(nu_plugin_error(format!(
-            "could not read a type from liquid.schema.nutype `{schema}`"
+            "could not read a type from soak.schema.nutype `{schema}`"
         )));
     };
     if matches!(ty, nu::Type::Any) {
         return Err(nu_plugin_error(format!(
-            "liquid.schema.nutype `{schema}` resolves to `any`, which validates nothing; \
+            "soak.schema.nutype `{schema}` resolves to `any`, which validates nothing; \
              use a concrete type or remove the file"
         )));
     }
     if !fill.is_subtype_of(&ty) {
         return Err(nu_plugin_error(format!(
-            "fill does not match liquid.schema.nutype `{schema}` (expected {ty})"
+            "fill does not match soak.schema.nutype `{schema}` (expected {ty})"
         )));
     }
     Ok(())

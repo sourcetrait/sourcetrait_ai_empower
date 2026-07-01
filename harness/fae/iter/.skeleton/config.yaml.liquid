@@ -1,8 +1,8 @@
 liquid:
   iter: {{ iter }}
-{%- if subiters == empty -%}
+{% if subiters == empty %}
   subiters: []
-{%- else -%}
+{% else %}
   subiters:
 {%- for subiter in subiters -%}
     - name: {{ subiter.name }}

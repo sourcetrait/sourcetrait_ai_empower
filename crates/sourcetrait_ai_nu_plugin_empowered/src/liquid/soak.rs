@@ -44,12 +44,12 @@ impl nu::SimplePluginCommand for Command {
     fn run(
         &self,
         _plugin: &EmpowerPlugin,
-        _engine: &nu::EngineInterface,
+        engine: &nu::EngineInterface,
         call: &nu::EvaluatedCall,
         _input: &nu::Value,
     ) -> Result<nu::Value, nu::LabeledError> {
-        let from: PathBuf = call.req(0)?;
-        let to: PathBuf = call.req(1)?;
+        let from = path::canonical(engine, &call.req::<PathBuf>(0)?, call.head)?;
+        let to = path::expand(engine, &call.req::<PathBuf>(1)?)?;
         let fill: nu::Value = call.req(2)?;
         let fill_record = fill
             .as_record()

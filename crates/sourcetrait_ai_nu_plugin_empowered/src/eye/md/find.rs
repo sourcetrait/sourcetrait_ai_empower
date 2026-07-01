@@ -39,13 +39,13 @@ impl nu::SimplePluginCommand for Command {
     fn run(
         &self,
         _plugin: &EmpowerPlugin,
-        _engine: &nu::EngineInterface,
+        engine: &nu::EngineInterface,
         call: &nu::EvaluatedCall,
         _input: &nu::Value,
     ) -> Result<nu::Value, nu::LabeledError> {
         let pattern: String = call.req(0)?;
-        let path: PathBuf = call.req(1)?;
-        let matches = find(&path, &pattern).map_err(|e| {
+        let file = path::canonical(engine, &call.req::<PathBuf>(1)?, call.head)?;
+        let matches = find(&file, &pattern).map_err(|e| {
             nu::LabeledError::new(e.to_string()).with_label(e.to_string(), call.head)
         })?;
         Ok(nu::Value::list(

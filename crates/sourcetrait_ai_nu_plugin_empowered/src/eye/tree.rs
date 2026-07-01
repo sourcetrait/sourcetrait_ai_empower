@@ -228,11 +228,11 @@ Ignored unless regarded: ['.git']
     fn run(
         &self,
         _plugin: &EmpowerPlugin,
-        _engine: &nu::EngineInterface,
+        engine: &nu::EngineInterface,
         call: &nu::EvaluatedCall,
         _input: &nu::Value,
     ) -> Result<nu::Value, nu::LabeledError> {
-        let dir: PathBuf = call.req(0)?;
+        let dir = path::canonical(engine, &call.req::<PathBuf>(0)?, call.head)?;
         let ignore = globs(call, 1)?;
         let regard = globs(call, 2)?;
         let rendered =

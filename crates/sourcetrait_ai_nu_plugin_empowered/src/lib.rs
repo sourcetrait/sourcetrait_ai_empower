@@ -34,6 +34,7 @@ pub(crate) mod md {
     pub(crate) mod result;
     pub(crate) mod shared;
 }*/
+pub(crate) mod path;
 pub(crate) mod error;
 pub(crate) mod plugin;
 
@@ -74,6 +75,7 @@ pub(crate) mod nu {
         LabeledError,
         Record,
         Signature,
+        Span,
         SyntaxShape,
         Type,
         Value,

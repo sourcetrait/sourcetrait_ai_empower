@@ -3,11 +3,12 @@
 
 ## bootstrap: {{ iter }}
 Perform the following iter bootstrap instructions, in order:
-1. Perform `{protocol:iter_working_bootstrap}` for: `./iter/{{ iter }}/understood`
+1. Perform `{protocol:iter_understood_bootstrap}` for: `./iter/{{ iter }}/understood`
 2. Upon completion, await instruction.
 
 ## iter: {{ iter }}
 - `config.yaml` Configuration data points
+- `soak.yaml` Soak representation of this Iter
 - `debt.md` Rolling technical debt
 - `design.md` Authorative user design intentions
 - `followup.md` Rolling planned followup tasks
@@ -16,13 +17,9 @@ Perform the following iter bootstrap instructions, in order:
 - `historical/` Historical `findings/` and `resolved/` tasks
 - `operational/` Operational resources as described by `operation.md`
 - `understood/` Rolling understanding of topic
-
-{%- if subiters != empty -%}
+{% if subiters != empty %}
 ## subiters: {{ iter }}
-subiters:
-{%- for subiter in subiters -%}
-  - name: {{ subiter.name }}
-    summary: >
-        {{ subiter.summary }}
+{%- for subiter in subiters %}
+- `{{ subiter.name }}` {{ subiter.summary }}
 {%- endfor -%}
-{%- endif -%}
+{% endif %}

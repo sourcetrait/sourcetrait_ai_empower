@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_ai_nu_plugin_empowered"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 description = "Nushell plugin supporting SourceTrait Empower"
 authors = ["SourceTrait <development@sourcetrait.com>"]

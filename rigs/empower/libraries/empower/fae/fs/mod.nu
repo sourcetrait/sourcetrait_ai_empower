@@ -1,7 +1,9 @@
+use sourcetrait/empower/fs
+
 
 export def harness_asset_dir []: nothing -> directory {
     const HARNESS_ASSET_DIR: path = 'sourcetrait/empower/harness/fae'
-    empower fs process_dir | path join $HARNESS_ASSET_DIR
+    fs process_dir | path join $HARNESS_ASSET_DIR
 }
 
 export def harness_skeleton_asset_dir []: nothing -> directory {

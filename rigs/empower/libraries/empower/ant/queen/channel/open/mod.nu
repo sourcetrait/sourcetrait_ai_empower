@@ -1,3 +1,6 @@
+use sourcetrait/empower/ant/queen/channel/common
+use sourcetrait/empower/pid
+
 
 # Bring the queen's bonded-fae channel online and report the fae's state.
 #
@@ -9,22 +12,22 @@
 # (the fae's inbox) and the queen's output dir on the fae side. Errors if the colony
 # has no live session.
 export def main [args: record<fae: string>]: nothing -> record<colony_inbox: string, queen_input_dir: string, fae_online: oneof<nothing, record<session_nom: string, colony_outbox: string, queen_output_dir: string>>> {
-    let colony_identity = (empower ant queen channel common colony_identity $args.fae)
-    let colony_session_nom = (empower ant queen channel common session_nom $colony_identity)
+    let colony_identity = (common colony_identity $args.fae)
+    let colony_session_nom = (common session_nom $colony_identity)
     if $colony_session_nom == null {
         error make { msg: $"colony has no live session: no context for ($colony_identity)" }
     }
-    let inbox = (empower ant queen channel common colony_inbox $colony_identity $colony_session_nom)
-    let in_dir = (empower ant queen channel common queen_input_dir $colony_identity $colony_session_nom)
+    let inbox = (common colony_inbox $colony_identity $colony_session_nom)
+    let in_dir = (common queen_input_dir $colony_identity $colony_session_nom)
     mkdir $in_dir
     touch $inbox
 
-    let fae_session_nom = ((empower pid list_ai null).sessions | where ai_identity == $args.fae | get -i 0.session_nom)
+    let fae_session_nom = ((pid list_ai null).sessions | where ai_identity == $args.fae | get -i 0.session_nom)
     let fae_online = if $fae_session_nom == null {
         null
     } else {
-        let outbox = (empower ant queen channel common colony_outbox $args.fae $fae_session_nom)
-        let out_dir = (empower ant queen channel common queen_output_dir $args.fae $fae_session_nom)
+        let outbox = (common colony_outbox $args.fae $fae_session_nom)
+        let out_dir = (common queen_output_dir $args.fae $fae_session_nom)
         if ($outbox | path exists) {
             $"COLONY ONLINE ($colony_session_nom)(char nl)" | save --append $outbox
         }

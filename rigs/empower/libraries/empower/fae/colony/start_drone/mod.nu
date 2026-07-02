@@ -1,3 +1,6 @@
+use sourcetrait/empower/fae/colony/channel/common
+use sourcetrait/empower/pid
+
 
 # Request the bonded colony's queen to start a drone (fae-side).
 #
@@ -10,12 +13,12 @@
 # the start packet's canonical path and the fae's drone-receive dir. Errors if the
 # fae or the colony has no live session, or the prompt shm file is missing.
 export def main [args: record<ai_identity: string, channel_tx_id: int, drone_name: string, persist: bool, drone_prompt_shm: string>]: nothing -> record<packet_path: string, drone_receive_dir: string> {
-    let fae_session_nom = (empower fae colony channel common session_nom $args.ai_identity)
+    let fae_session_nom = (common session_nom $args.ai_identity)
     if $fae_session_nom == null {
         error make { msg: $"fae has no live session: no context for ($args.ai_identity)" }
     }
-    let queen_identity = (empower fae colony channel common queen_identity $args.ai_identity)
-    let queen_session_nom = ((empower pid list_ai null).sessions | where ai_identity == $queen_identity | get -i 0.session_nom)
+    let queen_identity = (common queen_identity $args.ai_identity)
+    let queen_session_nom = ((pid list_ai null).sessions | where ai_identity == $queen_identity | get -i 0.session_nom)
     if $queen_session_nom == null {
         error make { msg: $"bonded colony ($queen_identity) is not online" }
     }
@@ -23,7 +26,7 @@ export def main [args: record<ai_identity: string, channel_tx_id: int, drone_nam
     if not ($prompt_path | path exists) {
         error make { msg: $"drone prompt shm file does not exist: ($prompt_path)" }
     }
-    let c_inbox = (empower fae colony channel common colony_inbox $queen_identity $queen_session_nom)
+    let c_inbox = (common colony_inbox $queen_identity $queen_session_nom)
     if not ($c_inbox | path exists) {
         error make { msg: $"colony inbox does not exist: ($c_inbox)" }
     }
@@ -32,7 +35,7 @@ export def main [args: record<ai_identity: string, channel_tx_id: int, drone_nam
     mkdir $drone_receive_dir
     # write the start-request packet to the queen's input dir.
     let packet = $"($fae_session_nom)_($args.channel_tx_id).md"
-    let queen_in = (empower fae colony channel common queen_input_dir $queen_identity $queen_session_nom)
+    let queen_in = (common queen_input_dir $queen_identity $queen_session_nom)
     mkdir $queen_in
     let packet_path = ($queen_in | path join $packet)
     let body = ([

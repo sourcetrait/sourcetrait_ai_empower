@@ -1,3 +1,5 @@
+use sourcetrait/empower/memory/classify
+
 # Read-only live<->repo memory mirror drift report (the bootstrap check).
 #
 # match=true means the dirs are identical (same files + content). Otherwise
@@ -5,7 +7,7 @@
 # sides whose content differs (with both mtimes + whether the repo copy is
 # git-committed). Performs no copy; {implied:bootstrap} step 2 wants match=true.
 export def main [args: record<live: string, repo: string>]: nothing -> record<match: bool, only_live: list<string>, only_repo: list<string>, content_diff: table<file: string, live_mtime: datetime, repo_mtime: datetime, repo_committed: bool>> {
-    let a = (empower memory classify analyze $args.live $args.repo)
+    let a = (classify analyze $args.live $args.repo)
     let only_live = ($a | where {|r| $r.in_live and (not $r.in_repo) } | get file)
     let only_repo = ($a | where {|r| (not $r.in_live) and $r.in_repo } | get file)
     let content_diff = (

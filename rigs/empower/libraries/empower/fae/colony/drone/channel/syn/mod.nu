@@ -1,3 +1,5 @@
+use sourcetrait/empower/fae/colony/drone/channel/common
+
 
 # Announce a packet the fae sent to a colony drone (FAE DRONE <name> SYN).
 #
@@ -9,20 +11,20 @@
 # if the colony is not online, the drone channel is not open, or a referenced packet
 # is missing. Void return.
 export def main [args: record<ai_identity: string, drone_name: string, tx_id: int, response_to_rx_id: oneof<int, nothing>>]: nothing -> nothing {
-    let fae_session_nom = (empower fae colony drone channel common session_nom $args.ai_identity)
+    let fae_session_nom = (common session_nom $args.ai_identity)
     if $fae_session_nom == null {
         error make { msg: $"fae has no live session: no context for ($args.ai_identity)" }
     }
-    let queen_identity = (empower fae colony drone channel common queen_identity $args.ai_identity)
-    let queen_session_nom = (empower fae colony drone channel common session_nom $queen_identity)
+    let queen_identity = (common queen_identity $args.ai_identity)
+    let queen_session_nom = (common session_nom $queen_identity)
     if $queen_session_nom == null {
         error make { msg: $"bonded colony ($queen_identity) is not online" }
     }
-    let c_inbox = (empower fae colony drone channel common colony_inbox $queen_identity $queen_session_nom)
+    let c_inbox = (common colony_inbox $queen_identity $queen_session_nom)
     if not ($c_inbox | path exists) {
         error make { msg: $"colony inbox does not exist: ($c_inbox)" }
     }
-    let drone_in = (empower fae colony drone channel common drone_input_dir $queen_identity $queen_session_nom $args.drone_name)
+    let drone_in = (common drone_input_dir $queen_identity $queen_session_nom $args.drone_name)
     if not ($drone_in | path exists) {
         error make { msg: $"drone channel is not open: ($drone_in)" }
     }
@@ -31,12 +33,12 @@ export def main [args: record<ai_identity: string, drone_name: string, tx_id: in
     if not ($packet_path | path exists) {
         error make { msg: $"packet does not exist: ($packet_path)" }
     }
-    mkdir (empower fae colony drone channel common fae_drone_dir $args.ai_identity $fae_session_nom $args.drone_name)
+    mkdir (common fae_drone_dir $args.ai_identity $fae_session_nom $args.drone_name)
     let line = if $args.response_to_rx_id == null {
         $"FAE DRONE ($args.drone_name) SYN ($packet)"
     } else {
         let re_packet = $"($queen_session_nom)_($args.response_to_rx_id).md"
-        let re_path = (empower fae colony drone channel common fae_drone_dir $args.ai_identity $fae_session_nom $args.drone_name | path join $re_packet)
+        let re_path = (common fae_drone_dir $args.ai_identity $fae_session_nom $args.drone_name | path join $re_packet)
         if not ($re_path | path exists) {
             error make { msg: $"response_to packet does not exist: ($re_path)" }
         }

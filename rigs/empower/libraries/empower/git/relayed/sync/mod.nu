@@ -1,3 +1,5 @@
+use sourcetrait/empower/git/relayed/common
+
 # Prepare a relay repo to work in.
 #
 # Make both local branches current and my branch safely rebased on the
@@ -8,10 +10,10 @@
 # branch names, short tips, and how far my branch is ahead/behind theirs.
 export def main [args: record<repo: directory>]: nothing -> record<handle: string, mine_branch: string, their_branch: string, mine_tip: string, their_tip: string, bare_mine_tip: string, ahead: int, behind: int> {
     cd $args.repo
-    empower git relayed common relay_ensure_remote
-    let h = (empower git relayed common relay_handle)
-    empower git relayed common relay_ensure_clean
-    let t = (empower git relayed common relay_sync_core $h)
+    common relay_ensure_remote
+    let h = (common relay_handle)
+    common relay_ensure_clean
+    let t = (common relay_sync_core $h)
     {
         handle: $h,
         mine_branch: $t.mine_branch,

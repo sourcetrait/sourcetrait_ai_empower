@@ -1,3 +1,5 @@
+use sourcetrait/empower/git/relayed/common
+
 # Commit my work and fast-forward-push my branch to the bare.
 #
 # cd into the repo; read the commit message from the shm path (relative to
@@ -8,8 +10,8 @@
 # principal's tip, and how many of my commits now sit on the bare ahead of theirs.
 export def main [args: record<repo: directory, msg_shm: string>]: nothing -> record<handle: string, committed: bool, commit: string, mine_tip: string, their_tip: string, ahead: int> {
     cd $args.repo
-    empower git relayed common relay_ensure_remote
-    let h = (empower git relayed common relay_handle)
+    common relay_ensure_remote
+    let h = (common relay_handle)
     let mine = $"draft/ai/($h)"
     let msg_path = ($env.XDGX_SHM_DIR | path join $args.msg_shm)
     if not ($msg_path | path exists) {
@@ -18,16 +20,16 @@ export def main [args: record<repo: directory, msg_shm: string>]: nothing -> rec
     if ((open --raw $msg_path | decode | str trim) | is-empty) {
         error make { msg: "relay submit: commit message is empty" }
     }
-    empower git relayed common grun ["switch" $mine] $"switch to ($mine)"
-    empower git relayed common grun ["add" "-A"] "stage changes"
+    common grun ["switch" $mine] $"switch to ($mine)"
+    common grun ["add" "-A"] "stage changes"
     let s = (gstat)
     let staged = ($s.idx_added_staged + $s.idx_modified_staged + $s.idx_deleted_staged)
     mut committed = false
     if $staged > 0 {
-        empower git relayed common grun ["commit" "-S" "-F" $msg_path] "commit (signed)"
+        common grun ["commit" "-S" "-F" $msg_path] "commit (signed)"
         $committed = true
     }
-    let t = (empower git relayed common relay_sync_core $h)
+    let t = (common relay_sync_core $h)
     {
         handle: $h,
         committed: $committed,

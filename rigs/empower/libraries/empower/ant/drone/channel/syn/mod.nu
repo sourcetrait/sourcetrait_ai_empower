@@ -1,3 +1,5 @@
+use sourcetrait/empower/ant/drone/channel/common
+
 
 # Announce a packet a drone sent to the bonded fae (COLONY DRONE <name> SYN).
 #
@@ -8,21 +10,21 @@
 # (in its input dir). Errors if the fae is not online, the sent packet is missing,
 # or the referenced packet is missing. Void return.
 export def main [args: record<fae: string, drone_name: string, tx_id: int, response_to_rx_id: oneof<int, nothing>>]: nothing -> nothing {
-    let colony_identity = (empower ant drone channel common colony_identity $args.fae)
-    let colony_session_nom = (empower ant drone channel common session_nom $colony_identity)
+    let colony_identity = (common colony_identity $args.fae)
+    let colony_session_nom = (common session_nom $colony_identity)
     if $colony_session_nom == null {
         error make { msg: $"colony has no live session: no context for ($colony_identity)" }
     }
-    let fae_session_nom = (empower ant drone channel common session_nom $args.fae)
+    let fae_session_nom = (common session_nom $args.fae)
     if $fae_session_nom == null {
         error make { msg: $"bonded fae ($args.fae) is not online" }
     }
-    let outbox = (empower ant drone channel common colony_outbox $args.fae $fae_session_nom)
+    let outbox = (common colony_outbox $args.fae $fae_session_nom)
     if not ($outbox | path exists) {
         error make { msg: $"colony outbox (fae inbox) does not exist: ($outbox)" }
     }
     let packet = $"($colony_session_nom)_($args.tx_id).md"
-    let packet_path = (empower ant drone channel common drone_output_dir $args.fae $fae_session_nom $args.drone_name | path join $packet)
+    let packet_path = (common drone_output_dir $args.fae $fae_session_nom $args.drone_name | path join $packet)
     if not ($packet_path | path exists) {
         error make { msg: $"packet does not exist: ($packet_path)" }
     }
@@ -30,7 +32,7 @@ export def main [args: record<fae: string, drone_name: string, tx_id: int, respo
         $"COLONY DRONE ($args.drone_name) SYN ($packet)"
     } else {
         let re_packet = $"($fae_session_nom)_($args.response_to_rx_id).md"
-        let re_path = (empower ant drone channel common drone_input_dir $colony_identity $colony_session_nom $args.drone_name | path join $re_packet)
+        let re_path = (common drone_input_dir $colony_identity $colony_session_nom $args.drone_name | path join $re_packet)
         if not ($re_path | path exists) {
             error make { msg: $"response_to packet does not exist: ($re_path)" }
         }

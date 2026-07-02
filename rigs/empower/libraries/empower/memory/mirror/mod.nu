@@ -1,3 +1,5 @@
+use sourcetrait/empower/memory/classify
+
 # Guarded directional live<->repo memory mirror (explicit direction, no default).
 #
 # direction is "live_to_repo" (the normal export) or "repo_to_live" (fresh-clone
@@ -14,7 +16,7 @@ export def main [args: record<live: string, repo: string, direction: string>]: n
     if (($dir != "live_to_repo") and ($dir != "repo_to_live")) {
         error make {msg: $"invalid direction '($dir)': expected live_to_repo or repo_to_live"}
     }
-    let a = (empower memory classify analyze $args.live $args.repo)
+    let a = (classify analyze $args.live $args.repo)
     let to_repo = ($dir == "live_to_repo")
     let src_dir = (if $to_repo { $args.live } else { $args.repo })
     let dst_dir = (if $to_repo { $args.repo } else { $args.live })

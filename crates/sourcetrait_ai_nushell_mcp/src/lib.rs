@@ -65,7 +65,7 @@ pub(crate) use crate::{
         cache::{CacheKind, cache_dir, closure_cache_file, data_base_dir},
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         library::{
-            LibraryInfo, LibraryLocks, ValidationResult, call_file_path, check_library,
+            LibraryInfo, LibraryLocks, ValidationResult, check_library,
             check_source_dir, commit_impl, ensure_substrate, enumerate_libraries, establish_library,
             index_node, inspect_impl, install_impl, is_valid_ident, is_valid_module_path,
             libraries_dir, load_index, scaffold_leaf, scaffold_leaf_exists, uninstall_impl,

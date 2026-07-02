@@ -226,10 +226,10 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
 /// from a clean baseline (the only diagnostic is the special file under test).
 fn author_valid_base(src: &Path) {
     write_source(src, "mod.nu", "export module m\n");
-    write_source(src, "m/mod.nu", "export use ./double.nu\n");
+    write_source(src, "m/mod.nu", "export module double\n");
     write_source(
         src,
-        "m/double.nu",
+        "m/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
 }
@@ -463,7 +463,7 @@ fn executable_nu_file_denied() {
     let src = host.source_dir("xnulib");
     let _ = host.library_new("xnulib", &src);
     author_valid_base(&src);
-    chmod_x(&src.join("m/double.nu"));
+    chmod_x(&src.join("m/double/mod.nu"));
     let resp = host.commit("xnulib");
     assert!(
         has_kind(&resp, "library::source_executable_denied"),

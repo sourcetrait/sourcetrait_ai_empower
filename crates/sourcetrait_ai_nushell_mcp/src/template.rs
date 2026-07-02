@@ -138,22 +138,27 @@ pub(crate) fn build_run_source(
 }
 
 /// What: builds the nushell source the stateless worker evals for a
-/// `call()` -- `use PATH` imports the committed function file, then
-/// `NAME LIT` invokes its `main` (NAME = the file stem; nushell runs a
-/// module's `main` when the module name is called directly). LIT is the
-/// args record as NUON, or bare `null` for empty / void args.
+/// `call()` -- `use <library>` loads the whole committed library, then the
+/// call is driven module-qualified along its namepath (module_path slashes
+/// -> spaces): `<library> <mod...> <name> LIT`. LIT is the args record as
+/// NUON, or bare `null` for empty / void args. Invoking the call's dir-module
+/// by name runs its `export def main`.
 ///
-/// Why: the committed call-target is a single infix-signatured
-/// `export def main [args: A]: nothing -> R` -- main's positional
-/// runtime-enforces the args and its output type parse-checks a static
-/// result, so the synthesis needs no resolve / call shim, just the
-/// two-line drive of `main`. The path comes from `call_file_path`
-/// (validated under the libraries dir); `use` resolves it at parse time.
+/// Why: the committed call-target is a `<name>/mod.nu` dir-module holding a
+/// single infix-signatured `export def main [args: A]: nothing -> R`. Its body
+/// self-refs sibling call-targets INLINE as `<library> <mod> <fn>`, which
+/// resolve only when the executing context has `use <library>` loaded -- so we
+/// load the whole library, not just the single target file (the prior
+/// `use <file>` form loaded only the target and would fail post-migration
+/// self-refs). `main`'s positional runtime-enforces the args and its output
+/// type parse-checks a static result; nushell runs a module's `main` when the
+/// module name is invoked, so the module-qualified path is the whole drive.
 ///
 /// Where: called by `server::tool::NuSh::call`; the rendered source ships
 /// through a pool worker exactly like run() / rerun().
 pub(crate) fn build_call_source(
-    path: &str,
+    library: &str,
+    module_path: &str,
     name: &str,
     args: &mcp::JsonObject,
     nonce: &str,
@@ -163,19 +168,27 @@ pub(crate) fn build_call_source(
     } else {
         args_to_nuon(args)
     };
+    // Namepath -> the module-qualified invocation, space-separated. A function
+    // always has a parent module (no root functions), so module_path is
+    // non-empty in practice; the empty branch is defensive.
+    let call_path = if module_path.is_empty() {
+        format!("{library} {name}")
+    } else {
+        format!("{library} {} {name}", module_path.replace('/', " "))
+    };
     // $env.NONCE carries this call's nonce ambiently into the committed `main`
-    // + any helper it `use`s (env reads inherit down). Set at top-level before
+    // + any helper it invokes (env reads inherit down). Set at top-level before
     // the target; the stateless per-call clone is dropped after the reply, so
     // it ceases to exist when the call completes.
     formatdoc!(
         r#"
         $env.NONCE = "{nonce}"
-        use {path}
-        {name} {lit}
+        use {library}
+        {call_path} {lit}
     "#,
         nonce = nonce,
-        path = path,
-        name = name,
+        library = library,
+        call_path = call_path,
         lit = lit,
     )
 }

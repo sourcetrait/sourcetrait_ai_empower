@@ -236,7 +236,7 @@ fn call_target_sees_nonce() {
     let _ = host.scaffold("noncelib:m:whoami");
     write_source(
         &src,
-        "m/whoami.nu",
+        "m/whoami/mod.nu",
         "export def main [args: record<noop: int>]: nothing -> record<seen: string> { { seen: $env.NONCE } }\n",
     );
     let committed = host.call_tool("commit", serde_json::json!({"library": "noncelib"}));

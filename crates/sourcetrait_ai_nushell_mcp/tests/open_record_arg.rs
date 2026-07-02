@@ -263,10 +263,10 @@ fn commit_inspect_and_call_open_record_arg_field() {
     let src = host.source_dir("openlib");
     let _ = host.library_new("openlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./soak.nu\n");
+    write_source(&src, "m/mod.nu", "export module soak\n");
     write_source(
         &src,
-        "m/soak.nu",
+        "m/soak/mod.nu",
         "export def main [args: record<x: int, fill: record<>>]: nothing -> record<sum: int, fillcols: int> {\n    { sum: $args.x, fillcols: ($args.fill | columns | length) }\n}\n",
     );
     let committed = host.call("commit", serde_json::json!({"library": "openlib"}));

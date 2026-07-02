@@ -311,7 +311,7 @@ fn info_lists_committed_library_hierarchy() {
                 .is_none(),
             "scaffold {np} failed: {scaffold}",
         );
-        let rel = format!("{module_path}/{name}.nu");
+        let rel = format!("{module_path}/{name}/mod.nu");
         write_source(
             &src,
             &rel,
@@ -400,10 +400,10 @@ fn info_lists_hand_authored_library_hierarchy() {
         "establish failed: {est}",
     );
     write_source(&src, "mod.nu", "export module math\n");
-    write_source(&src, "math/mod.nu", "export use ./double.nu\n");
+    write_source(&src, "math/mod.nu", "export module double\n");
     write_source(
         &src,
-        "math/double.nu",
+        "math/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
 
@@ -457,10 +457,10 @@ fn info_includes_node_summaries() {
     let src = host.source_dir("doctreelib");
     let _ = host.library_new("doctreelib", &src);
     write_source(&src, "mod.nu", "# the doctree library\nexport module m\n");
-    write_source(&src, "m/mod.nu", "# the m module\nexport use ./fn.nu\n");
+    write_source(&src, "m/mod.nu", "# the m module\nexport module fn\n");
     write_source(
         &src,
-        "m/fn.nu",
+        "m/fn/mod.nu",
         "# the fn summary\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x } }\n",
     );
     let committed = host.call_tool("commit", serde_json::json!({"library": "doctreelib"}));

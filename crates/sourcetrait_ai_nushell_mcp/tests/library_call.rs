@@ -193,7 +193,7 @@ fn call_after_commit_returns_result() {
     let _ = host.scaffold("calc:math:double");
     write_source(
         &src,
-        "math/double.nu",
+        "math/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "calc"}));
@@ -221,7 +221,7 @@ fn call_after_module_commit_returns_result() {
     let _ = host.scaffold("importable:util:triple");
     write_source(
         &src,
-        "util/triple.nu",
+        "util/triple/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 3) }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "importable"}));
@@ -270,7 +270,7 @@ fn call_args_typecheck_failure_surfaces() {
     let _ = host.scaffold("strictlib:m:needs_int");
     write_source(
         &src,
-        "m/needs_int.nu",
+        "m/needs_int/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "strictlib"}));
@@ -290,7 +290,7 @@ fn inspect_returns_function_doc() {
     let _ = host.scaffold("inspectlib:math:double");
     write_source(
         &src,
-        "math/double.nu",
+        "math/double/mod.nu",
         "# doubles its input\n#\n# returns the doubled value\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: ($args.x * 2) } }\n",
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib"}));
@@ -315,10 +315,10 @@ fn inspect_library_root_and_module() {
     let src = host.source_dir("inspectlib2");
     let _ = host.library_new("inspectlib2", &src);
     write_source(&src, "mod.nu", "# the inspectlib2 library\nexport module math\n");
-    write_source(&src, "math/mod.nu", "# math helpers\nexport use ./double.nu\n");
+    write_source(&src, "math/mod.nu", "# math helpers\nexport module double\n");
     write_source(
         &src,
-        "math/double.nu",
+        "math/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib2"}));
@@ -345,7 +345,7 @@ fn inspect_undocumented_is_empty() {
     let _ = host.scaffold("inspectlib3:m:f");
     write_source(
         &src,
-        "m/f.nu",
+        "m/f/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "inspectlib3"}));
@@ -377,7 +377,7 @@ fn result_record_field_shapes_preserved() {
     let _ = host.scaffold("fidelitylib:m:shapes");
     write_source(
         &src,
-        "m/shapes.nu",
+        "m/shapes/mod.nu",
         "export def main [args: record<n: int>]: nothing -> record<p: path, d: directory, c: cell-path, g: glob> { { p: \"x\", d: \"y\", c: $.a, g: (\"z\" | into glob) } }\n",
     );
     let committed = host.call_tool("commit", serde_json::json!({"library": "fidelitylib"}));
@@ -407,13 +407,13 @@ fn helper_file_pruned_from_info_and_not_callable() {
     let src = host.source_dir("helperlib");
     let _ = host.library_new("helperlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./util.nu\nexport use ./real.nu\n");
-    // Organizational helper: no `main` sentinel -> not a call-target.
+    write_source(&src, "m/mod.nu", "export use ./util.nu\nexport module real\n");
+    // Organizational helper FLAT FILE: no `main` sentinel, `export use`'d in.
     write_source(&src, "m/util.nu", "export def helper [n: int] { $n * 2 }\n");
-    // A real call-target beside it.
+    // A real call-target (dir-module) beside it.
     write_source(
         &src,
-        "m/real.nu",
+        "m/real/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x + 1) }"),
     );
     let committed = host.call_tool("commit", serde_json::json!({"library": "helperlib"}));

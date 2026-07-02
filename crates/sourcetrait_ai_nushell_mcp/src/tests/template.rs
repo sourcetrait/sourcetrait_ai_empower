@@ -94,13 +94,19 @@ fn run_source_multi_line_body() {
 
 #[test]
 fn call_source_typed_args() {
-    let got = build_call_source(
-        "/libs/calc/math/double.nu",
-        "double",
-        &obj(r#"{"x":6}"#),
-        "nonce123",
-    );
-    let expected = "$env.NONCE = \"nonce123\"\nuse /libs/calc/math/double.nu\ndouble {x: 6}\n";
+    // Dir-module convention: `use <library>` (loads the whole library so the
+    // target's inline `<library> <mod> <fn>` self-refs resolve), then the call
+    // driven module-qualified along its namepath (slashes -> spaces).
+    let got = build_call_source("calc", "math", "double", &obj(r#"{"x":6}"#), "nonce123");
+    let expected = "$env.NONCE = \"nonce123\"\nuse calc\ncalc math double {x: 6}\n";
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn call_source_nested_module_path() {
+    // A slash-separated module_path renders space-separated.
+    let got = build_call_source("calc", "math/trig", "sin", &obj(r#"{"x":1}"#), "nonce123");
+    let expected = "$env.NONCE = \"nonce123\"\nuse calc\ncalc math trig sin {x: 1}\n";
     assert_eq!(got, expected);
 }
 
@@ -108,8 +114,8 @@ fn call_source_typed_args() {
 fn call_source_void_args() {
     // Void / no-arg main: empty args bind the bare `null` literal so the
     // `nothing` positional typechecks (a `{}` record would not).
-    let got = build_call_source("/libs/util/ping.nu", "ping", &obj("{}"), "nonce123");
-    let expected = "$env.NONCE = \"nonce123\"\nuse /libs/util/ping.nu\nping null\n";
+    let got = build_call_source("util", "net", "ping", &obj("{}"), "nonce123");
+    let expected = "$env.NONCE = \"nonce123\"\nuse util\nutil net ping null\n";
     assert_eq!(got, expected);
 }
 

@@ -247,10 +247,10 @@ fn commit_accepts_path_self_call_target() {
     let src = host.source_dir("selflib");
     let _ = host.library_new("selflib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./whereami.nu\n");
+    write_source(&src, "m/mod.nu", "export module whereami\n");
     write_source(
         &src,
-        "m/whereami.nu",
+        "m/whereami/mod.nu",
         "export def main [args: record<noop: int>]: nothing -> record<here: string> {\n    const SELF = (path self)\n    { here: $SELF }\n}\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "selflib"}));
@@ -273,10 +273,10 @@ fn commit_accepts_path_self_in_mod_nu_const() {
         "mod.nu",
         "export const HERE = (path self)\nexport module m\n",
     );
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "modselflib"}));
@@ -292,10 +292,10 @@ fn commit_happy_path_writes_repo_and_meta() {
     let src = host.source_dir("happylib");
     let _ = host.library_new("happylib", &src);
     write_source(&src, "mod.nu", "export module math\n");
-    write_source(&src, "math/mod.nu", "export use ./double.nu\n");
+    write_source(&src, "math/mod.nu", "export module double\n");
     write_source(
         &src,
-        "math/double.nu",
+        "math/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
 
@@ -305,7 +305,7 @@ fn commit_happy_path_writes_repo_and_meta() {
     let lib = host.library_dir("happylib");
     assert!(lib.join("mod.nu").exists());
     assert!(lib.join("math").join("mod.nu").exists());
-    assert!(lib.join("math").join("double.nu").exists());
+    assert!(lib.join("math").join("double").join("mod.nu").exists());
 
     // Meta records ONLY source_path (no kind discriminant in 0.0.44+).
     let meta_text = std::fs::read_to_string(lib.join(".meta/library.json")).unwrap();
@@ -365,10 +365,10 @@ fn commit_accepts_multiline_def_signature() {
     let src = host.source_dir("multilinelib");
     let _ = host.library_new("multilinelib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         "export def main [\n    args: record<x: int>\n]: nothing -> record<out: int> {\n    { out: ($args.x * 2) }\n}\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "multilinelib"}));
@@ -383,11 +383,12 @@ fn commit_rejects_function_with_syntax_error() {
     let mut host = Host::spawn();
     let src = host.source_dir("syntaxlib");
     let _ = host.library_new("syntaxlib", &src);
-    write_source(&src, "mod.nu", "");
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export module broken\n");
     // Unbalanced brace -- nu_parser surfaces a parse error.
     write_source(
         &src,
-        "broken.nu",
+        "m/broken/mod.nu",
         "export def main [args: record<x: int>]: nothing -> record<out: int> {\n    { out: ($args.x * 2) \n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "syntaxlib"}));
@@ -407,10 +408,11 @@ fn commit_rejects_main_without_output_type() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib1");
     let _ = host.library_new("badlib1", &src);
-    write_source(&src, "mod.nu", "");
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing/mod.nu",
         "export def main [args: record<x: int>] { { out: $args.x } }\n",
     );
 
@@ -432,10 +434,10 @@ fn commit_accepts_call_target_with_helper_export() {
     let src = host.source_dir("helperexportlib");
     let _ = host.library_new("helperexportlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         "export def helper [n: int] { $n * 2 }\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x } }\n",
     );
 
@@ -463,10 +465,11 @@ fn commit_rejects_main_empty_record_output() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib3");
     let _ = host.library_new("badlib3", &src);
-    write_source(&src, "mod.nu", "");
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing/mod.nu",
         "export def main [args: record<x: int>]: nothing -> record<> { {} }\n",
     );
 
@@ -480,34 +483,33 @@ fn commit_rejects_main_empty_record_output() {
 }
 
 #[test]
-fn commit_rejects_mod_nu_with_inline_const() {
+fn commit_accepts_mod_nu_with_inline_const() {
+    // Relaxed rule: a mod.nu is a module in its own right, so a private `const`
+    // beside the cascade is allowed.
     let mut host = Host::spawn();
     let src = host.source_dir("constmodlib");
     let _ = host.library_new("constmodlib", &src);
     write_source(&src, "mod.nu", "export module sub\nconst X = 42\n");
     write_source(&src, "sub/mod.nu", "");
     let resp = host.call("commit", serde_json::json!({"library": "constmodlib"}));
-    assert!(has_error_path(&resp));
-    let msg = error_message(&resp);
     assert!(
-        msg.contains("call to `const`") || msg.contains("may only contain"),
-        "expected const-rejection violation; got {msg:?}",
+        !has_error_path(&resp),
+        "a private const in mod.nu is allowed; got {resp}"
     );
 }
 
 #[test]
-fn commit_rejects_mod_nu_with_inline_alias() {
+fn commit_accepts_mod_nu_with_inline_alias() {
+    // Relaxed rule: a private `alias` in mod.nu is allowed.
     let mut host = Host::spawn();
     let src = host.source_dir("aliasmodlib");
     let _ = host.library_new("aliasmodlib", &src);
     write_source(&src, "mod.nu", "export module sub\nalias foo = ls\n");
     write_source(&src, "sub/mod.nu", "");
     let resp = host.call("commit", serde_json::json!({"library": "aliasmodlib"}));
-    assert!(has_error_path(&resp));
-    let msg = error_message(&resp);
     assert!(
-        msg.contains("call to `alias`") || msg.contains("may only contain"),
-        "expected alias-rejection violation; got {msg:?}",
+        !has_error_path(&resp),
+        "a private alias in mod.nu is allowed; got {resp}"
     );
 }
 
@@ -542,7 +544,9 @@ fn commit_accepts_mod_nu_with_only_comments() {
 }
 
 #[test]
-fn commit_rejects_mod_nu_with_inline_def() {
+fn commit_accepts_mod_nu_with_inline_def() {
+    // Relaxed rule: a private `def` helper in mod.nu is allowed (a call-target
+    // mod.nu is a function file; a cascade mod.nu is still a module).
     let mut host = Host::spawn();
     let src = host.source_dir("badlib4");
     let _ = host.library_new("badlib4", &src);
@@ -550,11 +554,9 @@ fn commit_rejects_mod_nu_with_inline_def() {
     write_source(&src, "sub/mod.nu", "");
 
     let resp = host.call("commit", serde_json::json!({"library": "badlib4"}));
-    assert!(has_error_path(&resp));
-    let msg = error_message(&resp);
     assert!(
-        msg.contains("mod.nu may only contain"),
-        "expected mod.nu violation; got {msg:?}",
+        !has_error_path(&resp),
+        "a private def in mod.nu is allowed; got {resp}"
     );
 }
 
@@ -566,20 +568,23 @@ fn commit_aggregates_multiple_violations() {
     // Three distinct violations across the tree (== the cap of 3, so all
     // surface): a bare `def` in mod.nu, an empty-args skeleton, and a main
     // lacking an output type.
-    write_source(&src, "mod.nu", "export module a\ndef helper [] { 1 }\n");
+    // A disallowed decl in mod.nu (`extern` is not part of the cascade/helper
+    // set), an empty-args skeleton, and a main lacking an output type - three
+    // distinct violations (== the cap of 3).
+    write_source(&src, "mod.nu", "export module a\nextern noise []\n");
     write_source(
         &src,
         "a/mod.nu",
-        "export use ./skel.nu\nexport use ./noout.nu\n",
+        "export module skel\nexport module noout\n",
     );
     write_source(
         &src,
-        "a/skel.nu",
+        "a/skel/mod.nu",
         "export def main [args: record<>]: nothing -> record<out: int> { { out: 1 } }\n",
     );
     write_source(
         &src,
-        "a/noout.nu",
+        "a/noout/mod.nu",
         "export def main [args: record<x: int>] { { out: $args.x } }\n",
     );
 
@@ -613,10 +618,11 @@ fn commit_caps_structural_violations() {
     let _ = host.library_new("caplib", &src);
     // Four bare `def`s in mod.nu -> four "mod.nu may only contain"
     // violations, more than the cap of 3.
+    // Four disallowed `extern` decls in mod.nu -> four violations, past the cap.
     write_source(
         &src,
         "mod.nu",
-        "export module a\ndef h1 [] { 1 }\ndef h2 [] { 2 }\ndef h3 [] { 3 }\ndef h4 [] { 4 }\n",
+        "export module a\nextern e1 []\nextern e2 []\nextern e3 []\nextern e4 []\n",
     );
     write_source(&src, "a/mod.nu", "");
     let resp = host.call("commit", serde_json::json!({"library": "caplib"}));
@@ -635,10 +641,12 @@ fn commit_rejects_root_call_target() {
     let mut host = Host::spawn();
     let src = host.source_dir("rootfnlib");
     let _ = host.library_new("rootfnlib", &src);
-    write_source(&src, "mod.nu", "");
+    // A call-target directory placed directly under the library root - a call
+    // needs a parent module, so this is a root_function violation.
+    write_source(&src, "mod.nu", "export module thing\n");
     write_source(
         &src,
-        "thing.nu",
+        "thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "rootfnlib"}));
@@ -669,10 +677,10 @@ fn commit_succeeds_then_check_warns_long_summary() {
     let _ = host.library_new("doclib", &src);
     let long = "x".repeat(81);
     write_source(&src, "mod.nu", &format!("# {long}\nexport module m\n"));
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
     let committed = host.call("commit", serde_json::json!({"library": "doclib"}));
@@ -718,10 +726,10 @@ fn commit_accepts_short_summary() {
         "mod.nu",
         "# doubles its input\n# the math double helper module\nexport module m\n",
     );
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "okdoclib"}));
@@ -755,17 +763,17 @@ fn commit_picks_up_mutated_source() {
     let src = host.source_dir("livelib");
     let _ = host.library_new("livelib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call("commit", serde_json::json!({"library": "livelib"}));
     // Mutate the source and re-commit.
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x + 1000) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "livelib"}));
@@ -774,7 +782,8 @@ fn commit_picks_up_mutated_source() {
         "re-commit should succeed; got {resp}"
     );
     let committed =
-        std::fs::read_to_string(host.library_dir("livelib").join("m").join("thing.nu")).unwrap();
+        std::fs::read_to_string(host.library_dir("livelib").join("m").join("thing").join("mod.nu"))
+            .unwrap();
     assert!(
         committed.contains("+ 1000"),
         "committed body should reflect mutated source; got {committed:?}",
@@ -794,10 +803,10 @@ fn committed_library_invokable_via_standalone_driver() {
     let src = host.source_dir("drvilib");
     let _ = host.library_new("drvilib", &src);
     write_source(&src, "mod.nu", "export module math\n");
-    write_source(&src, "math/mod.nu", "export use ./double.nu\n");
+    write_source(&src, "math/mod.nu", "export module double\n");
     write_source(
         &src,
-        "math/double.nu",
+        "math/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call("commit", serde_json::json!({"library": "drvilib"}));
@@ -831,10 +840,10 @@ fn commit_validates_by_name_cross_library_use() {
     let base = host.source_dir("baselib");
     let _ = host.library_new("baselib", &base);
     write_source(&base, "mod.nu", "export module m\n");
-    write_source(&base, "m/mod.nu", "export use ./double.nu\n");
+    write_source(&base, "m/mod.nu", "export module double\n");
     write_source(
         &base,
-        "m/double.nu",
+        "m/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let committed_base = host.call("commit", serde_json::json!({"library": "baselib"}));
@@ -848,10 +857,10 @@ fn commit_validates_by_name_cross_library_use() {
     let consumer = host.source_dir("consumer");
     let _ = host.library_new("consumer", &consumer);
     write_source(&consumer, "mod.nu", "export module app\n");
-    write_source(&consumer, "app/mod.nu", "export use ./compute.nu\n");
+    write_source(&consumer, "app/mod.nu", "export module compute\n");
     write_source(
         &consumer,
-        "app/compute.nu",
+        "app/compute/mod.nu",
         "use baselib m *\nexport def main [args: record<x: int>]: nothing -> record<out: int> {\n    double {x: $args.x}\n}\n",
     );
     let committed = host.call("commit", serde_json::json!({"library": "consumer"}));
@@ -904,10 +913,10 @@ fn commit_accepts_mod_nu_with_export_const_and_def() {
         "mod.nu",
         "export const VERSION = 1\nexport def shared [] { 42 }\nexport module m\n",
     );
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "modutillib"}));
@@ -923,10 +932,11 @@ fn commit_rejects_empty_record_skeleton() {
     let mut host = Host::spawn();
     let src = host.source_dir("skellib");
     let _ = host.library_new("skellib", &src);
-    write_source(&src, "mod.nu", "");
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "thing.nu",
+        "m/thing/mod.nu",
         "export def main [args: record<>]: nothing -> record<n: int> { { n: 1 } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "skellib"}));
@@ -987,10 +997,10 @@ fn commit_rejects_const_named_reserved() {
         "mod.nu",
         "export const main = 5\nexport module m\n",
     );
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let resp = host.call("commit", serde_json::json!({"library": "constreslib"}));
@@ -1008,10 +1018,10 @@ fn commit_rejects_record_key_reserved() {
     let src = host.source_dir("rkeylib");
     let _ = host.library_new("rkeylib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         "export def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x, main: 1 } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "rkeylib"}));
@@ -1029,10 +1039,10 @@ fn commit_rejects_cellpath_member_reserved() {
     let src = host.source_dir("cpathlib");
     let _ = host.library_new("cpathlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         "export def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.main } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "cpathlib"}));
@@ -1068,10 +1078,10 @@ fn commit_accepts_reserved_as_quoted_string_value() {
     let src = host.source_dir("strvallib");
     let _ = host.library_new("strvallib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         "export def main [args: record<x: int>]: nothing -> record<out: int> { let note = \"main\"; { out: $args.x } }\n",
     );
     let resp = host.call("commit", serde_json::json!({"library": "strvallib"}));
@@ -1110,7 +1120,7 @@ fn library_new_and_scaffold_function() {
         !has_error_path(&r2),
         "scaffold function should succeed; got {r2}"
     );
-    let fn_src = std::fs::read_to_string(src.join("math").join("double.nu")).unwrap();
+    let fn_src = std::fs::read_to_string(src.join("math").join("double").join("mod.nu")).unwrap();
     assert!(
         fn_src.contains("export def main [args: record<>]: nothing -> record<>"),
         "skeleton missing the single infix-signatured main; got {fn_src:?}"
@@ -1122,7 +1132,7 @@ fn library_new_and_scaffold_function() {
     // Additive cascade wiring (NOT regenerate).
     let math_mod = std::fs::read_to_string(src.join("math").join("mod.nu")).unwrap();
     assert!(
-        math_mod.contains("export use ./double.nu"),
+        math_mod.contains("export module double"),
         "math mod.nu should wire double; got {math_mod:?}",
     );
     let root_mod = std::fs::read_to_string(src.join("mod.nu")).unwrap();
@@ -1169,7 +1179,7 @@ fn commit_validates_and_upserts_source() {
     let _ = host.library_new("clib", &src);
     let _ = host.scaffold("clib:math:double");
     std::fs::write(
-        src.join("math").join("double.nu"),
+        src.join("math").join("double").join("mod.nu"),
         valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     )
     .unwrap();
@@ -1178,7 +1188,8 @@ fn commit_validates_and_upserts_source() {
     assert!(
         host.library_dir("clib")
             .join("math")
-            .join("double.nu")
+            .join("double")
+            .join("mod.nu")
             .exists(),
         "canonical should have the committed function",
     );
@@ -1206,5 +1217,136 @@ fn commit_rejects_unfleshed_skeleton() {
     assert!(
         has_error_path(&resp),
         "committing an unfleshed skeleton should reject; got {resp}"
+    );
+}
+
+// ---- the dir-module call convention ----
+
+#[test]
+fn commit_rejects_main_in_flat_file() {
+    // `export def main` is reserved for a call target's `<name>/mod.nu`; a flat
+    // file (even one `export use`'d into a module) may not hold one.
+    let mut host = Host::spawn();
+    let src = host.source_dir("flatmainlib");
+    let _ = host.library_new("flatmainlib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ./impl.nu\n");
+    write_source(
+        &src,
+        "m/impl.nu",
+        &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+    );
+    let resp = host.call("commit", serde_json::json!({"library": "flatmainlib"}));
+    assert!(
+        structural_kinds(&resp)
+            .iter()
+            .any(|k| k == "library::main_in_flat_file"),
+        "expected library::main_in_flat_file; got {:?}",
+        structural_kinds(&resp),
+    );
+}
+
+#[test]
+fn commit_rejects_call_wired_via_export_use() {
+    // A call target must be wired into its parent via `export module`, never
+    // `export use`.
+    let mut host = Host::spawn();
+    let src = host.source_dir("wirelib");
+    let _ = host.library_new("wirelib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use double\n");
+    write_source(
+        &src,
+        "m/double/mod.nu",
+        &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    );
+    let resp = host.call("commit", serde_json::json!({"library": "wirelib"}));
+    assert!(
+        structural_kinds(&resp)
+            .iter()
+            .any(|k| k == "library::call_wiring"),
+        "expected library::call_wiring; got {:?}",
+        structural_kinds(&resp),
+    );
+}
+
+#[test]
+fn commit_rejects_call_with_submodule() {
+    // A call target is an edge module and cannot contain a submodule.
+    let mut host = Host::spawn();
+    let src = host.source_dir("leaflib");
+    let _ = host.library_new("leaflib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export module call\n");
+    write_source(
+        &src,
+        "m/call/mod.nu",
+        &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+    );
+    write_source(&src, "m/call/sub/mod.nu", "");
+    let resp = host.call("commit", serde_json::json!({"library": "leaflib"}));
+    assert!(
+        structural_kinds(&resp)
+            .iter()
+            .any(|k| k == "library::call_leaf"),
+        "expected library::call_leaf; got {:?}",
+        structural_kinds(&resp),
+    );
+}
+
+#[test]
+fn commit_rejects_orphan_module() {
+    // A subdirectory module not wired into its parent's cascade is dangling.
+    let mut host = Host::spawn();
+    let src = host.source_dir("orphanlib");
+    let _ = host.library_new("orphanlib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export module double\n");
+    write_source(
+        &src,
+        "m/double/mod.nu",
+        &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+    );
+    write_source(&src, "m/stray/mod.nu", "");
+    let resp = host.call("commit", serde_json::json!({"library": "orphanlib"}));
+    assert!(
+        structural_kinds(&resp).iter().any(|k| k == "library::orphan"),
+        "expected library::orphan; got {:?}",
+        structural_kinds(&resp),
+    );
+}
+
+#[test]
+fn commit_accepts_call_with_flat_helper() {
+    // A call target may split a large helper into a flat sibling file and pull
+    // it in privately via `use`.
+    let mut host = Host::spawn();
+    let src = host.source_dir("callhelperlib");
+    let _ = host.library_new("callhelperlib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(
+        &src,
+        "m/thing/helper.nu",
+        "export def doubler [n: int] { $n * 2 }\n",
+    );
+    write_source(
+        &src,
+        "m/thing/mod.nu",
+        "use ./helper.nu *\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: (doubler $args.x) } }\n",
+    );
+    let resp = host.call("commit", serde_json::json!({"library": "callhelperlib"}));
+    assert!(
+        !has_error_path(&resp),
+        "a call may use a flat helper sibling; got {resp}"
+    );
+    let called = host.call(
+        "call",
+        serde_json::json!({"namepath": "callhelperlib:m:thing", "args": {"x": 5}}),
+    );
+    assert_eq!(
+        called["result"]["structuredContent"]["result"]["out"].as_i64(),
+        Some(10),
+        "call should run with the flat helper; got {called}",
     );
 }

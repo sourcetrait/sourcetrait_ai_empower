@@ -137,8 +137,8 @@ pub(crate) fn libraries_dir() -> PathBuf {
 /// `<library>/` segment in every caller.
 ///
 /// Where: called by every library-coordinate path helper
-/// (`library_meta_path`, `library_root_modnu_path`, `call_file_path`)
-/// and by lifecycle ops to wipe / create the library subtree.
+/// (`library_meta_path`, `library_root_modnu_path`) and by lifecycle ops to
+/// wipe / create the library subtree.
 pub(crate) fn library_dir(library: &str) -> PathBuf {
     libraries_dir().join(library)
 }
@@ -548,7 +548,7 @@ pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) ->
 
 /// True if the terminal leaf of a scaffold coordinate already exists in the
 /// agent source tree: the module directory for a 2-part namepath, the
-/// `<name>.nu` file for a 3-part one.
+/// `<name>/` call-target directory for a 3-part one (a call is `<name>/mod.nu`).
 ///
 /// Why: the batch `new()` pre-checks every requested leaf before scaffolding
 /// any, so a single collision aborts the whole batch (nothing scaffolded).
@@ -565,8 +565,10 @@ pub(crate) fn scaffold_leaf_exists(
     for seg in module_path.split('/').filter(|s| !s.is_empty()) {
         dir = dir.join(seg);
     }
+    // A call target is a `<name>/mod.nu` dir-module, so both a function and a
+    // module leaf are a subdirectory.
     let leaf = match name {
-        Some(fn_name) => dir.join(format!("{fn_name}.nu")),
+        Some(fn_name) => dir.join(fn_name),
         None => dir,
     };
     Ok(leaf.exists())
@@ -627,17 +629,20 @@ pub(crate) fn scaffold_leaf(
     }
 
     if let Some(fn_name) = name {
-        let fn_file = dir.join(format!("{fn_name}.nu"));
-        if fn_file.exists() {
+        let fn_dir = dir.join(fn_name);
+        if fn_dir.exists() {
             return Err(Error::LibraryInvalidName {
                 library: fn_name.to_string(),
                 reason: "function already exists; edit it instead of scaffolding over it"
                     .to_string(),
             });
         }
-        fs::write(&fn_file, skeleton_function_source())?;
-        additively_wire_modnu(&dir.join("mod.nu"), &format!("export use ./{fn_name}.nu"))?;
-        created.push(fn_file.to_string_lossy().into_owned());
+        // A call target is a `<name>/mod.nu` dir-module wired via `export module`.
+        fs::create_dir_all(&fn_dir)?;
+        let fn_modnu = fn_dir.join("mod.nu");
+        fs::write(&fn_modnu, skeleton_function_source())?;
+        additively_wire_modnu(&dir.join("mod.nu"), &format!("export module {fn_name}"))?;
+        created.push(fn_modnu.to_string_lossy().into_owned());
     }
 
     Ok(created)
@@ -703,27 +708,6 @@ pub(crate) fn load_index(library: &str) -> io::Result<LibraryIndex> {
 // ============================================================================
 // (define_function / undefine_function retired in 0.0.44 - new/commit/library)
 // ============================================================================
-
-/// Resolve `<library>/<module_path>/<name>.nu` into an absolute path
-/// under the MCP libraries dir. Returns None if any name component is
-/// invalid (path traversal defense). Does NOT verify the file exists;
-/// caller checks.
-pub(crate) fn call_file_path(library: &str, module_path: &str, name: &str) -> Option<PathBuf> {
-    if !is_valid_ident(library) {
-        return None;
-    }
-    if !is_valid_module_path(module_path) {
-        return None;
-    }
-    if !is_valid_ident(name) {
-        return None;
-    }
-    let mut path = library_dir(library);
-    if !module_path.is_empty() {
-        path = path.join(module_path);
-    }
-    Some(path.join(format!("{name}.nu")))
-}
 
 // ============================================================================
 // Library enumeration (the info() hierarchy)
@@ -1433,22 +1417,25 @@ fn validate_docs_tree(
     Ok(())
 }
 
-/// Walk every `.nu` under `root`. Apply the strict per-file shape:
-/// - `mod.nu`: only `export use ./<file>.nu` or `export module <name>` lines
-///   (plus blank lines and `#` comments). Body-lint NOT applied (no agent
-///   code lives in mod.nu).
-/// - Function files: a single `export def main [args: A]: nothing -> R` (the
-///   sole export); args is a non-empty `record<...>` (or `nothing`) and the
-///   output type R likewise. Authored bodies are NOT lint-checked
-///   (item 7, the_user 2026-06-12: imports are authored with intent; the
-///   AST body-lint covers the on-the-fly run/interact/define path only).
+/// Walk the library `root` and validate + index it under the dir-module call
+/// convention:
+/// - A call target is a `<name>/mod.nu` (dir-module) whose module resolves an
+///   `export def main [args: A]: nothing -> R` (args a non-empty `record<...>`
+///   or `nothing`, R likewise); it is a leaf, wired into its parent via
+///   `export module <name>`, and registers as function `<name>` at the parent.
+/// - A cascade / helper `mod.nu` carries `export module`/`export use` plus
+///   exported or private `def`/`const`/`use`/`alias` utilities.
+/// - A flat `<name>.nu` (non-`mod.nu`) is organizational content pulled into a
+///   module via `export use`/`use`; it may never hold `export def main`.
+/// Every `.nu` file must be reachable through the module graph. Authored bodies
+/// are NOT lint-checked (imports are authored with intent; the AST body-lint
+/// covers the on-the-fly run/interact path only).
 ///
 /// Each file is parsed through `nu_parser::parse` (in a
-/// `module __v_<stem> { ... }` wrapper) so syntax errors land as
-/// structural violations with line numbers. Dotfile entries (e.g.
-/// `.git`, `.meta/`) are skipped. Returns ALL structural violations -- no
-/// bail-on-first; no auto-fix. ALSO assembles the big-meta index + docs into
-/// `result` (functions / modules / docs) during the same walk (built once at
+/// `module __v_<stem> { ... }` wrapper) so syntax errors land as structural
+/// violations with line numbers. Dotfile entries (`.git`, `.meta/`) are
+/// skipped. Returns ALL structural violations -- no bail-on-first; no auto-fix.
+/// ALSO assembles the big-meta index + docs during the same walk (built once at
 /// commit, read thereafter by info / call / inspect).
 pub(crate) fn validate_library_source(
     root: &std::path::Path,
@@ -1486,12 +1473,19 @@ fn validate_walk(
     module_path: &str,
     result: &mut ValidationResult,
 ) -> io::Result<(Vec<IndexModule>, Vec<IndexFunction>)> {
-    // This dir's own docs: its mod.nu leading comment, keyed at `module_path`
-    // ("" == the library root). Pushed only when non-empty.
+    // `dir` is a PURE MODULE (the library root, or a subdir the caller recursed
+    // into because its mod.nu carries no `main`). A call target is a leaf dir
+    // (`<call>/mod.nu` holds `export def main`), validated + registered by its
+    // PARENT below and never recursed into.
     let modnu = dir.join("mod.nu");
+    let modnu_src = if modnu.exists() {
+        fs::read_to_string(&modnu).unwrap_or_default()
+    } else {
+        String::new()
+    };
     if modnu.exists() {
-        let src = fs::read_to_string(&modnu).unwrap_or_default();
-        let (summary, details, _) = extract_doc(&src, None);
+        // This module's own docs (mod.nu leading comment), keyed at `module_path`.
+        let (summary, details, _) = extract_doc(&modnu_src, None);
         if !summary.is_empty() || !details.is_empty() {
             result.docs.push(DocEntry {
                 coord: module_path.to_string(),
@@ -1499,7 +1493,35 @@ fn validate_walk(
                 details,
             });
         }
+        let rel = modnu
+            .strip_prefix(root)
+            .unwrap_or(&modnu)
+            .to_string_lossy()
+            .into_owned();
+        let fname = modnu.to_string_lossy().into_owned();
+        // A library root's own mod.nu holding `main` would be a call target at
+        // the root - no root functions.
+        if module_path.is_empty()
+            && parse_module_has_main(&modnu, "root", &modnu_src, dir, engine)
+        {
+            result.diagnostics.push(Diagnostic::error(
+                "library::root_function",
+                Some(Source {
+                    path: Some(rel.clone()),
+                    position: [0, 0],
+                }),
+                "a call-target cannot live at the library root; move it into a module",
+            ));
+        }
+        // A pure-module mod.nu: cascade + module-level utils (relaxed content
+        // rule) + the reserved-terms scan.
+        validate_mod_nu_ast(&rel, &fname, "mod", &modnu_src, dir, engine, &mut result.diagnostics);
+        scan_reserved_terms(&rel, &fname, "mod", &modnu_src, dir, engine, &mut result.diagnostics);
     }
+    // The names this module's mod.nu wires in (export module / export use / use
+    // edges) - the reachability set for the orphan + calls-via-export-module
+    // checks below.
+    let edges = extract_module_edges(&modnu_src, &modnu, dir, engine);
 
     // Collect + classify entries. The source tree carries `.nu` + the
     // sanctioned root files + `.gitignore` (any depth); the root `.assets/` +
@@ -1557,29 +1579,62 @@ fn validate_walk(
     let mut functions: Vec<IndexFunction> = Vec::new();
     let mut modules: Vec<IndexModule> = Vec::new();
 
-    // Function (+ mod.nu) files at this level. mod.nu validates but yields no
-    // IndexFunction; a call-target yields one plus its docs at the function
-    // coordinate.
+    // Flat helper files at this level (non-mod.nu): organizational content pulled
+    // into the module via `export use`/`use`. A flat file is NEVER a call target
+    // (`export def main` in one is a violation - main is reserved for calls,
+    // which are always `<name>/mod.nu`). Each must be reached via an edge.
     for (name, path) in &files {
+        if name == "mod.nu" {
+            continue;
+        }
         if error_count(&result.diagnostics) > LINT_VIOLATION_CAP {
             return Ok((modules, functions));
         }
+        validate_flat_file(root, path, engine, result)?;
         let stem = name.trim_end_matches(".nu");
-        let coord = if module_path.is_empty() {
-            stem.to_string()
-        } else {
-            format!("{module_path}/{stem}")
-        };
-        if let Some((idx_fn, summary, details)) = validate_one_file(root, path, engine, result)? {
+        if !edges.iter().any(|(_, n)| n == stem) {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned();
+            result.diagnostics.push(Diagnostic::error(
+                "library::orphan",
+                Some(Source {
+                    path: Some(rel),
+                    position: [0, 0],
+                }),
+                format!(
+                    "`{name}` is not reached through the module graph; `export use`/`use` it from mod.nu or remove it",
+                ),
+            ));
+        }
+    }
+
+    // Subdirectory nodes: each is EITHER a call target (its mod.nu holds `main`,
+    // a leaf) or a pure sub-module (recurse). Every subdir must be wired into
+    // this module's mod.nu; a call MUST be wired via `export module`.
+    for (name, path) in &dirs {
+        if error_count(&result.diagnostics) > LINT_VIOLATION_CAP {
+            return Ok((modules, functions));
+        }
+        let child_modnu = path.join("mod.nu");
+        if !child_modnu.exists() {
+            continue;
+        }
+        let child_src = fs::read_to_string(&child_modnu).unwrap_or_default();
+        let rel = child_modnu
+            .strip_prefix(root)
+            .unwrap_or(&child_modnu)
+            .to_string_lossy()
+            .into_owned();
+        let fname = child_modnu.to_string_lossy().into_owned();
+        let edge = edges.iter().find(|(_, n)| n == name).map(|(k, _)| *k);
+        let child_has_main = parse_module_has_main(&child_modnu, name, &child_src, path, engine);
+
+        if child_has_main {
+            // CALL TARGET (a leaf).
             if module_path.is_empty() {
-                // No root functions: a callable must live in a module (the
-                // library root holds only the cascade + helpers, never a
-                // call-target). Reject it and skip indexing.
-                let rel = path
-                    .strip_prefix(root)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .into_owned();
                 result.diagnostics.push(Diagnostic::error(
                     "library::root_function",
                     Some(Source {
@@ -1590,80 +1645,296 @@ fn validate_walk(
                 ));
                 continue;
             }
-            if !summary.is_empty() || !details.is_empty() {
-                result.docs.push(DocEntry {
-                    coord,
-                    summary,
-                    details,
+            // A call dir is not recursed into (it is a leaf), so +x-check its
+            // mod.nu here rather than via the entry loop of a validate_walk.
+            check_not_executable(root, &child_modnu, Zone::Source, &mut result.diagnostics);
+            // Constraint: a call is wired into its parent via `export module`.
+            match edge {
+                Some(EdgeKind::ExportModule) => {}
+                Some(_) => result.diagnostics.push(Diagnostic::error(
+                    "library::call_wiring",
+                    Some(Source {
+                        path: Some(rel.clone()),
+                        position: [0, 0],
+                    }),
+                    format!(
+                        "a call must be wired into its parent via `export module {name}`, not `export use`",
+                    ),
+                )),
+                None => result.diagnostics.push(Diagnostic::error(
+                    "library::orphan",
+                    Some(Source {
+                        path: Some(rel.clone()),
+                        position: [0, 0],
+                    }),
+                    format!("call `{name}` is not wired into mod.nu; add `export module {name}`"),
+                )),
+            }
+            // A call target is an edge module - no submodules below it.
+            if has_child_module_dir(path) {
+                result.diagnostics.push(Diagnostic::error(
+                    "library::call_leaf",
+                    Some(Source {
+                        path: Some(rel.clone()),
+                        position: [0, 0],
+                    }),
+                    format!(
+                        "a call target is an edge module and cannot contain submodules; `{name}` has one",
+                    ),
+                ));
+            }
+            let extracted = validate_function_file_ast(
+                &rel,
+                &fname,
+                name,
+                &child_src,
+                path,
+                engine,
+                &mut result.diagnostics,
+            );
+            scan_reserved_terms(&rel, &fname, name, &child_src, path, engine, &mut result.diagnostics);
+            if let Some((idx_fn, summary, details)) = extracted {
+                let coord = format!("{module_path}/{name}");
+                if !summary.is_empty() || !details.is_empty() {
+                    result.docs.push(DocEntry {
+                        coord,
+                        summary,
+                        details,
+                    });
+                }
+                functions.push(idx_fn);
+            }
+        } else {
+            // PURE SUB-MODULE - recurse.
+            if edge.is_none() {
+                result.diagnostics.push(Diagnostic::error(
+                    "library::orphan",
+                    Some(Source {
+                        path: Some(rel),
+                        position: [0, 0],
+                    }),
+                    format!("`{name}` is not wired into mod.nu; add `export module {name}` (or remove it)"),
+                ));
+            }
+            let child_path = if module_path.is_empty() {
+                name.clone()
+            } else {
+                format!("{module_path}/{name}")
+            };
+            let (sub_mods, sub_fns) = validate_walk(root, path, engine, &child_path, result)?;
+            if !sub_fns.is_empty() || !sub_mods.is_empty() {
+                modules.push(IndexModule {
+                    name: name.clone(),
+                    functions: sub_fns,
+                    modules: sub_mods,
                 });
             }
-            functions.push(idx_fn);
-        }
-    }
-
-    // Subdirectory modules: only dirs carrying mod.nu are modules; only those
-    // with a call-target below them survive the prune.
-    for (name, path) in &dirs {
-        if error_count(&result.diagnostics) > LINT_VIOLATION_CAP {
-            return Ok((modules, functions));
-        }
-        if !path.join("mod.nu").exists() {
-            continue;
-        }
-        let child_path = if module_path.is_empty() {
-            name.clone()
-        } else {
-            format!("{module_path}/{name}")
-        };
-        let (sub_mods, sub_fns) = validate_walk(root, path, engine, &child_path, result)?;
-        if !sub_fns.is_empty() || !sub_mods.is_empty() {
-            modules.push(IndexModule {
-                name: name.clone(),
-                functions: sub_fns,
-                modules: sub_mods,
-            });
         }
     }
 
     Ok((modules, functions))
 }
 
-fn validate_one_file(
+/// The kind of module-graph edge a mod.nu statement declares (for the
+/// reachability + calls-via-`export module` checks).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum EdgeKind {
+    ExportModule,
+    ExportUse,
+    Use,
+}
+
+/// Parse `dir/mod.nu` as a module and report whether it resolves an `export def
+/// main` - i.e. this dir is a call target. `main` must live textually in the
+/// mod.nu (a flat file cannot supply one), so a resolved `Module.main` is
+/// unambiguous. A parse failure classifies as "no main" (the cascade /
+/// organizational validator surfaces the parse error separately).
+fn parse_module_has_main(
+    modnu: &std::path::Path,
+    name: &str,
+    source: &str,
+    parent: &std::path::Path,
+    engine: &ParseEngine,
+) -> bool {
+    let fname = modnu.to_string_lossy().into_owned();
+    let wrapper_name = format!("__cls_{name}");
+    let (wrapped, _) = wrap_as_module(source, &wrapper_name);
+    let engine_state = engine.engine_state_for_file(parent);
+    let mut ws = nu::StateWorkingSet::new(&engine_state);
+    let _ = ws.files.push(PathBuf::from(&fname), nu::Span::unknown());
+    let _ = nu::parse(&mut ws, Some(&fname), wrapped.as_bytes(), false);
+    if !ws.parse_errors.is_empty() {
+        return false;
+    }
+    match ws.find_module(wrapper_name.as_bytes()) {
+        Some(id) => ws.get_module(id).main.is_some(),
+        None => false,
+    }
+}
+
+/// Extract the module-graph edges a mod.nu declares: `export module <name>`,
+/// `export use <name>` / `export use ./<name>.nu`, and `use` (the referenced
+/// module / file stem). Feeds the orphan + calls-via-`export module` checks.
+/// Best-effort over the parsed AST (a parse failure yields no edges; the cascade
+/// validator reports the parse error). A resolved `use` that parses to an
+/// ImportPattern (not a Call) is not extracted here - the migrated libraries
+/// wire everything via `export module`, and a flat helper reached by a private
+/// `use` would then read as an orphan; revisit if that pattern lands.
+fn extract_module_edges(
+    source: &str,
+    modnu: &std::path::Path,
+    parent: &std::path::Path,
+    engine: &ParseEngine,
+) -> Vec<(EdgeKind, String)> {
+    let mut edges = Vec::new();
+    if source.is_empty() {
+        return edges;
+    }
+    let fname = modnu.to_string_lossy().into_owned();
+    let wrapper_name = "__edges";
+    let (wrapped, _) = wrap_as_module(source, wrapper_name);
+    let engine_state = engine.engine_state_for_file(parent);
+    let mut ws = nu::StateWorkingSet::new(&engine_state);
+    let _ = ws.files.push(PathBuf::from(&fname), nu::Span::unknown());
+    let block = nu::parse(&mut ws, Some(&fname), wrapped.as_bytes(), false);
+    if !ws.parse_errors.is_empty() {
+        return edges;
+    }
+    let body_id = block
+        .pipelines
+        .first()
+        .and_then(|p| p.elements.first())
+        .and_then(|elem| match &elem.expr.expr {
+            nu::Expr::Call(call) => call.arguments.iter().find_map(|arg| {
+                if let nu::Argument::Positional(e) = arg {
+                    if let nu::Expr::Block(id) = &e.expr {
+                        return Some(*id);
+                    }
+                }
+                None
+            }),
+            _ => None,
+        });
+    let Some(body_id) = body_id else {
+        return edges;
+    };
+    let body = ws.get_block(body_id);
+    for pipeline in &body.pipelines {
+        for elem in &pipeline.elements {
+            if let nu::Expr::Call(call) = &elem.expr.expr {
+                let decl = ws.get_decl(call.decl_id);
+                let kind = match decl.name() {
+                    "export module" => EdgeKind::ExportModule,
+                    "export use" => EdgeKind::ExportUse,
+                    "use" | "overlay use" => EdgeKind::Use,
+                    _ => continue,
+                };
+                if let Some(nu::Argument::Positional(e)) = call.arguments.first() {
+                    if let Some(n) = edge_name_from_expr(&e.expr) {
+                        edges.push((kind, n));
+                    }
+                }
+            }
+        }
+    }
+    edges
+}
+
+/// The referenced name from an edge statement's positional[0]: a bare module
+/// name (`foo`) or a file path (`./foo.nu` -> `foo`).
+fn edge_name_from_expr(expr: &nu::Expr) -> Option<String> {
+    let raw = match expr {
+        nu::Expr::String(s)
+        | nu::Expr::RawString(s)
+        | nu::Expr::GlobPattern(s, _)
+        | nu::Expr::Filepath(s, _)
+        | nu::Expr::Directory(s, _) => s.clone(),
+        _ => return None,
+    };
+    let stem = std::path::Path::new(&raw)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&raw)
+        .to_string();
+    if stem.is_empty() { None } else { Some(stem) }
+}
+
+/// True if `dir` contains a subdirectory carrying a `mod.nu` (a child module).
+/// A call target is an edge module, so a child module is a violation for one.
+fn has_child_module_dir(dir: &std::path::Path) -> bool {
+    let Ok(read) = fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in read.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        if entry.path().join("mod.nu").exists() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Validate a flat (non-`mod.nu`) `.nu` file: organizational content pulled into
+/// a module via `export use`/`use`. Parse-correctness + the reserved-terms scan;
+/// and it must NOT resolve an `export def main` (main is reserved for calls,
+/// which are always `<name>/mod.nu`).
+fn validate_flat_file(
     root: &std::path::Path,
     path: &std::path::Path,
     engine: &ParseEngine,
     result: &mut ValidationResult,
-) -> io::Result<Option<(IndexFunction, String, String)>> {
+) -> io::Result<()> {
     let source = fs::read_to_string(path)?;
     let rel = path
         .strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
         .into_owned();
-    // Absolute on-disk path, registered as the nu::parse fname so a parse-time
-    // `const SELF = (path self)` resolves during validation -- a relative fname
-    // errors "Couldn't find current file" (followup #26; serve already loads
-    // real files via NU_LIB_DIRS). Diagnostics keep `rel` (libraries-relative);
-    // only the parse fname changes.
     let fname = path.to_string_lossy().into_owned();
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
-    let is_mod = path.file_name().map(|n| n == "mod.nu").unwrap_or(false);
-    // mod.nu validates but is no call-target (None); a function file yields the
-    // IndexFunction + (summary, details) when it is a clean call-target.
-    let extracted = if is_mod {
-        validate_mod_nu_ast(&rel, &fname, stem, &source, parent, engine, &mut result.diagnostics);
-        None
-    } else {
-        validate_function_file_ast(&rel, &fname, stem, &source, parent, engine, &mut result.diagnostics)
-    };
-    // the reserved-terms ban applies to EVERY .nu file -- `main` may appear
-    // only as a call-target's exported sentinel.
+    let wrapper_name = format!("__of_{stem}");
+    let (wrapped, prefix_len) = wrap_as_module(&source, &wrapper_name);
+    let engine_state = engine.engine_state_for_file(parent);
+    let mut ws = nu::StateWorkingSet::new(&engine_state);
+    let _ = ws.files.push(PathBuf::from(&fname), nu::Span::unknown());
+    let _ = nu::parse(&mut ws, Some(&fname), wrapped.as_bytes(), false);
+    for err in &ws.parse_errors {
+        let span_start = err.span().start.saturating_sub(prefix_len);
+        let (line, _col) = span_to_line_col(&source, span_start);
+        result.diagnostics.push(Diagnostic::error(
+            "library::parse_error",
+            Some(Source {
+                path: Some(rel.clone()),
+                position: [line, 0],
+            }),
+            format!("parse error: {err:?}"),
+        ));
+    }
+    if ws.parse_errors.is_empty()
+        && let Some(id) = ws.find_module(wrapper_name.as_bytes())
+        && ws.get_module(id).main.is_some()
+    {
+        result.diagnostics.push(Diagnostic::error(
+            "library::main_in_flat_file",
+            Some(Source {
+                path: Some(rel.clone()),
+                position: [0, 0],
+            }),
+            "`export def main` is reserved for a call target and must live in `<call>/mod.nu`, not a flat file",
+        ));
+    }
     scan_reserved_terms(&rel, &fname, stem, &source, parent, engine, &mut result.diagnostics);
-    Ok(extracted)
+    Ok(())
 }
 
 /// The reserved-terms ban. `main` may appear in a library ONLY as the
@@ -1852,9 +2123,11 @@ fn signature_param_names(sig: &str) -> Vec<String> {
 /// `module` call's second argument (a `Block` expression), and for
 /// each pipeline element enforces:
 ///
-/// - Must be a `Call` (NOT `Garbage`, not raw expressions).
-/// - Call's decl name must be `"export use"` or `"export module"`.
-/// - Any other decl (def/const/alias/let/mut/etc.) is a violation.
+/// - Must be a `Call` / `ImportPattern` / `Overlay` (NOT `Garbage`, not raw
+///   expressions / bare commands).
+/// - An allowed decl: the cascade (`export use`/`export module`), an export
+///   (`export def`/`export const`), or a private `def`/`const`/`use`/`alias`.
+/// - Any other decl (`extern`, a bare command, ...) is a violation.
 ///
 /// This replaces the prior text-based `validate_mod_nu`. Empower is
 /// source-of-truth -- the validator walks the same AST the parser
@@ -1969,12 +2242,21 @@ fn check_mod_nu_pipeline_element(
         nu::Expr::Call(call) => {
             let decl = working_set.get_decl(call.decl_id);
             let name = decl.name();
-            // leg 1: mod.nu carries the cascade (`export use`/`export
-            // module`) AND module-level shared utils/consts (`export
-            // const`/`export def`).
+            // mod.nu carries the cascade (`export use`/`export module`) AND
+            // module-level utilities: exported (`export const`/`export def`) or
+            // private (`def`/`const`/`use`/`overlay use`/`alias`) - a mod.nu is a
+            // module in its own right, and (for a call target) a function file.
             if matches!(
                 name,
-                "export use" | "export module" | "export const" | "export def"
+                "export use"
+                    | "export module"
+                    | "export const"
+                    | "export def"
+                    | "use"
+                    | "overlay use"
+                    | "def"
+                    | "const"
+                    | "alias"
             ) {
                 return;
             }
@@ -1985,13 +2267,16 @@ fn check_mod_nu_pipeline_element(
                     position: [line, 0],
                 }),
                 format!(
-                    "mod.nu may only contain `export use`, `export module`, `export const`, or `export def` statements; got call to `{name}`",
+                    "mod.nu may only contain the module cascade (`export module`/`export use`), exports (`export def`/`export const`), or private `def`/`const`/`use`/`alias` declarations; got call to `{name}`",
                 ),
             ));
         }
         nu::Expr::Garbage => {
             // Parse error already surfaced; don't double-report.
         }
+        // A resolved private `use`/`overlay use` parses to an ImportPattern /
+        // Overlay (not a Call); allowed alongside the cascade (relaxed rule).
+        nu::Expr::ImportPattern(_) | nu::Expr::Overlay(_) => {}
         other => {
             diagnostics.push(Diagnostic::error(
                 "library::mod_nu",
@@ -2000,7 +2285,7 @@ fn check_mod_nu_pipeline_element(
                     position: [line, 0],
                 }),
                 format!(
-                    "mod.nu may only contain `export use`, `export module`, `export const`, or `export def` statements; got `{}`",
+                    "mod.nu may only contain the module cascade, exports, or private declarations; got `{}`",
                     short_expr_label(other),
                 ),
             ));

@@ -323,10 +323,10 @@ fn uninstall_removes_subtree_keeps_source() {
     let _ = host.library_new("droppable", &src);
     // A committed call-target lives in a module (no root functions).
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./thing.nu\n");
+    write_source(&src, "m/mod.nu", "export module thing\n");
     write_source(
         &src,
-        "m/thing.nu",
+        "m/thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call("commit", serde_json::json!({"library": "droppable"}));
@@ -347,7 +347,7 @@ fn uninstall_removes_subtree_keeps_source() {
     // uninstall never touches the agent source_dir.
     assert!(src.exists(), "source should remain after uninstall");
     assert!(
-        src.join("m/thing.nu").exists(),
+        src.join("m/thing/mod.nu").exists(),
         "source files should remain after uninstall",
     );
     let log = git_log_subjects(&host.libraries_dir());

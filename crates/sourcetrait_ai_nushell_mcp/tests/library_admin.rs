@@ -201,10 +201,10 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
 /// Author a complete `<lib>:m:double` source tree (x * 2) under `src`.
 fn author_double_tree(src: &Path) {
     write_source(src, "mod.nu", "export module m\n");
-    write_source(src, "m/mod.nu", "export use ./double.nu\n");
+    write_source(src, "m/mod.nu", "export module double\n");
     write_source(
         src,
-        "m/double.nu",
+        "m/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
 }
@@ -239,10 +239,10 @@ fn install_rolls_back_on_validation_failure() {
     // NOTHING registered: the freshly-built canonical subtree is wiped.
     let mut host = Host::spawn();
     let src = host.source_dir("badship");
-    write_source(&src, "mod.nu", "");
+    write_source(&src, "mod.nu", "export module thing\n");
     write_source(
         &src,
-        "thing.nu",
+        "thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
     let resp = host.library_action("install", "badship", src.to_str().unwrap());
@@ -292,10 +292,10 @@ fn check_reports_structural_errors() {
     let mut host = Host::spawn();
     let src = host.source_dir("checkerrlib");
     let _ = host.library_new("checkerrlib", &src);
-    write_source(&src, "mod.nu", "");
+    write_source(&src, "mod.nu", "export module thing\n");
     write_source(
         &src,
-        "thing.nu",
+        "thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
     let resp = host.library_action("check", "checkerrlib", src.to_str().unwrap());
@@ -376,10 +376,10 @@ fn run_body_can_use_a_committed_library() {
     let src = host.source_dir("uselib");
     let _ = host.library_new("uselib", &src);
     write_source(&src, "mod.nu", "export module math\n");
-    write_source(&src, "math/mod.nu", "export use ./double.nu\n");
+    write_source(&src, "math/mod.nu", "export module double\n");
     write_source(
         &src,
-        "math/double.nu",
+        "math/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let committed = host.call("commit", serde_json::json!({"library": "uselib"}));

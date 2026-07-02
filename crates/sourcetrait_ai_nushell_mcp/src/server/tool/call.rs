@@ -60,19 +60,6 @@ impl NuSh {
             }
         };
         let _guard = lock.read().await;
-        let file_path = match call_file_path(&library, &module_path, &name) {
-            Some(fp) => fp,
-            None => {
-                return Ok(error_to_call_result(
-                    Error::LibraryInvalidModulePath {
-                        module_path: module_path.clone(),
-                        reason: "library / module_path / name must satisfy identifier rules"
-                            .to_string(),
-                    },
-                    None,
-                ));
-            }
-        };
         // big meta: the index is the callability authority - the coordinate
         // must name a registered call-target. A helper file present on disk
         // but absent from the index is correctly NOT callable.
@@ -117,7 +104,7 @@ impl NuSh {
         // $env.NONCE in the call template.
         let nonce = self.nonce_gen.next(&payload_bytes);
         let source =
-            build_call_source(&file_path.display().to_string(), &name, &p.args, &nonce.to_string());
+            build_call_source(&library, &module_path, &name, &p.args, &nonce.to_string());
         // The in-flight path IS the namepath (a function namepath is always
         // library:module/path:name; there are no root functions).
         let path_str = p.namepath.clone();

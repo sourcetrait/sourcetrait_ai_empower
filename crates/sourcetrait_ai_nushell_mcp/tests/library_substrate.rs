@@ -72,7 +72,9 @@ impl Host {
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {
-        self.libraries_dir().join(name)
+        // Fixtures default to author `sourcetrait`; store subtree is
+        // `<libraries>/sourcetrait/<name>`.
+        self.libraries_dir().join("sourcetrait").join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {
@@ -297,7 +299,7 @@ fn library_new_writes_repo_and_records_meta() {
     // A signed commit landed in the repo log.
     let log = git_log_subjects(&host.libraries_dir());
     assert!(
-        log.iter().any(|s| s == "new library mylib"),
+        log.iter().any(|s| s == "new library sourcetrait/mylib"),
         "expected new-library commit in log; got {log:?}",
     );
 }
@@ -352,7 +354,7 @@ fn uninstall_removes_subtree_keeps_source() {
     );
     let log = git_log_subjects(&host.libraries_dir());
     assert!(
-        log.iter().any(|s| s == "uninstall library droppable"),
+        log.iter().any(|s| s == "uninstall library sourcetrait/droppable"),
         "expected uninstall-library commit in log; got {log:?}",
     );
 }

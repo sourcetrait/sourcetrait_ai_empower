@@ -204,7 +204,8 @@ fn test_variant_xdg_paths_isolated() {
         !has_error_path(&resp),
         "library(new) with _test-suffix name should succeed; got {resp}",
     );
-    let lib_dir = host.libraries_dir().join("foo_test");
+    // Author-parented: fixtures default to author `sourcetrait`.
+    let lib_dir = host.libraries_dir().join("sourcetrait").join("foo_test");
     assert!(
         lib_dir.exists(),
         "library dir should land under <XDG_DATA_HOME>/sourcetrait/nushell_mcp_test/libraries/; \

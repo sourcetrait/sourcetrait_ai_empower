@@ -65,7 +65,9 @@ impl Host {
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {
-        self.libraries_dir().join(name)
+        // Fixtures default to author `sourcetrait`; store subtree is
+        // `<libraries>/sourcetrait/<name>`.
+        self.libraries_dir().join("sourcetrait").join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {
@@ -813,7 +815,7 @@ fn committed_library_invokable_via_standalone_driver() {
     let out = Command::new("nu")
         .env("NU_LIB_DIRS", host.libraries_dir())
         .arg("-c")
-        .arg("use drvilib; drvilib math double {x: 6} | to nuon")
+        .arg("use sourcetrait/drvilib; drvilib math double {x: 6} | to nuon")
         .output()
         .expect("spawn nu");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -828,12 +830,13 @@ fn committed_library_invokable_via_standalone_driver() {
 
 #[test]
 fn commit_validates_by_name_cross_library_use() {
-    // A library whose source `use`s ANOTHER already-committed library BY NAME
-    // (`use baselib ...`) must validate at commit: the validator seeds
-    // $env.NU_LIB_DIRS with the canonical libraries store (mirroring the
-    // worker's seed_lib_dirs), so a committed sibling resolves during
-    // validation exactly as it does at serve. Without that, `use baselib`
-    // failed ModuleNotFound at commit though it runs fine once served.
+    // A library whose source `use`s ANOTHER already-committed library by the
+    // AUTHORED path (`use sourcetrait/baselib ...`) must validate at commit: the
+    // validator sets the const $NU_LIB_DIRS to the canonical libraries store
+    // (mirroring the worker's seed_lib_dirs), so a committed sibling resolves
+    // during validation exactly as it does at serve. Without that,
+    // `use sourcetrait/baselib` failed ModuleNotFound at commit though it runs
+    // fine once served.
     let mut host = Host::spawn();
 
     // baselib: a committed call-target `baselib:m:double` (x -> x*2).
@@ -861,7 +864,7 @@ fn commit_validates_by_name_cross_library_use() {
     write_source(
         &consumer,
         "app/compute/mod.nu",
-        "use baselib m *\nexport def main [args: record<x: int>]: nothing -> record<out: int> {\n    double {x: $args.x}\n}\n",
+        "use sourcetrait/baselib m *\nexport def main [args: record<x: int>]: nothing -> record<out: int> {\n    double {x: $args.x}\n}\n",
     );
     let committed = host.call("commit", serde_json::json!({"library": "consumer"}));
     assert!(
@@ -878,6 +881,43 @@ fn commit_validates_by_name_cross_library_use() {
         called["result"]["structuredContent"]["result"]["out"].as_i64(),
         Some(10),
         "cross-library call-target should resolve + run; got {called}",
+    );
+}
+
+#[test]
+fn commit_and_call_resolves_authored_self_ref() {
+    // The authored self-use convention END-TO-END: a call-target that imports a
+    // SIBLING module via `use sourcetrait/<lib>/<mod>` and invokes it must both
+    // VALIDATE at commit (the temp author-structured self-view resolves the ref
+    // against the source-under-commit, not-yet-placed at its store path) AND
+    // resolve at serve (the const $NU_LIB_DIRS + author-parented store). This is
+    // exactly the case inline `<lib> <mod> <fn>` self-refs silently failed at serve.
+    let mut host = Host::spawn();
+    let src = host.source_dir("selfreflib");
+    let _ = host.library_new("selfreflib", &src);
+    // base: a pure helper module exporting `val` -> 21.
+    write_source(&src, "mod.nu", "export module base\nexport module top\n");
+    write_source(&src, "base/mod.nu", "export def val []: nothing -> int { 21 }\n");
+    // top:double self-refs the sibling `base` module by its AUTHORED path.
+    write_source(&src, "top/mod.nu", "export module double\n");
+    write_source(
+        &src,
+        "top/double/mod.nu",
+        "use sourcetrait/selfreflib/base\nexport def main [args: nothing]: nothing -> record<out: int> {\n    { out: ((base val) * 2) }\n}\n",
+    );
+    let committed = host.call("commit", serde_json::json!({"library": "selfreflib"}));
+    assert!(
+        !has_error_path(&committed),
+        "a library with an authored self-ref target must validate at commit; got {committed}"
+    );
+    let called = host.call(
+        "call",
+        serde_json::json!({"namepath": "selfreflib:top:double", "args": {}}),
+    );
+    assert_eq!(
+        called["result"]["structuredContent"]["result"]["out"].as_i64(),
+        Some(42),
+        "the authored self-ref must resolve + run at serve; got {called}"
     );
 }
 

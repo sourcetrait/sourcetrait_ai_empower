@@ -18,6 +18,36 @@ use crate::*;
 /// (`validate_function_file_ast`, `validate_mod_nu_ast`).
 pub(crate) struct ParseEngine {
     engine_state: nu::EngineState,
+    /// Extra lib dir layered into the validation `$NU_LIB_DIRS` const so a
+    /// library's own `use <author>/<library>/<mod>` self-refs resolve against a
+    /// temp author-structured view of the source-under-commit (set per
+    /// validation via `with_extra_lib_dir`; `None` on the shared base).
+    extra_lib_dir: Option<PathBuf>,
+}
+
+/// Register the parse-time CONST variable `$NU_LIB_DIRS` = `dirs` on
+/// `engine_state`. This is the modern `use`-resolution path: nu-parser's
+/// `find_in_dirs_with_id` reads the const's list `const_val` FIRST, falling back
+/// to the deprecated `$env.NU_LIB_DIRS` only if the const is absent. Setting the
+/// const (not the env) means an agent body cannot redirect module resolution via
+/// `$env.NU_LIB_DIRS` - the MCP's own store is the sole, controlled lib path.
+/// Mirrors nu-cli's own const setup (a variable named `$NU_LIB_DIRS`, a const
+/// list value, merged into the state).
+pub(crate) fn set_lib_dirs_const(engine_state: &mut nu::EngineState, dirs: &[PathBuf]) {
+    let mut ws = nu::StateWorkingSet::new(engine_state);
+    let var_id = ws.add_variable(
+        b"$NU_LIB_DIRS".to_vec(),
+        nu::Span::unknown(),
+        nu::Type::List(Box::new(nu::Type::String)),
+        false,
+    );
+    let vals: Vec<nu::Value> = dirs
+        .iter()
+        .map(|d| nu::Value::string(d.to_string_lossy().into_owned(), nu::Span::unknown()))
+        .collect();
+    ws.set_variable_const_val(var_id, nu::Value::list(vals, nu::Span::unknown()));
+    let delta = ws.render();
+    let _ = engine_state.merge_delta(delta);
 }
 
 impl ParseEngine {
@@ -44,7 +74,23 @@ impl ParseEngine {
         engine_state = nu::add_shell_command_context(engine_state);
         engine_state.is_interactive = false;
         engine_state.is_mcp = true;
-        Self { engine_state }
+        Self {
+            engine_state,
+            extra_lib_dir: None,
+        }
+    }
+
+    /// Clone this ParseEngine with an extra lib dir layered into the per-file
+    /// validation `$NU_LIB_DIRS` const. `validate_library_source` uses it to
+    /// point at a temp author-structured view (`<tmp>/<author>/<library>` ->
+    /// source) so the source's own `use <author>/<library>/<mod>` self-refs
+    /// resolve against itself before it is placed in the store. EngineState is
+    /// Arc-shared internally, so the clone is cheap.
+    pub(crate) fn with_extra_lib_dir(&self, dir: PathBuf) -> Self {
+        Self {
+            engine_state: self.engine_state.clone(),
+            extra_lib_dir: Some(dir),
+        }
     }
 
     /// What: borrow the underlying `EngineState` so callers can construct
@@ -70,18 +116,16 @@ impl ParseEngine {
     ///   source tree (without it, parsing a `mod.nu` standalone produces noisy
     ///   `ModuleNotFound` diagnostics for files that DO exist; slice 4.5
     ///   probe_modnu_parse confirmed).
-    /// - `$env.NU_LIB_DIRS` = `[libraries_dir()]` (the canonical store), so a
-    ///   BY-NAME `use <sibling-library>` resolves an already-committed sibling
-    ///   during validation. This mirrors `worker::base::seed_lib_dirs` (which
-    ///   the host passes to the worker at serve time): without it, a
-    ///   cross-library `use pelos` fails `ModuleNotFound` at commit even though
-    ///   it resolves fine once the library is served. Aligning the validator's
-    ///   lib path with the worker's is the point - a library that serves must
-    ///   validate. Must be a list Value (the parser reads NU_LIB_DIRS as a
-    ///   list). A library's own first commit predates its appearance in the
-    ///   store, so a by-name SELF-reference (`use <self>`) still won't resolve
-    ///   during that commit - intra-library refs use the relative form, which
-    ///   PWD covers.
+    /// - the CONST `$NU_LIB_DIRS` = `[libraries_dir(), <self_view>?]` (see
+    ///   `set_lib_dirs_const`), so a `use <other_author>/<lib>` resolves an
+    ///   already-committed sibling during validation (mirroring
+    ///   `worker::base::seed_lib_dirs` at serve time - a library that serves
+    ///   must validate), and the optional self-view root resolves the library's
+    ///   OWN `use <author>/<library>/<mod>` self-refs against the
+    ///   source-under-commit (layered in by `validate_library_source` via
+    ///   `with_extra_lib_dir`) even though the library is not yet placed in the
+    ///   store at its author path. The CONST (not the deprecated `$env` form) is
+    ///   the resolution authority the parser reads.
     ///
     /// Validation-only: the body lint borrows the base via `engine_state()`,
     /// so this env layering never touches lint. Clone is cheap-ish because
@@ -95,16 +139,21 @@ impl ParseEngine {
                 nu::Span::unknown(),
             ),
         );
-        clone.add_env_var(
-            "NU_LIB_DIRS".to_string(),
-            nu::Value::list(
-                vec![nu::Value::string(
-                    libraries_dir().to_string_lossy().into_owned(),
-                    nu::Span::unknown(),
-                )],
-                nu::Span::unknown(),
-            ),
-        );
+        // The parse-time CONST `$NU_LIB_DIRS` (not the deprecated $env form) is
+        // what `use <author>/<library>` resolves against during validation:
+        // `libraries_dir()` (the author-parented store root) resolves a committed
+        // sibling `use <other_author>/<lib>`, and the optional self-view root
+        // resolves the library's OWN `use <author>/<library>/<mod>` self-refs
+        // against the source-under-commit before it is placed in the store.
+        // Self-view FIRST so a library's own `use <author>/<library>/<mod>`
+        // resolves against the source-under-commit ahead of any prior committed
+        // version; libraries_dir() then resolves foreign siblings.
+        let mut dirs = Vec::new();
+        if let Some(extra) = &self.extra_lib_dir {
+            dirs.push(extra.clone());
+        }
+        dirs.push(libraries_dir());
+        set_lib_dirs_const(&mut clone, &dirs);
         clone
     }
 }

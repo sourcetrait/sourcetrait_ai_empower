@@ -138,25 +138,28 @@ pub(crate) fn build_run_source(
 }
 
 /// What: builds the nushell source the stateless worker evals for a
-/// `call()` -- `use <library>` loads the whole committed library, then the
-/// call is driven module-qualified along its namepath (module_path slashes
-/// -> spaces): `<library> <mod...> <name> LIT`. LIT is the args record as
-/// NUON, or bare `null` for empty / void args. Invoking the call's dir-module
-/// by name runs its `export def main`.
+/// `call()` -- `use <author>/<library>` loads the whole committed library from
+/// the author-parented store, then the call is driven module-qualified along its
+/// namepath (module_path slashes -> spaces): `<library> <mod...> <name> LIT`.
+/// LIT is the args record as NUON, or bare `null` for empty / void args.
+/// Invoking the call's dir-module by name runs its `export def main`. (`use
+/// a/b` imports the module named `b`, the path leaf, so the drive stays
+/// `<library> ...`.)
 ///
 /// Why: the committed call-target is a `<name>/mod.nu` dir-module holding a
 /// single infix-signatured `export def main [args: A]: nothing -> R`. Its body
-/// self-refs sibling call-targets INLINE as `<library> <mod> <fn>`, which
-/// resolve only when the executing context has `use <library>` loaded -- so we
-/// load the whole library, not just the single target file (the prior
-/// `use <file>` form loaded only the target and would fail post-migration
-/// self-refs). `main`'s positional runtime-enforces the args and its output
-/// type parse-checks a static result; nushell runs a module's `main` when the
-/// module name is invoked, so the module-qualified path is the whole drive.
+/// self-refs sibling modules by the AUTHORED path -- `use <author>/<library>/<mod>`
+/// at the file top, then `<mod> <fn>` -- which the parse-time const `$NU_LIB_DIRS`
+/// (the author-parented store root) resolves at the file's own parse, so loading
+/// the whole library here makes every target and its self-refs resolvable.
+/// `main`'s positional runtime-enforces the args and its output type parse-checks
+/// a static result; nushell runs a module's `main` when the module name is
+/// invoked, so the module-qualified path is the whole drive.
 ///
 /// Where: called by `server::tool::NuSh::call`; the rendered source ships
 /// through a pool worker exactly like run() / rerun().
 pub(crate) fn build_call_source(
+    author: &str,
     library: &str,
     module_path: &str,
     name: &str,
@@ -183,10 +186,11 @@ pub(crate) fn build_call_source(
     formatdoc!(
         r#"
         $env.NONCE = "{nonce}"
-        use {library}
+        use {author}/{library}
         {call_path} {lit}
     "#,
         nonce = nonce,
+        author = author,
         library = library,
         call_path = call_path,
         lit = lit,

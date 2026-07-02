@@ -65,7 +65,9 @@ impl Host {
     }
 
     fn canonical_dir(&self, name: &str) -> PathBuf {
-        self.libraries_dir().join(name)
+        // Fixtures default to author `sourcetrait`; the store subtree is
+        // `<libraries>/sourcetrait/<name>`.
+        self.libraries_dir().join("sourcetrait").join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {
@@ -514,7 +516,7 @@ fn gitignore_honored_at_commit_staging_only() {
         canon.join(".docs/ignored.md").exists(),
         "ignored file is still copied to the canonical on disk"
     );
-    let tracked = git_ls_files(&host.libraries_dir(), "honorlib");
+    let tracked = git_ls_files(&host.libraries_dir(), "sourcetrait/honorlib");
     assert!(
         tracked.iter().any(|p| p.ends_with(".docs/kept.md")),
         "kept.md should be tracked; got {tracked:?}"

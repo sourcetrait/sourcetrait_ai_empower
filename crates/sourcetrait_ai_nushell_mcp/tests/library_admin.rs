@@ -59,7 +59,9 @@ impl Host {
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {
-        self.libraries_dir().join(name)
+        // Fixtures default to author `sourcetrait` (no library.rig.toml), so the
+        // store subtree is `<libraries>/sourcetrait/<name>`.
+        self.libraries_dir().join("sourcetrait").join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {
@@ -369,9 +371,9 @@ fn invalid_action_errors() {
 
 #[test]
 fn run_body_can_use_a_committed_library() {
-    // NU_LIB_DIRS regression: the worker sets $env.NU_LIB_DIRS to the canonical
-    // libraries root, so a run() body can `use <library>` and invoke its
-    // committed call-targets directly.
+    // NU_LIB_DIRS regression: the worker sets the CONST $NU_LIB_DIRS to the
+    // canonical libraries root, so a run() body can `use <author>/<library>` and
+    // invoke its committed call-targets directly.
     let mut host = Host::spawn();
     let src = host.source_dir("uselib");
     let _ = host.library_new("uselib", &src);
@@ -391,7 +393,7 @@ fn run_body_can_use_a_committed_library() {
             "args_schema": {},
             "result_schema": {"out": "int"},
             "args": {},
-            "body": "use uselib\nlet r = (uselib math double {x: 5})\n{ out: $r.out }",
+            "body": "use sourcetrait/uselib\nlet r = (uselib math double {x: 5})\n{ out: $r.out }",
         }),
     );
     assert!(

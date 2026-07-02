@@ -103,8 +103,14 @@ impl NuSh {
         // Mint the nonce BEFORE source synthesis so it can be embedded as
         // $env.NONCE in the call template.
         let nonce = self.nonce_gen.next(&payload_bytes);
-        let source =
-            build_call_source(&library, &module_path, &name, &p.args, &nonce.to_string());
+        let source = build_call_source(
+            &index.author,
+            &library,
+            &module_path,
+            &name,
+            &p.args,
+            &nonce.to_string(),
+        );
         // The in-flight path IS the namepath (a function namepath is always
         // library:module/path:name; there are no root functions).
         let path_str = p.namepath.clone();

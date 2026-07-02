@@ -94,19 +94,19 @@ fn run_source_multi_line_body() {
 
 #[test]
 fn call_source_typed_args() {
-    // Dir-module convention: `use <library>` (loads the whole library so the
-    // target's inline `<library> <mod> <fn>` self-refs resolve), then the call
-    // driven module-qualified along its namepath (slashes -> spaces).
-    let got = build_call_source("calc", "math", "double", &obj(r#"{"x":6}"#), "nonce123");
-    let expected = "$env.NONCE = \"nonce123\"\nuse calc\ncalc math double {x: 6}\n";
+    // Authored convention: `use <author>/<library>` (loads the whole library so
+    // the target's `use <author>/<library>/<mod>` self-refs resolve), then the
+    // call driven module-qualified along its namepath (slashes -> spaces).
+    let got = build_call_source("sourcetrait", "calc", "math", "double", &obj(r#"{"x":6}"#), "nonce123");
+    let expected = "$env.NONCE = \"nonce123\"\nuse sourcetrait/calc\ncalc math double {x: 6}\n";
     assert_eq!(got, expected);
 }
 
 #[test]
 fn call_source_nested_module_path() {
     // A slash-separated module_path renders space-separated.
-    let got = build_call_source("calc", "math/trig", "sin", &obj(r#"{"x":1}"#), "nonce123");
-    let expected = "$env.NONCE = \"nonce123\"\nuse calc\ncalc math trig sin {x: 1}\n";
+    let got = build_call_source("sourcetrait", "calc", "math/trig", "sin", &obj(r#"{"x":1}"#), "nonce123");
+    let expected = "$env.NONCE = \"nonce123\"\nuse sourcetrait/calc\ncalc math trig sin {x: 1}\n";
     assert_eq!(got, expected);
 }
 
@@ -114,8 +114,9 @@ fn call_source_nested_module_path() {
 fn call_source_void_args() {
     // Void / no-arg main: empty args bind the bare `null` literal so the
     // `nothing` positional typechecks (a `{}` record would not).
-    let got = build_call_source("util", "net", "ping", &obj("{}"), "nonce123");
-    let expected = "$env.NONCE = \"nonce123\"\nuse util\nutil net ping null\n";
+    // Non-`sourcetrait` author proves the author is threaded through, not hardcoded.
+    let got = build_call_source("acme", "util", "net", "ping", &obj("{}"), "nonce123");
+    let expected = "$env.NONCE = \"nonce123\"\nuse acme/util\nutil net ping null\n";
     assert_eq!(got, expected);
 }
 

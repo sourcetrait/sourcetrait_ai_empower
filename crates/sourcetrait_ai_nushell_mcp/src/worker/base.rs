@@ -148,37 +148,37 @@ fn seed_env(engine_state: &mut nu::EngineState) {
         );
     }
     for (key, val) in std::env::vars() {
-        if key == "PWD" {
+        // PWD is set above; NU_LIB_DIRS is deliberately NOT inherited from the
+        // box env - the MCP's own store is the sole, const-set lib path (see
+        // seed_lib_dirs). Letting the box's value merge in would widen module
+        // resolution beyond the controlled store.
+        if key == "PWD" || key == "NU_LIB_DIRS" {
             continue;
         }
         engine_state.add_env_var(key, nu::Value::string(val, nu::Span::unknown()));
     }
 }
 
-/// What: sets `$env.NU_LIB_DIRS` to the single-element list `[<libraries
-/// root>]`, read from the `NUSHELL_MCP_LIBRARIES_DIR` env var the host sets
-/// on the worker spawn. No-op when the var is absent (e.g. a worker spawned
-/// outside the host path, like a bare handshake test).
+/// What: registers the parse-time CONST `$NU_LIB_DIRS` = `[<libraries root>]`,
+/// read from the `NUSHELL_MCP_LIBRARIES_DIR` env var the host sets on the worker
+/// spawn. No-op when the var is absent (e.g. a worker spawned outside the host
+/// path, like a bare handshake test).
 ///
-/// Why: `use <library> <module> ...` from a run()/interact() body resolves a
-/// module by searching `$env.NU_LIB_DIRS`. Every committed library is a subdir
-/// of the canonical libraries root, so one entry makes them all importable and
-/// stays correct as libraries are added/removed. It MUST be a list Value:
-/// nushell's parser reads NU_LIB_DIRS as a list for module resolution, not the
-/// plain OS-env string `seed_env` would otherwise copy. The worker can't
-/// resolve the target-namespaced path itself (it never calls `build_target()`),
-/// so the host passes it across the spawn boundary.
+/// Why: `use <author>/<library> ...` from a run()/interact() body resolves a
+/// module by searching `$NU_LIB_DIRS`. Every committed library is an
+/// `<author>/<library>` subtree of the canonical libraries root, so one entry
+/// makes them all importable and stays correct as libraries are added/removed.
+/// The CONST (not the deprecated `$env.NU_LIB_DIRS` form) is what nu-parser's
+/// `find_in_dirs_with_id` reads FIRST - and, being a const, it can't be
+/// overridden by an agent body mutating `$env.NU_LIB_DIRS`, so the MCP's store
+/// stays the sole controlled lib path. The worker can't resolve the
+/// target-namespaced path itself (it never calls `build_target()`), so the host
+/// passes it across the spawn boundary.
 ///
 /// Where: called once in `WarmBase::new` after `seed_env`, both worker modes.
 fn seed_lib_dirs(engine_state: &mut nu::EngineState) {
     let Ok(dir) = std::env::var("NUSHELL_MCP_LIBRARIES_DIR") else {
         return;
     };
-    engine_state.add_env_var(
-        "NU_LIB_DIRS".to_string(),
-        nu::Value::list(
-            vec![nu::Value::string(dir, nu::Span::unknown())],
-            nu::Span::unknown(),
-        ),
-    );
+    set_lib_dirs_const(engine_state, &[std::path::PathBuf::from(dir)]);
 }

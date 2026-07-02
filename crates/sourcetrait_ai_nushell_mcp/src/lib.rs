@@ -73,7 +73,9 @@ pub(crate) use crate::{
         lint::{LINT_VIOLATION_CAP, lint_body},
         namepath::{Namepath, NamepathRef},
         nonce::{Nonce, NonceGen},
-        parse_engine::{ParseEngine, span_to_line_col, wrap_as_def_body, wrap_as_module},
+        parse_engine::{
+            ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body, wrap_as_module,
+        },
         pool::Pool,
         rerun::RerunHash,
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},

@@ -269,8 +269,9 @@ may likewise carry `export const` / `export def` (or private
 
 Prefer submodules: each directory carries a `mod.nu` wiring its children.
 
-- `export module <name>` - re-export a sibling subdirectory (its own
-  `mod.nu`): a submodule OR a call target. This is how calls are wired.
+- `export module <name>` - re-export a child module: a subdirectory beside
+  this `mod.nu` (with its own `mod.nu`) - a submodule OR a call target. This
+  is how calls are wired.
 - `export use ./<name>.nu` - inline a flat organizational helper file's
   exports into this module (use it only when a flat file is warranted).
 

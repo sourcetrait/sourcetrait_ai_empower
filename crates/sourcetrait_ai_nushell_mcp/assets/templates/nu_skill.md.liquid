@@ -214,9 +214,9 @@ source tree:
 are the live index of what exists, each node's schemas, and its docs -
 read those rather than tracking targets by hand.
 
-### The function file: a single `main`
+### The call target: a `<name>/mod.nu` dir-module
 
-A callable function lives at `<module_path>/<name>.nu` and exports ONE
+A callable function is a directory `<name>/` whose `mod.nu` exports ONE
 core decl - `main` - carrying an infix signature:
 
 ```nu
@@ -230,7 +230,8 @@ export def main [args: record<x: int>]: nothing -> record<out: int> {
 ```
 
 - `main` IS the call-target: it holds your logic AND owns the whole body
-  (no resolve passthrough, no call/main glue).
+  (no resolve passthrough, no call/main glue). It lives in the call's
+  `mod.nu`, NEVER a flat `<name>.nu`.
 - The `[args: record<...>]` positional carries the ARGS schema - real
   fields, or `nothing` for a void (no-arg) function. A bare `record<>` is
   the unfleshed skeleton and is rejected.
@@ -241,38 +242,45 @@ export def main [args: record<x: int>]: nothing -> record<out: int> {
   STATICALLY-typed result (a literal record). A dynamic / any-typed
   result is unchecked and records are open (extra fields pass) -
   best-effort result, reliably-enforced args.
-- A call-target file MAY ALSO export helper `def` / `const`s beside
-  `main`; only `main` is the indexed / callable target.
-- `main` is a RESERVED word: it may appear ONLY as this exported
-  call-target sentinel, never as any other def / module / directory /
-  file / parameter / record-key / cell-path-member name in the library.
-- NO ROOT FUNCTIONS: a call-target always lives inside a module
-  (`library:module/path:function`). The library root holds only the
-  cascade + helpers, never a `main`; a call-target at the root is
-  rejected at commit.
+- The call's `mod.nu` MAY ALSO carry private helper `def` / `const`s (or
+  `use` a flat sibling); only `main` is the indexed / callable target.
+- A call is a LEAF (an edge module): it holds `main`, never a submodule.
+  Its parent wires it in with `export module <name>` (never `export use`).
+- `main` is a RESERVED word: it may appear ONLY in a call's `mod.nu` as
+  this exported sentinel - never in a flat file, and never as any other def /
+  module / directory / parameter / record-key / cell-path-member name.
+- NO ROOT FUNCTIONS: a call always lives inside a module
+  (`library:module/path:function`); the namepath is the call's dir/export
+  path. The library root holds only the cascade + helpers; a call directly
+  at the root is rejected at commit.
 
 ### Organizational (helper) files
 
-A `.nu` file WITHOUT `main` is organizational: free
-`export def` / `export const` helpers, no contract. It is not a
-call-target (absent from `info`, not callable) - pull it into a function
-file with `use ./<file>.nu`. A `mod.nu` may likewise carry
-`export const` / `export def` shared utilities alongside its cascade.
+A flat `.nu` file WITHOUT `main` is organizational: free
+`export def` / `export const` helpers, no contract - the way to split a
+large source block into its own file for maintainability. Inline it into
+its module via `export use ./<file>.nu` (or a private `use ./<file>.nu`).
+It is not a call-target (absent from `info`, not callable) and may NEVER
+hold `export def main` (that is reserved for a call's `mod.nu`). A `mod.nu`
+may likewise carry `export const` / `export def` (or private
+`def` / `const` / `use` / `alias`) utilities alongside its cascade.
 
 ### The mod.nu cascade
 
-Each directory carries a `mod.nu` wiring its children:
+Prefer submodules: each directory carries a `mod.nu` wiring its children.
 
-- `export use ./<name>.nu` - re-export a sibling function / helper file.
-- `export module <name>` - re-export a sibling subdirectory (which has
-  its own `mod.nu`).
+- `export module <name>` - re-export a sibling subdirectory (its own
+  `mod.nu`): a submodule OR a call target. This is how calls are wired.
+- `export use ./<name>.nu` - inline a flat organizational helper file's
+  exports into this module (use it only when a flat file is warranted).
 
 ```
-<library_root>/
-  mod.nu              # export module geo
+<library_root>/          # the library, e.g. `mathlib`
+  mod.nu                 # export module geo
   geo/
-    mod.nu            # export use ./area.nu
-    area.nu          # export def main
+    mod.nu               # export module area
+    area/
+      mod.nu             # export def main  ->  call mathlib:geo:area
 ```
 
 ### Node documentation + inference reduction
@@ -1180,8 +1188,8 @@ Output (partial):
     "structuredContent": {
       "created": [
         "/abs/path/to/source/geo/shape",
-        "/abs/path/to/source/geo/shape/area.nu",
-        "/abs/path/to/source/geo/shape/perimeter.nu"
+        "/abs/path/to/source/geo/shape/area/mod.nu",
+        "/abs/path/to/source/geo/shape/perimeter/mod.nu"
       ]
     },
     "content": []
@@ -1226,7 +1234,7 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "added": ["geo/shape/area.nu", "geo/shape/mod.nu"],
+      "added": ["geo/shape/area/mod.nu", "geo/shape/mod.nu"],
       "modified": ["geo/mod.nu"],
       "removed": []
     },

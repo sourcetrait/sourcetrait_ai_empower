@@ -1,1 +1,1 @@
-record<ai: record<identity: string, email: string>, user: record<handle: string, full_name: string, informal: string>>
+record<agent: record<kind: string>, ai: record<identity: string, email: string>, user: record<handle: string, full_name: string, informal: string>>

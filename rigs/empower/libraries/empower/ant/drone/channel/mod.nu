@@ -6,10 +6,11 @@
 # relays inbound to it). Lifecycle lines (COLONY DRONE <name> ONLINE/OFFLINE) go to
 # both the colony inbox and the fae inbox; other lines go to the colony outbox (the
 # fae's inbox). Call targets: open, ready, done, syn, ack, close; shared derivation
-# in common.nu.
-export use ./open.nu
-export use ./ready.nu
-export use ./done.nu
-export use ./syn.nu
-export use ./ack.nu
-export use ./close.nu
+# in common.
+export module open
+export use ready
+export use done
+export use syn
+export use ack
+export use close
+export module common

@@ -4,7 +4,8 @@
 # the live<->repo mirror, mirror (guarded, explicit-direction) live<->repo, and
 # audit KB hygiene. All functions parameterize the live/repo/dir paths - no
 # harness-specific literals - so the module serves any bonded fae.
-export use ./names.nu
-export use ./audit.nu
-export use ./verify.nu
-export use ./mirror.nu
+export use names
+export use audit
+export use verify
+export use mirror
+export module classify

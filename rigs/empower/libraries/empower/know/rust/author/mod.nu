@@ -1,5 +1,5 @@
-export use ./plan.nu
-export use ./validate.nu
-export use ./retry_picks.nu
-export use ./measure.nu
-export use ./assemble.nu
+export use plan
+export use validate
+export use retry_picks
+export use measure
+export use assemble

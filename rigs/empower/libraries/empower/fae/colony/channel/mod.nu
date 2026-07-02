@@ -3,9 +3,10 @@
 # The fae drives FAE SYN/ACK/ONLINE/OFFLINE to the colony inbox, and receives all
 # COLONY (queen) and COLONY DRONE (drone) lines on its own inbox, which it monitors.
 # Every path derives from the fae's own ai_identity via the claudeline + shm layout.
-# Call targets: open, syn, ack, close; shared derivation in common.nu. Per-drone
+# Call targets: open, syn, ack, close; shared derivation in common. Per-drone
 # send lives under `drone` (empower:fae/colony/drone/channel).
-export use ./open.nu
-export use ./syn.nu
-export use ./ack.nu
-export use ./close.nu
+export module open
+export use syn
+export use ack
+export use close
+export module common

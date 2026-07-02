@@ -106,12 +106,13 @@ impl Namepath {
     }
 }
 
-/// A library segment must be a valid identifier (and not the reserved `mod`).
+/// A library segment is the compound `<author>/<name>` - exactly one slash,
+/// each side a valid identifier that is not the reserved `main`.
 fn check_library(library: &str) -> Result<(), &'static str> {
-    if is_valid_ident(library) {
+    if is_valid_library(library) {
         Ok(())
     } else {
-        Err("library must match [a-zA-Z_][a-zA-Z0-9_-]* and not be `mod`")
+        Err("library must be the compound `<author>/<name>` (e.g. `sourcetrait/empower`)")
     }
 }
 

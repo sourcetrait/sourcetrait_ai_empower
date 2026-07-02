@@ -115,8 +115,8 @@ its surface + this call's `$env.NONCE`:
 ```
 run():      $env.XDGX_SHM_DIR | path join 'mcp/run' | path join $env.NONCE
 interact(): $env.XDGX_SHM_DIR | path join 'mcp/interact' | path join $env.NONCE
-call():     $env.XDGX_SHM_DIR | path join '<lib>/<module>' | path join $env.NONCE
-            (first 2-3 namepath segments incl. the library, e.g. 'empower/know/rust')
+call():     $env.XDGX_SHM_DIR | path join '<author>/<library>/<module>' | path join $env.NONCE
+            (the library `<author>/<name>` plus its leading module path, e.g. 'sourcetrait/empower/know')
 ```
 
 FROM you (you write via the Write tool, a body reads) - no `$env.NONCE`
@@ -187,8 +187,8 @@ Nu ecosystem libraries are custom authored Nu module hierarchies that export:
 Libraries are installed system-wide and made available via `$env.NU_LIB_DIRS`.
 Their exports can be accessed anywhere, simply:
 ```nu
-use <library name>
-<library name> <module 1> <module 2> <export 1> <params>
+use <author>/<library>
+<library> <module 1> <module 2> <export 1> <params>
 ```
 
 The library ecosystem is what makes Nushell MCP a powerful tool. It allows
@@ -250,7 +250,7 @@ export def main [args: record<x: int>]: nothing -> record<out: int> {
   this exported sentinel - never in a flat file, and never as any other def /
   module / directory / parameter / record-key / cell-path-member name.
 - NO ROOT FUNCTIONS: a call always lives inside a module
-  (`library:module/path:function`); the namepath is the call's dir/export
+  (`<author>/<library>:module/path:function`); the namepath is the call's dir/export
   path. The library root holds only the cascade + helpers; a call directly
   at the root is rejected at commit.
 
@@ -276,13 +276,34 @@ Prefer submodules: each directory carries a `mod.nu` wiring its children.
   exports into this module (use it only when a flat file is warranted).
 
 ```
-<library_root>/          # the library, e.g. `mathlib`
+<library_root>/          # the library, e.g. `acme/mathlib`
   mod.nu                 # export module geo
   geo/
     mod.nu               # export module area
     area/
-      mod.nu             # export def main  ->  call mathlib:geo:area
+      mod.nu             # export def main  ->  call acme/mathlib:geo:area
 ```
+
+### Referencing other modules + libraries
+
+Every `use` names a library by its full `<author>/<library>` coordinate - even
+a library referencing ITSELF - because the store is author-parented and a
+parse-time const `$NU_LIB_DIRS` resolves that coordinate against it. There is
+nothing special about your OWN library vs a foreign one; both import alike.
+
+- Import a module at the level that READS naturally, then drive it by name:
+  `use <author>/<library>/<module>` then `<module> <fn> <args>`. Prefer the
+  shallowest module whose name reads well at the call site.
+- Import a DEEPER module ONLY to break a circular import - when the file doing
+  the `use` lives under the module it would otherwise pull in (importing your
+  own ancestor's cascade is a `CircularImport`). Reach past the cycle to the
+  specific descendant module.
+- Import a SPECIFIC function ONLY to break a name collision - when two imported
+  modules share a leaf name. Pull the one function in
+  (`use <author>/<library>/<a>/<b> <fn>`), keep the other a module import.
+- `use` MODULES, not functions (except the collision case). NEVER `use ./x.nu`
+  for a sibling MODULE - a bare relative path is only for inlining a flat helper
+  FILE via `export use ./<file>.nu`.
 
 ### Node documentation + inference reduction
 
@@ -323,8 +344,8 @@ whatever a caller needs once the summary has told them whether they care.
 
 - Harness-level (one agent's own knowledgebase): `./nu/<name>/` under the
   harness; the directory name equals the library name.
-- Distributed (vendor-shipped, multi-agent reusable): a symlink
-  `~/.sys/local/lib/nu/<vendor>/<name>` -> the project's library source tree
+- Distributed (author-shipped, multi-agent reusable): a symlink
+  `~/.sys/local/lib/nu/<author>/<name>` -> the project's library source tree
   (someday `/usr/local/lib/nu/...` when distribution-packaged). The
   `nu/` segment is the asset-type.
 
@@ -367,8 +388,9 @@ a stray `.foo`, a nested non-root `.assets`/`.docs`) is skipped (not carried). A
   warnings advise); `uninstall` drops the library (the agent source is
   never touched; idempotent). `source_dir` is the "are you sure"
   cross-check on every action.
-- `new([namepaths])` - scaffold module (`library:module/path`) or function
-  (`library:module/path:function`) skeletons into ALREADY established
+- `new([namepaths])` - scaffold module (`<author>/<library>:module/path`) or
+  function (`<author>/<library>:module/path:function`) skeletons into ALREADY
+  established
   libraries (it no longer establishes). Batch; the namepaths may span
   libraries. Additive: it refuses to scaffold over an existing leaf.
 - `commit(library)` - validate the source tree (structure + the
@@ -391,10 +413,11 @@ applies to the `run()` / `interact()` surface only.
 ### Using a committed library from run() / interact()
 
 A committed library is a full nu module on `$env.NU_LIB_DIRS`, so a
-run() / interact() body can `use <library>` and invoke its exports
-directly - not just call-targets but every `export`. `call()` drives a
-single committed `main`; `use <library> <module> ...` from a body reuses
-the same library as ordinary nu code.
+run() / interact() body can `use <author>/<library>` and invoke its
+exports directly - not just call-targets but every `export`. `call()`
+drives a single committed `main`; `use <author>/<library>` then
+`<library> <module> ...` from a body reuses the same library as ordinary
+nu code.
 
 ## Lint
 
@@ -670,7 +693,7 @@ Good - inline the logic OR author the function as a library + `call` it:
 
 # library option: author the .nu via new + commit, then call() it
 #   (discover the target + its schema via info() / inspect())
-mcp__nushell__call --namepath mylib:foo:bar --args { ... }
+mcp__nushell__call --namepath acme/mylib:foo:bar --args { ... }
 ```
 
 ### `str join` separator is a value, not a regex / format string
@@ -863,8 +886,8 @@ Output (partial):
 ### `call()`
 *Invoke a committed library function with typed args.*
 
-`namepath` is the function coordinate `library:module/path:function` (a
-callable always lives in a module - there are no root functions). Discover
+`namepath` is the function coordinate `<author>/<library>:module/path:function`
+(a callable always lives in a module - there are no root functions). Discover
 the live targets + their schemas with [`info()`](#info) / [`inspect()`](#inspect).
 
 #### arguments
@@ -887,7 +910,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "namepath": "geo:shape:area",
+    "namepath": "acme/geo:shape:area",
     "args": { "width": 3.0, "height": 4.0 }
   }
 }
@@ -957,7 +980,7 @@ Output (partial):
 
 Pair with [`kill()`](#kill) to cancel a specific call. Entries are
 `{nonce, tool, started_at, args, ...}`: `rerun` adds `rerun_id`, `call`
-adds a flat `path` (`library:module/path:name`). Match against your own
+adds a flat `path` (`<author>/<library>:module/path:name`). Match against your own
 send-set via `args`.
 
 #### arguments
@@ -1108,8 +1131,9 @@ over any static index. For a node's full details, call `inspect()`.
 Returns the single-node descriptor `{library, module_path, name?,
 summary, args_schema?, result_schema?, details}` - `name` and the
 schemas are present only for a function; `details` is last. Empty strings
-when undocumented. `namepath` is `library` (the root),
-`library:module/path` (a module), or `library:module/path:function`.
+when undocumented. `namepath` is `<author>/<library>` (the root),
+`<author>/<library>:module/path` (a module), or
+`<author>/<library>:module/path:function`.
 
 #### arguments
 
@@ -1128,7 +1152,7 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "namepath": "geo:shape:area" }
+  "arguments": { "namepath": "acme/geo:shape:area" }
 }
 ```
 
@@ -1153,8 +1177,8 @@ Output (partial):
 ### `new()`
 *Scaffold modules / functions (by namepath) into existing libraries.*
 
-Batch-scaffolds module (`library:module/path`) or function
-(`library:module/path:function`) skeletons into ALREADY-ESTABLISHED
+Batch-scaffolds module (`<author>/<library>:module/path`) or function
+(`<author>/<library>:module/path:function`) skeletons into ALREADY-ESTABLISHED
 libraries (establish one with [`library()`](#library) `new`); the namepaths
 may span libraries. Additive: it refuses to scaffold over an existing leaf.
 Edit the files, then [`commit()`](#commit). Returns `{created}`.
@@ -1177,7 +1201,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "namepaths": ["geo:shape:area", "geo:shape:perimeter"]
+    "namepaths": ["acme/geo:shape:area", "acme/geo:shape:perimeter"]
   }
 }
 ```

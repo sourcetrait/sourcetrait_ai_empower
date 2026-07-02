@@ -104,7 +104,6 @@ impl NuSh {
         // $env.NONCE in the call template.
         let nonce = self.nonce_gen.next(&payload_bytes);
         let source = build_call_source(
-            &index.author,
             &library,
             &module_path,
             &name,

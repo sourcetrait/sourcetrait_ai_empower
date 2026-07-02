@@ -19,23 +19,10 @@ use crate::*;
 #[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
 pub(crate) struct LibraryIndex {
     pub source_path: PathBuf,
-    /// The library's author (`library.rig.toml` `[author].name`): the parent
-    /// path segment of its `<author>/<library>` store subtree and the prefix the
-    /// call template loads (`use <author>/<library>`). Defaults to `sourcetrait`
-    /// for back-compat with pre-authored indexes.
-    #[serde(default = "default_author")]
-    pub author: String,
     #[serde(default)]
     pub functions: Vec<IndexFunction>,
     #[serde(default)]
     pub modules: Vec<IndexModule>,
-}
-
-/// The default author (`sourcetrait`): the serde fallback for old indexes and
-/// the value used when a library's `library.rig.toml` is absent or omits
-/// `[author].name`. All current SourceTrait libraries are authored `sourcetrait`.
-pub(crate) fn default_author() -> String {
-    "sourcetrait".to_string()
 }
 
 /// One call-target in the `library.json` index: its name plus the structured
@@ -142,82 +129,30 @@ pub(crate) fn libraries_dir() -> PathBuf {
     data_base_dir().join("libraries")
 }
 
-/// What: returns the directory for a specific library inside the
-/// libraries repo: `<libraries_dir>/<library>/`.
+/// The directory for a library inside the store: `<libraries_dir>/<library>/`,
+/// where `library` is the compound `<author>/<name>` (e.g. `sourcetrait/empower`).
+/// The library string IS its own author-parented store sub-path, so no author
+/// derivation or glob resolution is needed.
 ///
-/// Why: every library lives under its own top-level subdir;
-/// composing paths through this helper avoids hardcoding the
-/// `<library>/` segment in every caller.
-///
-/// Where: called by every library-coordinate path helper
-/// (`library_meta_path`, `library_root_modnu_path`) and by lifecycle ops to
-/// wipe / create the library subtree.
-/// The `<author>/<library>` store subtree for a KNOWN author. Used by the WRITE
-/// paths (establish / commit / write_meta) where the author is read from the
-/// source manifest and the subtree may not be placed yet (so the glob resolver
-/// can't find it).
-pub(crate) fn library_dir_at(author: &str, library: &str) -> PathBuf {
-    libraries_dir().join(author).join(library)
-}
-
-/// Resolve a library's placed store subtree by NAME: the unique
-/// `<libraries_dir>/<author>/<library>/` carrying `.meta/library.json`. None when
-/// the library is not registered. NOTE: assumes library NAMES are unique across
-/// authors for now; full `(author, library)` keying (two authors shipping a
-/// same-named library) is future work.
-pub(crate) fn library_store_dir(library: &str) -> Option<PathBuf> {
-    let root = libraries_dir();
-    for author_entry in fs::read_dir(&root).ok()?.flatten() {
-        if !author_entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            continue;
-        }
-        let candidate = author_entry.path().join(library);
-        if candidate.join(META_FILE).exists() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-/// The directory for a specific library inside the libraries repo:
-/// `<libraries_dir>/<author>/<library>/`. Resolves the author by locating the
-/// placed subtree (`library_store_dir`); falls back to the default author's path
-/// for an UNregistered library (so `.exists()` reads false). WRITE paths that
-/// know the author from the manifest use `library_dir_at` instead.
+/// Where: called by every library-coordinate path helper (`library_meta_path`,
+/// `library_meta_dir`, `library_docs_dir`) and by the lifecycle ops.
 pub(crate) fn library_dir(library: &str) -> PathBuf {
-    library_store_dir(library).unwrap_or_else(|| library_dir_at(&default_author(), library))
+    libraries_dir().join(library)
 }
 
-/// Read a library's author from `<source>/library.rig.toml` `[author].name`.
-/// Falls back to `default_author()` when the manifest is absent / unparseable /
-/// omits the field, or when the value isn't a safe path segment (defends the
-/// store path against traversal).
-pub(crate) fn read_manifest_author(source_path: &std::path::Path) -> String {
-    let Ok(text) = fs::read_to_string(source_path.join("library.rig.toml")) else {
-        return default_author();
-    };
-    let Ok(value) = ::toml::from_str::<::toml::Value>(&text) else {
-        return default_author();
-    };
-    match value
-        .get("author")
-        .and_then(|a| a.get("name"))
-        .and_then(|n| n.as_str())
-    {
-        Some(n) if is_safe_author(n) => n.to_string(),
-        _ => default_author(),
+/// A valid library coordinate: the compound `<author>/<name>` - exactly one
+/// slash, each side a valid identifier that is not the reserved `main`.
+pub(crate) fn is_valid_library(library: &str) -> bool {
+    match library.split_once('/') {
+        Some((author, name)) => {
+            !name.contains('/')
+                && is_valid_ident(author)
+                && !is_reserved_term(author)
+                && is_valid_ident(name)
+                && !is_reserved_term(name)
+        }
+        None => false,
     }
-}
-
-/// A safe author path segment: non-empty, `[A-Za-z0-9_-]+`, not `.` / `..`.
-/// Keeps a manifest-supplied author from escaping the store root.
-pub(crate) fn is_safe_author(s: &str) -> bool {
-    !s.is_empty()
-        && s != "."
-        && s != ".."
-        && s
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// What: path to a library's big-meta index sidecar
@@ -306,6 +241,10 @@ impl LibraryLocks {
             if !author_entry.file_type()?.is_dir() {
                 continue;
             }
+            let author = match author_entry.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
             for lib_entry in fs::read_dir(author_entry.path())? {
                 let lib_entry = lib_entry?;
                 if !lib_entry.file_type()?.is_dir() {
@@ -315,9 +254,10 @@ impl LibraryLocks {
                     Ok(s) => s,
                     Err(_) => continue,
                 };
-                // Treat any `<author>/<library>` subdir with a META_FILE as a library.
+                // A `<author>/<name>` subdir with a META_FILE is a library, keyed
+                // by the compound `<author>/<name>`.
                 if lib_entry.path().join(META_FILE).exists() {
-                    map.entry(name)
+                    map.entry(format!("{author}/{name}"))
                         .or_insert_with(|| Arc::new(tk::AsyncRwLock::new(())));
                 }
             }
@@ -529,19 +469,30 @@ fn validate_new_coordinate(
     module_path: &str,
     name: Option<&str>,
 ) -> Result<(), Error> {
-    if !is_valid_ident(library) || is_reserved_term(library) {
-        return Err(Error::LibraryInvalidName {
-            library: library.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]* and not be the reserved `main`"
-                .to_string(),
-        });
+    let (author, lib_name) = match library.split_once('/') {
+        Some((a, n)) if !n.contains('/') => (a, n),
+        _ => {
+            return Err(Error::LibraryInvalidName {
+                library: library.to_string(),
+                reason: "library must be the compound `<author>/<name>`".to_string(),
+            });
+        }
+    };
+    for seg in [author, lib_name] {
+        if !is_valid_ident(seg) || is_reserved_term(seg) {
+            return Err(Error::LibraryInvalidName {
+                library: seg.to_string(),
+                reason: "author/name must match [a-zA-Z_][a-zA-Z0-9_-]* and not be the reserved `main`"
+                    .to_string(),
+            });
+        }
     }
-    if NAME_DENYLIST.contains(&library) {
+    if NAME_DENYLIST.contains(&lib_name) {
         return Err(Error::LibraryNameDenied {
             library: library.to_string(),
         });
     }
-    if build_target().is_test() && !library.ends_with("_test") {
+    if build_target().is_test() && !lib_name.ends_with("_test") {
         return Err(Error::LibraryTestSuffixRequired {
             library: library.to_string(),
         });
@@ -584,10 +535,8 @@ fn validate_new_coordinate(
 /// Where: called by `tool::library` (the `new` + `install` actions).
 pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) -> Result<(), Error> {
     validate_new_coordinate(library, "", None)?;
-    // The author (from the source manifest) is the parent path segment; build the
-    // canonical dir EXPLICITLY - the glob resolver can't find it before it exists.
-    let author = read_manifest_author(source_path);
-    let canonical = library_dir_at(&author, library);
+    // `library` is the compound `<author>/<name>` and IS its store sub-path.
+    let canonical = library_dir(library);
     if canonical.exists() {
         return Err(Error::LibraryAlreadyRegistered {
             library: library.to_string(),
@@ -596,13 +545,12 @@ pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) ->
     let meta_dir = canonical.join(".meta");
     fs::create_dir_all(&canonical)?;
     fs::write(canonical.join("mod.nu"), b"")?;
-    // Establish-time index: source_path + author, empty tree. commit() rebuilds
-    // it from the validated source. Writing it under .meta/ is what makes the
+    // Establish-time index: source_path only, empty tree. commit() rebuilds it
+    // from the validated source. Writing it under .meta/ is what makes the
     // library detectable (hydrate / enumerate key on it).
     fs::create_dir_all(&meta_dir)?;
     let index = LibraryIndex {
         source_path: source_path.to_path_buf(),
-        author: author.clone(),
         functions: Vec::new(),
         modules: Vec::new(),
     };
@@ -611,11 +559,10 @@ pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) ->
         reason: e.to_string(),
     })?;
     fs::write(canonical.join(META_FILE), &index_bytes)?;
-    let rel = format!("{author}/{library}");
-    run_git(&libraries_dir(), &["add", "--", &rel])?;
+    run_git(&libraries_dir(), &["add", "--", library])?;
     run_git(
         &libraries_dir(),
-        &["commit", "-m", &format!("new library {rel}")],
+        &["commit", "-m", &format!("new library {library}")],
     )?;
     fs::create_dir_all(source_path)?;
     let root_modnu = source_path.join("mod.nu");
@@ -928,6 +875,9 @@ pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo
             if !author_entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 continue;
             }
+            let Ok(author) = author_entry.file_name().into_string() else {
+                continue;
+            };
             let Ok(libs) = fs::read_dir(author_entry.path()) else {
                 continue;
             };
@@ -939,7 +889,7 @@ pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo
                     continue;
                 }
                 if let Ok(name) = lib_entry.file_name().into_string() {
-                    names.push(name);
+                    names.push(format!("{author}/{name}"));
                 }
             }
         }
@@ -1025,10 +975,10 @@ pub(crate) fn inspect_impl(
     module_path: &str,
     name: Option<&str>,
 ) -> Result<InspectResult, Error> {
-    if !is_valid_ident(library) {
+    if !is_valid_library(library) {
         return Err(Error::LibraryInvalidName {
             library: library.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+            reason: "library must be the compound `<author>/<name>`".to_string(),
         });
     }
     if !library_dir(library).exists() {
@@ -1537,8 +1487,8 @@ static SELF_VIEW_SEQ: AtomicU64 = AtomicU64::new(0);
 impl SelfView {
     /// Best-effort: None (validation proceeds without a self-view) when the
     /// author/library are unsafe or the temp dir / symlink can't be built.
-    fn new(author: &str, library: &str, source: &std::path::Path) -> Option<Self> {
-        if !is_safe_author(author) || library.is_empty() || library.contains('/') {
+    fn new(library: &str, source: &std::path::Path) -> Option<Self> {
+        if !is_valid_library(library) {
             return None;
         }
         let base = std::env::temp_dir().join(format!(
@@ -1546,8 +1496,11 @@ impl SelfView {
             process::id(),
             SELF_VIEW_SEQ.fetch_add(1, Ordering::Relaxed),
         ));
-        fs::create_dir_all(base.join(author)).ok()?;
-        std::os::unix::fs::symlink(source, base.join(author).join(library)).ok()?;
+        // `library` is `<author>/<name>`; place `<base>/<author>/<name>` -> source
+        // so a file's `use <author>/<name>/<mod>` self-ref resolves against itself.
+        let link = base.join(library);
+        fs::create_dir_all(link.parent()?).ok()?;
+        std::os::unix::fs::symlink(source, &link).ok()?;
         Some(Self { base })
     }
 }
@@ -1559,6 +1512,7 @@ impl Drop for SelfView {
 }
 
 pub(crate) fn validate_library_source(
+    library: &str,
     root: &std::path::Path,
     engine: &ParseEngine,
 ) -> io::Result<ValidationResult> {
@@ -1569,16 +1523,11 @@ pub(crate) fn validate_library_source(
         docs: Vec::new(),
     };
     // Layer a temp author-structured self-view onto the validation lib path so
-    // the source's own `use <author>/<library>/<mod>` self-refs resolve against
-    // itself - it isn't placed at `<store>/<author>/<library>` yet on a fresh /
+    // the source's own `use <author>/<name>/<mod>` self-refs resolve against
+    // itself - it isn't placed at `<store>/<author>/<name>` yet on a fresh /
     // re-home commit. Best-effort; a self-contained library needs none. Held to
     // end of scope so its temp dir survives the whole walk, then drops.
-    let author = read_manifest_author(root);
-    let library = root
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let self_view = SelfView::new(&author, &library, root);
+    let self_view = SelfView::new(library, root);
     let scoped;
     let walk_engine = match &self_view {
         Some(view) => {
@@ -2886,18 +2835,15 @@ fn parse_git_changes(porcelain: &str) -> CommitResult {
 /// add / commit.
 fn write_meta(
     name: &str,
-    author: &str,
     source_path: &std::path::Path,
     result: &ValidationResult,
 ) -> Result<(), Error> {
-    // Explicit author paths: during commit the canonical dir was just re-copied
-    // (no .meta yet), so the glob resolver can't find it - use library_dir_at.
-    let canonical = library_dir_at(author, name);
+    // `name` is the compound `<author>/<name>` = the store sub-path.
+    let canonical = library_dir(name);
     let meta_dir = canonical.join(".meta");
     fs::create_dir_all(&meta_dir)?;
     let index = LibraryIndex {
         source_path: source_path.to_path_buf(),
-        author: author.to_string(),
         functions: result.functions.clone(),
         modules: result.modules.clone(),
     };
@@ -2931,13 +2877,14 @@ fn write_meta(
 /// authored kind). IDEMPOTENT on a no-change resync (no empty commit);
 /// RETURNS the changed paths.
 pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResult, Error> {
-    if !is_valid_ident(name) {
+    if !is_valid_library(name) {
         return Err(Error::LibraryInvalidName {
             library: name.to_string(),
-            reason: "must match [a-zA-Z_][a-zA-Z0-9_-]*".to_string(),
+            reason: "library must be the compound `<author>/<name>`".to_string(),
         });
     }
-    if library_store_dir(name).is_none() {
+    let lib_root = library_dir(name);
+    if !lib_root.exists() {
         return Err(Error::LibraryNotRegistered {
             library: name.to_string(),
         });
@@ -2949,11 +2896,7 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
             path: source_path.display().to_string(),
         });
     }
-    // The source manifest's [author] is the authority for the store subtree.
-    let author = read_manifest_author(&source_path);
-    let lib_root = library_dir_at(&author, name);
-    let rel = format!("{author}/{name}");
-    let mut result = validate_library_source(&source_path, engine)?;
+    let mut result = validate_library_source(name, &source_path, engine)?;
     // Make every located diagnostic's path libraries-dir-relative
     // (`<library>/<rel>`) before it reaches the agent; the walk stays
     // library-agnostic, the name is prepended here at the boundary.
@@ -2974,18 +2917,18 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
         fs::create_dir_all(parent)?;
     }
     copy_dir_recursive(&source_path, &lib_root)?;
-    write_meta(name, &author, &source_path, &result)?;
-    // Stage the `<author>/<library>` subtree, then diff. Idempotent: nothing
+    write_meta(name, &source_path, &result)?;
+    // Stage the `<author>/<name>` subtree, then diff. Idempotent: nothing
     // staged -> no commit (item 10).
-    run_git(&libraries_dir(), &["add", "--", &rel])?;
-    let porcelain = run_git_output(&libraries_dir(), &["status", "--porcelain", "--", &rel])?;
+    run_git(&libraries_dir(), &["add", "--", name])?;
+    let porcelain = run_git_output(&libraries_dir(), &["status", "--porcelain", "--", name])?;
     let changed = parse_git_changes(&porcelain);
     if changed.is_empty() {
         return Ok(changed);
     }
     run_git(
         &libraries_dir(),
-        &["commit", "-m", &format!("commit library {rel}")],
+        &["commit", "-m", &format!("commit library {name}")],
     )?;
     Ok(changed)
 }
@@ -3029,16 +2972,11 @@ pub(crate) fn install_impl(
             // nothing remains registered, and record the removal in git.
             let lib_root = library_dir(library);
             if lib_root.exists() {
-                let rel = lib_root
-                    .strip_prefix(libraries_dir())
-                    .unwrap_or(&lib_root)
-                    .to_string_lossy()
-                    .into_owned();
                 let _ = fs::remove_dir_all(&lib_root);
-                let _ = run_git(&libraries_dir(), &["add", "--", &rel]);
+                let _ = run_git(&libraries_dir(), &["add", "--", library]);
                 let _ = run_git(
                     &libraries_dir(),
-                    &["commit", "-m", &format!("rollback failed install {rel}")],
+                    &["commit", "-m", &format!("rollback failed install {library}")],
                 );
             }
             Err(e)
@@ -3052,19 +2990,15 @@ pub(crate) fn install_impl(
 /// source_dir sanity check + the lock-registry removal are the caller's
 /// (tool::library) responsibility.
 pub(crate) fn uninstall_impl(library: &str) -> Result<(), Error> {
-    let Some(lib_root) = library_store_dir(library) else {
+    let lib_root = library_dir(library);
+    if !lib_root.exists() {
         return Ok(());
-    };
-    let rel = lib_root
-        .strip_prefix(libraries_dir())
-        .unwrap_or(&lib_root)
-        .to_string_lossy()
-        .into_owned();
+    }
     fs::remove_dir_all(&lib_root)?;
-    run_git(&libraries_dir(), &["add", "--", &rel])?;
+    run_git(&libraries_dir(), &["add", "--", library])?;
     run_git(
         &libraries_dir(),
-        &["commit", "-m", &format!("uninstall library {rel}")],
+        &["commit", "-m", &format!("uninstall library {library}")],
     )?;
     Ok(())
 }
@@ -3090,7 +3024,7 @@ pub(crate) fn check_library(
             path: source_path.display().to_string(),
         });
     }
-    let mut result = validate_library_source(&source_path, engine)?;
+    let mut result = validate_library_source(library, &source_path, engine)?;
     // Libraries-dir-relative paths for the agent (see commit_impl).
     prefix_diagnostic_paths(&mut result, library);
     Ok(result)

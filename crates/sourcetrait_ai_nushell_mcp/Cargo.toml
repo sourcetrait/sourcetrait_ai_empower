@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_ai_nushell_mcp"
-version = "0.0.0-72"
+version = "0.0.0-73"
 edition = "2024"
 description = "Nushell engine MCP server"
 authors = ["SourceTrait <development@sourcetrait.com>"]
@@ -50,7 +50,6 @@ serde.workspace = true
 serde_json.workspace = true
 sourcetrait_ai_lib_empower.workspace = true
 tokio.workspace = true
-toml.workspace = true
 xxhash-rust.workspace = true
 
 [dev-dependencies]

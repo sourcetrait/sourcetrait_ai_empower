@@ -138,7 +138,7 @@ pub(crate) fn build_run_source(
 }
 
 /// What: builds the nushell source the stateless worker evals for a
-/// `call()` -- `use <author>/<library>` loads the whole committed library from
+/// `call()` -- `use <library>` (the compound `<author>/<name>`) loads the committed library from
 /// the author-parented store, then the call is driven module-qualified along its
 /// namepath (module_path slashes -> spaces): `<library> <mod...> <name> LIT`.
 /// LIT is the args record as NUON, or bare `null` for empty / void args.
@@ -159,7 +159,6 @@ pub(crate) fn build_run_source(
 /// Where: called by `server::tool::NuSh::call`; the rendered source ships
 /// through a pool worker exactly like run() / rerun().
 pub(crate) fn build_call_source(
-    author: &str,
     library: &str,
     module_path: &str,
     name: &str,
@@ -171,13 +170,16 @@ pub(crate) fn build_call_source(
     } else {
         args_to_nuon(args)
     };
+    // `library` is the compound `<author>/<name>`; `use <author>/<name>` imports
+    // the module named by the LAST path segment, so the drive starts there.
+    let library_name = library.rsplit('/').next().unwrap_or(library);
     // Namepath -> the module-qualified invocation, space-separated. A function
     // always has a parent module (no root functions), so module_path is
     // non-empty in practice; the empty branch is defensive.
     let call_path = if module_path.is_empty() {
-        format!("{library} {name}")
+        format!("{library_name} {name}")
     } else {
-        format!("{library} {} {name}", module_path.replace('/', " "))
+        format!("{library_name} {} {name}", module_path.replace('/', " "))
     };
     // $env.NONCE carries this call's nonce ambiently into the committed `main`
     // + any helper it invokes (env reads inherit down). Set at top-level before
@@ -186,11 +188,10 @@ pub(crate) fn build_call_source(
     formatdoc!(
         r#"
         $env.NONCE = "{nonce}"
-        use {author}/{library}
+        use {library}
         {call_path} {lit}
     "#,
         nonce = nonce,
-        author = author,
         library = library,
         call_path = call_path,
         lit = lit,

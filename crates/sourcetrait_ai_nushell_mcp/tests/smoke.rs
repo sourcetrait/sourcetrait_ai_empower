@@ -123,7 +123,7 @@ impl Host {
             "jsonrpc": "2.0",
             "id": id,
             "method": "tools/call",
-            "params": {"name": tool, "arguments": args}
+            "params": {"name": tool, "arguments": _author_prefixed(tool, args)}
         });
         self.send(&req);
         self.read_id(id)
@@ -434,4 +434,50 @@ fn smoke_7_multi_call_stability_and_scoping() {
          EngineState; got {:?}",
         envelope["result"],
     );
+}
+
+#[allow(dead_code)]
+fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
+    // Compound-library convention: default-author bare names at the dispatch boundary.
+    fn pfx_lib(s: &str) -> String {
+        if s.is_empty() || s.contains("/") {
+            s.to_string()
+        } else {
+            format!("sourcetrait/{s}")
+        }
+    }
+    fn pfx_np(s: &str) -> String {
+        let lib = s.split(":").next().unwrap_or(s);
+        if lib.is_empty() || lib.contains("/") {
+            s.to_string()
+        } else {
+            format!("sourcetrait/{s}")
+        }
+    }
+    match tool {
+        "call" | "inspect" => {
+            if let Some(np) = args.get("namepath").and_then(|v| v.as_str()) {
+                let p = pfx_np(np);
+                args["namepath"] = serde_json::Value::String(p);
+            }
+        }
+        "new" => {
+            if let Some(arr) = args.get_mut("namepaths").and_then(|v| v.as_array_mut()) {
+                for e in arr.iter_mut() {
+                    if let Some(s) = e.as_str() {
+                        let p = pfx_np(s);
+                        *e = serde_json::Value::String(p);
+                    }
+                }
+            }
+        }
+        "library" | "commit" => {
+            if let Some(l) = args.get("library").and_then(|v| v.as_str()) {
+                let p = pfx_lib(l);
+                args["library"] = serde_json::Value::String(p);
+            }
+        }
+        _ => {}
+    }
+    args
 }

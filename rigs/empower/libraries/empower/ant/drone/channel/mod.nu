@@ -8,9 +8,9 @@
 # fae's inbox). Call targets: open, ready, done, syn, ack, close; shared derivation
 # in common.
 export module open
-export use ready
-export use done
-export use syn
-export use ack
-export use close
+export module ready
+export module done
+export module syn
+export module ack
+export module close
 export module common

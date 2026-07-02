@@ -1,3 +1,3 @@
 # Scaffold Fae harness skeletons 
 
-export use iter
+export module iter

@@ -6,7 +6,7 @@
 # (ant_<fae>) via the claudeline + shm layout. Call targets: open, syn, ack, close;
 # shared derivation in common.
 export module open
-export use syn
-export use ack
-export use close
+export module syn
+export module ack
+export module close
 export module common

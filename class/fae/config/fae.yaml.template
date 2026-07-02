@@ -1,23 +1,37 @@
 ai:
-  identity: "%{ai_identity}%"
-  dir: "~/ai/%{ai_identity}%"
+  id: "%{ai_id}%"
+  repo: "~/ai/%{ai_id}%"
 session:
-  tmp_dir: "~/tmp/ai/%{ai_identity}%/{infer:session_nom}"
-  shm_dir: "~/tmp/ai/%{ai_identity}%/{infer:session_nom}"
-fae:
+  tmp_dir: "~/tmp/ai/%{ai_id}%/{infer:session_nom}"
+  shm_dir: "~/tmp/ai/%{ai_id}%/{infer:session_nom}"
+layout:
+  # Configuration of this AI repository
   config_dir: ./config
-  constitution_dir: ./constitution
+  # Data, per topic
   data_dir: ./data
-  docs_dir: ./docs
+  # Documents, per topic
+  doc_dir: ./docs
+  # Instructions specific to this AI repository. AI: Do NOT edit.
+  instruction_dir: ./instructions
+  # Rolling iterative mixed-expert home, per topic.
   iter_dir: ./iter
+  # Memory store. AI-maintained instruction enhancements; authorative, implied, adhoc.
   mem_dir: ./mem
+  # Nushell MCP libraries (rig libraries).
   nu_dir: ./nu
+  # Bulk data offloaded from this Git repository. Acceptable to lose in catastrophe.
   offload_dir: ./offload
-  scripts_dir: ./scripts
-  skills_dir: ./skills
+  # Standalone; py, js, nu, etc.
+  script_dir: ./scripts
+  skill_dir: ./skills
+  # Rolling state machine pointers; now, next, last, history.
   state_dir: ./state
-box:
+home:
+  # The User's documents
+  info_home: ~/info
+  # First-party repositories 
   projects_home: ~/proj
+  # Third-party repositories
   repositories_home: ~/repo
 env:
   XDG_CACHE_HOME: ~/.sys/.xdg/cache

@@ -47,7 +47,7 @@ export def live_sessions []: nothing -> table<kind: string, ai_identity: string,
 
 # a session's recorded {session_nom, pid} from its claudeline status yaml, or null
 # when the yaml is absent / unreadable / missing either field.
-export def status_session [identity: string]: nothing -> oneof<record<session_nom: string, pid: int>, nothing> {
+def status_session [identity: string]: nothing -> oneof<record<session_nom: string, pid: int>, nothing> {
     let yaml = ($env.XDG_CACHE_HOME | path join "sourcetrait" "empower" "claudeline" $identity "status" "latest.yaml")
     if ($yaml | path exists) {
         let parsed = (open --raw $yaml | decode | from yaml)

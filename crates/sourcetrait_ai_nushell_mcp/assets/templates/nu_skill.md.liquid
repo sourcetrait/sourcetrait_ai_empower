@@ -54,6 +54,13 @@ Output (partial):
 }
 ```
 
+The Output examples in this skill show the raw WIRE shape. An MCP client
+may present `structuredContent` UNWRAPPED - Claude Code renders the
+envelope fields (`result`, `nonce`, `rerun_id`, or `error`) as the top
+level of the tool result - so when parsing a result programmatically,
+read the envelope fields where your client presents them, not a
+hardcoded `result.structuredContent` nesting.
+
 ## Schemas
 
 `args_schema` and `result_schema` are structured JSON objects mapping
@@ -81,7 +88,12 @@ empty array `[]`, a table of empty records `[{}]`, an empty
 `{ "oneof<>": [] }`, and `any`. Records and tables are OPEN (extra
 fields accepted) but every DECLARED field is required and deep
 type-checked - a `result_schema` must match what the body returns
-exactly (see Nu Nuances: positional typecheck).
+exactly. Enforcement is asymmetric at runtime: the ARGS side is
+deep-checked against `args_schema` on every call, while the RESULT side
+strictly checks only a statically-shaped (literal) return - a
+dynamically built result is best-effort (see Nu Nuances: positional
+typecheck). Declare the exact result shape regardless; the grammar is
+the contract even where nu only partially enforces it.
 
 ## Large payloads: shm IPC
 
@@ -1390,6 +1402,11 @@ change between sessions; reading them live is how a fresh bootstrap (or a
 subagent) learns exactly which `call()` targets exist now - then
 `inspect()` for a node's full details - rather than trusting a static
 index that drifts.
+
+The `mcp__<key>__*` tool-name prefix comes from the CLIENT's server-entry
+key (e.g. `.mcp.json`), not from the server: the same binary surfaces as
+`mcp__nushell__*` or `mcp__nushell_mcp_test__*` depending on which entry
+launched it.
 
 Agents should use `mcp__nushell__info()` on every session so that they are
 aware of the full toolset.

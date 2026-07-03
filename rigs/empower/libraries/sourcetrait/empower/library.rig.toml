@@ -1,0 +1,27 @@
+name = "empower"
+title = "Empower"
+version = "0.0.0-3"
+
+[nushell]
+version = "0.113.1"
+
+[description]
+summary = "Empower platform base library"
+keywords = []
+
+[author]
+name = "sourcetrait"
+title = "SourceTrait"
+email = "development@sourcetrait.com"
+
+[license]
+spdx = "agpl3"
+file = "LICENSE-AGPL-3.txt"
+
+[provider]
+name = "github"
+
+[[bin]]
+name = "emptwo.nu"
+
+[dependencies]

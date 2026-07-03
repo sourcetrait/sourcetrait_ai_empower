@@ -1,7 +1,8 @@
 # The empwr desk gear's library - the principal/host-side toolkit. Installed to
-# the desk gear home; wire from config.nu with
-# `use gear/desk/sourcetrait/empwr *` (the `*` flattens the submodules ->
-# `ai relay from|to|up`, `mcp info|call|...`; drop it for `empwr ai relay ...`).
+# the desk gear home; wire from config.nu with `use gear/desk/sourcetrait/empwr`
+# and drive PREFIXED: `empwr ai relay ...`, `empwr mcp info ...`. The prefix is
+# the intended usage - we avoid flattening into the global namespace (the `*`
+# import form exists but is not used).
 #
 # `ai` is desk-side relaying (the desk/box perspective and flows differ, so it
 # stays a desk module); `mcp` is re-exported from the shared common library

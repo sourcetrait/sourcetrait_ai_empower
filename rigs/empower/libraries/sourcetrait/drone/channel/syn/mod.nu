@@ -11,10 +11,10 @@ use sourcetrait/drone/common
 # (in its input dir). Errors if the fae is not online, the sent packet is missing,
 # or the referenced packet is missing. Void return.
 export def main [args: record<fae: string, drone_name: string, tx_id: int, response_to_rx_id: oneof<int, nothing>>]: nothing -> nothing {
-    let colony_identity = (common colony_identity $args.fae)
-    let colony_session_nom = (common session_nom $colony_identity)
+    let colony_ai_id = (common colony_ai_id $args.fae)
+    let colony_session_nom = (common session_nom $colony_ai_id)
     if $colony_session_nom == null {
-        error make { msg: $"colony has no live session: no context for ($colony_identity)" }
+        error make { msg: $"colony has no live session: no context for ($colony_ai_id)" }
     }
     let fae_session_nom = (common session_nom $args.fae)
     if $fae_session_nom == null {
@@ -33,7 +33,7 @@ export def main [args: record<fae: string, drone_name: string, tx_id: int, respo
         $"COLONY DRONE ($args.drone_name) SYN ($packet)"
     } else {
         let re_packet = $"($fae_session_nom)_($args.response_to_rx_id).md"
-        let re_path = (common drone_input_dir $colony_identity $colony_session_nom $args.drone_name | path join $re_packet)
+        let re_path = (common drone_input_dir $colony_ai_id $colony_session_nom $args.drone_name | path join $re_packet)
         if not ($re_path | path exists) {
             error make { msg: $"response_to packet does not exist: ($re_path)" }
         }

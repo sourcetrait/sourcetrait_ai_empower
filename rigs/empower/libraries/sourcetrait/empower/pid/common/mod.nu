@@ -11,7 +11,7 @@ export const claude_prefix = "/usr/local/bin/claude "
 # an ai_id from a process cwd: the basename, except a colony worktree
 # (home-relative .../ant/colony/<fae>) maps to ant_<fae>. Mirrors claudeline's
 # ai_id so a live process matches the identity its status yaml is scoped to.
-export def cwd_to_identity [cwd: string]: nothing -> string {
+export def cwd_to_ai_id [cwd: string]: nothing -> string {
     let cwd_segs = ($cwd | path split | where {|seg| ($seg != "/") and ($seg != "") })
     let home_segs = ($env.HOME | path split | where {|seg| ($seg != "/") and ($seg != "") })
     let home_len = ($home_segs | length)
@@ -34,7 +34,7 @@ export def live_sessions []: nothing -> table<kind: string, ai_id: string, sessi
     ps -l
     | where {|proc| $proc.command | str starts-with $claude_prefix }
     | each {|proc|
-        let identity = (cwd_to_identity $proc.cwd)
+        let identity = (cwd_to_ai_id $proc.cwd)
         let status = (status_session $identity)
         if ($status != null) and ($status.pid == $proc.pid) {
             { kind: "claude", ai_id: $identity, session_nom: $status.session_nom, pid: $proc.pid }

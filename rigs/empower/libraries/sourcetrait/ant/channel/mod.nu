@@ -9,7 +9,7 @@
 # derivations - no fae<->ant dependencies.
 
 # the colony's ai_id, derived from the bonded fae's identity.
-export def colony_identity [fae: string]: nothing -> string {
+export def colony_ai_id [fae: string]: nothing -> string {
     $"ant_($fae)"
 }
 
@@ -26,8 +26,8 @@ export def session_nom [identity: string]: nothing -> oneof<string, nothing> {
 
 # the colony's inbox file (the queen monitors it; FAE lines and drone
 # lifecycle lines land here).
-export def colony_inbox [colony_identity: string, colony_session_nom: string]: nothing -> string {
-    $env.XDGX_SHM_DIR | path join "ai" $colony_identity $colony_session_nom "channel" "colony" "inbox.txt"
+export def colony_inbox [colony_ai_id: string, colony_session_nom: string]: nothing -> string {
+    $env.XDGX_SHM_DIR | path join "ai" $colony_ai_id $colony_session_nom "channel" "colony" "inbox.txt"
 }
 
 # the colony's outbox file (COLONY lines are written here) - this is the
@@ -38,8 +38,8 @@ export def colony_outbox [fae: string, fae_session_nom: string]: nothing -> stri
 
 # a drone's packet input dir on the colony side (the fae writes drone-bound
 # packets here; the drone reads them).
-export def drone_input_dir [colony_identity: string, colony_session_nom: string, drone_name: string]: nothing -> string {
-    $env.XDGX_SHM_DIR | path join "ai" $colony_identity $colony_session_nom "channel" "colony" "drone" $drone_name
+export def drone_input_dir [colony_ai_id: string, colony_session_nom: string, drone_name: string]: nothing -> string {
+    $env.XDGX_SHM_DIR | path join "ai" $colony_ai_id $colony_session_nom "channel" "colony" "drone" $drone_name
 }
 
 # a drone's packet output dir on the fae side (the drone writes its packets
@@ -55,13 +55,13 @@ export def drone_output_dir [fae: string, fae_session_nom: string, drone_name: s
 export def announce_drone [
     fae: string,
     drone_name: string,
-    colony_identity: string,
+    colony_ai_id: string,
     colony_session_nom: string,
     fae_session_nom: oneof<string, nothing>,
     status: string,
 ]: nothing -> nothing {
     let line = $"COLONY DRONE ($drone_name) ($status)(char nl)"
-    let c_inbox = (colony_inbox $colony_identity $colony_session_nom)
+    let c_inbox = (colony_inbox $colony_ai_id $colony_session_nom)
     if ($c_inbox | path exists) {
         $line | save --append $c_inbox
     }

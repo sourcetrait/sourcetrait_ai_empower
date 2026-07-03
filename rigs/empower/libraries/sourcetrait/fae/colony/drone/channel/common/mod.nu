@@ -9,7 +9,7 @@
 # fae's inbox (sourcetrait/fae:colony/channel), with packets in the fae's
 # drone-packet dir <fae_shm>/channel/colony/drone/<name>. Send-only.
 
-export def queen_identity [ai_id: string]: nothing -> string {
+export def queen_ai_id [ai_id: string]: nothing -> string {
     $"ant_($ai_id)"
 }
 
@@ -24,13 +24,13 @@ export def session_nom [identity: string]: nothing -> oneof<string, nothing> {
 
 # the colony's inbox file (the fae writes its FAE DRONE lines here; the queen
 # monitors it and relays them to the drone).
-export def colony_inbox [queen_identity: string, queen_session_nom: string]: nothing -> string {
-    $env.XDGX_SHM_DIR | path join "ai" $queen_identity $queen_session_nom "channel" "colony" "inbox.txt"
+export def colony_inbox [queen_ai_id: string, queen_session_nom: string]: nothing -> string {
+    $env.XDGX_SHM_DIR | path join "ai" $queen_ai_id $queen_session_nom "channel" "colony" "inbox.txt"
 }
 
 # the drone's input dir (the fae writes drone-bound packets here; the drone reads them).
-export def drone_input_dir [queen_identity: string, queen_session_nom: string, drone_name: string]: nothing -> string {
-    $env.XDGX_SHM_DIR | path join "ai" $queen_identity $queen_session_nom "channel" "colony" "drone" $drone_name
+export def drone_input_dir [queen_ai_id: string, queen_session_nom: string, drone_name: string]: nothing -> string {
+    $env.XDGX_SHM_DIR | path join "ai" $queen_ai_id $queen_session_nom "channel" "colony" "drone" $drone_name
 }
 
 # the fae's drone-packet dir (the fae reads the drone's response packets here).

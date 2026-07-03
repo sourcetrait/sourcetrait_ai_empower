@@ -12,12 +12,12 @@ export def main [args: record<ai_id: string, drone_name: string, rx_id: int>]: n
     if $fae_session_nom == null {
         error make { msg: $"fae has no live session: no context for ($args.ai_id)" }
     }
-    let queen_identity = (common queen_identity $args.ai_id)
-    let queen_session_nom = (common session_nom $queen_identity)
+    let queen_ai_id = (common queen_ai_id $args.ai_id)
+    let queen_session_nom = (common session_nom $queen_ai_id)
     if $queen_session_nom == null {
-        error make { msg: $"bonded colony ($queen_identity) is not online" }
+        error make { msg: $"bonded colony ($queen_ai_id) is not online" }
     }
-    let c_inbox = (common colony_inbox $queen_identity $queen_session_nom)
+    let c_inbox = (common colony_inbox $queen_ai_id $queen_session_nom)
     if not ($c_inbox | path exists) {
         error make { msg: $"colony inbox does not exist: ($c_inbox)" }
     }

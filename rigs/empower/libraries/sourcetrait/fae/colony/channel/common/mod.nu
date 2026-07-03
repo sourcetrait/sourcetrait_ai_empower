@@ -9,7 +9,7 @@
 # queen-bound packets to the queen's input dir <colony_shm>/channel/colony/queen.
 
 # the bonded colony's ai_id, derived from the fae's own identity.
-export def queen_identity [ai_id: string]: nothing -> string {
+export def queen_ai_id [ai_id: string]: nothing -> string {
     $"ant_($ai_id)"
 }
 
@@ -36,11 +36,11 @@ export def queen_packet_dir [ai_id: string, fae_session_nom: string]: nothing ->
 }
 
 # the colony's inbox file (the fae writes its FAE lines here; the queen monitors it).
-export def colony_inbox [queen_identity: string, queen_session_nom: string]: nothing -> string {
-    $env.XDGX_SHM_DIR | path join "ai" $queen_identity $queen_session_nom "channel" "colony" "inbox.txt"
+export def colony_inbox [queen_ai_id: string, queen_session_nom: string]: nothing -> string {
+    $env.XDGX_SHM_DIR | path join "ai" $queen_ai_id $queen_session_nom "channel" "colony" "inbox.txt"
 }
 
 # the queen's input dir (the fae writes queen-bound packets here; the queen reads them).
-export def queen_input_dir [queen_identity: string, queen_session_nom: string]: nothing -> string {
-    $env.XDGX_SHM_DIR | path join "ai" $queen_identity $queen_session_nom "channel" "colony" "queen"
+export def queen_input_dir [queen_ai_id: string, queen_session_nom: string]: nothing -> string {
+    $env.XDGX_SHM_DIR | path join "ai" $queen_ai_id $queen_session_nom "channel" "colony" "queen"
 }

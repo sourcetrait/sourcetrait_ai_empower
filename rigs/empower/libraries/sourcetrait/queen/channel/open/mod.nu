@@ -12,13 +12,13 @@ use sourcetrait/empower/pid
 # (the fae's inbox) and the queen's output dir on the fae side. Errors if the colony
 # has no live session.
 export def main [args: record<fae: string>]: nothing -> record<colony_inbox: string, queen_input_dir: string, fae_online: oneof<nothing, record<session_nom: string, colony_outbox: string, queen_output_dir: string>>> {
-    let colony_identity = (common colony_identity $args.fae)
-    let colony_session_nom = (common session_nom $colony_identity)
+    let colony_ai_id = (common colony_ai_id $args.fae)
+    let colony_session_nom = (common session_nom $colony_ai_id)
     if $colony_session_nom == null {
-        error make { msg: $"colony has no live session: no context for ($colony_identity)" }
+        error make { msg: $"colony has no live session: no context for ($colony_ai_id)" }
     }
-    let inbox = (common colony_inbox $colony_identity $colony_session_nom)
-    let in_dir = (common queen_input_dir $colony_identity $colony_session_nom)
+    let inbox = (common colony_inbox $colony_ai_id $colony_session_nom)
+    let in_dir = (common queen_input_dir $colony_ai_id $colony_session_nom)
     mkdir $in_dir
     touch $inbox
 

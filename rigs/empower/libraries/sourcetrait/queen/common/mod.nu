@@ -17,8 +17,8 @@
 use sourcetrait/ant/channel
 
 # the colony's ai_id, derived from the bonded fae's identity.
-export def colony_identity [fae: string]: nothing -> string {
-    channel colony_identity $fae
+export def colony_ai_id [fae: string]: nothing -> string {
+    channel colony_ai_id $fae
 }
 
 # an entity's current session_nom from its claudeline context/latest.yaml, or
@@ -29,8 +29,8 @@ export def session_nom [identity: string]: nothing -> oneof<string, nothing> {
 
 # the colony's inbox file (the queen monitors it; the fae writes FAE and FAE
 # DRONE lines here).
-export def colony_inbox [colony_identity: string, colony_session_nom: string]: nothing -> string {
-    channel colony_inbox $colony_identity $colony_session_nom
+export def colony_inbox [colony_ai_id: string, colony_session_nom: string]: nothing -> string {
+    channel colony_inbox $colony_ai_id $colony_session_nom
 }
 
 # the colony's outbox file (the queen writes its COLONY lines here) - this is
@@ -41,8 +41,8 @@ export def colony_outbox [fae: string, fae_session_nom: string]: nothing -> stri
 
 # a drone's packet input dir (the fae writes drone-bound packets here; the
 # drone reads them).
-export def drone_input_dir [colony_identity: string, colony_session_nom: string, drone_name: string]: nothing -> string {
-    channel drone_input_dir $colony_identity $colony_session_nom $drone_name
+export def drone_input_dir [colony_ai_id: string, colony_session_nom: string, drone_name: string]: nothing -> string {
+    channel drone_input_dir $colony_ai_id $colony_session_nom $drone_name
 }
 
 # a drone's packet output dir on the fae side (the drone writes its packets
@@ -56,18 +56,18 @@ export def drone_output_dir [fae: string, fae_session_nom: string, drone_name: s
 export def announce_drone [
     fae: string,
     drone_name: string,
-    colony_identity: string,
+    colony_ai_id: string,
     colony_session_nom: string,
     fae_session_nom: oneof<string, nothing>,
     status: string,
 ]: nothing -> nothing {
-    channel announce_drone $fae $drone_name $colony_identity $colony_session_nom $fae_session_nom $status
+    channel announce_drone $fae $drone_name $colony_ai_id $colony_session_nom $fae_session_nom $status
 }
 
 # the queen's packet input dir (the fae writes queen-bound packets here; the
 # queen reads them).
-export def queen_input_dir [colony_identity: string, colony_session_nom: string]: nothing -> string {
-    $env.XDGX_SHM_DIR | path join "ai" $colony_identity $colony_session_nom "channel" "colony" "queen"
+export def queen_input_dir [colony_ai_id: string, colony_session_nom: string]: nothing -> string {
+    $env.XDGX_SHM_DIR | path join "ai" $colony_ai_id $colony_session_nom "channel" "colony" "queen"
 }
 
 # the queen's packet output dir on the fae side (the queen writes its packets

@@ -14,17 +14,17 @@ export def main [args: record<ai_id: string, drone_name: string, tx_id: int>]: n
     if $fae_session_nom == null {
         error make { msg: $"fae has no live session: no context for ($args.ai_id)" }
     }
-    let queen_identity = (common queen_identity $args.ai_id)
-    let queen_session_nom = ((pid list_ai null).sessions | where ai_id == $queen_identity | get -i 0.session_nom)
+    let queen_ai_id = (common queen_ai_id $args.ai_id)
+    let queen_session_nom = ((pid list_ai null).sessions | where ai_id == $queen_ai_id | get -i 0.session_nom)
     if $queen_session_nom == null {
-        error make { msg: $"bonded colony ($queen_identity) is not online" }
+        error make { msg: $"bonded colony ($queen_ai_id) is not online" }
     }
-    let c_inbox = (common colony_inbox $queen_identity $queen_session_nom)
+    let c_inbox = (common colony_inbox $queen_ai_id $queen_session_nom)
     if not ($c_inbox | path exists) {
         error make { msg: $"colony inbox does not exist: ($c_inbox)" }
     }
     let packet = $"($fae_session_nom)_($args.tx_id).md"
-    let queen_in = (common queen_input_dir $queen_identity $queen_session_nom)
+    let queen_in = (common queen_input_dir $queen_ai_id $queen_session_nom)
     mkdir $queen_in
     let packet_path = ($queen_in | path join $packet)
     let body = ([

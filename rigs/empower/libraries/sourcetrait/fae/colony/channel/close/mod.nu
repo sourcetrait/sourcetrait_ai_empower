@@ -10,10 +10,10 @@ export def main [args: record<ai_id: string>]: nothing -> nothing {
     if $fae_session_nom == null {
         error make { msg: $"fae has no live session: no context for ($args.ai_id)" }
     }
-    let queen_identity = (common queen_identity $args.ai_id)
-    let queen_session_nom = (common session_nom $queen_identity)
+    let queen_ai_id = (common queen_ai_id $args.ai_id)
+    let queen_session_nom = (common session_nom $queen_ai_id)
     if $queen_session_nom != null {
-        let c_inbox = (common colony_inbox $queen_identity $queen_session_nom)
+        let c_inbox = (common colony_inbox $queen_ai_id $queen_session_nom)
         if ($c_inbox | path exists) {
             $"FAE OFFLINE(char nl)" | save --append $c_inbox
         }

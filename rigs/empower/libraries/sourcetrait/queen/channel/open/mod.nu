@@ -22,7 +22,7 @@ export def main [args: record<fae: string>]: nothing -> record<colony_inbox: str
     mkdir $in_dir
     touch $inbox
 
-    let fae_session_nom = ((pid list_ai null).sessions | where ai_id == $args.fae | get -i 0.session_nom)
+    let fae_session_nom = ((pid list_ai null).sessions | where ai_id == $args.fae | get -o 0.session_nom)
     let fae_online = if $fae_session_nom == null {
         null
     } else {

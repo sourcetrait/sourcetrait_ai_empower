@@ -21,7 +21,7 @@ export def main [args: record<ai_id: string>]: nothing -> record<fae_inbox: stri
     touch $inbox
 
     let queen_ai_id = (common queen_ai_id $args.ai_id)
-    let queen_session_nom = ((pid list_ai null).sessions | where ai_id == $queen_ai_id | get -i 0.session_nom)
+    let queen_session_nom = ((pid list_ai null).sessions | where ai_id == $queen_ai_id | get -o 0.session_nom)
     let queen_online = if $queen_session_nom == null {
         null
     } else {

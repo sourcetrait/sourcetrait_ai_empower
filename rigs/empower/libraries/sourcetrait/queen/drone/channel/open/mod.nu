@@ -19,7 +19,7 @@ export def main [args: record<fae: string, drone_name: string, persist: bool>]: 
     if $colony_session_nom == null {
         error make { msg: $"colony has no live session: no context for ($colony_ai_id)" }
     }
-    let fae_session_nom = ((pid list_ai null).sessions | where ai_id == $args.fae | get -i 0.session_nom)
+    let fae_session_nom = ((pid list_ai null).sessions | where ai_id == $args.fae | get -o 0.session_nom)
     if $fae_session_nom == null {
         error make { msg: $"bonded fae ($args.fae) is not online" }
     }

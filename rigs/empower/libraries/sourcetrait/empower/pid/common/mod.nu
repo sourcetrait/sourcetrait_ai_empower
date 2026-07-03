@@ -51,8 +51,8 @@ def status_session [identity: string]: nothing -> oneof<record<session_nom: stri
     let yaml = ($env.XDG_CACHE_HOME | path join "sourcetrait" "empower" "claudeline" $identity "status" "latest.yaml")
     if ($yaml | path exists) {
         let parsed = (open --raw $yaml | decode | from yaml)
-        let nom = ($parsed | get -i session_nom)
-        let pid = ($parsed | get -i pid)
+        let nom = ($parsed | get -o session_nom)
+        let pid = ($parsed | get -o pid)
         if ($nom == null) or ($pid == null) {
             null
         } else {

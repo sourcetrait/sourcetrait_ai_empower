@@ -18,7 +18,7 @@ export def colony_ai_id [fae: string]: nothing -> string {
 export def session_nom [identity: string]: nothing -> oneof<string, nothing> {
     let ctx = ($env.XDG_CACHE_HOME | path join "sourcetrait" "empower" "claudeline" $identity "context" "latest.yaml")
     if ($ctx | path exists) {
-        open --raw $ctx | decode | from yaml | get -i session_nom
+        open --raw $ctx | decode | from yaml | get -o session_nom
     } else {
         null
     }

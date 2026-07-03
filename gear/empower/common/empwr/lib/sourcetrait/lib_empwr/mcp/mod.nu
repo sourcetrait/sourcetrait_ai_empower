@@ -1,24 +1,28 @@
 # nushell_mcp administration from the user's shell (`empwr mcp ...`).
 #
 # Wraps `nushell_mcp [--id ..] [--namespace ..] cli <tool> ...` and parses the
-# machine JSON the cli emits when piped into real nu values: data-bearing
+# bare compact JSON the cli always emits into real nu values: data-bearing
 # results come back as records/tables, exec-shaped results unwrap, and an
-# error envelope becomes `error make` carrying the diagnostics. This module is
-# the cli's ONLY consumer - the user reaches nushell_mcp through `empwr mcp`,
-# and the agent drives the MCP tools directly, never the cli.
+# error envelope becomes `error make` carrying the diagnostics. The exports
+# are nu-native - records in, nu values out; the NUON argv serialization to
+# the cli is internal plumbing. This module is the cli's ONLY consumer - the
+# user reaches nushell_mcp through `empwr mcp`, and the agent drives the MCP
+# tools directly, never the cli.
 #
 # An empty --id / --namespace (the default) means the binary's own default
 # state coordinate; --timeout-ms 0 (the default) means the binary's default.
 
 # run one cli invocation and parse its envelope; error make on a failure.
-def mcp_cli [id: string, namespace: string, cli_args: list<string>]: nothing -> any {
+# Every envelope is a JSON object -> record; the no-return tools (kill,
+# library uninstall) print nothing -> null.
+def mcp_cli [id: string, namespace: string, cli_args: list<string>]: nothing -> oneof<record, nothing> {
     mut argv: list<string> = []
     if $id != "" { $argv = ($argv | append ["--id" $id]) }
     if $namespace != "" { $argv = ($argv | append ["--namespace" $namespace]) }
     let argv = ($argv | append "cli" | append $cli_args)
     let outcome = (^nushell_mcp ...$argv | complete)
     let raw = ($outcome.stdout | str trim)
-    let parsed: any = (if ($raw | is-empty) { null } else { $raw | from json })
+    let parsed: oneof<record, nothing> = (if ($raw | is-empty) { null } else { $raw | from json })
     if $outcome.exit_code != 0 {
         error make { msg: $"nushell_mcp cli failed: (mcp_error_detail $parsed $outcome.stderr)" }
     }
@@ -26,7 +30,7 @@ def mcp_cli [id: string, namespace: string, cli_args: list<string>]: nothing -> 
 }
 
 # render an error envelope's diagnostics; fall back to stderr.
-def mcp_error_detail [parsed: any, stderr: string]: nothing -> string {
+def mcp_error_detail [parsed: oneof<record, nothing>, stderr: string]: nothing -> string {
     let envelope_errors: any = (if ($parsed | describe | str starts-with "record") {
         $parsed | get -o error.errors
     } else {
@@ -61,8 +65,9 @@ export def inspect [namepath: string, --id: string = "", --namespace: string = "
     mcp_cli $id $namespace ["inspect" $namepath]
 }
 
-# Invoke a committed library function; returns the result value itself.
-export def call [namepath: string, args: record = {}, --id: string = "", --namespace: string = "", --timeout-ms: int = 0]: nothing -> any {
+# Invoke a committed library function; returns the result value itself
+# (a record matching the target's result schema).
+export def call [namepath: string, args: record = {}, --id: string = "", --namespace: string = "", --timeout-ms: int = 0]: nothing -> record {
     let cli_args = (with_timeout ["call" $namepath ($args | to nuon)] $timeout_ms)
     (mcp_cli $id $namespace $cli_args) | get result
 }
@@ -91,8 +96,9 @@ export def interact [body: string, --args-schema: record = {}, --result-schema: 
     mcp_cli $id $namespace $cli_args
 }
 
-# Re-evaluate a cached run() body with fresh args; returns the result value.
-export def rerun [rerun_id: string, args: record = {}, --id: string = "", --namespace: string = "", --timeout-ms: int = 0]: nothing -> any {
+# Re-evaluate a cached run() body with fresh args; returns the result value
+# (a record matching the cached body's result schema).
+export def rerun [rerun_id: string, args: record = {}, --id: string = "", --namespace: string = "", --timeout-ms: int = 0]: nothing -> record {
     let cli_args = (with_timeout ["rerun" $rerun_id ($args | to nuon)] $timeout_ms)
     (mcp_cli $id $namespace $cli_args) | get result
 }
@@ -122,7 +128,9 @@ export def commit [library: string, --id: string = "", --namespace: string = ""]
     mcp_cli $id $namespace ["commit" $library]
 }
 
-# Library administration: new, install, check, uninstall.
-export def library [action: string, library: string, source_dir: path, --id: string = "", --namespace: string = ""]: nothing -> any {
+# Library administration: new, install, check, uninstall. Returns the
+# action's summary envelope; uninstall's summary is absent (an empty
+# record).
+export def library [action: string, library: string, source_dir: path, --id: string = "", --namespace: string = ""]: nothing -> record {
     mcp_cli $id $namespace ["library" $action $library ($source_dir | into string)]
 }

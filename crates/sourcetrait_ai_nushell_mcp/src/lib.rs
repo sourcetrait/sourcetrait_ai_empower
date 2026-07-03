@@ -111,7 +111,7 @@ pub(crate) use std::{
     collections::HashMap,
     fmt::Display,
     fs, io,
-    io::{IsTerminal, Read, Write},
+    io::{Read, Write},
     hash::{Hash, Hasher},
     ops::ControlFlow,
     panic::{AssertUnwindSafe, catch_unwind},

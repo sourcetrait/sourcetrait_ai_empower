@@ -1,18 +1,20 @@
 use crate::*;
 
-/// What: the one-shot human CLI driver. Builds the same substrate the MCP
+/// What: the one-shot CLI driver. Builds the same substrate the MCP
 /// serve path uses (keypair + libraries repo + lock registry, the lazy
 /// stateless pool, a lazy interact slot), dispatches ONE tool invocation
-/// directly to the pub(crate) tool handlers, prints the envelope as
-/// pretty JSON on stdout, and exits: 0 on success, 1 on an error envelope
-/// or rmcp-boundary error, 2 on unparseable operator input.
+/// directly to the pub(crate) tool handlers, prints the envelope as bare
+/// compact JSON (one line, machine format -- the cli's consumer is a
+/// wrapper, never a human eye) on stdout, and exits: 0 on success, 1 on
+/// an error envelope or rmcp-boundary error, 2 on unparseable operator
+/// input.
 ///
 /// Why: the operator gets the identical tool surface with no agent and no
 /// MCP client -- same impls, same envelopes, no rmcp transport. Deny does
-/// not apply (it gates agent registration; this is the human surface).
-/// interact is single-shot (session state dies with this process);
-/// processes/kill are process-scoped, so a one-shot invocation shows
-/// none. Writes into a store a live agent host is using are the
+/// not apply (it gates agent registration; this surface is the
+/// operator's). interact is single-shot (session state dies with this
+/// process); processes/kill are process-scoped, so a one-shot invocation
+/// shows none. Writes into a store a live agent host is using are the
 /// operator's own risk (git's index lock keeps the repo itself safe).
 ///
 /// Where: called by `cli::host_main` for the `cli` subcommand; CONFIG is
@@ -141,7 +143,9 @@ pub(crate) fn run_oneshot(tool: CliTool) {
                     // The `error` wrapper is the success-vs-error
                     // discriminator on every envelope.
                     let failed = value.get("error").is_some();
-                    println!("{}", render_envelope_json(&value));
+                    // serde_json::Value's Display IS compact JSON -- the
+                    // machine format, one line, no color, no indentation.
+                    println!("{value}");
                     if failed { 1 } else { 0 }
                 }
                 // No-return success (kill): absence == success, print
@@ -205,18 +209,4 @@ fn nuon_record_arg(input: Option<&str>) -> mcp::JsonObject {
             process::exit(2);
         }
     }
-}
-
-/// Render an envelope as pretty-printed JSON: colorized (json_colorizer,
-/// default theme) when stdout is a TERMINAL, plain when piped -- so
-/// `| from json` and captured output stay byte-clean parseable JSON
-/// (color: false takes serde_json's own PrettyFormatter path). On the
-/// terminal branch the `colored` crate's NO_COLOR/CLICOLOR overrides
-/// still apply.
-fn render_envelope_json(value: &json::Value) -> String {
-    let options = json_colorizer::FormatOptions {
-        color: io::stdout().is_terminal(),
-        ..json_colorizer::FormatOptions::default()
-    };
-    json_colorizer::format_json(value, &options)
 }

@@ -143,9 +143,13 @@ def git_branches []: nothing -> list<string> {
 }
 
 # --- mcp: nushell_mcp administration (fronts gear/common/sourcetrait/lib_empwr) ---
-# Record-shaped inputs cross the process boundary as NUON strings; results
-# print rendered (pipe-consumers on a box shell should prefer the library:
-# `use gear/common/sourcetrait/lib_empwr` -> `lib_empwr mcp ...`).
+# The nu-native surface is the LIBRARY (records in, nu values out):
+# `use gear/common/sourcetrait/lib_empwr` -> `lib_empwr mcp call <np> {x: 5}`.
+# This bin is an external process, and nu binds each argv item to a script
+# `main` as a quoted STRING token (a record-typed param never binds:
+# "expected block, closure or record") - so record-shaped inputs cross THIS
+# boundary as NUON strings and are parsed back to records immediately below.
+# In-shell nu work should prefer the library import over the bin.
 
 export def "main mcp info" [--id: string = "", --namespace: string = ""] {
     lib_empwr mcp info --id $id --namespace $namespace

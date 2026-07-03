@@ -55,15 +55,16 @@ Example `.mcp.json` entries (one binary, two channels):
 }
 ```
 
-## Human CLI
+## One-shot CLI
 
 `nushell_mcp cli <tool> ...` runs ONE tool in-process against the
-configured store and prints the envelope as pretty JSON on stdout -
-colorized when stdout is a terminal, plain when piped (`| from json`
-and captured output stay byte-clean JSON) - no agent, no MCP client.
-Exit codes: 0 success, 1 error envelope, 2 unparseable input.
-Record-shaped INPUTS are single-quoted NUON strings; an omitted args
-value is the empty record.
+configured store and prints the envelope as bare compact JSON on
+stdout - one line, machine format, no color (`| from json` and
+captured output are byte-clean) - no agent, no MCP client. The cli is
+a wrapper's substrate, not a human display surface. Exit codes: 0
+success, 1 error envelope, 2 unparseable input. Record-shaped INPUTS
+are single-quoted NUON strings; an omitted args value is the empty
+record.
 
 ```nu
 nushell_mcp cli info
@@ -77,10 +78,10 @@ nushell_mcp cli run --args-schema '{x: int}' --args '{x: 5}' --result-schema '{o
 All 12 tools are mirrored. Caveats: `interact` is single-shot (session
 state dies with the process); `processes` / `kill` are process-scoped
 (a one-shot invocation shows none); `--deny` does not apply (it gates
-agent registration, not the human surface). Writing into a store a live
-agent host is using is the operator's own risk - git's index lock keeps
-the library repo itself safe, but an in-flight call can transiently
-fail.
+agent registration, not the operator surface). Writing into a store a
+live agent host is using is the operator's own risk - git's index lock
+keeps the library repo itself safe, but an in-flight call can
+transiently fail.
 
 ## Overview
 - [`run()`](#run) Evaluate a typed nushell source-code body on a stateless worker.

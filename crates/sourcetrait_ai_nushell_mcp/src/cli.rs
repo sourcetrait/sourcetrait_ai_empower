@@ -2,7 +2,7 @@ use crate::*;
 
 /// What: the host binary's CLI surface -- the runtime store coordinate
 /// (`--id` / `--namespace`), the operator tool-deny list (`--deny`), and
-/// an optional `cli` subcommand (the human one-shot surface). A bare
+/// an optional `cli` subcommand (the one-shot tool surface). A bare
 /// invocation serves MCP over stdio, so `.mcp.json` entries stay plain
 /// commands plus args.
 ///
@@ -34,9 +34,9 @@ pub(crate) struct HostCli {
 /// What: the host's subcommands. Absent = serve MCP over stdio.
 #[derive(clap::Subcommand)]
 pub(crate) enum HostCommand {
-    /// One-shot human CLI over the tool surface (prints the tool
-    /// envelope as pretty JSON, colorized on a terminal; exit 1 on an
-    /// error envelope).
+    /// One-shot CLI over the tool surface (prints the tool envelope as
+    /// bare compact JSON, one line, machine format; exit 1 on an error
+    /// envelope).
     Cli {
         #[command(subcommand)]
         tool: CliTool,
@@ -45,12 +45,16 @@ pub(crate) enum HostCommand {
 
 /// What: one-shot mirrors of the 12 MCP tools. Record-shaped inputs
 /// arrive as single-quoted NUON strings (e.g. '{x: 5}'); an omitted args
-/// value defaults to the empty record.
+/// value defaults to the empty record. Output is bare compact JSON --
+/// the cli's consumer is a wrapper (e.g. a nu-native front that takes
+/// real records and serializes at this argv boundary), never a human
+/// eye.
 ///
 /// Why: gives the operator the identical tool surface with no agent and
 /// no MCP client -- library authoring (new/commit/library), consumption
-/// (call/inspect/info), and eval (run) from any terminal. Deny does not
-/// apply here (it gates agent registration, not the human).
+/// (call/inspect/info), and eval (run) -- through whatever front wraps
+/// this binary. Deny does not apply here (it gates agent registration,
+/// not the operator).
 ///
 /// Where: dispatched by `server::oneshot::run_oneshot`.
 #[derive(clap::Subcommand)]
@@ -185,7 +189,7 @@ fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
 /// What: the host binary's entry point: parse `HostCli`, store the
 /// runtime `Config` (the set-once global every host-side reader uses),
 /// then either serve MCP over stdio (no subcommand) or run the one-shot
-/// human CLI.
+/// CLI.
 ///
 /// Why: CONFIG is stored here -- before serve/one-shot dispatch -- so it
 /// precedes every reader (path helpers, router assembly, worker spawns)

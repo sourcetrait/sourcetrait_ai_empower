@@ -1,14 +1,16 @@
-//! One-shot human CLI tests (`nushell_mcp cli <tool> ...`).
+//! One-shot CLI tests (`nushell_mcp cli <tool> ...`).
 //!
 //! Verifies:
-//!   - `cli info` prints the envelope as parseable pretty JSON, exits 0;
+//!   - `cli info` prints the envelope as parseable compact JSON, exits 0;
 //!   - the library lifecycle (library new -> commit -> call with a NUON
 //!     args record) works end to end as plain subprocesses;
 //!   - `cli run` accepts NUON schemas/args and evaluates;
 //!   - an error envelope exits 1 (and still prints the envelope);
 //!   - `cli kill` (no-return tool) prints nothing and exits 0.
-//! Inputs are NUON; OUTPUT is pretty JSON (the stdout of every
-//! envelope-bearing invocation must parse with serde_json).
+//! Inputs are NUON; OUTPUT is bare compact JSON -- one line, no color,
+//! no indentation, always (the cli's consumer is a wrapper, never a
+//! human eye); the stdout of every envelope-bearing invocation must
+//! parse with serde_json.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -31,7 +33,7 @@ fn stdout_str(out: &Output) -> String {
 }
 
 /// Parse an envelope-bearing invocation's stdout as JSON (the output
-/// contract: pretty JSON, machine-parseable).
+/// contract: bare compact JSON, machine format).
 fn stdout_json(out: &Output) -> serde_json::Value {
     let text = stdout_str(out);
     serde_json::from_str(text.trim())
@@ -206,9 +208,10 @@ fn cli_error_envelope_exits_one() {
 }
 
 #[test]
-fn cli_piped_output_carries_no_ansi() {
-    // Color is gated on stdout being a terminal; captured/piped stdout
-    // (this test, any `| from json`) must be byte-clean JSON.
+fn cli_output_is_bare_compact_json() {
+    // The machine-format contract: bare compact JSON always -- one
+    // line, no ANSI color, no pretty indentation -- so a wrapper's
+    // capture (`| from json`) is byte-clean without a tty branch.
     let data = tempfile::tempdir().expect("data");
     let cache = tempfile::tempdir().expect("cache");
     let out = cli(
@@ -220,7 +223,16 @@ fn cli_piped_output_carries_no_ansi() {
     let text = stdout_str(&out);
     assert!(
         !text.contains('\u{1b}'),
-        "piped stdout must carry no ANSI escapes; got {text:?}",
+        "stdout must carry no ANSI escapes; got {text:?}",
+    );
+    let trimmed = text.trim();
+    assert!(
+        !trimmed.contains('\n'),
+        "compact JSON is a single line; got {text:?}",
+    );
+    assert!(
+        trimmed.starts_with('{') && trimmed.ends_with('}'),
+        "stdout should be exactly one JSON object; got {text:?}",
     );
 }
 

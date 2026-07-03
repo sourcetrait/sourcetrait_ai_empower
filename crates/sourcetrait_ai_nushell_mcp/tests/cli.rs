@@ -206,6 +206,25 @@ fn cli_error_envelope_exits_one() {
 }
 
 #[test]
+fn cli_piped_output_carries_no_ansi() {
+    // Color is gated on stdout being a terminal; captured/piped stdout
+    // (this test, any `| from json`) must be byte-clean JSON.
+    let data = tempfile::tempdir().expect("data");
+    let cache = tempfile::tempdir().expect("cache");
+    let out = cli(
+        &["--id", "cid", "cli", "info"],
+        data.path(),
+        cache.path(),
+    );
+    assert!(out.status.success(), "cli info should exit 0; got {out:?}");
+    let text = stdout_str(&out);
+    assert!(
+        !text.contains('\u{1b}'),
+        "piped stdout must carry no ANSI escapes; got {text:?}",
+    );
+}
+
+#[test]
 fn cli_kill_prints_nothing_and_exits_zero() {
     let data = tempfile::tempdir().expect("data");
     let cache = tempfile::tempdir().expect("cache");

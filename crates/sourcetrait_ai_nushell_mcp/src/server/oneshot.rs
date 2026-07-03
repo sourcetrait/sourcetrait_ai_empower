@@ -207,10 +207,16 @@ fn nuon_record_arg(input: Option<&str>) -> mcp::JsonObject {
     }
 }
 
-/// Render an envelope as pretty-printed JSON (readable on a terminal,
-/// machine-parseable, `| from json` at a nushell prompt); falls back to
-/// the compact form if pretty serialization ever fails (it should not --
-/// envelopes are JSON-shaped by construction).
+/// Render an envelope as pretty-printed JSON: colorized (json_colorizer,
+/// default theme) when stdout is a TERMINAL, plain when piped -- so
+/// `| from json` and captured output stay byte-clean parseable JSON
+/// (color: false takes serde_json's own PrettyFormatter path). On the
+/// terminal branch the `colored` crate's NO_COLOR/CLICOLOR overrides
+/// still apply.
 fn render_envelope_json(value: &json::Value) -> String {
-    json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+    let options = json_colorizer::FormatOptions {
+        color: io::stdout().is_terminal(),
+        ..json_colorizer::FormatOptions::default()
+    };
+    json_colorizer::format_json(value, &options)
 }

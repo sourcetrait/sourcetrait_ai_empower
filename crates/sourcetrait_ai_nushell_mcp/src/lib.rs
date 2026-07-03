@@ -111,7 +111,7 @@ pub(crate) use std::{
     collections::HashMap,
     fmt::Display,
     fs, io,
-    io::{Read, Write},
+    io::{IsTerminal, Read, Write},
     hash::{Hash, Hasher},
     ops::ControlFlow,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -202,7 +202,7 @@ pub(crate) mod tk {
 }
 
 pub(crate) mod json {
-    pub(crate) use serde_json::{Value, from_slice, to_string_pretty, to_value, to_vec};
+    pub(crate) use serde_json::{Value, from_slice, to_value, to_vec};
 }
 
 pub use crate::{cli::host_main, worker::run::worker_main};

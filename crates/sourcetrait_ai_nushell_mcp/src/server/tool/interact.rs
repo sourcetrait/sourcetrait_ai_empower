@@ -13,7 +13,7 @@ impl NuSh {
         description = "Evaluate a typed nushell source-code body on a persistent stateful worker.",
         output_schema = mcp::schema_for_type::<InteractEnvelope>()
     )]
-    async fn interact(
+    pub(crate) async fn interact(
         &self,
         mcp::Parameters(p): mcp::Parameters<RunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

@@ -27,6 +27,9 @@ impl Host {
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
         let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
+            // Explicit store coordinate so path assertions are
+            // deterministic regardless of the test environment's $USER.
+            .args(["--id", "tid", "--namespace", "default"])
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
             .env("XDG_CACHE_HOME", cache_dir.path())
@@ -55,6 +58,8 @@ impl Host {
             .path()
             .join("sourcetrait")
             .join("nushell_mcp")
+            .join("tid")
+            .join("default")
             .join("libraries")
     }
 

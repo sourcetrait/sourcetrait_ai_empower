@@ -11,7 +11,7 @@ impl NuSh {
     #[mcp::tool(
         description = "Cancel an in-flight usage by its nonce."
     )]
-    async fn kill(
+    pub(crate) async fn kill(
         &self,
         mcp::Parameters(p): mcp::Parameters<KillParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

@@ -492,11 +492,6 @@ fn validate_new_coordinate(
             library: library.to_string(),
         });
     }
-    if build_target().is_test() && !lib_name.ends_with("_test") {
-        return Err(Error::LibraryTestSuffixRequired {
-            library: library.to_string(),
-        });
-    }
     if !is_valid_module_path(module_path) {
         return Err(Error::LibraryInvalidName {
             library: module_path.to_string(),

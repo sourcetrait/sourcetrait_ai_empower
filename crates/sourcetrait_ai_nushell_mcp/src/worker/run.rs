@@ -6,14 +6,13 @@ use crate::*;
 /// files (`nushell_mcp_worker.rs` + `nushell_mcp_test_worker.rs`) can
 /// dispatch through it as one-liners.
 ///
-/// Why: factoring the CLI parse out of `run_worker` lets a single
-/// shared entry point drive both the prod and the `_test` worker
-/// subprocesses -- they share one parse path. `BuildTarget` plays
-/// no role in workers (see `crate::build_target`); the worker just
-/// reads `Mode` and starts evaluating IPC frames.
+/// Why: factoring the CLI parse out of `run_worker` keeps the worker
+/// entry a one-liner. The host's runtime `Config` plays no role in
+/// workers (they never read it -- the host passes everything across
+/// the spawn boundary); the worker just reads `Mode` and starts
+/// evaluating IPC frames.
 ///
-/// Where: called from `src/bin/nushell_mcp_worker.rs::main` and
-/// `src/bin/nushell_mcp_test_worker.rs::main`.
+/// Where: called from `src/bin/nushell_mcp_worker.rs::main`.
 pub fn worker_main() {
     run_worker(parse_worker_mode());
 }

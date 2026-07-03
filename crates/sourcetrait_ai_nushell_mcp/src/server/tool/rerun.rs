@@ -25,7 +25,7 @@ impl NuSh {
         description = "Re-evaluate a cached `run()` body with fresh args.",
         output_schema = mcp::schema_for_type::<RerunEnvelope>()
     )]
-    async fn rerun(
+    pub(crate) async fn rerun(
         &self,
         mcp::Parameters(p): mcp::Parameters<RerunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

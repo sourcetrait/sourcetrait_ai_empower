@@ -25,7 +25,7 @@ impl NuSh {
         description = "Invoke a committed library function with typed args.",
         output_schema = mcp::schema_for_type::<CallEnvelope>()
     )]
-    async fn call(
+    pub(crate) async fn call(
         &self,
         mcp::Parameters(p): mcp::Parameters<CallParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

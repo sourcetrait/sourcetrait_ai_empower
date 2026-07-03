@@ -59,7 +59,8 @@ pub struct NuSh {
     pub(crate) library_locks: Arc<LibraryLocks>,
     pub(crate) lint_engine: Arc<ParseEngine>,
     pub(crate) in_flight: Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
-    #[allow(dead_code)]
+    /// The deny-filtered tool surface; `#[tool_handler(router =
+    /// self.tool_router)]` dispatches list_tools + call_tool off it.
     pub(crate) tool_router: mcp::ToolRouter<NuSh>,
 }
 
@@ -105,31 +106,33 @@ pub(crate) enum InFlightKind {
 }
 
 impl NuSh {
-    /// What: constructor for `NuSh`. Wraps the two `WorkerHandle`
-    /// values in `Arc<tk::AsyncMutex<...>>` for shared serialized
-    /// access, takes the already-Arc-wrapped nonce_gen + library_locks
-    /// directly, and initializes the rmcp `tool_router` from the
-    /// combined `Self::tool_router()` (assembled in `tool::handler`).
+    /// What: constructor for `NuSh`. Wraps the interact slot in
+    /// `Arc<tk::AsyncMutex<Option<...>>>` (None = lazy: the first
+    /// interact() spawns it -- the one-shot CLI path), takes the
+    /// already-Arc-wrapped nonce_gen + library_locks directly, and
+    /// initializes the rmcp `tool_router` from the deny-filtered
+    /// `Self::tool_router()` (assembled in `tool::handler` from
+    /// `config().deny`).
     ///
-    /// Why: all the wrapping happens here so calling code in
-    /// `run_server` can pass plain `WorkerHandle`s and Arc references
-    /// without juggling layers. The combined tool_router has to be
-    /// initialized AFTER all the inputs are owned, hence initialization
-    /// at the bottom of the field block.
+    /// Why: all the wrapping happens here so calling code passes plain
+    /// values without juggling layers. The serve path passes
+    /// Some(eagerly-spawned worker) for first-call latency; the one-shot
+    /// CLI passes None so an info/inspect invocation never pays a
+    /// stateful-worker spawn.
     ///
-    /// Where: called once in `server::run::run_server` after
-    /// substrate + worker spawn. Tests spawn their own NuSh
+    /// Where: called by `server::run::run_server` (Some) and
+    /// `server::oneshot::run_oneshot` (None). Tests spawn their own NuSh
     /// indirectly via the host binary.
     pub(crate) fn new(
         runs_pool: Arc<Pool>,
-        interact_worker: WorkerHandle,
+        interact_worker: Option<WorkerHandle>,
         nonce_gen: Arc<NonceGen>,
         library_locks: Arc<LibraryLocks>,
         lint_engine: Arc<ParseEngine>,
     ) -> Self {
         Self {
             runs_pool,
-            interact_worker: Arc::new(tk::AsyncMutex::new(Some(interact_worker))),
+            interact_worker: Arc::new(tk::AsyncMutex::new(interact_worker)),
             nonce_gen,
             library_locks,
             lint_engine,

@@ -41,7 +41,8 @@ fn json_object_to_nu_value(map: &mcp::JsonObject) -> nu::Value {
 /// `nu_protocol::Value`. Numbers preserve the int/float distinction;
 /// non-finite or out-of-i64-range numbers degrade to a string
 /// preserving the original token (rare for agent-supplied JSON).
-fn json_value_to_nu_value(v: &serde_json::Value) -> nu::Value {
+/// pub(crate): the one-shot CLI reuses it to render envelopes as NUON.
+pub(crate) fn json_value_to_nu_value(v: &serde_json::Value) -> nu::Value {
     let span = nu::Span::unknown();
     match v {
         serde_json::Value::Null => nu::Value::nothing(span),

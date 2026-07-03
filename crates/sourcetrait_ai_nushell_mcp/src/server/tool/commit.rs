@@ -21,7 +21,7 @@ impl NuSh {
         description = "Commit the agent's library source-code to the MCP's repository for live use.",
         output_schema = mcp::schema_for_type::<CommitEnvelope>()
     )]
-    async fn commit(
+    pub(crate) async fn commit(
         &self,
         mcp::Parameters(p): mcp::Parameters<CommitParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

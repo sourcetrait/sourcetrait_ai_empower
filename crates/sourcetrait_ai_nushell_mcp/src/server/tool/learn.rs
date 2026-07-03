@@ -91,7 +91,7 @@ impl NuSh {
         description = "Generate the latest `/nu` SKILL.md.",
         output_schema = mcp::schema_for_type::<LearnEnvelope>()
     )]
-    async fn learn(
+    pub(crate) async fn learn(
         &self,
         mcp::Parameters(p): mcp::Parameters<LearnParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

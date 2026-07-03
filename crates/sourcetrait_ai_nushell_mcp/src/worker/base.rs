@@ -172,7 +172,7 @@ fn seed_env(engine_state: &mut nu::EngineState) {
 /// `find_in_dirs_with_id` reads FIRST - and, being a const, it can't be
 /// overridden by an agent body mutating `$env.NU_LIB_DIRS`, so the MCP's store
 /// stays the sole controlled lib path. The worker can't resolve the
-/// target-namespaced path itself (it never calls `build_target()`), so the host
+/// store-namespaced path itself (it never reads `config()`), so the host
 /// passes it across the spawn boundary.
 ///
 /// Where: called once in `WarmBase::new` after `seed_env`, both worker modes.

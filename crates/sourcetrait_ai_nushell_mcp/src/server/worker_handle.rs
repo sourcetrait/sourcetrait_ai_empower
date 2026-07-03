@@ -87,9 +87,17 @@ impl WorkerHandle {
             .arg(mode_arg)
             // Hand the canonical libraries root to the worker so WarmBase can set
             // $env.NU_LIB_DIRS - lets run()/interact() bodies `use <library>
-            // <module> ...`. The worker resolves no XDG/target paths itself, so
-            // the host (which knows the target) passes it across the spawn.
+            // <module> ...`. The worker resolves no XDG/store paths itself, so
+            // the host (which knows the store coordinate) passes it across the
+            // spawn.
             .env("NUSHELL_MCP_LIBRARIES_DIR", libraries_dir())
+            // The store coordinate this host serves. seed_env forwards all
+            // inherited env into $env, so bodies + committed call-targets read
+            // $env.NUSHELL_MCP_ID / $env.NUSHELL_MCP_NAMESPACE ambiently (the
+            // who-am-I answer without pid matching). Workers still never read
+            // config().
+            .env("NUSHELL_MCP_ID", &config().id)
+            .env("NUSHELL_MCP_NAMESPACE", &config().namespace)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())

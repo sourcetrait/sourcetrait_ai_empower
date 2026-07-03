@@ -53,20 +53,20 @@ impl CacheKind {
 pub(crate) static BASE_DIRS: LazyLock<dirs::BaseDirs> =
     LazyLock::new(|| dirs::BaseDirs::new().expect("BaseDirs::new failed"));
 
-/// What: returns `$XDG_CACHE_HOME/sourcetrait/<target_name>/`, the
-/// per-app cache root where per-call stdout/stderr logs
+/// What: returns
+/// `$XDG_CACHE_HOME/sourcetrait/nushell_mcp/<id>/<namespace>/`, the
+/// per-store cache root where per-call stdout/stderr logs
 /// (runs/interacts/calls) and the content-addressed closure cache
 /// (closures) live. The vendor segment is
-/// `lib_empower::consts::SOURCETRAIT`; the target name is
-/// `"nushell_mcp"` on Main and `"nushell_mcp_test"` on Test, per
-/// `build_target().name()`.
+/// `lib_empower::consts::SOURCETRAIT`; the app segment is
+/// `consts::NUSHELL_MCP`; the `<id>/<namespace>` leaf is the runtime
+/// store coordinate from `config()`.
 ///
 /// Why: XDG cache is the platform-correct location for regenerable
 /// artifacts; the `sourcetrait/` vendor segment namespaces every
-/// sourcetrait app under one parent, and the `BuildTarget` leaf keeps
-/// the test sandbox completely isolated from the production cache so
-/// a `_test` host can run live alongside the production host without
-/// touching the same files.
+/// sourcetrait app under one parent, and the id/namespace leaf keeps
+/// every store (each agent, each test namespace) fully isolated so
+/// co-running hosts never touch the same files.
 ///
 /// Where: called by `cache_kind_dir` (which appends a CacheKind
 /// subdir) and `closure_cache_file` (which appends `closures/` +
@@ -75,31 +75,34 @@ pub(crate) fn cache_base_dir() -> PathBuf {
     BASE_DIRS
         .cache_dir()
         .join(lib_empower::consts::SOURCETRAIT)
-        .join(build_target().name())
+        .join(lib_empower::consts::NUSHELL_MCP)
+        .join(&config().id)
+        .join(&config().namespace)
 }
 
-/// What: returns `$XDG_DATA_HOME/sourcetrait/<target_name>/`, the
-/// per-app data root where the signing keypair and the libraries git
-/// repo live (slice 3 substrate). The vendor segment is
-/// `lib_empower::consts::SOURCETRAIT`; the target name is
-/// `"nushell_mcp"` on Main and `"nushell_mcp_test"` on Test, per
-/// `build_target().name()`.
+/// What: returns
+/// `$XDG_DATA_HOME/sourcetrait/nushell_mcp/<id>/<namespace>/`, the
+/// per-store data root where the signing keypair and the libraries git
+/// repo live. The vendor segment is `lib_empower::consts::SOURCETRAIT`;
+/// the app segment is `consts::NUSHELL_MCP`; the `<id>/<namespace>`
+/// leaf is the runtime store coordinate from `config()`.
 ///
 /// Why: XDG data is the platform-correct location for non-regenerable
 /// content; losing it would mean losing library registrations and
-/// the signing keypair. The `sourcetrait/` vendor segment namespaces
-/// every sourcetrait app under one parent; the `BuildTarget` leaf
-/// keeps the test sandbox's libraries / keypair completely isolated
-/// from the production ones.
+/// the signing keypair. The id-first leaf order groups an agent's
+/// whole state (every namespace) under one subtree, so wiping or
+/// backing an agent up is one directory operation.
 ///
 /// Where: called by `server::library` path helpers (`keypair_dir`,
 /// `libraries_dir`, `library_dir`, `library_meta_path`,
-/// `library_root_modnu_path`) to compose every slice-3 path.
+/// `library_docs_dir`) to compose every substrate path.
 pub(crate) fn data_base_dir() -> PathBuf {
     BASE_DIRS
         .data_dir()
         .join(lib_empower::consts::SOURCETRAIT)
-        .join(build_target().name())
+        .join(lib_empower::consts::NUSHELL_MCP)
+        .join(&config().id)
+        .join(&config().namespace)
 }
 
 /// What: returns the `<cache_base>/<kind>/` directory for the given

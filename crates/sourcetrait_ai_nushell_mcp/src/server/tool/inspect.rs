@@ -30,7 +30,7 @@ impl NuSh {
         description = "Detailed documentation of a specific callable library, module, function.",
         output_schema = mcp::schema_for_type::<InspectEnvelope>()
     )]
-    async fn inspect(
+    pub(crate) async fn inspect(
         &self,
         mcp::Parameters(p): mcp::Parameters<InspectParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

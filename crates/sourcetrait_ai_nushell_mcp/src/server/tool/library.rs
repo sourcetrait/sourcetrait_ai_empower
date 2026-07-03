@@ -61,7 +61,7 @@ impl NuSh {
         description = "Library administration: new, install, check, uninstall.",
         output_schema = mcp::schema_for_type::<LibraryEnvelope>()
     )]
-    async fn library(
+    pub(crate) async fn library(
         &self,
         mcp::Parameters(p): mcp::Parameters<LibraryParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

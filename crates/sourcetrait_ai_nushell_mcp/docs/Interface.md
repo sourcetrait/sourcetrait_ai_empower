@@ -1,5 +1,85 @@
 # MCP Interface
 
+## Server
+
+One binary, one variant surface, selected at runtime by trusted operator
+config (the `.mcp.json` server entry's `args`, or the invoking command
+line):
+
+```
+nushell_mcp [--id <string>] [--namespace <string>] [--deny <csv>]
+```
+
+- `--id` (default: `$USER`) - the agent identity owning the state store.
+- `--namespace` (default: `default`) - the state namespace within the
+  id's store.
+- `--deny` - comma-separated tools to withhold from the surface. The
+  deniable set: `run, rerun, interact, call, learn, new, commit,
+  library`; the core four (`info`, `inspect`, `processes`, `kill`)
+  always register. A denied tool is ABSENT from tools/list (never
+  registered); calling it anyway fails at the protocol layer. There is
+  no implication between tokens - denying `run` does not deny `rerun`;
+  list both when both are meant. An unknown token fails startup.
+
+The values are trusted config, not validated input: a malformed id or
+namespace surfaces as the natural downstream error (improper
+configuration).
+
+Every store is fully private per `(id, namespace)`:
+
+```
+$XDG_DATA_HOME/sourcetrait/nushell_mcp/<id>/<namespace>/{keypair,libraries}
+$XDG_CACHE_HOME/sourcetrait/nushell_mcp/<id>/<namespace>/{runs,interacts,calls,closures}
+```
+
+Workers receive the coordinate as spawn env, so bodies and committed
+call-targets read `$env.NUSHELL_MCP_ID` / `$env.NUSHELL_MCP_NAMESPACE`
+ambiently; `info()` reports the same pair.
+
+Example `.mcp.json` entries (one binary, two channels):
+
+```json
+{
+  "mcpServers": {
+    "nushell": {
+      "type": "stdio",
+      "command": "/path/to/nushell_mcp",
+      "args": ["--id", "emptwo"]
+    },
+    "nushell_mcp_test": {
+      "type": "stdio",
+      "command": "/path/to/build/nushell_mcp",
+      "args": ["--id", "emptwo", "--namespace", "test"]
+    }
+  }
+}
+```
+
+## Human CLI
+
+`nushell_mcp cli <tool> ...` runs ONE tool in-process against the
+configured store and prints the envelope as pretty NUON on stdout - no
+agent, no MCP client. Exit codes: 0 success, 1 error envelope, 2
+unparseable input. Record-shaped inputs are single-quoted NUON strings;
+an omitted args value is the empty record.
+
+```nu
+nushell_mcp cli info
+nushell_mcp --id emptwo cli inspect sourcetrait/empower:pid:list_ai
+nushell_mcp cli call sourcetrait/geo:shape:area '{width: 3.0, height: 4.0}'
+nushell_mcp cli library new sourcetrait/mylib ~/src/mylib
+nushell_mcp cli commit sourcetrait/mylib
+nushell_mcp cli run --args-schema '{x: int}' --args '{x: 5}' --result-schema '{out: int}' '{ out: ($args.x + 1) }'
+```
+
+All 12 tools are mirrored. Caveats: `interact` is single-shot (session
+state dies with the process); `processes` / `kill` are process-scoped
+(a one-shot invocation shows none); `--deny` does not apply (it gates
+agent registration, not the human surface). Writing into a store a live
+agent host is using is the operator's own risk - git's index lock keeps
+the library repo itself safe, but an in-flight call can transiently
+fail.
+
 ## Overview
 - [`run()`](#run) Evaluate a typed nushell source-code body on a stateless worker.
 - [`interact()`](#interact) Evaluate a typed nushell source-code body on a persistent stateful worker.
@@ -344,6 +424,8 @@ Output (partial):
       "name": "nushell_mcp",
       "version": "0.0.46",
       "nu_version": "0.113.1",
+      "id": "emptwo",
+      "namespace": "default",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
       "libraries": [
         {

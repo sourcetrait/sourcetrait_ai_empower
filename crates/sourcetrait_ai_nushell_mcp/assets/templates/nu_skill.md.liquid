@@ -748,6 +748,14 @@ glob ($args.root | path join "**" "*")
 - [`library()`](#library) Library administration: new, install, check, uninstall.
 - [`learn()`](#learn) Generate the latest `/nu` SKILL.md.
 
+The server runs against one STATE STORE selected by its operator config
+(`--id` / `--namespace`; surfaced by `info()` as `id` + `namespace`) -
+libraries, caches, and the signing keypair are per-store, so two servers
+on different coordinates share nothing. The operator may also DENY tools
+(`--deny`): a denied tool is absent from tools/list entirely. Trust the
+live list - if a tool from this skill is missing, it is denied for this
+server, not broken.
+
 ### `run()`
 *Evaluate a typed nushell source-code body on a stateless worker.*
 
@@ -1085,6 +1093,8 @@ Output (partial):
       "name": "nushell_mcp",
       "version": "{{ version }}",
       "nu_version": "{{ nu_version }}",
+      "id": "emptwo",
+      "namespace": "default",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
       "libraries": [
         {
@@ -1122,8 +1132,11 @@ each library carries `path` (the editable source dir) + a one-line
 one-line `summary` + structured `args_schema` + `result_schema` (a
 void-args function reads `{}`). A library HAS modules; a module MAY HAVE
 submodules. `plugins` are positional `[name, version]` pairs (version is
-`null` when the plugin reports none). This is ground truth - prefer it
-over any static index. For a node's full details, call `inspect()`.
+`null` when the plugin reports none). `id` + `namespace` are the state
+store this server serves (its operator config); bodies see the same pair
+ambiently as `$env.NUSHELL_MCP_ID` / `$env.NUSHELL_MCP_NAMESPACE`. This
+is ground truth - prefer it over any static index. For a node's full
+details, call `inspect()`.
 
 ### `inspect()`
 *Detailed documentation of a specific callable library, module, function.*

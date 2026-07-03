@@ -5,6 +5,7 @@ pub(crate) mod server {
     pub(crate) mod lint;
     pub(crate) mod namepath;
     pub(crate) mod nonce;
+    pub(crate) mod oneshot;
     pub(crate) mod parse_engine;
     pub(crate) mod pool;
     pub(crate) mod rerun;
@@ -42,8 +43,8 @@ pub(crate) mod worker {
 pub(crate) mod ipc {
     pub(crate) mod framing;
 }
-pub(crate) mod build_target;
 pub(crate) mod cli;
+pub(crate) mod config;
 pub(crate) mod mode;
 pub(crate) mod plugins;
 pub(crate) mod template;
@@ -55,10 +56,11 @@ mod tests {
 }
 
 pub(crate) use crate::{
-    build_target::build_target,
-    cli::parse_worker_mode,
+    cli::{CliTool, parse_worker_mode},
+    config::{CONFIG, Config, DeniableTool, DenySet, config},
     ipc::framing::{read_frame, read_frame_async, write_frame, write_frame_async},
     mcp::ServiceExt,
+    mode::Mode,
     nu::FromValue,
     plugins::list_registered_plugins,
     server::{
@@ -74,19 +76,33 @@ pub(crate) use crate::{
         lint::{LINT_VIOLATION_CAP, lint_body},
         namepath::{Namepath, NamepathRef},
         nonce::{Nonce, NonceGen},
+        oneshot::run_oneshot,
         parse_engine::{
             ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body, wrap_as_module,
         },
         pool::Pool,
         rerun::RerunHash,
+        run::{run_server, worker_pool_cap},
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},
-        tool::common::{
-            ClosureCacheBody, InFlightKind, NuSh, RunParams, convert_schemas, dispatch_interact,
-            dispatch_pooled, envelope_to_structured, lint_run_params,
+        tool::{
+            call::CallParams,
+            commit::CommitParams,
+            common::{
+                ClosureCacheBody, InFlightKind, NuSh, RunParams, convert_schemas,
+                dispatch_interact, dispatch_pooled, envelope_to_structured, lint_run_params,
+            },
+            info::InfoParams,
+            inspect::InspectParams,
+            kill::KillParams,
+            learn::LearnParams,
+            library::LibraryParams,
+            new::NewParams,
+            processes::ProcessesParams,
+            rerun::RerunParams,
         },
         worker_handle::{WorkerHandle, kill_worker_pid},
     },
-    template::{build_call_source, build_interact_source, build_run_source},
+    template::{build_call_source, build_interact_source, build_run_source, json_value_to_nu_value},
     wire::{Hello, PROTOCOL_VERSION, RunRequest, RunResponse},
     worker::base::WarmBase,
 };
@@ -142,7 +158,7 @@ pub(crate) mod nu {
         debugger::WithoutDebug,
         engine::{EngineState, Stack, StateWorkingSet},
     };
-    pub(crate) use nuon::{ToNuonConfig, to_nuon};
+    pub(crate) use nuon::{ToNuonConfig, ToStyle, from_nuon, to_nuon};
 }
 
 pub(crate) mod sys {
@@ -189,6 +205,4 @@ pub(crate) mod json {
     pub(crate) use serde_json::{Value, from_slice, to_value, to_vec};
 }
 
-pub use crate::{
-    build_target::BuildTarget, mode::Mode, server::run::run_server, worker::run::worker_main,
-};
+pub use crate::{cli::host_main, worker::run::worker_main};

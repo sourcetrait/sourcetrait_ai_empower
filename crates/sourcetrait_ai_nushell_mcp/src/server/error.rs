@@ -147,9 +147,6 @@ pub enum Error {
         module_path: String,
         reason: String,
     },
-    LibraryTestSuffixRequired {
-        library: String,
-    },
     LibrarySourceMissing {
         path: String,
     },
@@ -226,7 +223,6 @@ impl Error {
             Self::LibraryInvalidName { .. } => "library::invalid_name",
             Self::LibraryNameDenied { .. } => "library::name_denied",
             Self::LibraryInvalidModulePath { .. } => "library::invalid_module_path",
-            Self::LibraryTestSuffixRequired { .. } => "library::test_suffix_required",
             Self::LibrarySourceMissing { .. } => "library::source_missing",
             Self::LibrarySourcePathMismatch { .. } => "library::source_path_mismatch",
             Self::LibraryInvalidAction { .. } => "library::invalid_action",
@@ -273,9 +269,6 @@ impl Error {
                 module_path,
                 reason,
             } => format!("invalid module path `{module_path}`: {reason}"),
-            Self::LibraryTestSuffixRequired { library } => {
-                format!("library `{library}` must end with `_test` on the test variant")
-            }
             Self::LibrarySourceMissing { path } => {
                 format!("library source path is missing or not a directory: {path}")
             }

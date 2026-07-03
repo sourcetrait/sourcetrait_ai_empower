@@ -22,7 +22,7 @@ impl NuSh {
         description = "Scaffold modules / functions (by namepath) into existing libraries.",
         output_schema = mcp::schema_for_type::<NewEnvelope>()
     )]
-    async fn scaffold(
+    pub(crate) async fn scaffold(
         &self,
         mcp::Parameters(p): mcp::Parameters<NewParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

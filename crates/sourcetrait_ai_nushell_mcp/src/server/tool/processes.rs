@@ -29,7 +29,7 @@ impl NuSh {
         description = "List in-flight MCP tool usage.",
         output_schema = mcp::schema_for_type::<ProcessesEnvelope>()
     )]
-    async fn processes(
+    pub(crate) async fn processes(
         &self,
         mcp::Parameters(_p): mcp::Parameters<ProcessesParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {

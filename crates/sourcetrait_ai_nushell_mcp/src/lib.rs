@@ -102,7 +102,7 @@ pub(crate) use crate::{
         },
         worker_handle::{WorkerHandle, kill_worker_pid},
     },
-    template::{build_call_source, build_interact_source, build_run_source, json_value_to_nu_value},
+    template::{build_call_source, build_interact_source, build_run_source},
     wire::{Hello, PROTOCOL_VERSION, RunRequest, RunResponse},
     worker::base::WarmBase,
 };
@@ -158,7 +158,7 @@ pub(crate) mod nu {
         debugger::WithoutDebug,
         engine::{EngineState, Stack, StateWorkingSet},
     };
-    pub(crate) use nuon::{ToNuonConfig, ToStyle, from_nuon, to_nuon};
+    pub(crate) use nuon::{ToNuonConfig, from_nuon, to_nuon};
 }
 
 pub(crate) mod sys {
@@ -202,7 +202,7 @@ pub(crate) mod tk {
 }
 
 pub(crate) mod json {
-    pub(crate) use serde_json::{Value, from_slice, to_value, to_vec};
+    pub(crate) use serde_json::{Value, from_slice, to_string_pretty, to_value, to_vec};
 }
 
 pub use crate::{cli::host_main, worker::run::worker_main};

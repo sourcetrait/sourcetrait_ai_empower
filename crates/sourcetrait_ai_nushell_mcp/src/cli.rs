@@ -35,7 +35,7 @@ pub(crate) struct HostCli {
 #[derive(clap::Subcommand)]
 pub(crate) enum HostCommand {
     /// One-shot human CLI over the tool surface (prints the tool
-    /// envelope as pretty NUON; exit 1 on an error envelope).
+    /// envelope as pretty JSON; exit 1 on an error envelope).
     Cli {
         #[command(subcommand)]
         tool: CliTool,

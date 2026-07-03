@@ -58,10 +58,11 @@ Example `.mcp.json` entries (one binary, two channels):
 ## Human CLI
 
 `nushell_mcp cli <tool> ...` runs ONE tool in-process against the
-configured store and prints the envelope as pretty NUON on stdout - no
-agent, no MCP client. Exit codes: 0 success, 1 error envelope, 2
-unparseable input. Record-shaped inputs are single-quoted NUON strings;
-an omitted args value is the empty record.
+configured store and prints the envelope as pretty JSON on stdout
+(`| from json` at a nushell prompt) - no agent, no MCP client. Exit
+codes: 0 success, 1 error envelope, 2 unparseable input. Record-shaped
+INPUTS are single-quoted NUON strings; an omitted args value is the
+empty record.
 
 ```nu
 nushell_mcp cli info

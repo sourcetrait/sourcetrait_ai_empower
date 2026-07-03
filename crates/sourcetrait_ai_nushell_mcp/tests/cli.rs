@@ -1,12 +1,14 @@
 //! One-shot human CLI tests (`nushell_mcp cli <tool> ...`).
 //!
 //! Verifies:
-//!   - `cli info` prints the envelope as NUON and exits 0;
+//!   - `cli info` prints the envelope as parseable pretty JSON, exits 0;
 //!   - the library lifecycle (library new -> commit -> call with a NUON
 //!     args record) works end to end as plain subprocesses;
 //!   - `cli run` accepts NUON schemas/args and evaluates;
 //!   - an error envelope exits 1 (and still prints the envelope);
 //!   - `cli kill` (no-return tool) prints nothing and exits 0.
+//! Inputs are NUON; OUTPUT is pretty JSON (the stdout of every
+//! envelope-bearing invocation must parse with serde_json).
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -28,6 +30,14 @@ fn stdout_str(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// Parse an envelope-bearing invocation's stdout as JSON (the output
+/// contract: pretty JSON, machine-parseable).
+fn stdout_json(out: &Output) -> serde_json::Value {
+    let text = stdout_str(out);
+    serde_json::from_str(text.trim())
+        .unwrap_or_else(|e| panic!("stdout should be parseable JSON: {e}; got {text:?}"))
+}
+
 fn write_source(dir: &Path, rel: &str, contents: &str) {
     let target = dir.join(rel);
     if let Some(parent) = target.parent() {
@@ -37,7 +47,7 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
 }
 
 #[test]
-fn cli_info_prints_nuon() {
+fn cli_info_prints_json() {
     let data = tempfile::tempdir().expect("data");
     let cache = tempfile::tempdir().expect("cache");
     let out = cli(
@@ -46,18 +56,13 @@ fn cli_info_prints_nuon() {
         cache.path(),
     );
     assert!(out.status.success(), "cli info should exit 0; got {out:?}");
-    let text = stdout_str(&out);
+    let v = stdout_json(&out);
+    assert_eq!(v["name"].as_str(), Some("nushell_mcp"), "got {v}");
+    assert_eq!(v["id"].as_str(), Some("cid"), "got {v}");
+    assert_eq!(v["namespace"].as_str(), Some("default"), "got {v}");
     assert!(
-        text.contains("nushell_mcp"),
-        "info NUON should carry the name; got {text:?}",
-    );
-    assert!(
-        text.contains("nu_version"),
-        "info NUON should carry nu_version; got {text:?}",
-    );
-    assert!(
-        text.contains("cid"),
-        "info NUON should carry the configured id; got {text:?}",
+        v["nu_version"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
+        "info JSON should carry nu_version; got {v}",
     );
 }
 
@@ -125,10 +130,11 @@ fn cli_library_lifecycle_and_call() {
         stdout_str(&called),
         String::from_utf8_lossy(&called.stderr),
     );
-    let text = stdout_str(&called);
-    assert!(
-        text.contains("out") && text.contains("42"),
-        "call envelope should carry out: 42; got {text:?}",
+    let v = stdout_json(&called);
+    assert_eq!(
+        v["result"]["out"].as_i64(),
+        Some(42),
+        "call envelope should carry result.out = 42; got {v}",
     );
 }
 
@@ -159,10 +165,15 @@ fn cli_run_evaluates_nuon_schemas_and_args() {
         stdout_str(&out),
         String::from_utf8_lossy(&out.stderr),
     );
-    let text = stdout_str(&out);
+    let v = stdout_json(&out);
+    assert_eq!(
+        v["result"]["out"].as_i64(),
+        Some(6),
+        "run envelope should carry result.out = 6; got {v}",
+    );
     assert!(
-        text.contains("out") && text.contains('6'),
-        "run envelope should carry out: 6; got {text:?}",
+        v["rerun_id"].as_str().is_some(),
+        "run envelope should carry a rerun_id; got {v}",
     );
 }
 
@@ -187,10 +198,10 @@ fn cli_error_envelope_exits_one() {
         Some(1),
         "an error envelope should exit 1; got {out:?}",
     );
-    let text = stdout_str(&out);
+    let v = stdout_json(&out);
     assert!(
-        text.contains("error"),
-        "the error envelope should still print; got {text:?}",
+        v.get("error").is_some(),
+        "the error envelope should still print as JSON; got {v}",
     );
 }
 

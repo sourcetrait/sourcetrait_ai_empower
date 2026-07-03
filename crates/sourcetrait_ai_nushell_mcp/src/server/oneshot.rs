@@ -4,7 +4,7 @@ use crate::*;
 /// serve path uses (keypair + libraries repo + lock registry, the lazy
 /// stateless pool, a lazy interact slot), dispatches ONE tool invocation
 /// directly to the pub(crate) tool handlers, prints the envelope as
-/// pretty NUON on stdout, and exits: 0 on success, 1 on an error envelope
+/// pretty JSON on stdout, and exits: 0 on success, 1 on an error envelope
 /// or rmcp-boundary error, 2 on unparseable operator input.
 ///
 /// Why: the operator gets the identical tool surface with no agent and no
@@ -141,7 +141,7 @@ pub(crate) fn run_oneshot(tool: CliTool) {
                     // The `error` wrapper is the success-vs-error
                     // discriminator on every envelope.
                     let failed = value.get("error").is_some();
-                    println!("{}", render_envelope_nuon(&value));
+                    println!("{}", render_envelope_json(&value));
                     if failed { 1 } else { 0 }
                 }
                 // No-return success (kill): absence == success, print
@@ -207,16 +207,10 @@ fn nuon_record_arg(input: Option<&str>) -> mcp::JsonObject {
     }
 }
 
-/// Render an envelope's JSON as pretty NUON (2-space indentation) for a
-/// nushell terminal; falls back to compact JSON if the conversion ever
-/// fails (it should not -- envelopes are JSON-shaped by construction).
-fn render_envelope_nuon(value: &json::Value) -> String {
-    let nu_value = json_value_to_nu_value(value);
-    let engine_state = nu::EngineState::new();
-    nu::to_nuon(
-        &engine_state,
-        &nu_value,
-        nu::ToNuonConfig::default().style(nu::ToStyle::Spaces(2)),
-    )
-    .unwrap_or_else(|_| value.to_string())
+/// Render an envelope as pretty-printed JSON (readable on a terminal,
+/// machine-parseable, `| from json` at a nushell prompt); falls back to
+/// the compact form if pretty serialization ever fails (it should not --
+/// envelopes are JSON-shaped by construction).
+fn render_envelope_json(value: &json::Value) -> String {
+    json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }

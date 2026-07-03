@@ -1,5 +1,7 @@
 #!/bin/env nu
 
+use gear/common/sourcetrait/lib_empwr
+
 export def "main ant colony new" [fae: string]: nothing -> nothing {
     let ant_dir = (pwd)
     if not ($ant_dir | path exists) {
@@ -140,6 +142,60 @@ def git_branches []: nothing -> list<string> {
     ^git for-each-ref --format='%(refname:short)' refs/heads/
 }
 
+# --- mcp: nushell_mcp administration (fronts gear/common/sourcetrait/lib_empwr) ---
+# Record-shaped inputs cross the process boundary as NUON strings; results
+# print rendered (pipe-consumers on a box shell should prefer the library:
+# `use gear/common/sourcetrait/lib_empwr` -> `lib_empwr mcp ...`).
+
+export def "main mcp info" [--id: string = "", --namespace: string = ""] {
+    lib_empwr mcp info --id $id --namespace $namespace
+}
+
+export def "main mcp inspect" [namepath: string, --id: string = "", --namespace: string = ""] {
+    lib_empwr mcp inspect $namepath --id $id --namespace $namespace
+}
+
+export def "main mcp call" [namepath: string, args: string = "{}", --id: string = "", --namespace: string = "", --timeout-ms: int = 0] {
+    lib_empwr mcp call $namepath ($args | from nuon) --id $id --namespace $namespace --timeout-ms $timeout_ms
+}
+
+export def "main mcp run" [body: string, --args-schema: string = "{}", --result-schema: string = "{}", --args: string = "{}", --id: string = "", --namespace: string = "", --timeout-ms: int = 0] {
+    lib_empwr mcp run $body --args-schema ($args_schema | from nuon) --result-schema ($result_schema | from nuon) --args ($args | from nuon) --id $id --namespace $namespace --timeout-ms $timeout_ms
+}
+
+export def "main mcp interact" [body: string, --args-schema: string = "{}", --result-schema: string = "{}", --args: string = "{}", --id: string = "", --namespace: string = "", --timeout-ms: int = 0] {
+    lib_empwr mcp interact $body --args-schema ($args_schema | from nuon) --result-schema ($result_schema | from nuon) --args ($args | from nuon) --id $id --namespace $namespace --timeout-ms $timeout_ms
+}
+
+export def "main mcp rerun" [rerun_id: string, args: string = "{}", --id: string = "", --namespace: string = "", --timeout-ms: int = 0] {
+    lib_empwr mcp rerun $rerun_id ($args | from nuon) --id $id --namespace $namespace --timeout-ms $timeout_ms
+}
+
+export def "main mcp processes" [--id: string = "", --namespace: string = ""] {
+    lib_empwr mcp processes --id $id --namespace $namespace
+}
+
+export def "main mcp kill" [nonce: string, --id: string = "", --namespace: string = ""] {
+    lib_empwr mcp kill $nonce --id $id --namespace $namespace
+}
+
+export def "main mcp learn" [harness_dir: path, --id: string = "", --namespace: string = ""] {
+    lib_empwr mcp learn $harness_dir --id $id --namespace $namespace
+}
+
+export def "main mcp new" [...namepaths: string, --id: string = "", --namespace: string = ""] {
+    lib_empwr mcp new ...$namepaths --id $id --namespace $namespace
+}
+
+export def "main mcp commit" [library: string, --id: string = "", --namespace: string = ""] {
+    lib_empwr mcp commit $library --id $id --namespace $namespace
+}
+
+export def "main mcp library" [action: string, library: string, source_dir: path, --id: string = "", --namespace: string = ""] {
+    lib_empwr mcp library $action $library $source_dir --id $id --namespace $namespace
+}
+
+export def "main mcp" [] { help main mcp }
 export def "main ant colony" [] { help main ant colony }
 export def "main ant" [] { help main ant }
 export def main [] { help main }

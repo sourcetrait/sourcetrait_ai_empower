@@ -1,6 +1,6 @@
 name = "empower"
 tile = "empower"
-version = "0.0.0-1"
+version = "0.0.0-2"
 
 [author]
 name = "sourcetrait"
@@ -11,7 +11,9 @@ email = "development@sourcetrait.com"
 name = "github"
 
 [common]
-gear = []
+gear = [
+    "empwr"
+]
 
 [desk]
 gear = [

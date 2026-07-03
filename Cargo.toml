@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/sourcetrait_ai_lib_empower",
+  "crates/sourcetrait_ai_empower_nubed",
   "crates/sourcetrait_ai_nu_plugin_empowered",
   "crates/sourcetrait_ai_nushell_mcp",
   "crates/sourcetrait_ai_know_rust",
@@ -45,6 +46,7 @@ shellexpand = { version = "3", features = ["path"] }
 snafu = "0.8"
 sourcetrait_chronox = { version = "1" }
 sourcetrait_clapx = { version = "1" }
+sourcetrait_ai_empower_nubed = { path = "crates/sourcetrait_ai_empower_nubed" }
 sourcetrait_ai_lib_empower = { path = "crates/sourcetrait_ai_lib_empower" }
 sourcetrait_ronx = { version = "3" }
 sourcetrait_stdx = { version = "1" }

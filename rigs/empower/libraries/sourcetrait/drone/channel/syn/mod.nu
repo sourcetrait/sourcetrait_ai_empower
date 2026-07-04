@@ -1,4 +1,4 @@
-use sourcetrait/drone/common
+use rig/sourcetrait/drone/common
 
 
 # Announce a packet a drone sent to the bonded fae (COLONY DRONE <name> SYN).

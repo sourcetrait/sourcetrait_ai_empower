@@ -1,4 +1,4 @@
-use sourcetrait/queen/common
+use rig/sourcetrait/queen/common
 
 
 # Acknowledge a packet the queen received from the bonded fae (COLONY ACK).

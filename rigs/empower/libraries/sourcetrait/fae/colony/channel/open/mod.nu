@@ -1,5 +1,5 @@
-use sourcetrait/fae/colony/channel/common
-use sourcetrait/empower/pid
+use rig/sourcetrait/fae/colony/channel/common
+use rig/sourcetrait/empower/pid
 
 
 # Bring the fae's bonded-colony channel online and report the queen's state.

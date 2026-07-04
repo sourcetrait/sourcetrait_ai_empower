@@ -12,7 +12,7 @@
 # <fae_shm>/channel/colony/drone/<name>. The colony machinery shared with the
 # queen role wraps sourcetrait/ant.
 
-use sourcetrait/ant/channel
+use rig/sourcetrait/ant/channel
 
 # the colony's ai_id, derived from the bonded fae's identity.
 export def colony_ai_id [fae: string]: nothing -> string {

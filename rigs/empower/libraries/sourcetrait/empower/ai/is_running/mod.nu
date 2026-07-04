@@ -1,4 +1,4 @@
-use sourcetrait/empower/pid
+use rig/sourcetrait/empower/pid
 
 
 # Whether an ai_id has a live (running, pid-confirmed) claude session.

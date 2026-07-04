@@ -1,4 +1,4 @@
-use sourcetrait/drone/common
+use rig/sourcetrait/drone/common
 
 
 # Acknowledge a fae packet a drone received (COLONY DRONE <name> ACK).

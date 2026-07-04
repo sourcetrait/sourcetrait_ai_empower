@@ -1,5 +1,5 @@
-use sourcetrait/fae/colony/channel/common
-use sourcetrait/empower/pid
+use rig/sourcetrait/fae/colony/channel/common
+use rig/sourcetrait/empower/pid
 
 
 # Request the bonded colony's queen to stop a drone (fae-side).

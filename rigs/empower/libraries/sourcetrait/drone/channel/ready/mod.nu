@@ -1,4 +1,4 @@
-use sourcetrait/drone/common
+use rig/sourcetrait/drone/common
 
 
 # Announce a persisted drone is online and ready to accept instructions.

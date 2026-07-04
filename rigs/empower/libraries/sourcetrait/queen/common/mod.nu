@@ -14,7 +14,7 @@
 # <fae_shm>/channel/colony/queen. colony_shm = <shm>/ai/ant_<fae>/<colony_nom>,
 # fae_shm = <shm>/ai/<fae>/<fae_nom>.
 
-use sourcetrait/ant/channel
+use rig/sourcetrait/ant/channel
 
 # the colony's ai_id, derived from the bonded fae's identity.
 export def colony_ai_id [fae: string]: nothing -> string {

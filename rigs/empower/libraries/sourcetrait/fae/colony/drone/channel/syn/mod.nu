@@ -1,4 +1,4 @@
-use sourcetrait/fae/colony/drone/channel/common
+use rig/sourcetrait/fae/colony/drone/channel/common
 
 
 # Announce a packet the fae sent to a colony drone (FAE DRONE <name> SYN).

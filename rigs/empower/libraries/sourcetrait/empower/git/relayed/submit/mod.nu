@@ -1,4 +1,4 @@
-use sourcetrait/empower/git/relayed/common
+use rig/sourcetrait/empower/git/relayed/common
 
 # Commit my work and fast-forward-push my branch to the bare.
 #

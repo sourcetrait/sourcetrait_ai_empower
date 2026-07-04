@@ -1,5 +1,5 @@
-use sourcetrait/queen/common
-use sourcetrait/empower/pid
+use rig/sourcetrait/queen/common
+use rig/sourcetrait/empower/pid
 
 
 # Bring the queen's bonded-fae channel online and report the fae's state.

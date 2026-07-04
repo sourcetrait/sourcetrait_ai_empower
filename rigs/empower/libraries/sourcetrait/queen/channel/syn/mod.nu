@@ -1,4 +1,4 @@
-use sourcetrait/queen/common
+use rig/sourcetrait/queen/common
 
 
 # Announce a packet the queen sent to the bonded fae (COLONY SYN).

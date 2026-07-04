@@ -1,4 +1,4 @@
-use sourcetrait/empower/git/relayed/common
+use rig/sourcetrait/empower/git/relayed/common
 
 # Prepare a relay repo to work in.
 #

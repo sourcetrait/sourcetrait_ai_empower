@@ -1,4 +1,4 @@
-use sourcetrait/queen/common
+use rig/sourcetrait/queen/common
 
 
 # Take the queen's bonded-fae channel offline (COLONY OFFLINE).

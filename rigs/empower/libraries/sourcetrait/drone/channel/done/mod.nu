@@ -1,4 +1,4 @@
-use sourcetrait/drone/common
+use rig/sourcetrait/drone/common
 
 
 # Announce a drone is offline and communications are closed (drone self-teardown).

@@ -1,4 +1,4 @@
-use sourcetrait/fae/memory/classify
+use rig/sourcetrait/fae/memory/classify
 
 # Read-only live<->repo memory mirror drift report (the bootstrap check).
 #

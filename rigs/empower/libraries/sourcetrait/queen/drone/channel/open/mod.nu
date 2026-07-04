@@ -1,5 +1,5 @@
-use sourcetrait/queen/common
-use sourcetrait/empower/pid
+use rig/sourcetrait/queen/common
+use rig/sourcetrait/empower/pid
 
 
 # Set up a drone's bonded-fae channel (queen-invoked, before launch).

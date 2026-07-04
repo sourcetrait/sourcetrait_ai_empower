@@ -1,4 +1,4 @@
-use sourcetrait/queen/common
+use rig/sourcetrait/queen/common
 
 
 # Take a drone offline and close communications (COLONY DRONE <name> OFFLINE).

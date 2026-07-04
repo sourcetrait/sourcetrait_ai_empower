@@ -1,4 +1,4 @@
-use sourcetrait/fae/colony/channel/common
+use rig/sourcetrait/fae/colony/channel/common
 
 
 # Take the fae's bonded-colony channel offline (FAE OFFLINE).

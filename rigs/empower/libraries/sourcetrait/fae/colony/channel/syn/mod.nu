@@ -1,4 +1,4 @@
-use sourcetrait/fae/colony/channel/common
+use rig/sourcetrait/fae/colony/channel/common
 
 
 # Announce a packet the fae sent to the bonded colony's queen (FAE SYN).

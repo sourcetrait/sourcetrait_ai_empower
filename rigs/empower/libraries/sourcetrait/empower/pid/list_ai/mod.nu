@@ -1,4 +1,4 @@
-use sourcetrait/empower/pid/common
+use rig/sourcetrait/empower/pid/common
 
 # Live, pid-confirmed AI sessions: a running claude matched to its status yaml.
 #

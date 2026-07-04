@@ -1,4 +1,4 @@
-use sourcetrait/empower/pid
+use rig/sourcetrait/empower/pid
 
 
 # The live AI sessions, for direct agent use

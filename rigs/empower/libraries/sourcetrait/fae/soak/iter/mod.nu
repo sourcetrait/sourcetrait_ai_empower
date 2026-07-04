@@ -1,5 +1,5 @@
-use sourcetrait/empower/fs
-use sourcetrait/fae/fs role_skeleton_asset_dir
+use rig/sourcetrait/empower/fs
+use rig/sourcetrait/fae/fs role_skeleton_asset_dir
 
 
 # Generates a new Iter

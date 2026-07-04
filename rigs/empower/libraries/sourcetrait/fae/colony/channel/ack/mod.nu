@@ -1,4 +1,4 @@
-use sourcetrait/fae/colony/channel/common
+use rig/sourcetrait/fae/colony/channel/common
 
 
 # Acknowledge a packet the fae received from the bonded colony's queen (FAE ACK).

@@ -1,4 +1,4 @@
-use sourcetrait/fae/memory/classify
+use rig/sourcetrait/fae/memory/classify
 
 # Guarded directional live<->repo memory mirror (explicit direction, no default).
 #

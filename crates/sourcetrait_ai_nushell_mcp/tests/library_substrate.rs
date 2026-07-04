@@ -82,9 +82,9 @@ impl Host {
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {
-        // Fixtures default to author `sourcetrait`; store subtree is
-        // `<libraries>/sourcetrait/<name>`.
-        self.libraries_dir().join("sourcetrait").join(name)
+        // Fixtures default to author `sourcetrait`; store subtree is under the
+        // `rig/` type-level: `<libraries>/rig/sourcetrait/<name>`.
+        self.libraries_dir().join("rig").join("sourcetrait").join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {

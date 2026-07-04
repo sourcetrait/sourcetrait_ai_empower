@@ -176,6 +176,7 @@ fn default_id_is_user_env() {
     assert!(!has_error_path(&resp), "library(new) should succeed; got {resp}");
     let lib_dir = store_dir(data.path(), "udefault", "default")
         .join("libraries")
+        .join("rig")
         .join("sourcetrait")
         .join("mylib");
     assert!(
@@ -201,6 +202,7 @@ fn explicit_id_and_namespace_select_store() {
     assert!(!has_error_path(&resp), "library(new) should succeed; got {resp}");
     let lib_dir = store_dir(data.path(), "aid", "ns1")
         .join("libraries")
+        .join("rig")
         .join("sourcetrait")
         .join("mylib");
     assert!(

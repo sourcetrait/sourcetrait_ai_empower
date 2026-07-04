@@ -70,9 +70,9 @@ impl Host {
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {
-        // Fixtures default to author `sourcetrait`; store subtree is
-        // `<libraries>/sourcetrait/<name>`.
-        self.libraries_dir().join("sourcetrait").join(name)
+        // Fixtures default to author `sourcetrait`; store subtree is under the
+        // `rig/` type-level: `<libraries>/rig/sourcetrait/<name>`.
+        self.libraries_dir().join("rig").join("sourcetrait").join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {
@@ -820,7 +820,7 @@ fn committed_library_invokable_via_standalone_driver() {
     let out = Command::new("nu")
         .env("NU_LIB_DIRS", host.libraries_dir())
         .arg("-c")
-        .arg("use sourcetrait/drvilib; drvilib math double {x: 6} | to nuon")
+        .arg("use rig/sourcetrait/drvilib; drvilib math double {x: 6} | to nuon")
         .output()
         .expect("spawn nu");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -869,7 +869,7 @@ fn commit_validates_by_name_cross_library_use() {
     write_source(
         &consumer,
         "app/compute/mod.nu",
-        "use sourcetrait/baselib m *\nexport def main [args: record<x: int>]: nothing -> record<out: int> {\n    double {x: $args.x}\n}\n",
+        "use rig/sourcetrait/baselib m *\nexport def main [args: record<x: int>]: nothing -> record<out: int> {\n    double {x: $args.x}\n}\n",
     );
     let committed = host.call("commit", serde_json::json!({"library": "consumer"}));
     assert!(
@@ -908,7 +908,7 @@ fn commit_and_call_resolves_authored_self_ref() {
     write_source(
         &src,
         "top/double/mod.nu",
-        "use sourcetrait/selfreflib/base\nexport def main [args: nothing]: nothing -> record<out: int> {\n    { out: ((base val) * 2) }\n}\n",
+        "use rig/sourcetrait/selfreflib/base\nexport def main [args: nothing]: nothing -> record<out: int> {\n    { out: ((base val) * 2) }\n}\n",
     );
     let committed = host.call("commit", serde_json::json!({"library": "selfreflib"}));
     assert!(

@@ -138,9 +138,10 @@ pub(crate) fn build_run_source(
 }
 
 /// What: builds the nushell source the stateless worker evals for a
-/// `call()` -- `use <library>` (the compound `<author>/<name>`) loads the committed library from
-/// the author-parented store, then the call is driven module-qualified along its
-/// namepath (module_path slashes -> spaces): `<library> <mod...> <name> LIT`.
+/// `call()` -- `use rig/<library>` (the compound `<author>/<name>` under the
+/// store's `rig/` type-level) loads the committed library, then the call is
+/// driven module-qualified along its namepath (module_path slashes -> spaces):
+/// `<library> <mod...> <name> LIT`.
 /// LIT is the args record as NUON, or bare `null` for empty / void args.
 /// Invoking the call's dir-module by name runs its `export def main`. (`use
 /// a/b` imports the module named `b`, the path leaf, so the drive stays
@@ -148,9 +149,9 @@ pub(crate) fn build_run_source(
 ///
 /// Why: the committed call-target is a `<name>/mod.nu` dir-module holding a
 /// single infix-signatured `export def main [args: A]: nothing -> R`. Its body
-/// self-refs sibling modules by the AUTHORED path -- `use <author>/<library>/<mod>`
+/// self-refs sibling modules by the AUTHORED path -- `use rig/<author>/<library>/<mod>`
 /// at the file top, then `<mod> <fn>` -- which the parse-time const `$NU_LIB_DIRS`
-/// (the author-parented store root) resolves at the file's own parse, so loading
+/// (the store root) resolves at the file's own parse, so loading
 /// the whole library here makes every target and its self-refs resolvable.
 /// `main`'s positional runtime-enforces the args and its output type parse-checks
 /// a static result; nushell runs a module's `main` when the module name is
@@ -170,8 +171,9 @@ pub(crate) fn build_call_source(
     } else {
         args_to_nuon(args)
     };
-    // `library` is the compound `<author>/<name>`; `use <author>/<name>` imports
-    // the module named by the LAST path segment, so the drive starts there.
+    // `library` is the compound `<author>/<name>`; `use rig/<author>/<name>`
+    // (the store's rig type-level) imports the module named by the LAST path
+    // segment, so the drive starts there.
     let library_name = library.rsplit('/').next().unwrap_or(library);
     // Namepath -> the module-qualified invocation, space-separated. A function
     // always has a parent module (no root functions), so module_path is
@@ -188,7 +190,7 @@ pub(crate) fn build_call_source(
     formatdoc!(
         r#"
         $env.NONCE = "{nonce}"
-        use {library}
+        use rig/{library}
         {call_path} {lit}
     "#,
         nonce = nonce,

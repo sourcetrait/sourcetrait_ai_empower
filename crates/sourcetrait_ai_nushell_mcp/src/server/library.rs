@@ -129,15 +129,31 @@ pub(crate) fn libraries_dir() -> PathBuf {
     data_base_dir().join("libraries")
 }
 
-/// The directory for a library inside the store: `<libraries_dir>/<library>/`,
-/// where `library` is the compound `<author>/<name>` (e.g. `sourcetrait/empower`).
+/// The store's rig type-level: every MCP-store library is a rig, living under
+/// `<libraries_dir>/rig/<author>/<name>/`. The `rig/` segment is what a
+/// type-prefixed import `use rig/<author>/<name>` resolves against the store
+/// root (the const NU_LIB_DIRS = libraries_dir()). gear libraries are box-only
+/// and never enter the store, so this type-dir is unconditional.
+pub(crate) const RIG_TYPE_DIR: &str = "rig";
+
+/// The directory for a library inside the store:
+/// `<libraries_dir>/rig/<library>/`, where `library` is the compound
+/// `<author>/<name>` (e.g. `sourcetrait/empower`) under the `rig/` type-level.
 /// The library string IS its own author-parented store sub-path, so no author
 /// derivation or glob resolution is needed.
 ///
 /// Where: called by every library-coordinate path helper (`library_meta_path`,
 /// `library_meta_dir`, `library_docs_dir`) and by the lifecycle ops.
 pub(crate) fn library_dir(library: &str) -> PathBuf {
-    libraries_dir().join(library)
+    libraries_dir().join(RIG_TYPE_DIR).join(library)
+}
+
+/// A library's path RELATIVE to the libraries repo root (the git pathspec):
+/// `rig/<author>/<name>`. The physical tree sits under the `rig/` type-level,
+/// so every `git add` / `git status` pathspec naming a library uses this, not
+/// the bare compound coordinate.
+pub(crate) fn library_store_rel(library: &str) -> String {
+    format!("{RIG_TYPE_DIR}/{library}")
 }
 
 /// A valid library coordinate: the compound `<author>/<name>` - exactly one
@@ -229,7 +245,7 @@ impl LibraryLocks {
     /// startup so existing libraries from prior server runs get their
     /// locks pre-created.
     pub(crate) async fn hydrate_from_disk(&self) -> io::Result<()> {
-        let dir = libraries_dir();
+        let dir = libraries_dir().join(RIG_TYPE_DIR);
         if !dir.exists() {
             return Ok(());
         }
@@ -554,7 +570,8 @@ pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) ->
         reason: e.to_string(),
     })?;
     fs::write(canonical.join(META_FILE), &index_bytes)?;
-    run_git(&libraries_dir(), &["add", "--", library])?;
+    let rel = library_store_rel(library);
+    run_git(&libraries_dir(), &["add", "--", &rel])?;
     run_git(
         &libraries_dir(),
         &["commit", "-m", &format!("new library {library}")],
@@ -863,7 +880,7 @@ fn index_module_to_info(
 /// Where: called by `server::tool::NuSh::info` to populate
 /// `InfoEnvelope::libraries`.
 pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo> {
-    let dir = libraries_dir();
+    let dir = libraries_dir().join(RIG_TYPE_DIR);
     let mut names: Vec<String> = Vec::new();
     if let Ok(read) = fs::read_dir(&dir) {
         for author_entry in read.flatten() {
@@ -1491,9 +1508,10 @@ impl SelfView {
             process::id(),
             SELF_VIEW_SEQ.fetch_add(1, Ordering::Relaxed),
         ));
-        // `library` is `<author>/<name>`; place `<base>/<author>/<name>` -> source
-        // so a file's `use <author>/<name>/<mod>` self-ref resolves against itself.
-        let link = base.join(library);
+        // `library` is `<author>/<name>`; place `<base>/rig/<author>/<name>` ->
+        // source so a file's `use rig/<author>/<name>/<mod>` self-ref resolves
+        // against itself (the store's rig type-level, mirrored here).
+        let link = base.join(RIG_TYPE_DIR).join(library);
         fs::create_dir_all(link.parent()?).ok()?;
         std::os::unix::fs::symlink(source, &link).ok()?;
         Some(Self { base })
@@ -2915,8 +2933,9 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
     write_meta(name, &source_path, &result)?;
     // Stage the `<author>/<name>` subtree, then diff. Idempotent: nothing
     // staged -> no commit (item 10).
-    run_git(&libraries_dir(), &["add", "--", name])?;
-    let porcelain = run_git_output(&libraries_dir(), &["status", "--porcelain", "--", name])?;
+    let rel = library_store_rel(name);
+    run_git(&libraries_dir(), &["add", "--", &rel])?;
+    let porcelain = run_git_output(&libraries_dir(), &["status", "--porcelain", "--", &rel])?;
     let changed = parse_git_changes(&porcelain);
     if changed.is_empty() {
         return Ok(changed);
@@ -2968,7 +2987,8 @@ pub(crate) fn install_impl(
             let lib_root = library_dir(library);
             if lib_root.exists() {
                 let _ = fs::remove_dir_all(&lib_root);
-                let _ = run_git(&libraries_dir(), &["add", "--", library]);
+                let rel = library_store_rel(library);
+                let _ = run_git(&libraries_dir(), &["add", "--", &rel]);
                 let _ = run_git(
                     &libraries_dir(),
                     &["commit", "-m", &format!("rollback failed install {library}")],
@@ -2990,7 +3010,8 @@ pub(crate) fn uninstall_impl(library: &str) -> Result<(), Error> {
         return Ok(());
     }
     fs::remove_dir_all(&lib_root)?;
-    run_git(&libraries_dir(), &["add", "--", library])?;
+    let rel = library_store_rel(library);
+    run_git(&libraries_dir(), &["add", "--", &rel])?;
     run_git(
         &libraries_dir(),
         &["commit", "-m", &format!("uninstall library {library}")],

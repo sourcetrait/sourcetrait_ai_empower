@@ -64,9 +64,10 @@ impl Host {
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {
-        // Fixtures default to author `sourcetrait` (no library.rig.toml), so the
-        // store subtree is `<libraries>/sourcetrait/<name>`.
-        self.libraries_dir().join("sourcetrait").join(name)
+        // Fixtures default to author `sourcetrait` (no library.rig.toml); the
+        // store subtree is under the `rig/` type-level:
+        // `<libraries>/rig/sourcetrait/<name>`.
+        self.libraries_dir().join("rig").join("sourcetrait").join(name)
     }
 
     fn source_dir(&self, name: &str) -> PathBuf {
@@ -398,7 +399,7 @@ fn run_body_can_use_a_committed_library() {
             "args_schema": {},
             "result_schema": {"out": "int"},
             "args": {},
-            "body": "use sourcetrait/uselib\nlet r = (uselib math double {x: 5})\n{ out: $r.out }",
+            "body": "use rig/sourcetrait/uselib\nlet r = (uselib math double {x: 5})\n{ out: $r.out }",
         }),
     );
     assert!(

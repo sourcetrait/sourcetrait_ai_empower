@@ -6,8 +6,9 @@
 # generation under `soak`. Self-contained by design: no fae<->ant/queen/drone
 # dependencies (shared-looking derivations are deliberately duplicated per
 # side).
+export module asset 
 export module colony
-export module fs
+export module layout 
 export module soak
 export module memory
 export module know

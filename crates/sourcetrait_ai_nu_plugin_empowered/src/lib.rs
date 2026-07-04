@@ -18,6 +18,10 @@ pub(crate) mod liquid {
     pub(crate) mod schema;
     pub(crate) mod from;
     pub(crate) mod soak;
+    #[cfg(test)]
+    mod tests {
+        mod soak;
+    }
 }
 pub(crate) mod md {
     pub(crate) mod find;

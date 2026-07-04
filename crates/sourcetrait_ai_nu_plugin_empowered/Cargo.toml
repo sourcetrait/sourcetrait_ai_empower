@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_ai_nu_plugin_empowered"
-version = "0.0.0-5"
+version = "0.0.0-6"
 edition = "2024"
 description = "Nushell plugin supporting SourceTrait Empower"
 authors = ["SourceTrait <development@sourcetrait.com>"]
@@ -23,9 +23,9 @@ nu-plugin.workspace = true
 nu-protocol.workspace = true
 regex.workspace = true
 snafu.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 
 # nu-plugin-test-support stays out -- 0.113 pulls nu-plugin-engine 0.113.1 with a
 # non-exhaustive-match upstream bug (ServerCommunicationIo::LocalSocket arm

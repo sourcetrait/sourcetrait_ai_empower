@@ -4,7 +4,6 @@ if $nu.os-info.name != "windows" {
     umask rwx------ | ignore
 }
 
-const WHO: string = "[proj]"
 module tooling {
     export def "report info" [who: string]: string -> nothing {
         print $"(ansi blue)($who)(ansi reset) ($in)"
@@ -31,6 +30,7 @@ module tooling {
 }
 
 use tooling *
+const WHO: string = "[proj]"
 
 # Creates the rig and gear include paths in $HOME
 export def "main setup home" [--dirspec: string@enum_dirspec="xdg", --force = false]: nothing -> nothing {

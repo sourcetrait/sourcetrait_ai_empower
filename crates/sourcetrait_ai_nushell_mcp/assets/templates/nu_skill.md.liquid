@@ -199,7 +199,7 @@ Nu ecosystem libraries are custom authored Nu module hierarchies that export:
 Libraries are installed system-wide and made available via `$env.NU_LIB_DIRS`.
 Their exports can be accessed anywhere, simply:
 ```nu
-use <author>/<library>
+use rig/<author>/<library>
 <library> <module 1> <module 2> <export 1> <params>
 ```
 
@@ -298,13 +298,16 @@ Prefer submodules: each directory carries a `mod.nu` wiring its children.
 
 ### Referencing other modules + libraries
 
-Every `use` names a library by its full `<author>/<library>` coordinate - even
-a library referencing ITSELF - because the store is author-parented and a
-parse-time const `$NU_LIB_DIRS` resolves that coordinate against it. There is
-nothing special about your OWN library vs a foreign one; both import alike.
+Every `use` names a library under the store's `rig/` type-level by its full
+`rig/<author>/<library>` coordinate - even a library referencing ITSELF - because
+the store hosts libraries under `rig/` and a parse-time const `$NU_LIB_DIRS` (the
+store root) resolves that coordinate against it. There is nothing special about
+your OWN library vs a foreign one; both import alike. (The `call()` namepath stays
+`<author>/<library>:module/path:function` - rig is implied there; only the `use` import
+spells the `rig/` prefix.)
 
 - Import a module at the level that READS naturally, then drive it by name:
-  `use <author>/<library>/<module>` then `<module> <fn> <args>`. Prefer the
+  `use rig/<author>/<library>/<module>` then `<module> <fn> <args>`. Prefer the
   shallowest module whose name reads well at the call site.
 - Import a DEEPER module ONLY to break a circular import - when the file doing
   the `use` lives under the module it would otherwise pull in (importing your
@@ -312,7 +315,7 @@ nothing special about your OWN library vs a foreign one; both import alike.
   specific descendant module.
 - Import a SPECIFIC function ONLY to break a name collision - when two imported
   modules share a leaf name. Pull the one function in
-  (`use <author>/<library>/<a>/<b> <fn>`), keep the other a module import.
+  (`use rig/<author>/<library>/<a>/<b> <fn>`), keep the other a module import.
 - `use` MODULES, not functions (except the collision case). NEVER `use ./x.nu`
   for a sibling MODULE - a bare relative path is only for inlining a flat helper
   FILE via `export use ./<file>.nu`.
@@ -357,9 +360,10 @@ whatever a caller needs once the summary has told them whether they care.
 - Harness-level (one agent's own knowledgebase): `./nu/<name>/` under the
   harness; the directory name equals the library name.
 - Distributed (author-shipped, multi-agent reusable): a symlink
-  `~/.sys/local/lib/nu/<author>/<name>` -> the project's library source tree
-  (someday `/usr/local/lib/nu/...` when distribution-packaged). The
-  `nu/` segment is the asset-type.
+  `~/.sys/local/lib/nu/rig/<author>/<name>` -> the project's library source tree
+  (someday `/usr/local/lib/nu/rig/...` when distribution-packaged). The
+  `nu/` segment is the asset-type, `rig/` the store type-level that a
+  `use rig/<author>/<library>` resolves against.
 
 `library(new)`'s establishing call records the source dir; `commit`
 always re-reads through it, so you edit that tree and commit to promote.
@@ -425,9 +429,9 @@ applies to the `run()` / `interact()` surface only.
 ### Using a committed library from run() / interact()
 
 A committed library is a full nu module on `$env.NU_LIB_DIRS`, so a
-run() / interact() body can `use <author>/<library>` and invoke its
+run() / interact() body can `use rig/<author>/<library>` and invoke its
 exports directly - not just call-targets but every `export`. `call()`
-drives a single committed `main`; `use <author>/<library>` then
+drives a single committed `main`; `use rig/<author>/<library>` then
 `<library> <module> ...` from a body reuses the same library as ordinary
 nu code.
 

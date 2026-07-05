@@ -4,28 +4,28 @@ if $nu.os-info.name != "windows" {
     umask rwx------ | ignore
 }
 
-const LOG_TAG: string = "[proj]"
+const WHO: string = "[proj]"
 module tooling {
-    export def "report info" []: string -> nothing {
-        print $"(ansi blue)($LOG_TAG)(ansi reset) ($in)"
+    export def "report info" [who: string]: string -> nothing {
+        print $"(ansi blue)($who)(ansi reset) ($in)"
     }
 
-    export def "report ok" []: string -> nothing {
-        print $"(ansi green)($LOG_TAG)(ansi reset) ($in)"
+    export def "report ok" [who: string]: string -> nothing {
+        print $"(ansi green)($who)(ansi reset) ($in)"
     }
 
-    export def "report warn" []: string -> nothing {
-        print $"(ansi yellow)($LOG_TAG)(ansi reset) ($in)"
+    export def "report warn" [who: string]: string -> nothing {
+        print $"(ansi yellow)($who)(ansi reset) ($in)"
     }
 
-    export def "ask yes" []: string -> bool {
+    export def "ask yes" [who: string]: string -> bool {
         let prompt: string = $in
-        let ok: string = input $"(ansi yellow)($LOG_TAG)(ansi reset) ($prompt)? [yes/(ansi d)no(ansi rst_d)]: " | str downcase
+        let ok: string = input $"(ansi yellow)($who)(ansi reset) ($prompt)? [yes/(ansi d)no(ansi rst_d)]: " | str downcase
         $ok == "yes"
     }
 
-    export def abort []: nothing -> nothing {
-        print $"(ansi yellow)($LOG_TAG)(ansi reset) (ansi bo)aborted(ansi rst_bo)"
+    export def abort [who: string]: nothing -> nothing {
+        print $"(ansi yellow)($who)(ansi reset) (ansi bo)aborted(ansi rst_bo)"
         exit 1
     }
 }
@@ -34,9 +34,9 @@ use tooling *
 
 # Creates the rig and gear include paths in $HOME
 export def "main setup home" [--dirspec: string@enum_dirspec="xdg", --force = false]: nothing -> nothing {
-    $"Setting up home ..." | report info
+    $"Setting up home ..." | report info $WHO
     setup_equipment_paths $dirspec $force
-    $"Done setting up home" | report ok
+    $"Done setting up home" | report ok $WHO
 }
 
 export def "main setup" []: nothing -> nothing { help main setup }
@@ -80,15 +80,15 @@ def setup_equipment_paths [spec: string@enum_dirspec = "xdg", force: bool = fals
     if ($to_mkdir | is-not-empty) or ($to_lndir | is-not-empty) {
         if not $force {
             if ($to_mkdir | is-not-empty) {
-                "Directories to be created:" | report warn
+                "Directories to be created:" | report warn $WHO
                 $to_mkdir | each {|i| print $"  (ansi grey)($i)(ansi reset)" }
             }
             if ($to_lndir | is-not-empty) {
-                "Directories to be linked:" | report warn
+                "Directories to be linked:" | report warn $WHO
                 $to_lndir | each {|i| print $"  (ansi grey)($i.from)(ansi reset) to (ansi grey)($i.to)(ansi reset)" }
             }
-            if not ("Perform file operations?" | ask yes) {
-                abort
+            if not ("Perform file operations?" | ask yes $WHO) {
+                abort $WHO
             }
         }
 

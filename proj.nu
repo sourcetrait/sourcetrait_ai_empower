@@ -4,9 +4,39 @@ if $nu.os-info.name != "windows" {
     umask rwx------ | ignore
 }
 
+const LOG_TAG: string = "[proj]"
+module tooling {
+    export def "report info" []: string -> nothing {
+        print $"(ansi blue)($LOG_TAG)(ansi reset) ($in)"
+    }
+
+    export def "report ok" []: string -> nothing {
+        print $"(ansi green)($LOG_TAG)(ansi reset) ($in)"
+    }
+
+    export def "report warn" []: string -> nothing {
+        print $"(ansi yellow)($LOG_TAG)(ansi reset) ($in)"
+    }
+
+    export def "ask yes" []: string -> bool {
+        let prompt: string = $in
+        let ok: string = input $"(ansi yellow)($LOG_TAG)(ansi reset) ($prompt)? [yes/(ansi d)no(ansi rst_d)]: " | str downcase
+        $ok == "yes"
+    }
+
+    export def abort []: nothing -> nothing {
+        print $"(ansi yellow)($LOG_TAG)(ansi reset) (ansi bo)aborted(ansi rst_bo)"
+        exit 1
+    }
+}
+
+use tooling *
+
 # Creates the rig and gear include paths in $HOME
 export def "main setup home" [--dirspec: string@enum_dirspec="xdg", --force = false]: nothing -> nothing {
+    $"Setting up home ..." | report info
     setup_equipment_paths $dirspec $force
+    $"Done setting up home" | report ok
 }
 
 export def "main setup" []: nothing -> nothing { help main setup }
@@ -39,11 +69,11 @@ def setup_equipment_paths [spec: string@enum_dirspec = "xdg", force: bool = fals
         $to_mkdir = $to_mkdir | append $paths.nu_scripts_dir
     }
 
-    if not ($paths.nu_scripts_rig_home | path exists) or not ((realpath $paths.nu_scripts_rig_home) != $paths.nu_lib_rig_home) {
+    if not ($paths.nu_scripts_rig_home | path exists) or not ((realpath $paths.nu_scripts_rig_home) == $paths.nu_lib_rig_home) {
         $to_lndir = $to_lndir | append { from: $paths.nu_scripts_rig_home, to: $paths.nu_lib_rig_home }
     }
 
-    if not ($paths.nu_scripts_gear_home | path exists) or not ((realpath $paths.nu_scripts_gear_home) != $paths.nu_lib_gear_home) {
+    if not ($paths.nu_scripts_gear_home | path exists) or not ((realpath $paths.nu_scripts_gear_home) == $paths.nu_lib_gear_home) {
         $to_lndir = $to_lndir | append { from: $paths.nu_scripts_gear_home, to: $paths.nu_lib_gear_home }
     }
 
@@ -55,7 +85,7 @@ def setup_equipment_paths [spec: string@enum_dirspec = "xdg", force: bool = fals
             }
             if ($to_lndir | is-not-empty) {
                 "Directories to be linked:" | report warn
-                $to_lndir | each {|i| print $"  ($i.from) -> ($i.to)" }
+                $to_lndir | each {|i| print $"  (ansi grey)($i.from)(ansi reset) to (ansi grey)($i.to)(ansi reset)" }
             }
             if not ("Perform file operations?" | ask yes) {
                 abort
@@ -63,17 +93,15 @@ def setup_equipment_paths [spec: string@enum_dirspec = "xdg", force: bool = fals
         }
 
         for to_mk in $to_mkdir {
-            #mkdir $to_mk
-            print $to_mk
+            mkdir $to_mk
         }
 
         for to_ln in $to_lndir {
             if ($to_ln.from | path exists) {
-                #rm $to_ln.from
-                print $to_ln.from
+                rm $to_ln.from
             }
-            #linkdir $to_ln.from $to_ln.to
-            print $to_ln
+
+            linkdir $to_ln.from $to_ln.to
         }
     }
 }
@@ -110,23 +138,3 @@ def equipment_paths [dirspec: string@enum_dirspec="xdg"]: nothing -> record<conf
     }
 }
 
-const LOG: string = "[proj]"
-
-def "report info" []: string -> nothing {
-    print $"(ansi blue)($LOG)(ansi reset) ($in)"
-}
-
-def "report warn" []: string -> nothing {
-    print $"(ansi yellow)($LOG)(ansi reset) ($in)"
-}
-
-def "ask yes" []: string -> bool {
-    let prompt: string = $in
-    let ok: string = input $"(ansi yellow)($LOG)(ansi reset) ($prompt)? [yes/(ansi d)no(ansi rst_d)]: " | str downcase
-    $ok == "yes"
-}
-
-def abort []: nothing -> nothing {
-    print $"(ansi yellow)($LOG)(ansi reset) (ansi bo)aborted(ansi rst_bo)"
-    exit 1
-}

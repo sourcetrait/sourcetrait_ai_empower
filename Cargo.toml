@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/sourcetrait_equipment",
   "crates/sourcetrait_ai_lib_empower",
   "crates/sourcetrait_ai_empower_nubed",
   "crates/sourcetrait_ai_nu_plugin_empowered",
@@ -41,6 +42,7 @@ schemars = { version = "1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 serde_norway = { version = "0.9" }
+semver = { version = "1" }
 shellexpand = { version = "3", features = ["path"] }
 snafu = "0.8"
 sourcetrait_chronox = { version = "1" }

@@ -2,6 +2,9 @@ name = "empower"
 tile = "Empower"
 version = "0.0.0-2"
 
+[nushell]
+version = "0.113.1"
+
 [author]
 name = "sourcetrait"
 title = "SourceTrait"

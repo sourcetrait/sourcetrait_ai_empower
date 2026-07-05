@@ -21,9 +21,6 @@ file = "LICENSE-AGPL-3.txt"
 [provider]
 name = "github"
 
-[mcp]
-calls = [
-  "fae:memory:audit",
-]
-
 [dependencies]
+equip = { author = "sourcetrait", version = "0", provider = "github", path = "../equip" }
+empower = { author = "sourcetrait", version = "0", provider = "github", path = "../empower" }

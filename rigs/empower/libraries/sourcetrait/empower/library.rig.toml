@@ -21,7 +21,5 @@ file = "LICENSE-AGPL-3.txt"
 [provider]
 name = "github"
 
-[[bin]]
-name = "emptwo.nu"
-
 [dependencies]
+equip = { author = "sourcetrait", version = "0", provider = "github", path = "../equip" }

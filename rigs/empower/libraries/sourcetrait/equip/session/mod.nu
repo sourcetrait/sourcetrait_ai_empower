@@ -3,11 +3,11 @@
 # > HUMAN
 
 export def equip_id []: nothing -> string {
-    $env | get -o NUSHELL_MCP_ID | default $env.USER
+    $env | get -o EQUIP_ID | default $env.USER
 }
 
 export def equip_namespace []: nothing -> string {
-    $env | get -o NUSHELL_MCP_NAMESPACE | default 'default'
+    $env | get -o EQUIP_NAMESPACE | default 'default'
 }
 
 export def equip_work_dir []: nothing -> string {

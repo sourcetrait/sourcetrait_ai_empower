@@ -1,0 +1,24 @@
+name = "equip"
+title = "Equip"
+version = "0.0.0-1"
+
+[nushell]
+version = "0.113.1"
+
+[description]
+summary = "Equip core library"
+keywords = []
+
+[author]
+name = "sourcetrait"
+title = "SourceTrait"
+email = "development@sourcetrait.com"
+
+[license]
+spdx = "agpl3"
+file = "LICENSE-AGPL-3.txt"
+
+[provider]
+name = "github"
+
+[dependencies]

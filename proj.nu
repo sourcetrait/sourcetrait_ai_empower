@@ -4,19 +4,20 @@ if $nu.os-info.name != "windows" {
     umask rwx------ | ignore
 }
 
-export def "main setup home" [--spec: string@enum_spec="xdg", --force = false]: nothing -> nothing {
-    setup_equipment_home $spec $force
+# Creates the rig and gear include paths in $HOME
+export def "main setup home" [--dirspec: string@enum_dirspec="xdg", --force = false]: nothing -> nothing {
+    setup_equipment_paths $dirspec $force
 }
 
 export def "main setup" []: nothing -> nothing { help main setup }
 
 export def main []: nothing -> nothing { help main }
 
-def enum_spec []: nothing -> list<string> {
-    [ xdg box ]
+def enum_dirspec []: nothing -> list<string> {
+    [ xdg dotsys ]
 }
 
-def setup_equipment_home [spec: string@enum_spec = "xdg", force: bool = false]: nothing -> nothing {
+def setup_equipment_paths [spec: string@enum_dirspec = "xdg", force: bool = false]: nothing -> nothing {
     let paths = equipment_paths $spec
 
     mut to_mkdir: list<directory> = []
@@ -38,28 +39,26 @@ def setup_equipment_home [spec: string@enum_spec = "xdg", force: bool = false]: 
         $to_mkdir = $to_mkdir | append $paths.nu_scripts_dir
     }
 
-    if not ($paths.nu_scripts_rig_home | path exists) {
-        $to_lndir = $to_lndir | append $paths.nu_scripts_rig_home
+    if not ($paths.nu_scripts_rig_home | path exists) or not ((realpath $paths.nu_scripts_rig_home) != $paths.nu_lib_rig_home) {
+        $to_lndir = $to_lndir | append { from: $paths.nu_scripts_rig_home, to: $paths.nu_lib_rig_home }
     }
 
-    if not ($paths.nu_scripts_gear_home | path exists) {
-        $to_lndir = $to_lndir | append $paths.nu_scripts_gear_home
+    if not ($paths.nu_scripts_gear_home | path exists) or not ((realpath $paths.nu_scripts_gear_home) != $paths.nu_lib_gear_home) {
+        $to_lndir = $to_lndir | append { from: $paths.nu_scripts_gear_home, to: $paths.nu_lib_gear_home }
     }
 
     if ($to_mkdir | is-not-empty) or ($to_lndir | is-not-empty) {
         if not $force {
             if ($to_mkdir | is-not-empty) {
-                print $"(ansi yellow)[just.nu](ansi reset) Directories to be created:"
-                print $to_mkdir
+                "Directories to be created:" | report warn
+                $to_mkdir | each {|i| print $"  (ansi grey)($i)(ansi reset)" }
             }
             if ($to_lndir | is-not-empty) {
-                print $"(ansi yellow)[just.nu](ansi reset) Directories to be linked:"
-                print $to_lndir
+                "Directories to be linked:" | report warn
+                $to_lndir | each {|i| print $"  ($i.from) -> ($i.to)" }
             }
-            let ok = input $"(ansi yellow)[just.nu](ansi reset) Perform operations? [yes/(ansi grey)no(ansi reset)]: "
-            if $ok != "yes" {
-                print $"(ansi red)[just.nu](ansi reset) Aborted"
-                exit 1
+            if not ("Perform file operations?" | ask yes) {
+                abort
             }
         }
 
@@ -69,6 +68,10 @@ def setup_equipment_home [spec: string@enum_spec = "xdg", force: bool = false]: 
         }
 
         for to_ln in $to_lndir {
+            if ($to_ln.from | path exists) {
+                #rm $to_ln.from
+                print $to_ln.from
+            }
             #linkdir $to_ln.from $to_ln.to
             print $to_ln
         }
@@ -82,11 +85,11 @@ def linkdir [from: directory, to: directory]: nothing -> nothing {
     }
 }
 
-def equipment_paths [spec: string@enum_spec="xdg"]: nothing -> record<config_home: directory, library_home: directory, nu_lib_home: directory, nu_lib_gear_home: directory, nu_lib_rig_home: directory, nu_scripts_home: directory, nu_scripts_gear_home: directory, nu_scripts_rig_home: directory> {
+def equipment_paths [dirspec: string@enum_dirspec="xdg"]: nothing -> record<config_home: directory, library_home: directory, nu_lib_home: directory, nu_lib_gear_home: directory, nu_lib_rig_home: directory, nu_scripts_home: directory, nu_scripts_gear_home: directory, nu_scripts_rig_home: directory> {
     let config_home = ($env | get -o XDG_CONFIG_HOME | default ($env.HOME | path join '.config'))
-    let library_home = ($env | get -o XDGX_LIBRARY_HOME | default (match $spec {
+    let library_home = ($env | get -o XDGX_LIBRARY_HOME | default (match $dirspec {
         "xdg" => ($env.HOME | path join '.local/lib')
-        "box" => ($env.HOME | path join '.sys/local/lib')
+        "dotsys" => ($env.HOME | path join '.sys/local/lib')
     }))
     let nu_lib_home = $library_home | path join 'nu'
     let nu_lib_gear_home = $nu_lib_home | path join 'gear'
@@ -105,4 +108,25 @@ def equipment_paths [spec: string@enum_spec="xdg"]: nothing -> record<config_hom
         nu_scripts_gear_home: $nu_scripts_gear_home
         nu_scripts_rig_home: $nu_scripts_rig_home
     }
+}
+
+const LOG: string = "[proj]"
+
+def "report info" []: string -> nothing {
+    print $"(ansi blue)($LOG)(ansi reset) ($in)"
+}
+
+def "report warn" []: string -> nothing {
+    print $"(ansi yellow)($LOG)(ansi reset) ($in)"
+}
+
+def "ask yes" []: string -> bool {
+    let prompt: string = $in
+    let ok: string = input $"(ansi yellow)($LOG)(ansi reset) ($prompt)? [yes/(ansi d)no(ansi rst_d)]: " | str downcase
+    $ok == "yes"
+}
+
+def abort []: nothing -> nothing {
+    print $"(ansi yellow)($LOG)(ansi reset) (ansi bo)aborted(ansi rst_bo)"
+    exit 1
 }

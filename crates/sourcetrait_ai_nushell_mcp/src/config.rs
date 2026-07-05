@@ -1,8 +1,9 @@
 use crate::*;
 
 /// What: the host's runtime configuration -- the state-store coordinate
-/// (`id` + `namespace`) plus the operator-denied tool set, parsed from the
-/// host CLI (`--id` / `--namespace` / `--deny`) by `cli::host_main`.
+/// (`id` + `namespace`), the agent work dir, and the operator-denied tool
+/// set, parsed from the host CLI (`--id` / `--namespace` / `--workdir` /
+/// `--deny`) by `cli::host_main`.
 ///
 /// Why: one binary serves every variant; the operator's `.mcp.json` entry
 /// (or CLI invocation) selects the store and the tool surface at runtime.
@@ -22,6 +23,12 @@ use crate::*;
 pub(crate) struct Config {
     pub id: String,
     pub namespace: String,
+    /// The agent's working directory (its repo/work root), resolved by
+    /// `cli::resolve_work_dir` (an explicit `--workdir` tilde-expanded;
+    /// absent -> `<home>/proj/equip/<id>`). Trusted operator config -- no
+    /// existence check. Exported to every worker as EQUIP_WORK_DIR and
+    /// reported by info(); the host itself never reads it.
+    pub work_dir: PathBuf,
     pub deny: DenySet,
 }
 

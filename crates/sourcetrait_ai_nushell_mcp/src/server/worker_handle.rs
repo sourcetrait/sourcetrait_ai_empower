@@ -91,13 +91,15 @@ impl WorkerHandle {
             // the host (which knows the store coordinate) passes it across the
             // spawn.
             .env("NUSHELL_MCP_LIBRARIES_DIR", libraries_dir())
-            // The store coordinate this host serves. seed_env forwards all
-            // inherited env into $env, so bodies + committed call-targets read
-            // $env.NUSHELL_MCP_ID / $env.NUSHELL_MCP_NAMESPACE ambiently (the
-            // who-am-I answer without pid matching). Workers still never read
-            // config().
-            .env("NUSHELL_MCP_ID", &config().id)
-            .env("NUSHELL_MCP_NAMESPACE", &config().namespace)
+            // The store coordinate + work dir this host serves. seed_env
+            // forwards all inherited env into $env, so bodies + committed
+            // call-targets read $env.EQUIP_ID / $env.EQUIP_NAMESPACE /
+            // $env.EQUIP_WORK_DIR ambiently (the who-am-I and
+            // where-is-my-work answers without pid matching). Workers still
+            // never read config().
+            .env("EQUIP_ID", &config().id)
+            .env("EQUIP_NAMESPACE", &config().namespace)
+            .env("EQUIP_WORK_DIR", &config().work_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())

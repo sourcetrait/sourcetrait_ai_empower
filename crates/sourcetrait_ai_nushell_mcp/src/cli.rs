@@ -1,14 +1,15 @@
 use crate::*;
 
 /// What: the host binary's CLI surface -- the runtime store coordinate
-/// (`--id` / `--namespace`), the operator tool-deny list (`--deny`), and
-/// an optional `cli` subcommand (the one-shot tool surface). A bare
-/// invocation serves MCP over stdio, so `.mcp.json` entries stay plain
-/// commands plus args.
+/// (`--id` / `--namespace`), the agent work dir (`--workdir`), the
+/// operator tool-deny list (`--deny`), and an optional `cli` subcommand
+/// (the one-shot tool surface). A bare invocation serves MCP over stdio,
+/// so `.mcp.json` entries stay plain commands plus args.
 ///
 /// Why: one binary, variant selected at runtime by trusted operator
 /// config. `id` / `namespace` are NOT ident-validated here (a bad value
-/// errors naturally downstream); `--deny` IS validated (fail-fast on an
+/// errors naturally downstream); `--workdir` is tilde-expanded but not
+/// existence-checked (same trust); `--deny` IS validated (fail-fast on an
 /// unknown tool name -- a typo silently denying nothing would defeat the
 /// operator's intent).
 ///
@@ -23,6 +24,10 @@ pub(crate) struct HostCli {
     /// State namespace within the id's store.
     #[arg(long, default_value = "default")]
     pub namespace: String,
+    /// Agent working directory, exported to every eval body as
+    /// $env.EQUIP_WORK_DIR. Defaults to <home>/proj/equip/<id>.
+    #[arg(long)]
+    pub workdir: Option<String>,
     /// Comma-separated tools to deny:
     /// run,rerun,interact,call,learn,new,commit,library.
     #[arg(long, value_delimiter = ',', value_parser = parse_deniable)]
@@ -174,6 +179,30 @@ fn default_id() -> String {
     std::env::var("USER").unwrap_or_else(|_| "default".to_string())
 }
 
+/// What: resolve the `--workdir` value into the Config's `work_dir`. An
+/// explicit value has a leading `~` / `~/` expanded against the home dir
+/// (any other form passes through literally, absolute or not); an absent
+/// value defaults to `<home>/proj/equip/<id>` -- the sane user-cli case;
+/// agent harness `.mcp.json` entries always pass `--workdir` explicitly.
+///
+/// Why: `.mcp.json` args reach the process verbatim (no shell), so a
+/// `~/`-form value must expand HERE to be usable; the directories crate's
+/// home view (`BASE_DIRS`) keeps that expansion consistent with every
+/// other path helper. No existence check -- trusted operator config, like
+/// id / namespace.
+///
+/// Where: called once by `host_main` before `CONFIG` is stored.
+fn resolve_work_dir(raw: Option<&str>, id: &str) -> PathBuf {
+    match raw {
+        Some("~") => BASE_DIRS.home_dir().to_path_buf(),
+        Some(s) => match s.strip_prefix("~/") {
+            Some(rest) => BASE_DIRS.home_dir().join(rest),
+            None => PathBuf::from(s),
+        },
+        None => BASE_DIRS.home_dir().join("proj").join("equip").join(id),
+    }
+}
+
 /// clap value_parser for `--deny` tokens; rejects unknown names with the
 /// valid-token list so a typo fails the startup instead of silently
 /// denying nothing.
@@ -198,9 +227,11 @@ fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
 /// Where: called from `src/main.rs::main`.
 pub fn host_main() {
     let cli = HostCli::parse();
+    let work_dir = resolve_work_dir(cli.workdir.as_deref(), &cli.id);
     let config = Config {
         id: cli.id,
         namespace: cli.namespace,
+        work_dir,
         deny: DenySet::new(cli.deny),
     };
     CONFIG.set(config).expect("CONFIG set once at startup");

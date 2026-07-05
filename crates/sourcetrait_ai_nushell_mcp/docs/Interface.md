@@ -7,12 +7,17 @@ config (the `.mcp.json` server entry's `args`, or the invoking command
 line):
 
 ```
-nushell_mcp [--id <string>] [--namespace <string>] [--deny <csv>]
+nushell_mcp [--id <string>] [--namespace <string>] [--workdir <path>] [--deny <csv>]
 ```
 
 - `--id` (default: `$USER`) - the agent identity owning the state store.
 - `--namespace` (default: `default`) - the state namespace within the
   id's store.
+- `--workdir` (default: `<home>/proj/equip/<id>`) - the agent's working
+  directory, exported to every eval body as `$env.EQUIP_WORK_DIR`. A
+  leading `~` / `~/` expands against the home dir; any other value
+  passes through literally. The default serves the bare user-cli case;
+  agent harness entries always pass it explicitly.
 - `--deny` - comma-separated tools to withhold from the surface. The
   deniable set: `run, rerun, interact, call, learn, new, commit,
   library`; the core four (`info`, `inspect`, `processes`, `kill`)
@@ -21,9 +26,9 @@ nushell_mcp [--id <string>] [--namespace <string>] [--deny <csv>]
   no implication between tokens - denying `run` does not deny `rerun`;
   list both when both are meant. An unknown token fails startup.
 
-The values are trusted config, not validated input: a malformed id or
-namespace surfaces as the natural downstream error (improper
-configuration).
+The values are trusted config, not validated input: a malformed id,
+namespace, or workdir surfaces as the natural downstream error (improper
+configuration); workdir is tilde-expanded but never existence-checked.
 
 Every store is fully private per `(id, namespace)`:
 
@@ -32,9 +37,9 @@ $XDG_DATA_HOME/sourcetrait/nushell_mcp/<id>/<namespace>/{keypair,libraries}
 $XDG_CACHE_HOME/sourcetrait/nushell_mcp/<id>/<namespace>/{runs,interacts,calls,closures}
 ```
 
-Workers receive the coordinate as spawn env, so bodies and committed
-call-targets read `$env.NUSHELL_MCP_ID` / `$env.NUSHELL_MCP_NAMESPACE`
-ambiently; `info()` reports the same pair.
+Workers receive the coordinate + work dir as spawn env, so bodies and
+committed call-targets read `$env.EQUIP_ID` / `$env.EQUIP_NAMESPACE` /
+`$env.EQUIP_WORK_DIR` ambiently; `info()` reports the same values.
 
 Example `.mcp.json` entries (one binary, two channels):
 
@@ -44,12 +49,12 @@ Example `.mcp.json` entries (one binary, two channels):
     "nushell": {
       "type": "stdio",
       "command": "/path/to/nushell_mcp",
-      "args": ["--id", "emptwo"]
+      "args": ["--id", "emptwo", "--workdir", "~/ai/emptwo"]
     },
     "nushell_mcp_test": {
       "type": "stdio",
       "command": "/path/to/build/nushell_mcp",
-      "args": ["--id", "emptwo", "--namespace", "test"]
+      "args": ["--id", "emptwo", "--namespace", "test", "--workdir", "~/ai/emptwo"]
     }
   }
 }
@@ -429,6 +434,7 @@ Output (partial):
       "nu_version": "0.113.1",
       "id": "emptwo",
       "namespace": "default",
+      "work_dir": "/home/user/ai/emptwo",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
       "libraries": [
         {

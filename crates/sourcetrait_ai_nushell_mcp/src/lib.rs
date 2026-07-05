@@ -64,7 +64,7 @@ pub(crate) use crate::{
     nu::FromValue,
     plugins::list_registered_plugins,
     server::{
-        cache::{CacheKind, cache_dir, closure_cache_file, data_base_dir},
+        cache::{BASE_DIRS, CacheKind, cache_dir, closure_cache_file, data_base_dir},
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         library::{
             LibraryInfo, LibraryLocks, ValidationResult, check_library,

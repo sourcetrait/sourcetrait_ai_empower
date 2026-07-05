@@ -5,9 +5,13 @@
 //!   - explicit `--id` / `--namespace` select the store subtree
 //!     `<xdg>/sourcetrait/nushell_mcp/<id>/<namespace>/`;
 //!   - two namespaces under one id are fully disjoint stores;
-//!   - info() reports the configured id + namespace;
-//!   - workers receive NUSHELL_MCP_ID / NUSHELL_MCP_NAMESPACE, readable
-//!     from a run() body as `$env.*` (the ambient who-am-I).
+//!   - info() reports the configured id + namespace + work_dir;
+//!   - workers receive EQUIP_ID / EQUIP_NAMESPACE / EQUIP_WORK_DIR,
+//!     readable from a run() body as `$env.*` (the ambient who-am-I +
+//!     where-is-my-work);
+//!   - --workdir resolution: an explicit value wins, a `~/` value
+//!     expands against HOME, an absent value defaults to
+//!     <home>/proj/equip/<id>.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -283,11 +287,13 @@ fn namespaces_are_disjoint_stores() {
 }
 
 #[test]
-fn worker_env_carries_store_coordinate() {
+fn worker_env_carries_store_coordinate_and_work_dir() {
     let data = tempfile::tempdir().expect("data");
     let cache = tempfile::tempdir().expect("cache");
+    let wd = tempfile::tempdir().expect("workdir");
+    let wd_str = wd.path().to_str().expect("workdir utf-8");
     let mut host = Host::spawn_with(
-        &["--id", "envid", "--namespace", "envns"],
+        &["--id", "envid", "--namespace", "envns", "--workdir", wd_str],
         &[],
         data.path(),
         cache.path(),
@@ -296,20 +302,91 @@ fn worker_env_carries_store_coordinate() {
         "run",
         serde_json::json!({
             "args_schema": {},
-            "result_schema": {"id": "string", "ns": "string"},
+            "result_schema": {"id": "string", "ns": "string", "wd": "string"},
             "args": {},
-            "body": "{ id: $env.NUSHELL_MCP_ID, ns: $env.NUSHELL_MCP_NAMESPACE }",
+            "body": "{ id: $env.EQUIP_ID, ns: $env.EQUIP_NAMESPACE, wd: $env.EQUIP_WORK_DIR }",
         }),
     );
     let env = structured(&resp);
     assert_eq!(
         env["result"]["id"].as_str(),
         Some("envid"),
-        "run body should see NUSHELL_MCP_ID; got {resp}",
+        "run body should see EQUIP_ID; got {resp}",
     );
     assert_eq!(
         env["result"]["ns"].as_str(),
         Some("envns"),
-        "run body should see NUSHELL_MCP_NAMESPACE; got {resp}",
+        "run body should see EQUIP_NAMESPACE; got {resp}",
+    );
+    assert_eq!(
+        env["result"]["wd"].as_str(),
+        Some(wd_str),
+        "run body should see the explicit EQUIP_WORK_DIR; got {resp}",
+    );
+    // info() reports the same work_dir.
+    let info = host.call("info", serde_json::json!({}));
+    assert_eq!(
+        structured(&info)["work_dir"].as_str(),
+        Some(wd_str),
+        "info() should report the configured work_dir; got {info}",
+    );
+}
+
+#[test]
+fn workdir_tilde_expands_against_home() {
+    let data = tempfile::tempdir().expect("data");
+    let cache = tempfile::tempdir().expect("cache");
+    let home = tempfile::tempdir().expect("home");
+    let home_str = home.path().to_str().expect("home utf-8");
+    let mut host = Host::spawn_with(
+        &["--id", "tildeid", "--workdir", "~/wd_x"],
+        &[("HOME", home_str)],
+        data.path(),
+        cache.path(),
+    );
+    let resp = host.call(
+        "run",
+        serde_json::json!({
+            "args_schema": {},
+            "result_schema": {"wd": "string"},
+            "args": {},
+            "body": "{ wd: $env.EQUIP_WORK_DIR }",
+        }),
+    );
+    let expected = home.path().join("wd_x");
+    assert_eq!(
+        structured(&resp)["result"]["wd"].as_str(),
+        expected.to_str(),
+        "a ~/ workdir should expand against HOME; got {resp}",
+    );
+}
+
+#[test]
+fn workdir_defaults_under_home_proj_equip_id() {
+    let data = tempfile::tempdir().expect("data");
+    let cache = tempfile::tempdir().expect("cache");
+    let home = tempfile::tempdir().expect("home");
+    let home_str = home.path().to_str().expect("home utf-8");
+    // No --workdir: the default is <home>/proj/equip/<id>.
+    let mut host = Host::spawn_with(
+        &["--id", "wdid"],
+        &[("HOME", home_str)],
+        data.path(),
+        cache.path(),
+    );
+    let resp = host.call(
+        "run",
+        serde_json::json!({
+            "args_schema": {},
+            "result_schema": {"wd": "string"},
+            "args": {},
+            "body": "{ wd: $env.EQUIP_WORK_DIR }",
+        }),
+    );
+    let expected = home.path().join("proj").join("equip").join("wdid");
+    assert_eq!(
+        structured(&resp)["result"]["wd"].as_str(),
+        expected.to_str(),
+        "an absent --workdir should default to <home>/proj/equip/<id>; got {resp}",
     );
 }

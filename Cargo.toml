@@ -1,7 +1,6 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
-  "crates/sourcetrait_equipment",
   "crates/sourcetrait_ai_lib_empower",
   "crates/sourcetrait_ai_empower_nubed",
   "crates/sourcetrait_ai_nu_plugin_empowered",

@@ -1,0 +1,33 @@
+name = "empower"
+title = "Empower"
+version = "0.0.0-2"
+
+[nushell]
+version = "0.113.1"
+
+[author]
+name = "sourcetrait"
+title = "SourceTrait"
+email = "development@sourcetrait.com"
+
+[description]
+summary = "Empower rig"
+keywords = ["ai"]
+
+[license]
+spdx = "AGPL-3.0-or-later"
+file = "LICENSE-AGPL-3.txt"
+
+[provider]
+name = "github"
+
+[exports]
+libraries = [
+    "ant",
+    "drone",
+    "equip",
+    "empower",
+    "fae",
+    "queen"
+]
+

@@ -12,8 +12,11 @@ keywords = ["sourcetrait", "equipment"]
 
 [dependencies]
 serde.workspace = true
-snafu.workspace = true
+toml.workspace = true
 semver.workspace = true
+snafu.workspace = true
+spdx.workspace = true
 
 [dev-dependencies]
 sourcetrait_testing.workspace = true
+pretty_assertions.workspace = true

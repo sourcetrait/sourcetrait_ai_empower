@@ -55,7 +55,7 @@ impl nu::SimplePluginCommand for Command {
             )
             .required(
                 "fill",
-                nu::SyntaxShape::Record(vec![]),
+                nu::SyntaxShape::Record(vec![].into()),
                 "Record of values for templating.",
             )
             .switch(

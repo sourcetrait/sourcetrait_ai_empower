@@ -56,6 +56,8 @@ pub(crate) use crate::{
 
 pub(crate) use snafu::ResultExt;
 
+pub(crate) use nu_protocol::CompareTypes;
+
 pub(crate) use std::{
     fs,
     path::{

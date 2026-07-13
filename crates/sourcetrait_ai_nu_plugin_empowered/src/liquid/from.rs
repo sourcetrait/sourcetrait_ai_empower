@@ -17,7 +17,7 @@ impl nu::SimplePluginCommand for Command {
         nu::Signature::build("from empowered liquid")
             .required(
                 "fill",
-                nu::SyntaxShape::Record(vec![]),
+                nu::SyntaxShape::Record(vec![].into()),
                 "Record of values interpolated into the template.",
             )
             .input_output_types(vec![(nu::Type::String, nu::Type::String)])

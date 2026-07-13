@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_ai_empower_nubed"
-version = "0.0.0-1"
+version = "0.0.0-2"
 edition = "2024"
 description = "Isolated nushell embedding engine for purely functional filter scripts"
 authors = ["SourceTrait <development@sourcetrait.com>"]

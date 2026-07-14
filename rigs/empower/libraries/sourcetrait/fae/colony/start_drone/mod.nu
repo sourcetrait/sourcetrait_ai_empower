@@ -1,4 +1,4 @@
-use rig/sourcetrait/fae/colony/channel/common
+use rig/sourcetrait/fae/colony/comm/common
 use rig/sourcetrait/empower/pid
 
 

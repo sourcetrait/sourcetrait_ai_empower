@@ -14,41 +14,41 @@
 # <fae_shm>/channel/colony/queen. colony_shm = <shm>/ai/ant_<fae>/<colony_nom>,
 # fae_shm = <shm>/ai/<fae>/<fae_nom>.
 
-use rig/sourcetrait/ant/channel
+use rig/sourcetrait/ant/comm
 
 # the colony's ai_id, derived from the bonded fae's identity.
 export def colony_ai_id [fae: string]: nothing -> string {
-    channel colony_ai_id $fae
+    comm colony_ai_id $fae
 }
 
 # an entity's current session_nom from its claudeline context/latest.yaml, or
 # null when it has no context file (no live session).
 export def session_nom [identity: string]: nothing -> oneof<string, nothing> {
-    channel session_nom $identity
+    comm session_nom $identity
 }
 
 # the colony's inbox file (the queen monitors it; the fae writes FAE and FAE
 # DRONE lines here).
 export def colony_inbox [colony_ai_id: string, colony_session_nom: string]: nothing -> string {
-    channel colony_inbox $colony_ai_id $colony_session_nom
+    comm colony_inbox $colony_ai_id $colony_session_nom
 }
 
 # the colony's outbox file (the queen writes its COLONY lines here) - this is
 # the fae's inbox, which the fae monitors.
 export def colony_outbox [fae: string, fae_session_nom: string]: nothing -> string {
-    channel colony_outbox $fae $fae_session_nom
+    comm colony_outbox $fae $fae_session_nom
 }
 
 # a drone's packet input dir (the fae writes drone-bound packets here; the
 # drone reads them).
 export def drone_input_dir [colony_ai_id: string, colony_session_nom: string, drone_name: string]: nothing -> string {
-    channel drone_input_dir $colony_ai_id $colony_session_nom $drone_name
+    comm drone_input_dir $colony_ai_id $colony_session_nom $drone_name
 }
 
 # a drone's packet output dir on the fae side (the drone writes its packets
 # to the fae here).
 export def drone_output_dir [fae: string, fae_session_nom: string, drone_name: string]: nothing -> string {
-    channel drone_output_dir $fae $fae_session_nom $drone_name
+    comm drone_output_dir $fae $fae_session_nom $drone_name
 }
 
 # announce a drone lifecycle status on both inboxes (the colony inbox always,
@@ -61,7 +61,7 @@ export def announce_drone [
     fae_session_nom: oneof<string, nothing>,
     status: string,
 ]: nothing -> nothing {
-    channel announce_drone $fae $drone_name $colony_ai_id $colony_session_nom $fae_session_nom $status
+    comm announce_drone $fae $drone_name $colony_ai_id $colony_session_nom $fae_session_nom $status
 }
 
 # the queen's packet input dir (the fae writes queen-bound packets here; the

@@ -4,8 +4,12 @@
 # the live<->repo mirror, mirror (guarded, explicit-direction) live<->repo, and
 # audit KB hygiene. All functions parameterize the live/repo/dir paths - no
 # ai-repository-specific literals - so the module serves any bonded fae.
+export module names
 export use names
+export module audit
 export use audit
+export module verify
 export use verify
+export module mirror
 export use mirror
 export module classify

@@ -675,14 +675,24 @@ pub(crate) fn scaffold_leaf(
                     .to_string(),
             });
         }
-        // A call target is a `<name>/mod.nu` dir-module wired via `export use`:
-        // nu 0.114 (#18303) no longer implicitly imports a module's submodules,
-        // so an `export module`-only call would be unreachable from a consumer
-        // that imports the parent.
+        // A call target is a `<name>/mod.nu` dir-module wired with BOTH edges (the
+        // conditional cascade convention). `export module` declares it as a
+        // submodule, keeping it addressable as a module path like any other dir;
+        // `export use` re-exports it so a consumer that imported the PARENT can
+        // drive it. The `export use` is the one nu 0.114 made mandatory: #18303
+        // stopped implicitly importing a module's submodules, so an
+        // `export module`-only call is unreachable from such a consumer
+        // (`library::call_wiring`).
+        //
+        // The module-path SEGMENTS above take `export module` ALONE: a pure module
+        // has no `main` to re-export, and an `export use` would flatten its helper
+        // exports up into the parent.
         fs::create_dir_all(&fn_dir)?;
         let fn_modnu = fn_dir.join("mod.nu");
         fs::write(&fn_modnu, skeleton_function_source())?;
-        additively_wire_modnu(&dir.join("mod.nu"), &format!("export use {fn_name}"))?;
+        let parent_modnu = dir.join("mod.nu");
+        additively_wire_modnu(&parent_modnu, &format!("export module {fn_name}"))?;
+        additively_wire_modnu(&parent_modnu, &format!("export use {fn_name}"))?;
         created.push(fn_modnu.to_string_lossy().into_owned());
     }
 

@@ -121,18 +121,46 @@ not a nushell_mcp failure, and it does not behave like one:
   diagnostic to read. Your nonce is inside the spilled payload, not the message.
 - The COMPLETE result is already on disk, at the path the message names.
 
-So the zero-write recovery is to READ that file - the client already wrote it
-for you. To pull one field out without rendering the whole thing into context,
-`open` it from a second run() body and project just what you need.
+So the zero-write recovery is to READ that spill file - the client already wrote
+it for you. Two things the message does not tell you, and you need both:
 
-Better: prevent it. Return a COUNT or a summary, not the payload - a body
-ending `{ n: ($paths | length) }` never spills. As an order of magnitude, a few
-hundred paths is comfortable and a few thousand is not: a recursive listing of
-~1,200 paths runs ~72 KB and blows the cap.
+- The file holds the WHOLE envelope (`{result, nonce, rerun_id}`), not the bare
+  result. Your nonce and rerun_id are in THERE, not in the message.
+- It is a `.txt`, so a bare `open` hands you a STRING (see "open auto-parses
+  known extensions" below). Force the parse:
 
-To WALK a large result without writing anything, page it with `rerun()`: it
-re-evaluates the SAME cached body with fresh args, so a body that takes `skip` /
-`take` args hands you one chunk per call.
+```nu
+# args_schema { spill: string }  result_schema { n: int }
+let doc = (open --raw $args.spill | decode | from json)
+{ n: ($doc.result.paths | length) }
+```
+
+Project just what you need from that second body. Do not render the whole
+payload back into context - that is what the cap was stopping in the first place.
+
+Better: never spill. Return a COUNT or a summary, not the payload - a body
+ending `{ n: ($paths | length) }` cannot blow the cap. The cap is on TOKENS, so
+treat any figure as a rule of thumb, not a threshold: as an order of magnitude, a
+few hundred paths is comfortable and a few thousand is not (a recursive listing
+of ~1,200 paths runs ~72 KB and spills).
+
+PAGING MUST BE DESIGNED IN BEFORE THE FIRST CALL. `rerun()` cannot rescue a call
+that already spilled: it re-evaluates the SAME cached body, and that body is
+FROZEN. If it did not already take `skip` / `take`, rerun re-runs it unchanged
+and spills again - and it fails SILENTLY, because records are open, so your extra
+args are accepted and then ignored. (The `rerun_id` you would need is not in the
+oversize message either; it is in the spill file.) So if a big result is possible,
+write the body to page from the start:
+
+```nu
+# args_schema { root: string, skip: int, take: int }
+# result_schema { total: int, page: [string] }
+let all = (glob ($args.root | path join "**" "*"))
+{ total: ($all | length), page: ($all | skip $args.skip | take $args.take) }
+```
+
+then walk it with `rerun(<rerun_id>, {root: ..., skip: 100, take: 100})`, which
+re-uses the cached body with fresh args and writes nothing.
 
 Reach for shm when you must move the WHOLE payload AND you may write.
 
@@ -306,6 +334,11 @@ may likewise carry `export const` / `export def` (or private
 `def` / `const` / `use` / `alias`) utilities alongside its cascade.
 
 ### The mod.nu cascade
+
+This follows nushell's own convention. The 0.114.0 release notes (PR #18303,
+"Submodules are no longer implicitly imported") state that importing a module no
+longer implicitly imports its exported submodules, and prescribe keeping
+`export module sub` and ADDING `export use sub` to restore reachability.
 
 Each directory carries a `mod.nu` wiring its children. HOW you wire a child
 depends on WHAT the child is:

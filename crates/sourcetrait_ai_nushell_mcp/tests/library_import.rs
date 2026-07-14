@@ -1180,16 +1180,59 @@ fn library_new_and_scaffold_function() {
         !fn_src.contains("export def call") && !fn_src.contains("export def resolve"),
         "skeleton should be 1-def main only; got {fn_src:?}"
     );
-    // Additive cascade wiring (NOT regenerate).
+    // Additive cascade wiring (NOT regenerate), per the CONDITIONAL convention:
+    // a CALL gets BOTH edges; a PURE module gets `export module` alone.
     let math_mod = std::fs::read_to_string(src.join("math").join("mod.nu")).unwrap();
     assert!(
+        math_mod.contains("export module double"),
+        "math mod.nu should DECLARE the call as a submodule; got {math_mod:?}",
+    );
+    assert!(
         math_mod.contains("export use double"),
-        "math mod.nu should wire the CALL via `export use`; got {math_mod:?}",
+        "math mod.nu should RE-EXPORT the call (0.114 no longer implicitly imports \
+         submodules, so `export module` alone leaves it unreachable); got {math_mod:?}",
     );
     let root_mod = std::fs::read_to_string(src.join("mod.nu")).unwrap();
     assert!(
         root_mod.contains("export module math"),
         "root mod.nu should wire math; got {root_mod:?}",
+    );
+    assert!(
+        !root_mod.contains("export use math"),
+        "`math` is a PURE module (no `main`): an `export use` would flatten its \
+         helpers into the parent; got {root_mod:?}",
+    );
+}
+
+#[test]
+fn scaffolded_call_commits_as_wired() {
+    // End-to-end on the scaffolder's own output: whatever `new()` wires must
+    // satisfy the validator. Scaffold, flesh out the skeleton, commit -- untouched
+    // cascade. This is the lock that keeps the scaffolder and the wiring rules
+    // from drifting apart (an `export module`-only wiring would fail
+    // library::call_wiring here).
+    let mut host = Host::spawn();
+    let src = host.source_dir("wiredlib");
+    let _ = host.library_new("wiredlib", &src);
+    let _ = host.scaffold("wiredlib:math:double");
+    std::fs::write(
+        src.join("math").join("double").join("mod.nu"),
+        valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
+    )
+    .unwrap();
+    let resp = host.call("commit", serde_json::json!({"library": "wiredlib"}));
+    assert!(
+        !has_error_path(&resp),
+        "the scaffolder's own wiring must pass the validator; got {resp}"
+    );
+    let called = host.call(
+        "call",
+        serde_json::json!({"namepath": "wiredlib:math:double", "args": {"x": 21}}),
+    );
+    assert_eq!(
+        called["result"]["structuredContent"]["result"]["out"].as_i64(),
+        Some(42),
+        "a scaffolded call must be drivable; got {called}",
     );
 }
 

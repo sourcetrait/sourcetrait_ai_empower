@@ -45,6 +45,7 @@ pub(crate) mod ipc {
 }
 pub(crate) mod cli;
 pub(crate) mod config;
+pub(crate) mod engine;
 pub(crate) mod mode;
 pub(crate) mod plugins;
 pub(crate) mod template;
@@ -58,11 +59,12 @@ mod tests {
 pub(crate) use crate::{
     cli::{CliTool, parse_worker_mode},
     config::{CONFIG, Config, DeniableTool, DenySet, config},
+    engine::base_context,
     ipc::framing::{read_frame, read_frame_async, write_frame, write_frame_async},
     mcp::ServiceExt,
     mode::Mode,
     nu::FromValue,
-    plugins::list_registered_plugins,
+    plugins::{list_registered_plugins, load_plugin_decls},
     server::{
         cache::{BASE_DIRS, CacheKind, cache_dir, closure_cache_file, data_base_dir},
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},

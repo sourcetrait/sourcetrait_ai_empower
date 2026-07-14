@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_ai_nushell_mcp"
-version = "0.0.0-83"
+version = "0.0.0-84"
 edition = "2024"
 description = "Nushell engine MCP server"
 authors = ["SourceTrait <development@sourcetrait.com>"]

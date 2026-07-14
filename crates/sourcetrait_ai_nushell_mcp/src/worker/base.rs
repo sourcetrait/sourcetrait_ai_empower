@@ -37,29 +37,25 @@ impl WarmBase {
     /// Where: called once at worker startup by
     /// `worker::run::run_worker` before the request loop starts.
     pub(crate) fn new(mode: Mode) -> Self {
-        let mut engine_state = nu::add_shell_command_context(nu::create_default_context());
-        // The nu-cmd-extra family (bits / math-trig / str-case / format / roll /
-        // to html / from url / ansi gradient) - pure data/string transforms with
-        // no admin or side-effect surface; BOTH worker modes load it (item 17,
-        // the_user 2026-06-15).
-        engine_state = nu::add_extra_command_context(engine_state);
+        // The command context shared with the library validator (crate::engine):
+        // lang + shell + nu-cmd-extra, is_interactive = false, is_mcp = true.
+        // Anything a library body may legally call has to parse on BOTH, so the
+        // layering lives in one constructor.
+        let mut engine_state = base_context();
         // The plugin-management family (plugin add/rm/list/use/stop) lands on the
         // STATEFUL (interact) administrative worker ONLY: run() stays admin-free,
         // and plugin registration's merge_delta only persists on the stateful
         // worker anyway (the stateless per-call clone discards it) (item 17).
+        // Deliberately NOT in base_context: a call-target always runs stateless,
+        // so a library must never be validated against this family.
         if matches!(mode, Mode::Stateful) {
             engine_state = nu::add_plugin_command_context(engine_state);
         }
-        engine_state.is_interactive = false;
-        engine_state.is_mcp = true;
-        // Slice 5.7: register plugin decls so agent closures can invoke
-        // installed plugins (e.g. `from xlsx`, custom plugin commands).
-        // Resolves the canonical `$nu.plugin-path` via `nu_path::nu_config_dir`
-        // -- the same logic nu binary uses at startup -- and runs the
-        // standard `nu_plugin_engine::load_plugin_file` against the registry
-        // file. Missing file / parse failures / individual plugin load errors
-        // all log + continue; absent plugins are NOT fatal for the worker.
-        load_plugins_best_effort(&mut engine_state);
+        // Register plugin decls so agent closures can invoke installed plugins
+        // (e.g. `from xlsx`, custom plugin commands). Shared with the validator
+        // (crate::plugins) so what serves is what validates; best-effort, an
+        // absent/broken registry is not fatal.
+        load_plugin_decls(&mut engine_state);
         // Populate the `$nu` const so closures can reference `$nu.plugin-path`,
         // `$nu.home-dir`, etc. Without this every `$nu.*` access surfaces
         // `Variable not found`. Each nu host (REPL, LSP, etc.) calls this
@@ -82,51 +78,6 @@ impl WarmBase {
         let _ = sys::setsid();
         Self { engine_state, mode }
     }
-}
-
-/// What: sets `engine_state.plugin_path` to the canonical registry
-/// location (resolved by `plugins::registry_path`, mirroring what
-/// `$nu.plugin-path` resolves to), reads + deserializes the registry
-/// via `plugins::read_registry`, and registers each plugin's decls
-/// into a fresh `StateWorkingSet` via `nu_plugin_engine::load_plugin_file`.
-/// Merges the resulting delta back into `engine_state` so plugin decls
-/// are visible to subsequent parse + eval. Every step is best-effort:
-/// no config dir, no file, parse error, individual plugin load error
-/// -- all skip silently; the worker stays usable for non-plugin code.
-///
-/// Why: the worker is the agent's nushell engine; without plugins
-/// loaded, agent closures that invoke `from xlsx`, `query db`, or any
-/// other plugin command would parse-fail on unknown decls. Path
-/// resolution + read share `crate::plugins` with the host-side
-/// `info()` tool so the worker's view and the agent's view of the
-/// registry can never drift.
-///
-/// Where: called once in `WarmBase::new` after `add_shell_command_context`
-/// but before `seed_env`. Both `Mode::Stateless` and `Mode::Stateful`
-/// workers run this -- plugins load symmetrically per the_user 2026-06-01.
-fn load_plugins_best_effort(engine_state: &mut nu::EngineState) {
-    let Some(path) = plugins::registry_path() else {
-        return;
-    };
-    engine_state.plugin_path = Some(path.clone().into());
-    let Some(contents) = plugins::read_registry() else {
-        return;
-    };
-    let mut working_set = nu::StateWorkingSet::new(engine_state);
-    // nu_plugin_engine::load_plugin_file returns the count of plugins that
-    // failed to load; per-plugin errors are already routed to stderr via
-    // report_shell_error inside the call. Slice 6.0: surface the summary so
-    // a partial load is visible to the host operator alongside the
-    // pre-printed per-plugin errors.
-    let error_count = nu::load_plugin_file(&mut working_set, &contents, None);
-    if error_count > 0 {
-        eprintln!(
-            "nushell_mcp_worker: {error_count} plugin(s) failed to load from {}; see preceding error reports",
-            path.display(),
-        );
-    }
-    let delta = working_set.render();
-    let _ = engine_state.merge_delta(delta);
 }
 
 /// What: copies env vars from the OS environment into the

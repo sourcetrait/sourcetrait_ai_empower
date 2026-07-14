@@ -1371,6 +1371,44 @@ fn commit_rejects_orphan_module() {
 }
 
 #[test]
+fn commit_accepts_nu_cmd_extra_command() {
+    // The validator's EngineState must carry the SAME command surface the worker
+    // runs against. It used to be a STRICT SUBSET (lang + shell only) while the
+    // worker also loads nu-cmd-extra, so a call-target using `str snake-case` ran
+    // fine on the worker but was REJECTED at commit as
+    // `ExtraPositional("str ", ...)` -- the parser binding a bare `str` and
+    // reading the subcommand word as an extra positional, an opaque error naming
+    // nothing. It must commit AND run.
+    //
+    // The call is wired with BOTH `export module` and `export use` (the_user's
+    // conditional cascade convention), which also locks that shape as valid.
+    let mut host = Host::spawn();
+    let src = host.source_dir("extralib");
+    let _ = host.library_new("extralib", &src);
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export module snake\nexport use snake\n");
+    write_source(
+        &src,
+        "m/snake/mod.nu",
+        "export def main [args: record<text: string>]: nothing -> record<out: string> {\n    { out: ($args.text | str snake-case) }\n}\n",
+    );
+    let resp = host.call("commit", serde_json::json!({"library": "extralib"}));
+    assert!(
+        !has_error_path(&resp),
+        "a call-target using nu-cmd-extra (`str snake-case`) must commit; got {resp}"
+    );
+    let called = host.call(
+        "call",
+        serde_json::json!({"namepath": "extralib:m:snake", "args": {"text": "Hello World"}}),
+    );
+    assert_eq!(
+        called["result"]["structuredContent"]["result"]["out"].as_str(),
+        Some("hello_world"),
+        "the committed nu-cmd-extra call must run; got {called}",
+    );
+}
+
+#[test]
 fn commit_accepts_call_with_flat_helper() {
     // A call target may split a large helper into a flat sibling file and pull
     // it in privately via `use`.

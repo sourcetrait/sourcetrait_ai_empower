@@ -196,12 +196,17 @@ Nu ecosystem libraries are custom authored Nu module hierarchies that export:
   any other library and within MCP `run()/call()/interact()` bodies.
 - Private definitions and consts that are used internally by the library itself.
 
-Libraries are installed system-wide and made available via `$env.NU_LIB_DIRS`.
-Their exports can be accessed anywhere, simply:
+Libraries are installed system-wide and resolved by a parse-time const
+`$NU_LIB_DIRS` the MCP controls. Import the MODULE that owns what you want,
+then drive it prefixed:
 ```nu
-use rig/<author>/<library>
-<library> <module 1> <module 2> <export 1> <params>
+use rig/<author>/<library>/<module>
+<module> <export> <params>
 ```
+
+Always name the MODULE. Importing the library ROOT reaches nothing below it:
+nushell 0.114 stopped implicitly importing a module's submodules, so a root
+import binds no submodule the drive could traverse.
 
 The library ecosystem is what makes Nushell MCP a powerful tool. It allows
 agents and users to author reusable and consistent tools at will. Their
@@ -257,7 +262,8 @@ export def main [args: record<x: int>]: nothing -> record<out: int> {
 - The call's `mod.nu` MAY ALSO carry private helper `def` / `const`s (or
   `use` a flat sibling); only `main` is the indexed / callable target.
 - A call is a LEAF (an edge module): it holds `main`, never a submodule.
-  Its parent wires it in with `export module <name>` (never `export use`).
+  Its parent wires it in with BOTH `export module <name>` AND
+  `export use <name>` (the cascade below).
 - `main` is a RESERVED word: it may appear ONLY in a call's `mod.nu` as
   this exported sentinel - never in a flat file, and never as any other def /
   module / directory / parameter / record-key / cell-path-member name.
@@ -279,22 +285,39 @@ may likewise carry `export const` / `export def` (or private
 
 ### The mod.nu cascade
 
-Prefer submodules: each directory carries a `mod.nu` wiring its children.
+Each directory carries a `mod.nu` wiring its children. HOW you wire a child
+depends on WHAT the child is:
 
-- `export module <name>` - re-export a child module: a subdirectory beside
-  this `mod.nu` (with its own `mod.nu`) - a submodule OR a call target. This
-  is how calls are wired.
-- `export use ./<name>.nu` - inline a flat organizational helper file's
-  exports into this module (use it only when a flat file is warranted).
+- A CALL TARGET (a dir-module holding `main`) gets BOTH
+  `export module <name>` AND `export use <name>`. `export module` declares it
+  as a submodule, keeping it addressable as a module path like any other dir;
+  `export use` re-exports it so a consumer that imported the PARENT can drive
+  it (`<parent> <call>`). The `export use` is REQUIRED, not decoration:
+  nushell 0.114 stopped implicitly importing a module's submodules, so an
+  `export module`-only call is unreachable from a consumer that imported the
+  parent. It re-exports the call without leaking the target's `main` or its
+  helper exports into the parent's namespace.
+- A PURE MODULE (helpers, no `main`) gets `export module <name>` ONLY. It has
+  no `main` to re-export, and an `export use` would pull its helper exports up
+  into the parent - flattening, which this ecosystem avoids everywhere.
+- A FLAT HELPER FILE (`<name>.nu`, no `main`) is inlined with
+  `export use ./<name>.nu` (or a private `use ./<name>.nu`). This relative,
+  path-shaped form is ONLY ever for a flat FILE - never for a sibling module.
 
 ```
 <library_root>/          # the library, e.g. `acme/mathlib`
-  mod.nu                 # export module geo
+  mod.nu                 # export module geo          <- pure module: one edge
   geo/
-    mod.nu               # export module area
+    mod.nu               # export module area         <- call: both edges
+                         # export use area
     area/
       mod.nu             # export def main  ->  call acme/mathlib:geo:area
 ```
+
+Wiring is enforced at `commit`, so getting it wrong is a hard error, not a
+silent bug: a call wired only by `export module` is `library::call_wiring`; a
+child reached by no edge at all is `library::orphan`; a call that contains a
+submodule is `library::call_leaf`.
 
 ### Referencing other modules + libraries
 
@@ -319,6 +342,13 @@ spells the `rig/` prefix.)
 - `use` MODULES, not functions (except the collision case). NEVER `use ./x.nu`
   for a sibling MODULE - a bare relative path is only for inlining a flat helper
   FILE via `export use ./<file>.nu`.
+
+A library may also depend on ANOTHER COMMITTED library, by the same coordinate
+(`use rig/<other_author>/<other_library>/<module>`). It validates at `commit`
+against the store exactly as it resolves at serve, so a cross-library dep is a
+first-class authoring move, not a workaround. The one ordering constraint: the
+sibling must already be committed - your own library's self-refs are the case
+that does NOT need this, since they resolve against the source-under-commit.
 
 ### Node documentation + inference reduction
 
@@ -428,12 +458,18 @@ applies to the `run()` / `interact()` surface only.
 
 ### Using a committed library from run() / interact()
 
-A committed library is a full nu module on `$env.NU_LIB_DIRS`, so a
-run() / interact() body can `use rig/<author>/<library>` and invoke its
-exports directly - not just call-targets but every `export`. `call()`
-drives a single committed `main`; `use rig/<author>/<library>` then
-`<library> <module> ...` from a body reuses the same library as ordinary
-nu code.
+A committed library is ordinary nu on the MCP's controlled lib path, so a
+run() / interact() body can import it and invoke its exports directly - not
+just call-targets, but EVERY `export`. Import the module that owns what you
+want (a root import reaches nothing, as above):
+
+```nu
+use rig/<author>/<library>/<module>
+<module> <export> <params>
+```
+
+`call()` drives a single committed `main` by namepath; importing from a body
+reuses the same library as plain nu code.
 
 ## Lint
 
@@ -548,6 +584,42 @@ glob "*.rs"                                   # for find
 External commands NOT on the denylist pass freely:
 `git`, `cargo`, `python3`, `tree-sitter`, `fd`, `ast-grep`,
 `claude`, etc.
+
+## Infrastructure errors (`worker::*`)
+
+`lint::*` means your body broke a rule and was never dispatched. `library::*`
+means your library source broke a contract and was never committed. The
+`worker::*` kinds are different in kind: the call WAS dispatched, and the
+EVALUATOR is what failed. All arrive in the same error envelope, and all carry
+the call's `nonce` - fetch that call's captured stdout/stderr from the per-nonce
+cache log dir the server `instructions` advertise. That log is usually where the
+real message is.
+
+- `worker::returned_error` - YOUR code, at eval time: a parse error, a type
+  mismatch, an external that exited non-zero, an unresolved command. Most of
+  the Nu Nuances below surface as this. NOT transient - re-running unchanged
+  reproduces it. If the message is opaque (a bare
+  `eval: External command failed` with empty logs), suspect a misspelled or
+  undefined command that nushell fell back to running as an external.
+- `worker::timeout` - the call exceeded `timeout_ms` (default 120000) and its
+  worker was KILLED. The message carries the ms. Your work did not finish, but
+  any side effects it had ALREADY committed remain (evaluation is not
+  transactional - see below). Do not just retry: either the work is genuinely
+  long, and you raise `timeout_ms` deliberately, or the body HUNG - and the
+  usual cause is an external waiting on stdin the worker cannot provide (a git
+  credential prompt, a pager, anything wanting a tty). A retry at the same
+  timeout hangs again.
+- `worker::dispatch` - the worker could not be reached: it died mid-call, or a
+  fresh one could not be spawned. Whose fault depends on which, and ONE retry
+  tells you - the pool lazy-spawns a replacement, so a transient dead worker
+  clears itself:
+  - reproduces -> it is your body (it called `exit`, or crashed the engine).
+  - clears -> you hit a dead pooled worker; nothing to fix.
+  - fails at SPAWN (`pool acquire: No such file or directory`) -> the server's
+    worker binary is gone, which happens when the binaries were replaced under
+    a running server. It needs a reconnect; no body change will help.
+
+`kill(nonce)` produces the timeout shape - it SIGKILLs that call's worker.
 
 ## Nu Nuances
 
@@ -738,7 +810,7 @@ literal - the hardcoded-path lint fires on it):
 glob ($args.root | path join "**" "*")
 ```
 
-Verified (nu 0.113.1): the result INCLUDES the root dir itself AND
+Verified (nu 0.114.1): the result INCLUDES the root dir itself AND
 returns files as well as directories (`**` and `**/*` behave the same).
 So for "every subdirectory BELOW <root>", filter to dirs and drop the
 root:
@@ -1149,10 +1221,11 @@ one-line `summary` + structured `args_schema` + `result_schema` (a
 void-args function reads `{}`). A library HAS modules; a module MAY HAVE
 submodules. `plugins` are positional `[name, version]` pairs (version is
 `null` when the plugin reports none). `id` + `namespace` are the state
-store this server serves (its operator config); bodies see the same pair
-ambiently as `$env.NUSHELL_MCP_ID` / `$env.NUSHELL_MCP_NAMESPACE`. This
-is ground truth - prefer it over any static index. For a node's full
-details, call `inspect()`.
+store this server serves, and `work_dir` its configured agent work dir (its
+operator config); a body reads all three ambiently as `$env.EQUIP_ID` /
+`$env.EQUIP_NAMESPACE` / `$env.EQUIP_WORK_DIR` - the who-am-I and
+where-is-my-work answers, no pid matching needed. This is ground truth -
+prefer it over any static index. For a node's full details, call `inspect()`.
 
 ### `inspect()`
 *Detailed documentation of a specific callable library, module, function.*

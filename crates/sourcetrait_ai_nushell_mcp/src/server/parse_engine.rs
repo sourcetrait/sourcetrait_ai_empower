@@ -1,17 +1,18 @@
 use crate::*;
 
-/// What: reusable parsing context that wraps a full-shell
-/// `EngineState` (`create_default_context` +
-/// `add_shell_command_context`, is_interactive=false, is_mcp=true).
-/// Cloned per-file via `engine_state_for_file` to layer a per-file
-/// `$env.PWD` without disturbing the base.
+/// What: reusable parsing context wrapping an `EngineState` built to MATCH the
+/// stateless worker's command surface (`new_full`: the shared
+/// `engine::base_context` + the registered plugin decls + the `$nu` const).
+/// Cloned per-file via `engine_state_for_file` to layer a per-file `$env.PWD` +
+/// `$NU_LIB_DIRS` without disturbing the base.
 ///
-/// Why: building an EngineState is millisecond-scale; reusing one
-/// across every file in a `validate_library_source` walk amortizes
-/// that cost. The full shell context (not lang-only) is required so
-/// the body lint can resolve regex-receiver decls (e.g. `str replace
-/// --regex`) as Calls rather than ExternalCalls; see `new_full`'s
-/// docstring. The body linter shares the same substrate.
+/// Why: building an EngineState is millisecond-scale; reusing one across every
+/// file in a `validate_library_source` walk amortizes that cost. The surface has
+/// to MATCH the worker's, not merely be "full shell": whatever a library body
+/// may legally call must parse here, or the validator rejects code that runs
+/// (see `new_full`). The body linter shares the same substrate, and separately
+/// needs the shell context so regex-receiver decls (`str replace --regex`)
+/// resolve as Calls rather than ExternalCalls.
 ///
 /// Where: instantiated by `library::validate_library_source` once
 /// per invocation; passed by reference into the per-file walkers
@@ -51,29 +52,52 @@ pub(crate) fn set_lib_dirs_const(engine_state: &mut nu::EngineState, dirs: &[Pat
 }
 
 impl ParseEngine {
-    /// What: constructs a fresh `ParseEngine` carrying the full shell
-    /// command set (`nu_cmd_lang::create_default_context` +
-    /// `nu_command::add_shell_command_context`) plus the same
-    /// `is_interactive = false` and `is_mcp = true` flags.
+    /// What: constructs a fresh `ParseEngine` carrying the SAME command surface a
+    /// stateless worker runs against -- `crate::engine::base_context` (lang +
+    /// shell + nu-cmd-extra, `is_interactive = false`, `is_mcp = true`) plus the
+    /// registered plugin decls (`plugins::load_plugin_decls`) plus the `$nu`
+    /// const.
     ///
-    /// Why: the slice 5.x body linter needs `cd`, `ls`, `str replace`,
-    /// `parse`, `find`, `split row`, `split column`, etc. resolved as
-    /// `Expr::Call` rather than collapsing to `Expr::ExternalCall`.
-    /// Without the full shell context, the parser cannot identify the
-    /// regex-receiver decl names (the named `--regex` flag flattens to
-    /// a plain ext arg and becomes indistinguishable from a path-shape
-    /// positional). Slice 5.0 probe `iter/nushell_mcp/
-    /// slice_5_0_probe_findings.md` confirmed this trade-off.
+    /// Why, two independent reasons:
     ///
-    /// Where: called once in `server::run::run_server` to construct
-    /// the `lint_engine: Arc<ParseEngine>` field on `NuSh`. Per-call
-    /// clones for parse are cheap because `EngineState`'s data is
-    /// Arc-shared.
+    /// 1. The BODY LINT needs `cd`, `ls`, `str replace`, `parse`, `find`,
+    ///    `split row`, `split column`, etc. resolved as `Expr::Call` rather than
+    ///    collapsing to `Expr::ExternalCall`. Without the shell context the
+    ///    parser cannot identify the regex-receiver decl names (the named
+    ///    `--regex` flag flattens to a plain ext arg, indistinguishable from a
+    ///    path-shape positional). Slice 5.0 probe confirmed the trade-off.
+    /// 2. The LIBRARY VALIDATOR must not reject source that RUNS. It used to
+    ///    carry only lang + shell while the worker carried lang + shell + extra
+    ///    + the plugin decls, so the validator was a strict subset and the gap
+    ///    was silent: a library body calling nu-cmd-extra (`str snake-case`,
+    ///    `bits and`) or a plugin command extending a builtin family
+    ///    (`from empowered liquid`) failed commit/check as
+    ///    `ExtraPositional(...)` -- the parser binding the builtin and reading
+    ///    the rest as extra positionals -- while running fine on the worker. A
+    ///    plugin command with its OWN head parsed as an implicit external and
+    ///    committed UNVALIDATED, so plugin support worked only by accident.
+    ///    Sharing `base_context` + `load_plugin_decls` with `WarmBase::new` is
+    ///    what keeps validate == serve.
+    ///
+    /// The one deliberate asymmetry: no `add_plugin_command_context`. That admin
+    /// family (`plugin add/rm/list/...`) is stateful-worker-only, and a
+    /// call-target always runs stateless -- validating against a command a
+    /// library can never legally call would let it commit and then fail.
+    ///
+    /// Where: called once in `server::run::run_server` (and `run_oneshot`) to
+    /// construct the `lint_engine: Arc<ParseEngine>` field on `NuSh`. Per-call
+    /// clones for parse are cheap because `EngineState`'s data is Arc-shared.
     pub(crate) fn new_full() -> Self {
-        let mut engine_state = nu::create_default_context();
-        engine_state = nu::add_shell_command_context(engine_state);
-        engine_state.is_interactive = false;
-        engine_state.is_mcp = true;
+        let mut engine_state = base_context();
+        // The plugin decls the workers register. Registers DECLS only -- no
+        // plugin process spawns (nushell spawns those lazily on first
+        // invocation), so the validator pays just the registry read.
+        load_plugin_decls(&mut engine_state);
+        // `$nu.*` is a parse-time const: without it, library source referencing
+        // `$nu.home-dir` fails to parse here while parsing fine on the worker.
+        // After the plugin load, so `$nu.plugin-path` reflects the resolved
+        // registry (same ordering as `WarmBase::new`).
+        engine_state.generate_nu_constant();
         Self {
             engine_state,
             extra_lib_dir: None,

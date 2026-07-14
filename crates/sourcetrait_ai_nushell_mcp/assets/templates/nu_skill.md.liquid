@@ -109,10 +109,32 @@ already captured per-call by the MCP at its cache log dir (the server
 `instructions` advertise the path) - to read a command's full output,
 fetch that per-nonce log; rather than `save` command output to shm.
 
-The oversize tell: a result too big returns as an
-`Error: result (N characters) exceeds...` envelope that spilled the data
-to a file - the client truncating, NOT a nushell_mcp failure. That is when
-you reach for shm.
+The oversize tell: a result too big comes back as
+`Error: result (N characters) exceeds...`, naming a file the payload was
+spilled to. Read that message carefully, because it is the CLIENT truncating,
+not a nushell_mcp failure, and it does not behave like one:
+
+- Your call SUCCEEDED. The body ran, the worker returned a normal envelope, and
+  any side effects it had are already done.
+- It is NOT an error envelope. There is no `kind`, no `errors[]`, no `nonce` -
+  so the "fetch the per-nonce log" recovery does NOT apply here, and there is no
+  diagnostic to read. Your nonce is inside the spilled payload, not the message.
+- The COMPLETE result is already on disk, at the path the message names.
+
+So the zero-write recovery is to READ that file - the client already wrote it
+for you. To pull one field out without rendering the whole thing into context,
+`open` it from a second run() body and project just what you need.
+
+Better: prevent it. Return a COUNT or a summary, not the payload - a body
+ending `{ n: ($paths | length) }` never spills. As an order of magnitude, a few
+hundred paths is comfortable and a few thousand is not: a recursive listing of
+~1,200 paths runs ~72 KB and blows the cap.
+
+To WALK a large result without writing anything, page it with `rerun()`: it
+re-evaluates the SAME cached body with fresh args, so a body that takes `skip` /
+`take` args hands you one chunk per call.
+
+Reach for shm when you must move the WHOLE payload AND you may write.
 
 The MCP host, its workers, and your Read/Write tools share one
 filesystem, so a file one writes another reads. The tmpfs IPC filesystem
@@ -131,12 +153,13 @@ call():     $env.XDGX_SHM_DIR | path join '<author>/<library>/<module>' | path j
             (the library `<author>/<name>` plus its leading module path, e.g. 'sourcetrait/empower/know')
 ```
 
-FROM you (you write via the Write tool, a body reads) - no `$env.NONCE`
-exists before the call, so namespace under your own provisioned
-per-session dir:
+FROM you (you write via the Write tool, a body reads) - no `$env.NONCE` exists
+before the call, so choose any path you control under the root:
 ```
-ai/{infer:ai_identity}/{infer:session_nom}/<name>
+<a dir you own>/<name>          e.g.  agent/inbox/input.json
 ```
+The contract is only the path RELATIVE to `$env.XDGX_SHM_DIR`; the
+sub-namespace is yours to pick. Create the directory before writing to it.
 
 OUT (body -> you):
 ```nu
@@ -150,10 +173,9 @@ $data | to json | save -f ($env.XDGX_SHM_DIR | path join $rel)
 ```
 Read `$env.XDGX_SHM_DIR` joined with `shm_out` via the Read tool.
 
-IN (you -> body): with your Write tool, write the payload to
-`ai/{infer:ai_identity}/{infer:session_nom}/input.json` under
-`$env.XDGX_SHM_DIR` (that dir is already provisioned), then pass that
-relative path in an `shm`-named arg:
+IN (you -> body): with your Write tool, write the payload somewhere under
+`$env.XDGX_SHM_DIR` (creating the directory if needed), then pass the path
+RELATIVE to that root in an `shm`-named arg:
 ```nu
 # args_schema { shm_in: string }  result_schema { rows: int }
 { rows: (open ($env.XDGX_SHM_DIR | path join $args.shm_in) | length) }
@@ -342,6 +364,32 @@ spells the `rig/` prefix.)
 - `use` MODULES, not functions (except the collision case). NEVER `use ./x.nu`
   for a sibling MODULE - a bare relative path is only for inlining a flat helper
   FILE via `export use ./<file>.nu`.
+
+The commonest shape in practice is a CALL TARGET using a SIBLING helper module,
+so it is worth spelling out. Given:
+
+```
+text/
+  mod.nu          # export module slug + export use slug   <- the call
+                  # export module common                    <- the helper module
+  slug/mod.nu     # the call target: holds `main`
+  common/mod.nu   # shared helper defs, no `main`
+```
+
+`slug/mod.nu` imports `common` DIRECTLY, by its full coordinate:
+
+```nu
+use rig/acme/toolkit/text/common
+export def main [args: record<s: string>]: nothing -> record<out: string> {
+    { out: (common normalize $args.s) }
+}
+```
+
+Reach for the SIBLING, never the PARENT. A `use rig/acme/toolkit/text` from
+inside `text/slug/` would pull in the very cascade you live under - that is the
+`CircularImport` the rule above is about. Naming `text/common` resolves that one
+module directly and is fine. Note there is no relative form here: a sibling
+MODULE is always the full `rig/...` coordinate, even within your own library.
 
 A library may also depend on ANOTHER COMMITTED library, by the same coordinate
 (`use rig/<other_author>/<other_library>/<module>`). It validates at `commit`
@@ -819,6 +867,17 @@ root:
 glob ($args.root | path join "**" "*")
 | where {|p| (($p | path type) == "dir") and ($p != $args.root) }
 ```
+
+HIDDEN entries ARE matched. `*` and `**` both traverse dotted names (nu's glob
+runs with `require_literal_leading_dot: false`), so `glob ($dir | path join "*")`
+returns `.gitignore` and `.git/` the same as any other entry - it is `ls`, not
+`ls -a`, that is the odd one out. If you want only visible entries, filter them
+out yourself; if you are enumerating "everything under here", you already have
+them.
+
+A recursive listing is also the easiest way to blow the result-size cap - see
+"Large payloads: shm IPC" above. Return a `| length`, or page it with `rerun()`,
+before you return thousands of paths.
 
 ## MCP Interface
 

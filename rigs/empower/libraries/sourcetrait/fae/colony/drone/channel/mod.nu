@@ -5,6 +5,6 @@
 # responses arrive as COLONY DRONE lines on the fae's inbox
 # (sourcetrait/fae:colony/channel), packets in the fae's drone-packet dir. Call
 # targets: syn, ack; shared derivation in common.
-export module syn
-export module ack
+export use syn
+export use ack
 export module common

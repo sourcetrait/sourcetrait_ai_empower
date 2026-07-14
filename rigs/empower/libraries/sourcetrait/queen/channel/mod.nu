@@ -5,7 +5,7 @@
 # (which it monitors). Every path derives from the bonded fae's identity + the
 # colony (ant_<fae>) via the claudeline + shm layout. Call targets: open, syn,
 # ack, close; shared derivation in sourcetrait/queen:common.
-export module open
-export module syn
-export module ack
-export module close
+export use open
+export use syn
+export use ack
+export use close

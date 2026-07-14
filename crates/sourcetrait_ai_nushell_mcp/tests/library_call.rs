@@ -315,7 +315,7 @@ fn inspect_library_root_and_module() {
     let src = host.source_dir("inspectlib2");
     let _ = host.library_new("inspectlib2", &src);
     write_source(&src, "mod.nu", "# the inspectlib2 library\nexport module math\n");
-    write_source(&src, "math/mod.nu", "# math helpers\nexport module double\n");
+    write_source(&src, "math/mod.nu", "# math helpers\nexport use double\n");
     write_source(
         &src,
         "math/double/mod.nu",
@@ -407,7 +407,7 @@ fn helper_file_pruned_from_info_and_not_callable() {
     let src = host.source_dir("helperlib");
     let _ = host.library_new("helperlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use ./util.nu\nexport module real\n");
+    write_source(&src, "m/mod.nu", "export use ./util.nu\nexport use real\n");
     // Organizational helper FLAT FILE: no `main` sentinel, `export use`'d in.
     write_source(&src, "m/util.nu", "export def helper [n: int] { $n * 2 }\n");
     // A real call-target (dir-module) beside it.

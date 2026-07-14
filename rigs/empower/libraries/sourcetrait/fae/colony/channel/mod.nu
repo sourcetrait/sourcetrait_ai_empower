@@ -5,8 +5,8 @@
 # Every path derives from the fae's own ai_id via the claudeline + shm layout.
 # Call targets: open, syn, ack, close; shared derivation in common. Per-drone
 # send lives under `drone` (sourcetrait/fae:colony/drone/channel).
-export module open
-export module syn
-export module ack
-export module close
+export use open
+export use syn
+export use ack
+export use close
 export module common

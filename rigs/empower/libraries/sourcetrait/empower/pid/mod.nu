@@ -5,5 +5,5 @@
 # live session is a running claude process confirmed against the pid claudeline
 # records in its status yaml; live ps is authoritative (a status yaml alone is
 # only the last write).
-export module list_ai
+export use list_ai
 export module common

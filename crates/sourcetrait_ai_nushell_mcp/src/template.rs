@@ -1,6 +1,12 @@
 use crate::*;
 use indoc::formatdoc;
 
+/// The name `build_call_source` binds the call target's overlay to. A constant
+/// WE control, so the drive never depends on the target's own name -- which is
+/// the agent's to choose and may collide with a nushell builtin, or worse with a
+/// KEYWORD (`run` is one as of 0.114), which cannot be shadowed at all.
+const CALL_ALIAS: &str = "__call";
+
 /// What: convert the agent-supplied args (`mcp::JsonObject`) into a
 /// NUON record-literal string ready for substitution into a nu
 /// source template.
@@ -137,25 +143,33 @@ pub(crate) fn build_run_source(
     )
 }
 
-/// What: builds the nushell source the stateless worker evals for a
-/// `call()` -- `use rig/<library>` (the compound `<author>/<name>` under the
-/// store's `rig/` type-level) loads the committed library, then the call is
-/// driven module-qualified along its namepath (module_path slashes -> spaces):
-/// `<library> <mod...> <name> LIT`.
-/// LIT is the args record as NUON, or bare `null` for empty / void args.
-/// Invoking the call's dir-module by name runs its `export def main`. (`use
-/// a/b` imports the module named `b`, the path leaf, so the drive stays
-/// `<library> ...`.)
+/// What: builds the nushell source the stateless worker evals for a `call()` --
+/// an ALIASED, PREFIXED overlay of the call target's OWN dir-module, driven by
+/// the alias:
+/// `overlay use --prefix rig/<author>/<library>/<module_path>/<name> as __call`
+/// then `__call LIT`. LIT is the args record as NUON, or bare `null` for empty /
+/// void args. Invoking the overlay by name runs the target's
+/// `export def main [args: A]: nothing -> R`, whose positional runtime-enforces
+/// the args and whose output type parse-checks a static result.
 ///
-/// Why: the committed call-target is a `<name>/mod.nu` dir-module holding a
-/// single infix-signatured `export def main [args: A]: nothing -> R`. Its body
-/// self-refs sibling modules by the AUTHORED path -- `use rig/<author>/<library>/<mod>`
-/// at the file top, then `<mod> <fn>` -- which the parse-time const `$NU_LIB_DIRS`
-/// (the store root) resolves at the file's own parse, so loading
-/// the whole library here makes every target and its self-refs resolvable.
-/// `main`'s positional runtime-enforces the args and its output type parse-checks
-/// a static result; nushell runs a module's `main` when the module name is
-/// invoked, so the module-qualified path is the whole drive.
+/// Why three deliberate pieces (all verified on nu 0.114.1):
+/// - The TARGET's module, not the library root. nushell 0.114 (#18303) no longer
+///   implicitly imports a module's submodules, so the old `use rig/<library>` +
+///   module-qualified drive (`<library> <mods...> <name>`) is dead: the root
+///   binds nothing the drive can traverse.
+/// - `as __call`. The target's name belongs to the AGENT, not to us. A name that
+///   collides with a nushell KEYWORD can never be shadowed -- the keyword wins at
+///   parse time under `use`, `overlay use`, and `overlay use --prefix` alike, and
+///   `run` became a keyword in 0.114 (we have a `run` call-target). Renaming the
+///   overlay sidesteps the namespace entirely: the drive is a constant we own.
+/// - `--prefix`. A call-target MAY export helpers beside `main`. Without the
+///   flag the overlay FLATTENS them bare into the eval scope, where one named
+///   `open` shadows the builtin. With it they hang off the alias instead.
+///
+/// The target's own `use rig/<author>/<library>/<mod>` self-refs still resolve:
+/// they bind at THAT file's parse against the const `$NU_LIB_DIRS`, not through
+/// this import -- so importing the target alone (rather than the whole library)
+/// costs nothing.
 ///
 /// Where: called by `server::tool::NuSh::call`; the rendered source ships
 /// through a pool worker exactly like run() / rerun().
@@ -171,31 +185,28 @@ pub(crate) fn build_call_source(
     } else {
         args_to_nuon(args)
     };
-    // `library` is the compound `<author>/<name>`; `use rig/<author>/<name>`
-    // (the store's rig type-level) imports the module named by the LAST path
-    // segment, so the drive starts there.
-    let library_name = library.rsplit('/').next().unwrap_or(library);
-    // Namepath -> the module-qualified invocation, space-separated. A function
-    // always has a parent module (no root functions), so module_path is
-    // non-empty in practice; the empty branch is defensive.
-    let call_path = if module_path.is_empty() {
-        format!("{library_name} {name}")
+    // The call target's own store path under the `rig/` type-level:
+    // `<author>/<library>/<module_path>/<name>`. A function always has a parent
+    // module (no root functions), so module_path is non-empty in practice; the
+    // empty branch is defensive.
+    let target = if module_path.is_empty() {
+        format!("{library}/{name}")
     } else {
-        format!("{library_name} {} {name}", module_path.replace('/', " "))
+        format!("{library}/{module_path}/{name}")
     };
     // $env.NONCE carries this call's nonce ambiently into the committed `main`
     // + any helper it invokes (env reads inherit down). Set at top-level before
-    // the target; the stateless per-call clone is dropped after the reply, so
+    // the overlay; the stateless per-call clone is dropped after the reply, so
     // it ceases to exist when the call completes.
     formatdoc!(
         r#"
         $env.NONCE = "{nonce}"
-        use rig/{library}
-        {call_path} {lit}
+        overlay use --prefix rig/{target} as {alias}
+        {alias} {lit}
     "#,
         nonce = nonce,
-        library = library,
-        call_path = call_path,
+        target = target,
+        alias = CALL_ALIAS,
         lit = lit,
     )
 }

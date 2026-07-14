@@ -95,7 +95,7 @@ fn cli_library_lifecycle_and_call() {
     );
 
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module double\n");
+    write_source(&src, "m/mod.nu", "export use double\n");
     write_source(
         &src,
         "m/double/mod.nu",

@@ -254,7 +254,7 @@ fn commit_accepts_path_self_call_target() {
     let src = host.source_dir("selflib");
     let _ = host.library_new("selflib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module whereami\n");
+    write_source(&src, "m/mod.nu", "export use whereami\n");
     write_source(
         &src,
         "m/whereami/mod.nu",
@@ -280,7 +280,7 @@ fn commit_accepts_path_self_in_mod_nu_const() {
         "mod.nu",
         "export const HERE = (path self)\nexport module m\n",
     );
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -299,7 +299,7 @@ fn commit_happy_path_writes_repo_and_meta() {
     let src = host.source_dir("happylib");
     let _ = host.library_new("happylib", &src);
     write_source(&src, "mod.nu", "export module math\n");
-    write_source(&src, "math/mod.nu", "export module double\n");
+    write_source(&src, "math/mod.nu", "export use double\n");
     write_source(
         &src,
         "math/double/mod.nu",
@@ -372,7 +372,7 @@ fn commit_accepts_multiline_def_signature() {
     let src = host.source_dir("multilinelib");
     let _ = host.library_new("multilinelib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -416,7 +416,7 @@ fn commit_rejects_main_without_output_type() {
     let src = host.source_dir("badlib1");
     let _ = host.library_new("badlib1", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -441,7 +441,7 @@ fn commit_accepts_call_target_with_helper_export() {
     let src = host.source_dir("helperexportlib");
     let _ = host.library_new("helperexportlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -473,7 +473,7 @@ fn commit_rejects_main_empty_record_output() {
     let src = host.source_dir("badlib3");
     let _ = host.library_new("badlib3", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -582,7 +582,7 @@ fn commit_aggregates_multiple_violations() {
     write_source(
         &src,
         "a/mod.nu",
-        "export module skel\nexport module noout\n",
+        "export use skel\nexport use noout\n",
     );
     write_source(
         &src,
@@ -650,7 +650,7 @@ fn commit_rejects_root_call_target() {
     let _ = host.library_new("rootfnlib", &src);
     // A call-target directory placed directly under the library root - a call
     // needs a parent module, so this is a root_function violation.
-    write_source(&src, "mod.nu", "export module thing\n");
+    write_source(&src, "mod.nu", "export use thing\n");
     write_source(
         &src,
         "thing/mod.nu",
@@ -684,7 +684,7 @@ fn commit_succeeds_then_check_warns_long_summary() {
     let _ = host.library_new("doclib", &src);
     let long = "x".repeat(81);
     write_source(&src, "mod.nu", &format!("# {long}\nexport module m\n"));
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -733,7 +733,7 @@ fn commit_accepts_short_summary() {
         "mod.nu",
         "# doubles its input\n# the math double helper module\nexport module m\n",
     );
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -770,7 +770,7 @@ fn commit_picks_up_mutated_source() {
     let src = host.source_dir("livelib");
     let _ = host.library_new("livelib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -809,18 +809,22 @@ fn committed_library_invokable_via_standalone_driver() {
     let mut host = Host::spawn();
     let src = host.source_dir("drvilib");
     let _ = host.library_new("drvilib", &src);
-    write_source(&src, "mod.nu", "export module math\n");
-    write_source(&src, "math/mod.nu", "export module double\n");
+    write_source(&src, "mod.nu", "export module calc\n");
+    write_source(&src, "calc/mod.nu", "export use double\n");
     write_source(
         &src,
-        "math/double/mod.nu",
+        "calc/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call("commit", serde_json::json!({"library": "drvilib"}));
+    // The user-facing import form under nu 0.114: import the MODULE that owns the
+    // call (a library-root import no longer traverses into submodules), then drive
+    // it prefixed. The module is `calc`, not `math`, deliberately -- `math` is a
+    // nushell builtin and would win over the imported module.
     let out = Command::new("nu")
         .env("NU_LIB_DIRS", host.libraries_dir())
         .arg("-c")
-        .arg("use rig/sourcetrait/drvilib; drvilib math double {x: 6} | to nuon")
+        .arg("use rig/sourcetrait/drvilib/calc; calc double {x: 6} | to nuon")
         .output()
         .expect("spawn nu");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -848,7 +852,7 @@ fn commit_validates_by_name_cross_library_use() {
     let base = host.source_dir("baselib");
     let _ = host.library_new("baselib", &base);
     write_source(&base, "mod.nu", "export module m\n");
-    write_source(&base, "m/mod.nu", "export module double\n");
+    write_source(&base, "m/mod.nu", "export use double\n");
     write_source(
         &base,
         "m/double/mod.nu",
@@ -861,15 +865,17 @@ fn commit_validates_by_name_cross_library_use() {
     );
 
     // consumer: its call-target `use`s baselib BY NAME at the file top, the
-    // same shape a game library uses to consume the shared `pelos` loader.
+    // same shape a game library uses to consume the shared `pelos` loader. It
+    // imports the MODULE owning the call (`baselib/m`) and drives it prefixed --
+    // reachable because `m/mod.nu` wires its call via `export use`.
     let consumer = host.source_dir("consumer");
     let _ = host.library_new("consumer", &consumer);
     write_source(&consumer, "mod.nu", "export module app\n");
-    write_source(&consumer, "app/mod.nu", "export module compute\n");
+    write_source(&consumer, "app/mod.nu", "export use compute\n");
     write_source(
         &consumer,
         "app/compute/mod.nu",
-        "use rig/sourcetrait/baselib m *\nexport def main [args: record<x: int>]: nothing -> record<out: int> {\n    double {x: $args.x}\n}\n",
+        "use rig/sourcetrait/baselib/m\nexport def main [args: record<x: int>]: nothing -> record<out: int> {\n    m double {x: $args.x}\n}\n",
     );
     let committed = host.call("commit", serde_json::json!({"library": "consumer"}));
     assert!(
@@ -904,7 +910,7 @@ fn commit_and_call_resolves_authored_self_ref() {
     write_source(&src, "mod.nu", "export module base\nexport module top\n");
     write_source(&src, "base/mod.nu", "export def val []: nothing -> int { 21 }\n");
     // top:double self-refs the sibling `base` module by its AUTHORED path.
-    write_source(&src, "top/mod.nu", "export module double\n");
+    write_source(&src, "top/mod.nu", "export use double\n");
     write_source(
         &src,
         "top/double/mod.nu",
@@ -958,7 +964,7 @@ fn commit_accepts_mod_nu_with_export_const_and_def() {
         "mod.nu",
         "export const VERSION = 1\nexport def shared [] { 42 }\nexport module m\n",
     );
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -978,7 +984,7 @@ fn commit_rejects_empty_record_skeleton() {
     let src = host.source_dir("skellib");
     let _ = host.library_new("skellib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -1042,7 +1048,7 @@ fn commit_rejects_const_named_reserved() {
         "mod.nu",
         "export const main = 5\nexport module m\n",
     );
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -1063,7 +1069,7 @@ fn commit_rejects_record_key_reserved() {
     let src = host.source_dir("rkeylib");
     let _ = host.library_new("rkeylib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -1084,7 +1090,7 @@ fn commit_rejects_cellpath_member_reserved() {
     let src = host.source_dir("cpathlib");
     let _ = host.library_new("cpathlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -1123,7 +1129,7 @@ fn commit_accepts_reserved_as_quoted_string_value() {
     let src = host.source_dir("strvallib");
     let _ = host.library_new("strvallib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -1177,8 +1183,8 @@ fn library_new_and_scaffold_function() {
     // Additive cascade wiring (NOT regenerate).
     let math_mod = std::fs::read_to_string(src.join("math").join("mod.nu")).unwrap();
     assert!(
-        math_mod.contains("export module double"),
-        "math mod.nu should wire double; got {math_mod:?}",
+        math_mod.contains("export use double"),
+        "math mod.nu should wire the CALL via `export use`; got {math_mod:?}",
     );
     let root_mod = std::fs::read_to_string(src.join("mod.nu")).unwrap();
     assert!(
@@ -1292,14 +1298,17 @@ fn commit_rejects_main_in_flat_file() {
 }
 
 #[test]
-fn commit_rejects_call_wired_via_export_use() {
-    // A call target must be wired into its parent via `export module`, never
-    // `export use`.
+fn commit_rejects_call_wired_via_export_module() {
+    // A call target must be wired into its parent via `export use`, never
+    // `export module`. nu 0.114 (#18303) stopped implicitly importing a module's
+    // submodules, so an `export module`-only call is unreachable from a consumer
+    // that imports the parent; `export use` re-exports it (and leaks neither the
+    // target's `main` nor its helpers into the parent).
     let mut host = Host::spawn();
     let src = host.source_dir("wirelib");
     let _ = host.library_new("wirelib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export use double\n");
+    write_source(&src, "m/mod.nu", "export module double\n");
     write_source(
         &src,
         "m/double/mod.nu",
@@ -1322,7 +1331,7 @@ fn commit_rejects_call_with_submodule() {
     let src = host.source_dir("leaflib");
     let _ = host.library_new("leaflib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module call\n");
+    write_source(&src, "m/mod.nu", "export use call\n");
     write_source(
         &src,
         "m/call/mod.nu",
@@ -1346,7 +1355,7 @@ fn commit_rejects_orphan_module() {
     let src = host.source_dir("orphanlib");
     let _ = host.library_new("orphanlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module double\n");
+    write_source(&src, "m/mod.nu", "export use double\n");
     write_source(
         &src,
         "m/double/mod.nu",
@@ -1369,7 +1378,7 @@ fn commit_accepts_call_with_flat_helper() {
     let src = host.source_dir("callhelperlib");
     let _ = host.library_new("callhelperlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/helper.nu",

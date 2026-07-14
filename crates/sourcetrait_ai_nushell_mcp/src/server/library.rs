@@ -675,11 +675,14 @@ pub(crate) fn scaffold_leaf(
                     .to_string(),
             });
         }
-        // A call target is a `<name>/mod.nu` dir-module wired via `export module`.
+        // A call target is a `<name>/mod.nu` dir-module wired via `export use`:
+        // nu 0.114 (#18303) no longer implicitly imports a module's submodules,
+        // so an `export module`-only call would be unreachable from a consumer
+        // that imports the parent.
         fs::create_dir_all(&fn_dir)?;
         let fn_modnu = fn_dir.join("mod.nu");
         fs::write(&fn_modnu, skeleton_function_source())?;
-        additively_wire_modnu(&dir.join("mod.nu"), &format!("export module {fn_name}"))?;
+        additively_wire_modnu(&dir.join("mod.nu"), &format!("export use {fn_name}"))?;
         created.push(fn_modnu.to_string_lossy().into_owned());
     }
 
@@ -1715,7 +1718,7 @@ fn validate_walk(
 
     // Subdirectory nodes: each is EITHER a call target (its mod.nu holds `main`,
     // a leaf) or a pure sub-module (recurse). Every subdir must be wired into
-    // this module's mod.nu; a call MUST be wired via `export module`.
+    // this module's mod.nu; a call MUST be wired via `export use`.
     for (name, path) in &dirs {
         if error_count(&result.diagnostics) > LINT_VIOLATION_CAP {
             return Ok((modules, functions));
@@ -1731,7 +1734,15 @@ fn validate_walk(
             .to_string_lossy()
             .into_owned();
         let fname = child_modnu.to_string_lossy().into_owned();
-        let edge = edges.iter().find(|(_, n)| n == name).map(|(k, _)| *k);
+        // EVERY edge naming this child. A node may legitimately carry more than
+        // one (an `export use` beside a lingering `export module`), so the checks
+        // below test for the PRESENCE of the required kind rather than keying on
+        // whichever edge happens to be written first.
+        let edge_kinds: Vec<EdgeKind> = edges
+            .iter()
+            .filter(|(_, n)| n == name)
+            .map(|(k, _)| *k)
+            .collect();
         let child_has_main = parse_module_has_main(&child_modnu, name, &child_src, path, engine);
 
         if child_has_main {
@@ -1750,27 +1761,33 @@ fn validate_walk(
             // A call dir is not recursed into (it is a leaf), so +x-check its
             // mod.nu here rather than via the entry loop of a validate_walk.
             check_not_executable(root, &child_modnu, Zone::Source, &mut result.diagnostics);
-            // Constraint: a call is wired into its parent via `export module`.
-            match edge {
-                Some(EdgeKind::ExportModule) => {}
-                Some(_) => result.diagnostics.push(Diagnostic::error(
+            // Constraint: a call is wired into its parent via `export use`.
+            // `export module` DECLARES a child module but does not re-export it,
+            // and nushell 0.114 (#18303) no longer implicitly imports a module's
+            // submodules - so an `export module`-only call is unreachable from a
+            // consumer that imports the parent. `export use` re-exports it, which
+            // restores the `<parent> <call>` drive while leaking neither the
+            // target's `main` nor its helper exports into the parent's namespace.
+            if edge_kinds.is_empty() {
+                result.diagnostics.push(Diagnostic::error(
+                    "library::orphan",
+                    Some(Source {
+                        path: Some(rel.clone()),
+                        position: [0, 0],
+                    }),
+                    format!("call `{name}` is not wired into mod.nu; add `export use {name}`"),
+                ));
+            } else if !edge_kinds.contains(&EdgeKind::ExportUse) {
+                result.diagnostics.push(Diagnostic::error(
                     "library::call_wiring",
                     Some(Source {
                         path: Some(rel.clone()),
                         position: [0, 0],
                     }),
                     format!(
-                        "a call must be wired into its parent via `export module {name}`, not `export use`",
+                        "a call must be wired into its parent via `export use {name}`, not `export module`",
                     ),
-                )),
-                None => result.diagnostics.push(Diagnostic::error(
-                    "library::orphan",
-                    Some(Source {
-                        path: Some(rel.clone()),
-                        position: [0, 0],
-                    }),
-                    format!("call `{name}` is not wired into mod.nu; add `export module {name}`"),
-                )),
+                ));
             }
             // A call target is an edge module - no submodules below it.
             if has_child_module_dir(path) {
@@ -1807,8 +1824,10 @@ fn validate_walk(
                 functions.push(idx_fn);
             }
         } else {
-            // PURE SUB-MODULE - recurse.
-            if edge.is_none() {
+            // PURE SUB-MODULE - recurse. A cascade node keeps `export module`:
+            // consumers import it by its own path, so it needs declaring, not
+            // re-exporting.
+            if edge_kinds.is_empty() {
                 result.diagnostics.push(Diagnostic::error(
                     "library::orphan",
                     Some(Source {

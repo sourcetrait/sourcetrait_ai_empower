@@ -1,3 +1,3 @@
 # Scaffold fae role skeletons
 
-export module iter
+export use iter

@@ -400,7 +400,7 @@ fn info_lists_hand_authored_library_hierarchy() {
         "establish failed: {est}",
     );
     write_source(&src, "mod.nu", "export module math\n");
-    write_source(&src, "math/mod.nu", "export module double\n");
+    write_source(&src, "math/mod.nu", "export use double\n");
     write_source(
         &src,
         "math/double/mod.nu",
@@ -457,7 +457,7 @@ fn info_includes_node_summaries() {
     let src = host.source_dir("doctreelib");
     let _ = host.library_new("doctreelib", &src);
     write_source(&src, "mod.nu", "# the doctree library\nexport module m\n");
-    write_source(&src, "m/mod.nu", "# the m module\nexport module fn\n");
+    write_source(&src, "m/mod.nu", "# the m module\nexport use fn\n");
     write_source(
         &src,
         "m/fn/mod.nu",

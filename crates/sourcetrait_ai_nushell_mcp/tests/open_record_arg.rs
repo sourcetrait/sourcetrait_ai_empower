@@ -263,7 +263,7 @@ fn commit_inspect_and_call_open_record_arg_field() {
     let src = host.source_dir("openlib");
     let _ = host.library_new("openlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module soak\n");
+    write_source(&src, "m/mod.nu", "export use soak\n");
     write_source(
         &src,
         "m/soak/mod.nu",

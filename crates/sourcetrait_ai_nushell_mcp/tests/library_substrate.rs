@@ -335,7 +335,7 @@ fn uninstall_removes_subtree_keeps_source() {
     let _ = host.library_new("droppable", &src);
     // A committed call-target lives in a module (no root functions).
     write_source(&src, "mod.nu", "export module m\n");
-    write_source(&src, "m/mod.nu", "export module thing\n");
+    write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
         &src,
         "m/thing/mod.nu",

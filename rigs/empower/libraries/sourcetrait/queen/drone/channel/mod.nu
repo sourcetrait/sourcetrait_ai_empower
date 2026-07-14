@@ -5,5 +5,5 @@
 # channel (ready/done/syn/ack) lives in sourcetrait/drone:channel; `close`
 # performs the same operation a persisted drone runs itself via
 # sourcetrait/drone:channel:done.
-export module open
-export module close
+export use open
+export use close

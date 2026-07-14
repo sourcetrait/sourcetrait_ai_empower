@@ -7,7 +7,7 @@
 # Lifecycle lines (COLONY DRONE <name> ONLINE/OFFLINE) go to both the colony
 # inbox and the fae inbox; other lines go to the colony outbox (the fae's
 # inbox). Shared derivation in sourcetrait/drone:common.
-export module ready
-export module done
-export module syn
-export module ack
+export use ready
+export use done
+export use syn
+export use ack

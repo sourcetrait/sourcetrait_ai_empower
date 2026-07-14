@@ -239,7 +239,7 @@ fn namespaces_are_disjoint_stores() {
         );
         let _ = ns1.library_new("sourcetrait/nslib", &src);
         write_source(&src, "mod.nu", "export module m\n");
-        write_source(&src, "m/mod.nu", "export module double\n");
+        write_source(&src, "m/mod.nu", "export use double\n");
         write_source(
             &src,
             "m/double/mod.nu",

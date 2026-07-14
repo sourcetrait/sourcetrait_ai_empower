@@ -233,7 +233,7 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
 /// from a clean baseline (the only diagnostic is the special file under test).
 fn author_valid_base(src: &Path) {
     write_source(src, "mod.nu", "export module m\n");
-    write_source(src, "m/mod.nu", "export module double\n");
+    write_source(src, "m/mod.nu", "export use double\n");
     write_source(
         src,
         "m/double/mod.nu",

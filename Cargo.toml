@@ -7,6 +7,7 @@ members = [
   "crates/sourcetrait_ai_nushell_mcp",
   "crates/sourcetrait_ai_know_rust",
   "crates/sourcetrait_ai_claudeline",
+  "crates/sourcetrait_puremd_mdbook",
 ]
 
 [workspace.dependencies]
@@ -20,6 +21,7 @@ indexmap = { version = "2" }
 indoc = { version = "2" }
 liquid = { version = "0.26" }
 heck = { version = "0.5" }
+mdbook-preprocessor = { version = "0.5" }
 nix = { version = "0.30", features = ["process", "signal"] }
 nu-cmd-extra = { git = "https://github.com/nushell/nushell", tag = "0.114.1" }
 nu-cmd-lang = { git = "https://github.com/nushell/nushell", tag = "0.114.1" }
@@ -36,6 +38,7 @@ nu-protocol = { git = "https://github.com/nushell/nushell", tag = "0.114.1" }
 nuon = { git = "https://github.com/nushell/nushell", tag = "0.114.1" }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 pretty_assertions = { version = "1" }
+pulldown-cmark = { version = "0.13" }
 regex = { version = "1" }
 rmcp = { version = "1.7", features = ["server", "transport-io", "schemars", "macros"] }
 rmp-serde = { version = "1.3" }

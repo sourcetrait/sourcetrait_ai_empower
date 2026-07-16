@@ -1,12 +1,12 @@
-# KB integrity audit over the token-form ragref memory store (p1-p5 envelope).
+# KB integrity audit over the token-form ragref memory store (p1-p4 envelope).
 #
 # p1 frontmatter (name==snake, description present + no triple-dash, meta
 # complete), p2 refs (dangling = a `## ref` token whose base memory is missing;
-# orphans = memories no ref points at), p3 index (MEMORY.md first-bullet token
-# coverage), p4 mirror (live<->repo sha drift), p5 MEMORY.md size vs cap. Parses
-# the {implied:/adhoc:} token forms (shards + granularity); the retired wikilink
-# / mem: / MEMORY_*_INDEX machinery is gone.
-export def main [args: record<live: string, repo: string>]: nothing -> record<counts: record<memories: int, indexed: int>, p1_frontmatter: record<bad_frontmatter: list<string>, name_missing: list<string>, name_mismatch: table<file: string, name: string, snake: string>, desc_missing: list<string>, desc_tripledash: list<string>, meta_incomplete: list<string>>, p2_refs: record<dangling: table<from: string, base: string>, orphan_count: int, orphans: list<string>>, p3_index: record<unindexed: list<string>, broken: table<idx: string, missing: string>>, p4_mirror: record<only_live: list<string>, only_repo: list<string>, sha_mismatch: table<file: string>>, p5_sizes: record<memory_md_bytes: int, over_cap: bool>> {
+# orphans = memories no ref points at), p3 index (MEMORY.md coverage - one bare
+# token per line under the `# MEMORY.md` H1; malformed = lines that are neither
+# the H1, blank, nor exactly one token), p4 MEMORY.md size vs cap. Parses the
+# {implied:/adhoc:} token forms (shards + granularity).
+export def main [args: record<dir: string>]: nothing -> record<counts: record<memories: int, indexed: int>, p1_frontmatter: record<bad_frontmatter: list<string>, name_missing: list<string>, name_mismatch: table<file: string, name: string, snake: string>, desc_missing: list<string>, desc_tripledash: list<string>, meta_incomplete: list<string>>, p2_refs: record<dangling: table<from: string, base: string>, orphan_count: int, orphans: list<string>>, p3_index: record<unindexed: list<string>, broken: table<idx: string, missing: string>, malformed: list<string>>, p4_sizes: record<memory_md_bytes: int, over_cap: bool>> {
     const DEFAULT_MEMORY_CAP = 24576
 
     def mem_files [dir: string] {
@@ -78,8 +78,8 @@ export def main [args: record<live: string, repo: string>]: nothing -> record<co
         }
     }
 
-    let files = (mem_files $args.live)
-    let parsed = ($files | each {|f| parse_memory $args.live $f })
+    let files = (mem_files $args.dir)
+    let parsed = ($files | each {|f| parse_memory $args.dir $f })
     let snakes = ($parsed | get snake)
 
     let all_refs = ($parsed | each {|p| $p.ref_bases | each {|b| {from: $p.file, base: $b} } } | flatten)
@@ -89,23 +89,26 @@ export def main [args: record<live: string, repo: string>]: nothing -> record<co
     let inbound = (if ($all_refs | is-empty) { [] } else { $all_refs | get base | uniq })
     let orphans = ($parsed | where {|p| $p.snake not-in $inbound } | get file)
 
-    let mem_raw = (open --raw ($args.live | path join "MEMORY.md") | decode)
-    let idx_bases = ((ref_tokens $mem_raw) | each {|t| token_base $t } | uniq)
+    # The MEMORY.md index is bare tokens, one per line, under a `# MEMORY.md`
+    # H1 - no bullets, no prose. Tokens are read from the whole file; format
+    # violations land in `malformed`.
+    let mem_raw = (open --raw ($args.dir | path join "MEMORY.md") | decode)
+    let idx_m = ($mem_raw | parse --regex '\{(?<tok>(?:implied|adhoc):[a-z0-9_:]+)\}')
+    let idx_bases = (if ($idx_m | is-empty) { [] } else { $idx_m | get tok | each {|t| token_base $t } | uniq })
     let indexed_files = ($idx_bases | each {|b| $b + ".md" })
     let unindexed = ($files | where {|f| $f not-in $indexed_files })
     let broken = ($idx_bases | where {|b| ($b + ".md") not-in $files } | each {|b| {idx: "MEMORY.md", missing: ($b + ".md")} })
+    let malformed = ($mem_raw | lines | each {|l| $l | str trim } | where {|t|
+        if ($t | is-empty) {
+            false
+        } else if ($t == "# MEMORY.md") {
+            false
+        } else {
+            not ($t =~ '^\{(?:implied|adhoc):[a-z0-9_:]+\}$')
+        }
+    })
 
-    let repo_files = (mem_files $args.repo)
-    let common = ($files | where {|f| $f in $repo_files })
-    let only_live = ($files | where {|f| $f not-in $repo_files })
-    let only_repo = ($repo_files | where {|f| $f not-in $files })
-    let sha_mismatch = ($common | each {|f|
-        let l = (open --raw ([$args.live $f] | path join) | hash sha256)
-        let r = (open --raw ([$args.repo $f] | path join) | hash sha256)
-        if $l != $r { {file: $f} } else { null }
-    } | compact)
-
-    let mem_bytes = (open --raw ($args.live | path join "MEMORY.md") | into binary | bytes length)
+    let mem_bytes = ($mem_raw | into binary | bytes length)
 
     {
         counts: { memories: ($files | length), indexed: ($idx_bases | where {|b| ($b + ".md") in $files } | length) }
@@ -125,13 +128,9 @@ export def main [args: record<live: string, repo: string>]: nothing -> record<co
         p3_index: {
             unindexed: $unindexed
             broken: $broken
+            malformed: $malformed
         }
-        p4_mirror: {
-            only_live: $only_live
-            only_repo: $only_repo
-            sha_mismatch: $sha_mismatch
-        }
-        p5_sizes: {
+        p4_sizes: {
             memory_md_bytes: $mem_bytes
             over_cap: ($mem_bytes > $DEFAULT_MEMORY_CAP)
         }

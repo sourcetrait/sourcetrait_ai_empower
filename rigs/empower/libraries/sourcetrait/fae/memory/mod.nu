@@ -1,15 +1,10 @@
 # Memory knowledge-base ops for a fae (distributed, parameterized).
 #
-# The agent-side memory tooling every fae shares: list the memory snakes, verify
-# the live<->repo mirror, mirror (guarded, explicit-direction) live<->repo, and
-# audit KB hygiene. All functions parameterize the live/repo/dir paths - no
-# ai-repository-specific literals - so the module serves any bonded fae.
+# The agent-side memory tooling every fae shares: list the memory snakes and
+# audit KB hygiene over the single git-backed memory store. All functions
+# parameterize the store dir - no ai-repository-specific literals - so the
+# module serves any bonded fae.
 export module names
 export use names
 export module audit
 export use audit
-export module verify
-export use verify
-export module mirror
-export use mirror
-export module classify

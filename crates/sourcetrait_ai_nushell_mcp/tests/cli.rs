@@ -158,8 +158,8 @@ fn cli_run_evaluates_nuon_schemas_and_args() {
         "run envelope should carry result.out = 6; got {v}",
     );
     assert!(
-        v["rerun_id"].as_str().is_some(),
-        "run envelope should carry a rerun_id; got {v}",
+        v["nonce"].as_str().is_some(),
+        "run envelope should carry a nonce; got {v}",
     );
 }
 

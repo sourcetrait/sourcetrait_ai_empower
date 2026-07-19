@@ -68,13 +68,13 @@ pub(crate) fn run_oneshot(tool: CliTool) {
                     .await
             }
             CliTool::Rerun {
-                rerun_id,
+                nonce,
                 args,
                 timeout_ms,
             } => {
                 server
                     .rerun(mcp::Parameters(RerunParams {
-                        rerun_id,
+                        nonce,
                         args: nuon_record_arg(args.as_deref()),
                         timeout_ms,
                     }))

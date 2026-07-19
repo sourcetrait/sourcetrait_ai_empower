@@ -141,15 +141,15 @@ pub enum Error {
         namepath: String,
         reason: String,
     },
-    ClosureInvalidRerunId {
-        rerun_id: String,
+    RerunInvalidNonce {
+        nonce: String,
         reason: String,
     },
-    ClosureCacheMissing {
-        rerun_id: String,
+    RerunBodyMissing {
+        nonce: String,
     },
-    ClosureCacheDecode {
-        rerun_id: String,
+    RerunBodyDecode {
+        nonce: String,
         reason: String,
     },
     WorkerDispatch {
@@ -181,9 +181,9 @@ impl Error {
             Self::FunctionNotDefined { .. } => "function::not_defined",
             Self::SchemaInvalid { .. } => "schema::invalid",
             Self::NamepathInvalid { .. } => "namepath::invalid",
-            Self::ClosureInvalidRerunId { .. } => "closure::invalid_rerun_id",
-            Self::ClosureCacheMissing { .. } => "closure::cache_missing",
-            Self::ClosureCacheDecode { .. } => "closure::cache_decode",
+            Self::RerunInvalidNonce { .. } => "rerun::invalid_nonce",
+            Self::RerunBodyMissing { .. } => "rerun::body_missing",
+            Self::RerunBodyDecode { .. } => "rerun::body_decode",
             Self::WorkerDispatch { .. } => "worker::dispatch",
             Self::WorkerTimeout { .. } => "worker::timeout",
             Self::WorkerReturnedError { .. } => "worker::returned_error",
@@ -232,14 +232,14 @@ impl Error {
             Self::NamepathInvalid { namepath, reason } => {
                 format!("invalid namepath `{namepath}`: {reason}")
             }
-            Self::ClosureInvalidRerunId { rerun_id, reason } => {
-                format!("invalid rerun_id `{rerun_id}`: {reason}")
+            Self::RerunInvalidNonce { nonce, reason } => {
+                format!("invalid nonce `{nonce}`: {reason}")
             }
-            Self::ClosureCacheMissing { rerun_id } => {
-                format!("no cached closure for rerun_id `{rerun_id}`")
+            Self::RerunBodyMissing { nonce } => {
+                format!("no cached run body for nonce `{nonce}`")
             }
-            Self::ClosureCacheDecode { rerun_id, reason } => {
-                format!("failed to decode cached closure `{rerun_id}`: {reason}")
+            Self::RerunBodyDecode { nonce, reason } => {
+                format!("failed to decode cached run body for nonce `{nonce}`: {reason}")
             }
             Self::WorkerDispatch { reason } => format!("worker dispatch failed: {reason}"),
             Self::WorkerTimeout { timeout_ms } => format!("worker timed out after {timeout_ms} ms"),

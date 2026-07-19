@@ -3,8 +3,8 @@ use crate::*;
 /// Parameters for `rerun()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct RerunParams {
-    /// The id returned by a prior `run()`, naming the cached body to re-evaluate.
-    pub rerun_id: String,
+    /// The nonce a prior `run()` returned; names its cached body to re-evaluate.
+    pub nonce: String,
     /// JSON object of fresh argument values for this re-evaluation.
     pub args: mcp::JsonObject,
     /// Optional per-call timeout in milliseconds; defaults to 120000 (2 minutes).
@@ -29,41 +29,40 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RerunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        if !lib_empower::is_base62(&p.rerun_id) {
+        if !lib_empower::is_base62(&p.nonce) {
             return Ok(error_to_call_result(
-                Error::ClosureInvalidRerunId {
-                    rerun_id: p.rerun_id.clone(),
-                    reason: "rerun_id must be base62".to_string(),
+                Error::RerunInvalidNonce {
+                    nonce: p.nonce.clone(),
+                    reason: "nonce must be base62".to_string(),
                 },
                 None,
             ));
         }
-        let path = closure_cache_file(&p.rerun_id);
-        let cached_bytes = match fs::read(&path) {
-            Ok(b) => b,
+        let path = run_body_file(&p.nonce);
+        let text = match fs::read_to_string(&path) {
+            Ok(t) => t,
             Err(_) => {
                 return Ok(error_to_call_result(
-                    Error::ClosureCacheMissing {
-                        rerun_id: p.rerun_id.clone(),
+                    Error::RerunBodyMissing {
+                        nonce: p.nonce.clone(),
                     },
                     None,
                 ));
             }
         };
-        let cached: ClosureCacheBody = match json::from_slice(&cached_bytes) {
+        let cached = match CachedRunBody::from_nuon(&text) {
             Ok(c) => c,
-            Err(e) => {
+            Err(reason) => {
                 return Ok(error_to_call_result(
-                    Error::ClosureCacheDecode {
-                        rerun_id: p.rerun_id.clone(),
-                        reason: e.to_string(),
+                    Error::RerunBodyDecode {
+                        nonce: p.nonce.clone(),
+                        reason,
                     },
                     None,
                 ));
             }
         };
-        let _ = fs::write(&path, &cached_bytes);
-        let nonce = self.nonce_gen.next(&cached_bytes);
+        let nonce = self.nonce_gen.next(&text);
         let source = build_run_source(
             &cached.args_type,
             &cached.result_type,
@@ -72,6 +71,11 @@ impl NuSh {
             &nonce.to_string(),
         );
         let args_json = serde_json::Value::Object(p.args.clone());
+        let cache_body = CachedRunBody {
+            args_type: cached.args_type,
+            result_type: cached.result_type,
+            body: cached.body,
+        };
         let outcome = match dispatch_pooled(
             &self.runs_pool,
             &self.in_flight,
@@ -81,8 +85,9 @@ impl NuSh {
             "rerun",
             args_json,
             InFlightKind::Rerun {
-                rerun_id: p.rerun_id.clone(),
+                source_nonce: p.nonce.clone(),
             },
+            Some(cache_body),
             p.timeout_ms,
         )
         .await

@@ -16,11 +16,66 @@ pub struct RunParams {
     pub timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, ser::Deserialize, ser::Serialize)]
-pub(crate) struct ClosureCacheBody {
+/// The cached run body -- the converted positional types plus the source body,
+/// enough to re-synthesize the run source for `rerun(nonce, args)`. Persisted as
+/// NUON at `runs/<nonce>/body.nuon` (the house format for persisted nu data),
+/// co-located with the call's stdout/stderr so a single prune of `runs/<nonce>/`
+/// reclaims logs and body together.
+pub(crate) struct CachedRunBody {
     pub(crate) args_type: String,
     pub(crate) result_type: String,
     pub(crate) body: String,
+}
+
+impl CachedRunBody {
+    pub(crate) fn to_nuon(&self) -> Result<String, String> {
+        let span = nu::Span::unknown();
+        let mut record = nu::Record::new();
+        record.insert("args_type", nu::Value::string(self.args_type.clone(), span));
+        record.insert("result_type", nu::Value::string(self.result_type.clone(), span));
+        record.insert("body", nu::Value::string(self.body.clone(), span));
+        nu::to_nuon(
+            &nu::EngineState::new(),
+            &nu::Value::record(record, span),
+            nu::ToNuonConfig::default(),
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn from_nuon(text: &str) -> Result<Self, String> {
+        let value = nu::from_nuon(text, None).map_err(|e| e.to_string())?;
+        let record = value.as_record().map_err(|e| e.to_string())?;
+        let field = |name: &str| -> Result<String, String> {
+            match record.get(name) {
+                Some(nu::Value::String { val, .. }) => Ok(val.clone()),
+                Some(_) => Err(format!("cached body field `{name}` is not a string")),
+                None => Err(format!("cached body missing `{name}`")),
+            }
+        };
+        Ok(Self {
+            args_type: field("args_type")?,
+            result_type: field("result_type")?,
+            body: field("body")?,
+        })
+    }
+}
+
+/// Persist the run body beside the call's logs (`runs/<nonce>/body.nuon`).
+/// Non-fatal: a write failure is logged and the call proceeds -- the run still
+/// returns its result + nonce; only a later `rerun(nonce)` would miss the body.
+fn write_run_body(
+    log_dir: &std::path::Path,
+    body: &CachedRunBody,
+) {
+    let path = log_dir.join(BODY_FILE);
+    match body.to_nuon() {
+        Ok(nuon) => {
+            if let Err(e) = fs::write(&path, nuon.as_bytes()) {
+                eprintln!("nushell_mcp: run body cache write failed at {}: {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("nushell_mcp: run body cache serialize failed: {e}"),
+    }
 }
 
 pub struct NuSh {
@@ -47,7 +102,7 @@ pub(crate) struct InFlightEntry {
 pub(crate) enum InFlightKind {
     Run,
     Interact,
-    Rerun { rerun_id: String },
+    Rerun { source_nonce: String },
     Call { path: String },
 }
 
@@ -119,6 +174,7 @@ pub(crate) async fn dispatch_pooled(
     tool_name: &'static str,
     args_json: serde_json::Value,
     kind: InFlightKind,
+    cache_body: Option<CachedRunBody>,
     timeout_ms: Option<u64>,
 ) -> Result<DispatchOutcome, DispatchError> {
     let nonce_str = nonce.to_string();
@@ -130,6 +186,9 @@ pub(crate) async fn dispatch_pooled(
         },
         nonce: None,
     })?;
+    if let Some(body) = &cache_body {
+        write_run_body(&log_dir, body);
+    }
     let mut guard = pool.acquire().await.map_err(|e| DispatchError {
         error: Error::WorkerDispatch {
             reason: format!("pool acquire: {e}"),

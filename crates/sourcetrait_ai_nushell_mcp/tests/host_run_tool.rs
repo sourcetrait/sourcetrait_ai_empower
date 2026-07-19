@@ -143,12 +143,12 @@ fn host_tools_list_and_run_stub() {
         .get("structuredContent")
         .cloned()
         .unwrap_or_else(|| panic!("expected structuredContent on run result: {call_resp}"));
-    let rerun_id = envelope["rerun_id"]
+    let nonce = envelope["nonce"]
         .as_str()
-        .expect("envelope has rerun_id");
+        .expect("envelope has nonce");
     assert!(
-        !rerun_id.is_empty() && rerun_id.chars().all(|c| c.is_ascii_alphanumeric()),
-        "rerun_id should be non-empty base62; got {rerun_id:?}",
+        !nonce.is_empty() && nonce.chars().all(|c| c.is_ascii_alphanumeric()),
+        "nonce should be non-empty base62; got {nonce:?}",
     );
     assert_eq!(
         envelope["result"]["out"].as_i64(),

@@ -5,9 +5,9 @@ use crate::*;
 pub(crate) struct RunEnvelope {
     /// The source-code body's return value, as a JSON object matching `result_schema`.
     pub result: mcp::JsonObject,
+    /// This eval's id, and its re-evaluation handle: `rerun(nonce, args)` replays
+    /// this body with fresh args. Also names the per-call log dir + cached body.
     pub nonce: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rerun_id: Option<String>,
 }
 
 #[mcp::tool_router(router = run_router, vis = "pub(crate)")]
@@ -47,7 +47,11 @@ impl NuSh {
         let source =
             build_run_source(&args_type, &result_type, &p.args, &p.body, &nonce.to_string());
         let args_json = serde_json::Value::Object(p.args.clone());
-        let timeout_ms = p.timeout_ms;
+        let cache_body = CachedRunBody {
+            args_type,
+            result_type,
+            body: p.body,
+        };
         let outcome = match dispatch_pooled(
             &self.runs_pool,
             &self.in_flight,
@@ -57,56 +61,19 @@ impl NuSh {
             "run",
             args_json,
             InFlightKind::Run,
-            timeout_ms,
+            Some(cache_body),
+            p.timeout_ms,
         )
         .await
         {
             Ok(o) => o,
             Err(de) => return Ok(error_to_call_result(de.error, de.nonce)),
         };
-        let computed_rerun_id = RerunHash::of(&(
-            args_type.as_str(),
-            result_type.as_str(),
-            p.body.as_str(),
-        ))
-        .to_string();
-        let rerun_id_opt =
-            match write_closure_cache(&computed_rerun_id, &args_type, &result_type, &p.body) {
-                Ok(()) => Some(computed_rerun_id),
-                Err(e) => {
-                    eprintln!(
-                        "nushell_mcp: write_closure_cache failed for {computed_rerun_id}: {e}",
-                    );
-                    None
-                }
-            };
         let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
         let envelope = RunEnvelope {
             result: result_obj,
             nonce: outcome.nonce.to_string(),
-            rerun_id: rerun_id_opt,
         };
         envelope_to_structured(&envelope)
     }
-}
-
-fn write_closure_cache(
-    rerun_id: &str,
-    args_type: &str,
-    result_type: &str,
-    body: &str,
-) -> io::Result<()> {
-    let path = closure_cache_file(rerun_id);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let cache = ClosureCacheBody {
-        args_type: args_type.to_string(),
-        result_type: result_type.to_string(),
-        body: body.to_string(),
-    };
-    let bytes = json::to_vec(&cache)
-        .map_err(|e| io::Error::other(format!("serialize ClosureCacheBody: {e}")))?;
-    fs::write(&path, &bytes)?;
-    Ok(())
 }

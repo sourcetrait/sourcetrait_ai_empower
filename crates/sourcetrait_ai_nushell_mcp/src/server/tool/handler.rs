@@ -55,8 +55,9 @@ impl mcp::ServerHandler for NuSh {
         info.instructions = Some(format!(
             "Evaluation artifacts are cached at \
              $XDG_CACHE_HOME/sourcetrait/nushell_mcp/{id}/{namespace}/{{runs,interacts,calls}}/<nonce>/{{stdout,stderr}}; \
-             closures cached at \
-             $XDG_CACHE_HOME/sourcetrait/nushell_mcp/{id}/{namespace}/closures/<rerun_id>.json. \
+             a run's cached body co-locates at \
+             $XDG_CACHE_HOME/sourcetrait/nushell_mcp/{id}/{namespace}/runs/<nonce>/body.nuon \
+             (the rerun(nonce) handle). \
              Registered libraries live in a signed git repo at \
              $XDG_DATA_HOME/sourcetrait/nushell_mcp/{id}/{namespace}/libraries/; signing keypair at \
              $XDG_DATA_HOME/sourcetrait/nushell_mcp/{id}/{namespace}/keypair/. \

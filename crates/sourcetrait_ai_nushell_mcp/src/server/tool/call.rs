@@ -115,6 +115,7 @@ impl NuSh {
             "call",
             args_json,
             InFlightKind::Call { path: path_str },
+            None,
             p.timeout_ms,
         )
         .await

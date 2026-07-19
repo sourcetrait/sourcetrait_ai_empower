@@ -116,8 +116,8 @@ pub(crate) enum CliTool {
     },
     /// Re-evaluate a cached run() body with fresh args.
     Rerun {
-        /// The id returned by a prior run().
-        rerun_id: String,
+        /// The nonce returned by a prior run().
+        nonce: String,
         /// Args as a NUON record (default {}).
         args: Option<String>,
         /// Per-call timeout in milliseconds (default 120000).

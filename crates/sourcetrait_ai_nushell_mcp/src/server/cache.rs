@@ -4,7 +4,6 @@ use crate::*;
 pub(crate) enum CacheKind {
     Runs,
     Interacts,
-    Closure,
     Calls,
 }
 
@@ -13,7 +12,6 @@ impl CacheKind {
         match self {
             Self::Runs => "runs",
             Self::Interacts => "interacts",
-            Self::Closure => "closures",
             Self::Calls => "calls",
         }
     }
@@ -48,6 +46,12 @@ pub(crate) fn cache_dir(kind: CacheKind, nonce: Nonce) -> PathBuf {
     cache_kind_dir(kind).join(nonce.to_string())
 }
 
-pub(crate) fn closure_cache_file(rerun_id: &str) -> PathBuf {
-    cache_kind_dir(CacheKind::Closure).join(format!("{rerun_id}.json"))
+pub(crate) const BODY_FILE: &str = "body.nuon";
+
+/// The cached run body, co-located under the per-call log dir at
+/// `runs/<nonce>/body.nuon`. The nonce IS the re-evaluation handle (no separate
+/// closure id space), so `rerun(nonce)` reads this and it is pruned with the
+/// rest of `runs/<nonce>/`. `nonce` must be base62-validated by the caller.
+pub(crate) fn run_body_file(nonce: &str) -> PathBuf {
+    cache_kind_dir(CacheKind::Runs).join(nonce).join(BODY_FILE)
 }

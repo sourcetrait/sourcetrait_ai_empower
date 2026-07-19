@@ -8,7 +8,6 @@ pub(crate) mod server {
     pub(crate) mod oneshot;
     pub(crate) mod parse_engine;
     pub(crate) mod pool;
-    pub(crate) mod rerun;
     pub(crate) mod run;
     pub(crate) mod schema;
     pub(crate) mod tool {
@@ -66,7 +65,7 @@ pub(crate) use crate::{
     nu::FromValue,
     plugins::{list_registered_plugins, load_plugin_decls},
     server::{
-        cache::{BASE_DIRS, CacheKind, cache_dir, closure_cache_file, data_base_dir},
+        cache::{BASE_DIRS, BODY_FILE, CacheKind, cache_dir, data_base_dir, run_body_file},
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         library::{
             LibraryInfo, LibraryLocks, ValidationResult, check_library,
@@ -83,14 +82,13 @@ pub(crate) use crate::{
             ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body, wrap_as_module,
         },
         pool::Pool,
-        rerun::RerunHash,
         run::{run_server, worker_pool_cap},
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},
         tool::{
             call::CallParams,
             commit::CommitParams,
             common::{
-                ClosureCacheBody, InFlightKind, NuSh, RunParams, convert_schemas,
+                CachedRunBody, InFlightKind, NuSh, RunParams, convert_schemas,
                 dispatch_interact, dispatch_pooled, envelope_to_structured, lint_run_params,
             },
             info::InfoParams,

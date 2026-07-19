@@ -130,58 +130,74 @@ fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Val
     serde_json::from_str(text).ok()
 }
 
-fn extract_rerun_id(call_response: &serde_json::Value) -> String {
-    let env = extract_envelope(call_response)
-        .unwrap_or_else(|| panic!("expected envelope; got {call_response}"));
-    env["rerun_id"]
-        .as_str()
-        .unwrap_or_else(|| panic!("envelope missing rerun_id; got {env}"))
-        .to_string()
+fn has_error(resp: &serde_json::Value) -> bool {
+    resp.get("result")
+        .and_then(|r| r.get("structuredContent"))
+        .and_then(|sc| sc.get("error"))
+        .is_some()
 }
 
 #[test]
-fn run_returns_deterministic_rerun_id() {
+fn run_envelope_has_nonce_and_no_rerun_id() {
     let mut host = Host::spawn();
-    let closure_a = serde_json::json!({
-        "args_schema": {"x": "int"},
-        "result_schema": {"out": "int"},
-        "args": {"x": 1},
-        "body": "{ out: ($args.x + 100) }",
-    });
-    let r1 = extract_rerun_id(&host.call("run", closure_a.clone()));
-    let r2 = extract_rerun_id(&host.call("run", closure_a));
-    assert_eq!(r1, r2, "same closure -> same rerun_id; got {r1} vs {r2}");
-    assert_ne!(
-        r1, "0",
-        "rerun_id should be content-derived, not the placeholder \"0\""
+    let resp = host.call(
+        "run",
+        serde_json::json!({
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
+            "args": {"x": 1},
+            "body": "{ out: ($args.x + 100) }",
+        }),
+    );
+    let env = extract_envelope(&resp).unwrap_or_else(|| panic!("envelope; got {resp}"));
+    assert!(
+        env["nonce"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
+        "run envelope should carry a non-empty nonce; got {env}",
     );
     assert!(
-        !r1.is_empty() && r1.chars().all(|c| c.is_ascii_alphanumeric()),
-        "rerun_id should be non-empty base62; got {r1:?}",
+        env.get("rerun_id").is_none(),
+        "run envelope should no longer carry rerun_id; got {env}",
     );
 }
 
 #[test]
-fn rerun_id_differs_when_closure_changes() {
+fn timeout_then_rerun_recovers() {
     let mut host = Host::spawn();
-    let base = serde_json::json!({
-        "args_schema": {"x": "int"},
-        "result_schema": {"out": "int"},
-        "args": {"x": 1},
-        "body": "{ out: ($args.x + 100) }",
-    });
-    let mut altered = base.clone();
-    altered["body"] = serde_json::json!("{ out: ($args.x + 200) }");
-    let r_base = extract_rerun_id(&host.call("run", base));
-    let r_alt = extract_rerun_id(&host.call("run", altered));
-    assert_ne!(
-        r_base, r_alt,
-        "different closure body -> different rerun_id"
+    let timed_out = host.call(
+        "run",
+        serde_json::json!({
+            "args_schema": {"x": "int"},
+            "result_schema": {"out": "int"},
+            "args": {"x": 5},
+            "body": "sleep 400ms\n{ out: ($args.x + 1) }",
+            "timeout_ms": 100u64,
+        }),
+    );
+    let err = timed_out["result"]["structuredContent"]["error"].clone();
+    assert_eq!(
+        err["errors"][0]["kind"].as_str(),
+        Some("worker::timeout"),
+        "the first run should time out; got {timed_out}",
+    );
+    let nonce = err["nonce"].as_str().expect("timeout envelope nonce").to_string();
+
+    // The body was cached PRE-dispatch, so the nonce from a TIMED-OUT run is a
+    // valid rerun handle -- replay with a larger timeout recovers it.
+    let recovered = host.call(
+        "rerun",
+        serde_json::json!({ "nonce": nonce, "args": {"x": 5}, "timeout_ms": 5000u64 }),
+    );
+    let env = extract_envelope(&recovered)
+        .unwrap_or_else(|| panic!("recovery envelope; got {recovered}"));
+    assert_eq!(
+        env["result"]["out"].as_i64(),
+        Some(6),
+        "rerun of a timed-out nonce with a bigger timeout should complete -> 6; got {env}",
     );
 }
 
 #[test]
-fn rerun_roundtrip_with_new_args() {
+fn rerun_by_nonce_roundtrips_with_new_args() {
     let mut host = Host::spawn();
     let first = host.call(
         "run",
@@ -193,70 +209,66 @@ fn rerun_roundtrip_with_new_args() {
         }),
     );
     let first_env =
-        extract_envelope(&first).unwrap_or_else(|| panic!("call 1 envelope; got {first}"));
+        extract_envelope(&first).unwrap_or_else(|| panic!("run 1 envelope; got {first}"));
     assert_eq!(first_env["result"]["out"].as_i64(), Some(15));
-    let rerun_id = first_env["rerun_id"]
-        .as_str()
-        .expect("rerun_id present")
-        .to_string();
+    let nonce = first_env["nonce"].as_str().expect("run nonce").to_string();
 
     let second = host.call(
         "rerun",
-        serde_json::json!({
-            "rerun_id": rerun_id,
-            "args": {"x": 7}
-        }),
+        serde_json::json!({ "nonce": nonce, "args": {"x": 7} }),
     );
     let second_env =
         extract_envelope(&second).unwrap_or_else(|| panic!("rerun envelope; got {second}"));
     assert_eq!(
         second_env["result"]["out"].as_i64(),
         Some(21),
-        "rerun should reuse the cached closure with new args -> 7 * 3 = 21; got {:?}",
+        "rerun should replay the cached body with new args -> 7 * 3 = 21; got {:?}",
         second_env["result"],
     );
     assert!(
         second_env.get("rerun_id").is_none(),
         "rerun envelope should not include rerun_id; got {second_env}",
     );
+
+    // The rerun's OWN nonce is itself a handle (rerun caches its body too).
+    let rerun_nonce = second_env["nonce"].as_str().expect("rerun nonce").to_string();
+    assert_ne!(rerun_nonce, nonce, "each eval gets a fresh nonce");
+    let third = host.call(
+        "rerun",
+        serde_json::json!({ "nonce": rerun_nonce, "args": {"x": 2} }),
+    );
+    let third_env = extract_envelope(&third)
+        .unwrap_or_else(|| panic!("rerun-of-rerun envelope; got {third}"));
+    assert_eq!(
+        third_env["result"]["out"].as_i64(),
+        Some(6),
+        "a rerun's own nonce must itself be rerunnable -> 2 * 3 = 6; got {third_env}",
+    );
 }
 
 #[test]
-fn rerun_unknown_id_errors() {
+fn rerun_unknown_nonce_errors() {
     let mut host = Host::spawn();
     let resp = host.call(
         "rerun",
-        serde_json::json!({
-            "rerun_id": "abcDEF123456",
-            "args": {"x": 0}
-        }),
+        serde_json::json!({ "nonce": "abcDEF123456", "args": {"x": 0} }),
     );
-    let has_error = resp
-        .get("result")
-        .and_then(|r| r.get("structuredContent"))
-        .and_then(|sc| sc.get("error"))
-        .is_some();
-    assert!(has_error, "expected error for unknown rerun_id; got {resp}");
-}
-
-#[test]
-fn rerun_rejects_non_base62_id() {
-    let mut host = Host::spawn();
-    let resp = host.call(
-        "rerun",
-        serde_json::json!({
-            "rerun_id": "../etc/passwd",
-            "args": {"x": 0}
-        }),
-    );
-    let has_error = resp
-        .get("result")
-        .and_then(|r| r.get("structuredContent"))
-        .and_then(|sc| sc.get("error"))
-        .is_some();
     assert!(
-        has_error,
-        "expected error for non-base62 rerun_id; got {resp}"
+        has_error(&resp),
+        "a base62 nonce with no cached body should error; got {resp}",
+    );
+}
+
+#[test]
+fn rerun_rejects_non_base62_nonce() {
+    let mut host = Host::spawn();
+    let resp = host.call(
+        "rerun",
+        serde_json::json!({ "nonce": "../etc/passwd", "args": {"x": 0} }),
+    );
+    assert!(
+        has_error(&resp),
+        "a non-base62 nonce should error; got {resp}",
     );
 }
 

@@ -12,7 +12,7 @@ pub(crate) struct ProcessEntry {
     pub started_at: u64,
     pub args: mcp::JsonObject,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub rerun_id: Option<String>,
+    pub source_nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
 }
@@ -38,9 +38,9 @@ impl NuSh {
             .iter()
             .map(|(nonce_str, entry)| {
                 let args_obj = entry.args.as_object().cloned().unwrap_or_default();
-                let (rerun_id, path) = match &entry.kind {
+                let (source_nonce, path) = match &entry.kind {
                     InFlightKind::Run | InFlightKind::Interact => (None, None),
-                    InFlightKind::Rerun { rerun_id } => (Some(rerun_id.clone()), None),
+                    InFlightKind::Rerun { source_nonce } => (Some(source_nonce.clone()), None),
                     InFlightKind::Call { path } => (None, Some(path.clone())),
                 };
                 ProcessEntry {
@@ -48,7 +48,7 @@ impl NuSh {
                     tool: entry.tool.to_string(),
                     started_at: entry.started_at,
                     args: args_obj,
-                    rerun_id,
+                    source_nonce,
                     path,
                 }
             })

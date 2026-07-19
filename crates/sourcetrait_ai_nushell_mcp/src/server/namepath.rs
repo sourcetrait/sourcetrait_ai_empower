@@ -1,23 +1,7 @@
 use crate::*;
 
-/// What: the agent-facing addressing string for a library coordinate -
-/// `library`, `library:module/path`, or `library:module/path:function`, split
-/// on `:`. A newtype over the raw string; `validate()` parses + checks it into
-/// the structured `NamepathRef`.
-///
-/// Why: namepath is sugar over the structured (library, module_path, name)
-/// coordinate the call / inspect / new tools take. The internal model stays
-/// structured - this is purely the boundary parse, so a malformed namepath
-/// fails with a typed `Error::NamepathInvalid` before any dispatch.
-///
-/// Where: built from the `namepath` param in `tool/call.rs` + `tool/inspect.rs`
-/// and from each entry of `tool/new.rs`'s `namepaths` list.
 pub(crate) struct Namepath(pub String);
 
-/// The structured coordinate a valid namepath resolves to. Variant arity
-/// mirrors the `:`-segment count: 1 = library, 2 = module, 3 = function. A
-/// `Function` always carries a non-empty `module_path` - there are no root
-/// functions (`library::function` is rejected).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NamepathRef {
     Library {
@@ -35,21 +19,6 @@ pub(crate) enum NamepathRef {
 }
 
 impl Namepath {
-    /// What: parse + validate the raw namepath into a `NamepathRef`. Splits on
-    /// `:` into 1 / 2 / 3 parts (library / module / function); each segment is
-    /// checked with the same identifier + module-path rules the library
-    /// substrate uses. Returns `Error::NamepathInvalid { namepath, reason }` on
-    /// any malformed form.
-    ///
-    /// Why: one classify-and-check boundary (mirroring the schema converter's
-    /// one-error-per-denial discipline) keeps namepath validity in a single
-    /// place; the tool handlers then match the returned variant for their
-    /// required arity. Denials: empty; leading/trailing `:`; `::` (the banned
-    /// root-function form); more than two `:`; an invalid segment; and `main`
-    /// as a function name (the reserved call-target sentinel).
-    ///
-    /// Where: called by `tool/call.rs` (requires `Function`), `tool/inspect.rs`
-    /// (any arity), and `tool/new.rs` (requires `Module` or `Function`).
     pub(crate) fn validate(&self) -> Result<NamepathRef, Error> {
         fn bad(raw: &str, reason: &str) -> Error {
             Error::NamepathInvalid {
@@ -106,8 +75,6 @@ impl Namepath {
     }
 }
 
-/// A library segment is the compound `<author>/<name>` - exactly one slash,
-/// each side a valid identifier that is not the reserved `main`.
 fn check_library(library: &str) -> Result<(), &'static str> {
     if is_valid_library(library) {
         Ok(())
@@ -116,8 +83,6 @@ fn check_library(library: &str) -> Result<(), &'static str> {
     }
 }
 
-/// A module-path segment must be non-empty and a slash-separated chain of
-/// valid identifiers (no leading / trailing / double slash).
 fn check_module_path(module_path: &str) -> Result<(), &'static str> {
     if module_path.is_empty() {
         Err("module path must not be empty")

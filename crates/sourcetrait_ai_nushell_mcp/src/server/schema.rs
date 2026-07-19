@@ -1,30 +1,7 @@
-// The item 21 grammar is a complete, deliberately-typed API: some
-// `*Kind` discriminants and `kind()` accessors are surface for callers
-// and future items (15/16) and are not all internally consumed yet.
 #![allow(dead_code)]
 use crate::*;
 
-// Structured-schema grammar (item 21). A strict, well-defined,
-// bidirectional grammar represented twice: as Copy `*Kind`
-// discriminants and as fieldful `*Typedef` structural ASTs, one
-// parallel hierarchy per representation (`Json*` and `Nu*`).
-//
-// Two directions, mirror images:
-// - schema_to_typedef (input): a JSON schema -> Json*Typedef ->
-//   map to Nu*Typedef -> render the nu positional-type string the
-//   worker parses.
-// - typedef_to_schema (emit): a nu positional-type string ->
-//   Nu*Typedef -> map to Json*Typedef -> render a JSON value.
-//
-// No fallback: validity is confirmed at import/define, so the emit
-// parser trusts grammar-conformant input; a failure on a validated
-// schema is a bug. Every grammar denial is a single classify/parse
-// error here, not scattered checks elsewhere.
 
-// ============================================================================
-// Scalar vocabulary -- the 14 named scalar types. `nothing` is its own
-// kind (JSON null, not a string); `any` is deliberately absent.
-// ============================================================================
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum JsonScalarTypedef {
@@ -146,11 +123,6 @@ impl NuScalarTypedef {
     }
 }
 
-// ============================================================================
-// Shared name newtypes -- a field/column name carries no representation
-// difference, so these are shared (not Json/Nu-paired), but distinct
-// from each other.
-// ============================================================================
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FieldName(pub String);
@@ -158,9 +130,6 @@ pub(crate) struct FieldName(pub String);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ColumnName(pub String);
 
-// ============================================================================
-// Kind discriminants (Copy) for the genuine multi-variant enums
-// ============================================================================
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum JsonTypedefKind {
@@ -206,9 +175,6 @@ pub(crate) enum NuResultTypedefKind {
     Record,
 }
 
-// ============================================================================
-// JSON-side structural AST
-// ============================================================================
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum JsonTypedef {
@@ -295,9 +261,6 @@ impl JsonResultTypedef {
     }
 }
 
-// ============================================================================
-// Nu-side structural AST (mirror of the JSON side)
-// ============================================================================
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NuTypedef {
@@ -384,16 +347,9 @@ impl NuResultTypedef {
     }
 }
 
-// The reserved record-field / oneof key.
 const ONEOF_KEY: &str = "oneof<>";
 
-// ============================================================================
-// JSON side: classify -> parse -> render
-// ============================================================================
 
-/// Classify a nested JSON schema node into its grammar kind (the one
-/// place the object/array disambiguation lives). Nested only: a nested
-/// empty object {} is denied (Void is top-level; see parse_json_args).
 fn json_typedef_kind(v: &json::Value, allow_open_record: bool) -> Result<JsonTypedefKind, String> {
     match v {
         json::Value::Null => Ok(JsonTypedefKind::Nothing),
@@ -402,9 +358,6 @@ fn json_typedef_kind(v: &json::Value, allow_open_record: bool) -> Result<JsonTyp
             if map.contains_key(ONEOF_KEY) {
                 Ok(JsonTypedefKind::Oneof)
             } else if map.is_empty() {
-                // An empty object is an OPEN record (`record<>`): allowed only in
-                // an args position (item 27), denied in a result position and as
-                // a bare list element (see parse_json_typedef's List arm).
                 if allow_open_record {
                     Ok(JsonTypedefKind::Record)
                 } else {
@@ -424,7 +377,6 @@ fn json_typedef_kind(v: &json::Value, allow_open_record: bool) -> Result<JsonTyp
                     arr.len()
                 ));
             }
-            // Table iff the single element is a non-oneof object.
             match &arr[0] {
                 json::Value::Object(m) if !m.contains_key(ONEOF_KEY) => Ok(JsonTypedefKind::Table),
                 _ => Ok(JsonTypedefKind::List),
@@ -450,10 +402,6 @@ fn parse_json_record_fields(
     Ok(fields)
 }
 
-/// Parse a nested JSON schema node into a JsonTypedef. `allow_open_record`
-/// carries the args-vs-result context down the recursion: it permits an empty
-/// `{}` (open record) in a record field / oneof member / table column, but is
-/// dropped to `false` for a bare list element (the List arm below).
 fn parse_json_typedef(v: &json::Value, allow_open_record: bool) -> Result<JsonTypedef, String> {
     Ok(match json_typedef_kind(v, allow_open_record)? {
         JsonTypedefKind::Nothing => JsonTypedef::Nothing,
@@ -504,11 +452,6 @@ fn parse_json_typedef(v: &json::Value, allow_open_record: bool) -> Result<JsonTy
         }
         JsonTypedefKind::List => {
             let arr = v.as_array().expect("classified List");
-            // FENCE: a list element does NOT inherit the open-record allowance.
-            // `list<record<>>` (JSON `[{}]`) collides with an empty table and
-            // would not round-trip, so an open record is never a bare list
-            // element (item 27). A `[{}]` here is already classified as a table
-            // and denied above; this keeps the nu side symmetric.
             JsonTypedef::List(JsonListTypedef {
                 element: Box::new(parse_json_typedef(&arr[0], false)?),
             })
@@ -516,13 +459,11 @@ fn parse_json_typedef(v: &json::Value, allow_open_record: bool) -> Result<JsonTy
     })
 }
 
-/// Parse a top-level args schema object: empty {} -> Void, else Record.
 fn parse_json_args(map: &mcp::JsonObject) -> Result<JsonArgsTypedef, String> {
     if map.is_empty() {
         Ok(JsonArgsTypedef::Void)
     } else {
         Ok(JsonArgsTypedef::Record(JsonRecordTypedef {
-            // args permit an open record (`record<>`) as a nested type.
             fields: parse_json_record_fields(map, true)?,
         }))
     }
@@ -533,7 +474,6 @@ fn parse_json_result(map: &mcp::JsonObject) -> Result<JsonResultTypedef, String>
         Ok(JsonResultTypedef::Void)
     } else {
         Ok(JsonResultTypedef::Record(JsonRecordTypedef {
-            // result denies an open record - every result field is concretely typed.
             fields: parse_json_record_fields(map, false)?,
         }))
     }
@@ -569,11 +509,7 @@ fn render_json_record(fields: &[JsonRecordFieldTypedef]) -> json::Value {
     json::Value::Object(m)
 }
 
-// ============================================================================
-// Nu side: classify -> parse -> render
-// ============================================================================
 
-/// Split `s` on top-level occurrences of `sep` (depth 0 w.r.t. `<>`).
 fn split_top_level(s: &str, sep: char) -> Vec<String> {
     let mut parts = Vec::new();
     let mut depth = 0i32;
@@ -602,7 +538,6 @@ fn split_top_level(s: &str, sep: char) -> Vec<String> {
     parts
 }
 
-/// Split a `name: type` field at its first top-level `:`.
 fn split_field(field: &str) -> Result<(std::string::String, &str), String> {
     let mut depth = 0i32;
     for (i, c) in field.char_indices() {
@@ -618,14 +553,12 @@ fn split_field(field: &str) -> Result<(std::string::String, &str), String> {
     Err(format!("field `{field}` is missing a `:` type separator"))
 }
 
-/// If `tok` is `prefix<...>`, return the balanced inner; else None.
 fn bracketed<'a>(tok: &'a str, prefix: &str) -> Option<&'a str> {
     let rest = tok.strip_prefix(prefix)?;
     let inner = rest.strip_suffix('>')?;
     Some(inner)
 }
 
-/// Classify a nu typedef token into its grammar kind (nested context).
 fn nu_typedef_kind(tok: &str) -> Result<NuTypedefKind, String> {
     let tok = tok.trim();
     if tok == "nothing" {
@@ -641,7 +574,6 @@ fn nu_typedef_kind(tok: &str) -> Result<NuTypedefKind, String> {
     } else if tok == "record" || tok == "table" || tok == "list" {
         Err(format!("bare `{tok}` is not allowed; specify its contents"))
     } else {
-        // A scalar name (from_name rejects `any` and unknowns).
         Ok(NuTypedefKind::Scalar)
     }
 }
@@ -661,12 +593,6 @@ fn parse_nu_record_fields(
     Ok(fields)
 }
 
-/// Parse a nested nu typedef token into a NuTypedef. `allow_open_record` carries
-/// the args-vs-result context: it permits an empty `record<>` (open record) in a
-/// record field / oneof member / table column, but is dropped to `false` for a
-/// bare list element (the List arm below). Bare `record` stays denied in
-/// `nu_typedef_kind` regardless - it is not valid arg syntax; the author writes
-/// `record<>`.
 fn parse_nu_typedef(tok: &str, allow_open_record: bool) -> Result<NuTypedef, String> {
     let tok = tok.trim();
     Ok(match nu_typedef_kind(tok)? {
@@ -676,8 +602,6 @@ fn parse_nu_typedef(tok: &str, allow_open_record: bool) -> Result<NuTypedef, Str
             let inner = bracketed(tok, "record<")
                 .ok_or_else(|| format!("malformed record type `{tok}`"))?;
             if inner.trim().is_empty() {
-                // `record<>` = OPEN record: allowed in an args position (item 27),
-                // denied in a result position.
                 if allow_open_record {
                     return Ok(NuTypedef::Record(NuRecordTypedef { fields: Vec::new() }));
                 }
@@ -719,9 +643,6 @@ fn parse_nu_typedef(tok: &str, allow_open_record: bool) -> Result<NuTypedef, Str
         NuTypedefKind::List => {
             let inner =
                 bracketed(tok, "list<").ok_or_else(|| format!("malformed list type `{tok}`"))?;
-            // FENCE: a list element does NOT inherit the open-record allowance
-            // (symmetric with the JSON side) - `list<record<>>` would emit `[{}]`,
-            // an empty table, and not round-trip (item 27).
             NuTypedef::List(NuListTypedef {
                 element: Box::new(parse_nu_typedef(inner, false)?),
             })
@@ -729,8 +650,6 @@ fn parse_nu_typedef(tok: &str, allow_open_record: bool) -> Result<NuTypedef, Str
     })
 }
 
-/// Parse a top-level args positional type: `nothing` -> Void, else
-/// `record<...>` -> Record. Anything else at the top level is rejected.
 fn parse_nu_args(tok: &str) -> Result<NuArgsTypedef, String> {
     let tok = tok.trim();
     if tok == "nothing" {
@@ -812,9 +731,6 @@ fn render_nu_result(r: &NuResultTypedef) -> std::string::String {
     }
 }
 
-// ============================================================================
-// Structural maps Json* <-> Nu* (1:1; total)
-// ============================================================================
 
 fn json_to_nu_typedef(t: &JsonTypedef) -> NuTypedef {
     match t {
@@ -898,12 +814,7 @@ fn scalar_n2j(s: NuScalarTypedef) -> JsonScalarTypedef {
     JsonScalarTypedef::from_name(s.name()).expect("paired scalar")
 }
 
-// ============================================================================
-// Public entry points (the 4 the rest of the crate calls)
-// ============================================================================
 
-/// Input: a JSON args schema object -> the nu positional-type string
-/// (`record<...>` or `nothing`).
 pub(crate) fn args_schema_to_nu(schema: &mcp::JsonObject) -> Result<std::string::String, String> {
     let json = parse_json_args(schema)?;
     let nu = match json {
@@ -913,7 +824,6 @@ pub(crate) fn args_schema_to_nu(schema: &mcp::JsonObject) -> Result<std::string:
     Ok(render_nu_args(&nu))
 }
 
-/// Input: a JSON result schema object -> the nu positional-type string.
 pub(crate) fn result_schema_to_nu(schema: &mcp::JsonObject) -> Result<std::string::String, String> {
     let json = parse_json_result(schema)?;
     let nu = match json {
@@ -923,8 +833,6 @@ pub(crate) fn result_schema_to_nu(schema: &mcp::JsonObject) -> Result<std::strin
     Ok(render_nu_result(&nu))
 }
 
-/// Emit: a nu args positional-type string -> the JSON schema object
-/// ({} for void, {fields} for a record).
 pub(crate) fn nu_to_args_schema(typedef: &str) -> Result<mcp::JsonObject, String> {
     let nu = parse_nu_args(typedef)?;
     let json = match nu {
@@ -940,7 +848,6 @@ pub(crate) fn nu_to_args_schema(typedef: &str) -> Result<mcp::JsonObject, String
     })
 }
 
-/// Emit: a nu result positional-type string -> the JSON schema object.
 pub(crate) fn nu_to_result_schema(typedef: &str) -> Result<mcp::JsonObject, String> {
     let nu = parse_nu_result(typedef)?;
     let json = match nu {

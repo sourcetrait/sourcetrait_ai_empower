@@ -70,9 +70,6 @@ fn worker_handshake_and_stub_response() {
         rt_elapsed.as_secs_f64() * 1000.0,
     );
 
-    // 0.0.7+: value field is a msgpack-encoded JSON value (was a NUON
-    // string before). `1 + 1` evaluates to a nushell int, which converts
-    // to a JSON Number(2), which msgpacks as an integer.
     let value_bytes: Vec<u8> = response["value"]
         .as_array()
         .expect("value is byte array")

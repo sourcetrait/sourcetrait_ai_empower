@@ -1,17 +1,3 @@
-//! Store-coordinate tests (`--id` / `--namespace`).
-//!
-//! Verifies:
-//!   - the default id is $USER (store lands under `<user>/default/`);
-//!   - explicit `--id` / `--namespace` select the store subtree
-//!     `<xdg>/sourcetrait/nushell_mcp/<id>/<namespace>/`;
-//!   - two namespaces under one id are fully disjoint stores;
-//!   - info() reports the configured id + namespace + work_dir;
-//!   - workers receive EQUIP_ID / EQUIP_NAMESPACE / EQUIP_WORK_DIR,
-//!     readable from a run() body as `$env.*` (the ambient who-am-I +
-//!     where-is-my-work);
-//!   - --workdir resolution: an explicit value wins, a `~/` value
-//!     expands against HOME, an absent value defaults to
-//!     <home>/proj/equip/<id>.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -26,9 +12,6 @@ struct Host {
 }
 
 impl Host {
-    /// Spawn a host against the given XDG dirs with extra CLI args (the
-    /// store coordinate under test). The dirs are owned by the test so
-    /// two hosts can share them.
     fn spawn_with(args: &[&str], envs: &[(&str, &str)], data: &Path, cache: &Path) -> Self {
         let host_bin = env!("CARGO_BIN_EXE_nushell_mcp");
         let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
@@ -174,7 +157,6 @@ fn default_id_is_user_env() {
     let cache = tempfile::tempdir().expect("cache");
     let src_root = tempfile::tempdir().expect("src");
     let src = src_root.path().join("mylib");
-    // No --id: the default is $USER.
     let mut host = Host::spawn_with(&[], &[("USER", "udefault")], data.path(), cache.path());
     let resp = host.library_new("sourcetrait/mylib", &src);
     assert!(!has_error_path(&resp), "library(new) should succeed; got {resp}");
@@ -215,7 +197,6 @@ fn explicit_id_and_namespace_select_store() {
         lib_dir.display(),
     );
 
-    // info() reports the configured coordinate.
     let info = host.call("info", serde_json::json!({}));
     let env = structured(&info);
     assert_eq!(env["id"].as_str(), Some("aid"), "got {env}");
@@ -229,7 +210,6 @@ fn namespaces_are_disjoint_stores() {
     let src_root = tempfile::tempdir().expect("src");
     let src = src_root.path().join("nslib");
 
-    // ns1: establish + commit a callable library, then drop the host.
     {
         let mut ns1 = Host::spawn_with(
             &["--id", "aid", "--namespace", "ns1"],
@@ -258,7 +238,6 @@ fn namespaces_are_disjoint_stores() {
         );
     }
 
-    // ns2 (same id, same XDG dirs): the library does not exist.
     let mut ns2 = Host::spawn_with(
         &["--id", "aid", "--namespace", "ns2"],
         &[],
@@ -281,7 +260,6 @@ fn namespaces_are_disjoint_stores() {
         has_error_path(&called),
         "ns2 call into ns1's library must fail; got {called}",
     );
-    // Both namespace subtrees exist side by side under the one id.
     assert!(store_dir(data.path(), "aid", "ns1").exists());
     assert!(store_dir(data.path(), "aid", "ns2").exists());
 }
@@ -323,7 +301,6 @@ fn worker_env_carries_store_coordinate_and_work_dir() {
         Some(wd_str),
         "run body should see the explicit EQUIP_WORK_DIR; got {resp}",
     );
-    // info() reports the same work_dir.
     let info = host.call("info", serde_json::json!({}));
     assert_eq!(
         structured(&info)["work_dir"].as_str(),
@@ -367,7 +344,6 @@ fn workdir_defaults_under_home_proj_equip_id() {
     let cache = tempfile::tempdir().expect("cache");
     let home = tempfile::tempdir().expect("home");
     let home_str = home.path().to_str().expect("home utf-8");
-    // No --workdir: the default is <home>/proj/equip/<id>.
     let mut host = Host::spawn_with(
         &["--id", "wdid"],
         &[("HOME", home_str)],

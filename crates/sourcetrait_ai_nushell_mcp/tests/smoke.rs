@@ -1,8 +1,3 @@
-//! Phase 4 smoke tests for the MTP.
-//!
-//! Each test spawns its own host process so test isolation is per-test.
-//! The closure `exit` test, in particular, would otherwise wreck other
-//! tests sharing the worker.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -149,10 +144,6 @@ fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Val
 
 #[test]
 fn smoke_2_runtime_arg_typecheck_error() {
-    // The substitution template puts ARGS_DATA as a literal record at the
-    // __run call site, so the arg typecheck fires at parse time inside the
-    // worker. The wire returns ok=false with a structured parse-error
-    // diagnostic, which the host maps to an MCP error.
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"x": "int"},
@@ -161,8 +152,6 @@ fn smoke_2_runtime_arg_typecheck_error() {
         "body": "{ out: ($args.x + 1) }",
     });
     let resp = host.run(args);
-    // We expect either an error result (rmcp's CallToolResult with is_error=true)
-    // OR a JSON-RPC error object. Both are valid representations.
     let has_error_path = resp
         .get("result")
         .and_then(|r| r.get("structuredContent"))
@@ -176,9 +165,6 @@ fn smoke_2_runtime_arg_typecheck_error() {
 
 #[test]
 fn smoke_3_runtime_result_typecheck_error() {
-    // Body returns {out: "five"} (static record<out: string>) but
-    // result_schema declares out: int. __run's `: nothing -> R` output type
-    // raises OutputMismatch at parse time -> worker error.
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"x": "int"},
@@ -200,10 +186,6 @@ fn smoke_3_runtime_result_typecheck_error() {
 
 #[test]
 fn smoke_5_external_command() {
-    // External `^printf "hello"` should round-trip the stdout. The closure
-    // captures the output as a string and emits {out: <captured>}.
-    // Uses `printf` (POSIX, universal, NOT in slice 5.1 lint denylist)
-    // because `^echo` is denied by the body linter.
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"noop": "int"},
@@ -224,10 +206,6 @@ fn smoke_5_external_command() {
 
 #[test]
 fn smoke_6_worker_death_via_exit() {
-    // `exit 1` inside the closure body calls process::exit at the top frame
-    // of eval_block, killing the worker. The host's send_request sees an EOF
-    // on the IPC channel and returns an error. Subsequent calls should also
-    // fail because the worker is gone (no respawn in MTP).
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"noop": "int"},
@@ -249,19 +227,11 @@ fn smoke_6_worker_death_via_exit() {
 
 #[test]
 fn smoke_9_timeout_fires() {
-    // Slice 5.10: timeout_ms wraps the round-trip in tokio::time::timeout.
-    // A closure that sleeps longer than the timeout emits a typed
-    // worker::timeout error envelope (kind + timeout_ms data + nonce);
-    // the worker is killed and the next call succeeds on a fresh pool
-    // worker.
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"noop": "int"},
         "result_schema": {"out": "int"},
         "args": {"noop": 0},
-        // Multi-statement body without outer braces; inserted by the
-        // template as the def body. `sleep 5sec` blocks the worker for
-        // 5 seconds; the 200ms timeout fires first.
         "body": "sleep 5sec\n{ out: 0 }",
         "timeout_ms": 200u64
     });
@@ -284,7 +254,6 @@ fn smoke_9_timeout_fires() {
         "timeout message should carry the ms; got {env}"
     );
     assert!(env["nonce"].as_str().is_some(), "expected nonce; got {env}");
-    // Next call against the (respawned) pool worker should succeed.
     let args2 = serde_json::json!({
         "args_schema": {"x": "int"},
         "result_schema": {"out": "int"},
@@ -298,14 +267,11 @@ fn smoke_9_timeout_fires() {
 
 #[test]
 fn smoke_10_processes_empty_when_idle() {
-    // Slice 5.9: processes() returns the in-flight list. When nothing
-    // is running, the list is empty.
     let mut host = Host::spawn();
     let resp = host.call_tool("processes", serde_json::json!({}));
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
-    // C3: processes() emits structured_content only.
     let env = result
         .get("structuredContent")
         .unwrap_or_else(|| panic!("expected structuredContent; got {resp}"));
@@ -317,13 +283,11 @@ fn smoke_10_processes_empty_when_idle() {
 
 #[test]
 fn smoke_11_kill_unknown_nonce_silent_ok() {
-    // Slice 5.9: kill() with an unknown nonce returns {ok: true} silently.
     let mut host = Host::spawn();
     let resp = host.call_tool("kill", serde_json::json!({"nonce": "doesnotexist"}));
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
-    // C6.1: kill emits no structured_content; absence of error == success.
     assert!(
         result.get("structuredContent").is_none(),
         "no-return tools should not emit structuredContent; got {result}",
@@ -332,11 +296,6 @@ fn smoke_11_kill_unknown_nonce_silent_ok() {
 
 #[test]
 fn smoke_8_plugin_path_resolves() {
-    // Slice 5.7: the worker's WarmBase::new sets engine_state.plugin_path
-    // to <nu_config_dir>/plugin.msgpackz so that `$nu.plugin-path` returns
-    // a string instead of `nothing`. Tests that this is visible from inside
-    // a closure -- proves the load_plugins_best_effort path ran without
-    // crashing AND the field assignment took effect.
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"noop": "int"},
@@ -350,8 +309,6 @@ fn smoke_8_plugin_path_resolves() {
     let path = envelope["result"]["path"]
         .as_str()
         .unwrap_or_else(|| panic!("expected string; got {:?}", envelope["result"]));
-    // The resolved path should end with plugin.msgpackz (modulo platform
-    // path separators). Non-empty and ends with the canonical filename.
     assert!(
         path.ends_with("plugin.msgpackz"),
         "expected $nu.plugin-path to end with plugin.msgpackz; got {path:?}",
@@ -360,15 +317,6 @@ fn smoke_8_plugin_path_resolves() {
 
 #[test]
 fn smoke_12_tls_crypto_provider_installed() {
-    // The worker installs nushell's TLS crypto provider at startup
-    // (nu_command::tls::CRYPTO_PROVIDER -- nushell does NOT read the
-    // rustls process-global default). Without it, any `http` call died
-    // at "tls crypto provider not found" BEFORE opening a socket.
-    // Hermetic probe: https against the closed discard port on
-    // localhost -- with the provider installed the request reaches TCP
-    // and fails with a connection error instead. Assert only that the
-    // provider error is gone; the connection-failure text belongs to
-    // ureq.
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"noop": "int"},
@@ -392,11 +340,6 @@ fn smoke_12_tls_crypto_provider_installed() {
 
 #[test]
 fn smoke_7_multi_call_stability_and_scoping() {
-    // Ten distinct closures in sequence on the same worker. Each call's
-    // `__run` def lives only inside the do block, so the worker's EngineState
-    // should not accumulate defs across calls. We verify by introspecting
-    // `scope commands` AFTER the 10 calls -- the result should NOT contain
-    // `__run` lingering.
     let mut host = Host::spawn();
     for i in 0..10 {
         let args = serde_json::json!({
@@ -416,8 +359,6 @@ fn smoke_7_multi_call_stability_and_scoping() {
             envelope["result"],
         );
     }
-    // Introspect: ask the worker whether `__run` leaked to the top level
-    // after all 10 calls. The do-block scoping should mean it does NOT persist.
     let intro = serde_json::json!({
         "args_schema": {"noop": "int"},
         "result_schema": {"leaked": "int"},
@@ -438,7 +379,6 @@ fn smoke_7_multi_call_stability_and_scoping() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

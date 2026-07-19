@@ -55,7 +55,6 @@ fn host_tools_list_and_run_stub() {
     let mut stdin = host.stdin.take().expect("host stdin pipe");
     let mut stdout = BufReader::new(host.stdout.take().expect("host stdout pipe"));
 
-    // initialize
     let init = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -78,14 +77,12 @@ fn host_tools_list_and_run_stub() {
         init_elapsed.as_secs_f64() * 1000.0,
     );
 
-    // initialized notification (no id)
     let initialized = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "notifications/initialized",
     });
     send(&mut stdin, &initialized);
 
-    // tools/list
     let list = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 2,
@@ -121,7 +118,6 @@ fn host_tools_list_and_run_stub() {
         );
     }
 
-    // tools/call run with a stub closure body
     let call_start = Instant::now();
     let call = serde_json::json!({
         "jsonrpc": "2.0",
@@ -143,14 +139,10 @@ fn host_tools_list_and_run_stub() {
     let result = call_resp
         .get("result")
         .unwrap_or_else(|| panic!("tools/call response missing result: {call_resp}"));
-    // C2: `run` emits structured_content only (no content[] mirror).
     let envelope = result
         .get("structuredContent")
         .cloned()
         .unwrap_or_else(|| panic!("expected structuredContent on run result: {call_resp}"));
-    // 0.0.9+: rerun_id is a content-derived base62 hash, not the
-    // pre-cache placeholder "0". Spot-check shape: non-empty,
-    // alphanumeric.
     let rerun_id = envelope["rerun_id"]
         .as_str()
         .expect("envelope has rerun_id");
@@ -158,10 +150,6 @@ fn host_tools_list_and_run_stub() {
         !rerun_id.is_empty() && rerun_id.chars().all(|c| c.is_ascii_alphanumeric()),
         "rerun_id should be non-empty base62; got {rerun_id:?}",
     );
-    // 0.0.7+: result is a structured JSON object (via nu_json::Value
-    // conversion in the worker), not a NUON string. Closure
-    // `{ out: ($args.x + 1) }` with args.x = 5 returns the record
-    // {out: 6}, surfaced as JSON object {"out": 6}.
     assert_eq!(
         envelope["result"]["out"].as_i64(),
         Some(6),
@@ -173,7 +161,6 @@ fn host_tools_list_and_run_stub() {
         call_elapsed.as_secs_f64() * 1000.0,
     );
 
-    // clean shutdown
     drop(stdin);
     let _ = wait_with_timeout(&mut host, Duration::from_secs(5));
 }

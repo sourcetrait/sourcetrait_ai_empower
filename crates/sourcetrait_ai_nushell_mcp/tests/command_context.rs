@@ -1,9 +1,3 @@
-//! Worker command-context layer tests (item 17).
-//!
-//! run() (stateless) loads lang + shell + nu-cmd-extra; interact()
-//! (stateful) additionally loads nu-cmd-plugin. So `bits` / `str *-case`
-//! resolve on both workers, but the `plugin *` admin family resolves
-//! ONLY on interact() -- run() stays admin-free.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -132,8 +126,6 @@ fn envelope(resp: &serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn run_has_extra_lacks_plugin() {
-    // run() = lang + shell + extra. `bits and` + `str snake-case` resolve
-    // and compute; the `plugin *` admin family is absent.
     let mut host = Host::spawn();
     let resp = host.call_tool(
         "run",
@@ -169,8 +161,6 @@ fn run_has_extra_lacks_plugin() {
 
 #[test]
 fn interact_has_extra_and_plugin() {
-    // interact() = lang + shell + extra + plugin. Both `bits and` and the
-    // `plugin *` admin family resolve on the stateful administrative worker.
     let mut host = Host::spawn();
     let resp = host.call_tool(
         "interact",
@@ -196,7 +186,6 @@ fn interact_has_extra_and_plugin() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

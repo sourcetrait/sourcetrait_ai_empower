@@ -1,5 +1,3 @@
-//! Unit tests for `crate::server::schema` (the item-21 structured-schema
-//! grammar matrix, both directions + the live migration shapes).
 
 use crate::*;
 
@@ -10,7 +8,6 @@ fn obj(s: &str) -> mcp::JsonObject {
     }
 }
 
-// ---- args_schema_to_nu (json -> nu) ----
 
 #[test]
 fn args_void() {
@@ -55,7 +52,6 @@ fn args_all_scalars_incl_cell_path() {
     );
 }
 
-// ---- denials ----
 
 #[test]
 fn deny_any() {
@@ -64,8 +60,6 @@ fn deny_any() {
 
 #[test]
 fn args_allow_open_record_field() {
-    // item 27: an empty `{}` field in ARGS is an open record (`record<>`);
-    // result still denies it.
     assert_eq!(
         args_schema_to_nu(&obj(r#"{"x":{}}"#)).unwrap(),
         "record<x: record<>>"
@@ -98,7 +92,6 @@ fn deny_empty_oneof() {
     assert!(args_schema_to_nu(&obj(r#"{"x":{"oneof<>":[]}}"#)).is_err());
 }
 
-// ---- nu_to_args_schema (nu -> json) ----
 
 #[test]
 fn emit_void() {
@@ -127,7 +120,6 @@ fn emit_rejects_bare_list() {
     assert!(nu_to_args_schema("record<x: list>").is_err());
 }
 
-// ---- round-trips ----
 
 #[test]
 fn roundtrip_json_nu_json() {
@@ -154,12 +146,9 @@ fn result_void_and_record() {
     assert_eq!(nu_to_result_schema("nothing").unwrap(), obj("{}"));
 }
 
-// ---- nu -> json -> nu round-trips (the emit direction) ----
 
 #[test]
 fn roundtrip_nu_json_nu() {
-    // Sorted field names so the BTreeMap-sorted render is string-identical to
-    // the input.
     for nu in [
         "nothing",
         "record<a: int>",
@@ -176,12 +165,9 @@ fn roundtrip_nu_json_nu() {
     }
 }
 
-// ---- emit normalizations + nested composites ----
 
 #[test]
 fn emit_list_of_record_normalizes_to_table_json() {
-    // list<record<...>> and table<...> share the [{...}] JSON form: the
-    // settled grammar maps [{record}] canonically to a table.
     assert_eq!(
         nu_to_args_schema("record<x: list<record<a: int>>>").unwrap(),
         obj(r#"{"x":[{"a":"int"}]}"#)
@@ -212,7 +198,6 @@ fn emit_oneof_with_composite_members() {
     );
 }
 
-// ---- emit denials (the nu parse side) ----
 
 #[test]
 fn emit_rejects_bare_table_and_record() {
@@ -222,8 +207,6 @@ fn emit_rejects_bare_table_and_record() {
 
 #[test]
 fn emit_open_record_field_and_empty_table() {
-    // item 27: a `record<>` field emits `{}` in ARGS; `table<>` stays denied;
-    // result still denies the open record.
     assert_eq!(
         nu_to_args_schema("record<x: record<>>").unwrap(),
         obj(r#"{"x":{}}"#)
@@ -234,7 +217,6 @@ fn emit_open_record_field_and_empty_table() {
 
 #[test]
 fn args_open_record_oneof_member_and_table_column() {
-    // record<> allowed as a oneof member and a table column in args (both round-trip).
     assert_eq!(
         args_schema_to_nu(&obj(r#"{"u":{"oneof<>":[{},"string"]}}"#)).unwrap(),
         "record<u: oneof<record<>, string>>"
@@ -255,8 +237,6 @@ fn args_open_record_oneof_member_and_table_column() {
 
 #[test]
 fn args_fence_open_record_list_element() {
-    // `list<record<>>` (JSON `[{}]`) collides with an empty table and is fenced
-    // in args on both sides (item 27).
     assert!(nu_to_args_schema("record<xs: list<record<>>>").is_err());
     assert!(args_schema_to_nu(&obj(r#"{"xs":[{}]}"#)).is_err());
 }
@@ -282,7 +262,6 @@ fn emit_rejects_top_level_bare_forms() {
     assert!(nu_to_args_schema("oneof<int, string>").is_err());
 }
 
-// ---- json-side denials not covered above ----
 
 #[test]
 fn deny_oneof_extra_key() {
@@ -300,7 +279,6 @@ fn deny_bool_and_number_nodes() {
     assert!(args_schema_to_nu(&obj(r#"{"x":3}"#)).is_err());
 }
 
-// ---- all 14 scalars, both directions ----
 
 #[test]
 fn all_scalars_roundtrip_both_ways() {
@@ -328,7 +306,6 @@ fn all_scalars_roundtrip_both_ways() {
     }
 }
 
-// ---- the live migration shapes (regression locks) ----
 
 #[test]
 fn roundtrip_symbols_result_shape() {
@@ -357,7 +334,6 @@ fn roundtrip_integrity_nested_record_shape() {
 
 #[test]
 fn args_void_and_validate_result_shape() {
-    // memories' migrated shape: void args + a list<string> result.
     assert_eq!(args_schema_to_nu(&obj("{}")).unwrap(), "nothing");
     let s = r#"{"failed_details":[{"bytes":"int","pattern":"string","reason":"string"}],"failed_patterns":["string"]}"#;
     let nu = result_schema_to_nu(&obj(s)).unwrap();

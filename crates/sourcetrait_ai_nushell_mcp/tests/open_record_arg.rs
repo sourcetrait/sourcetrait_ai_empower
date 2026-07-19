@@ -1,10 +1,3 @@
-//! Open-record args (`record<>`) tests (item 27).
-//!
-//! An empty `record<>` is allowed as an OPEN record wherever a type appears in
-//! an ARGS schema (record field, oneof member, table column) - never in a result
-//! schema, and never as a bare list element (`[{}]` is an empty table). Covers
-//! both the run() submit path (json->nu) and the library commit/call path
-//! (nu->json, read from the author's source annotation).
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -176,8 +169,6 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
 
 #[test]
 fn run_binds_open_record_arg() {
-    // args_schema `{fill: {}}` -> positional `record<fill: record<>>`; an
-    // arbitrary record binds and is readable in the body.
     let mut host = Host::spawn();
     let resp = host.call(
         "run",
@@ -198,7 +189,6 @@ fn run_binds_open_record_arg() {
 
 #[test]
 fn run_binds_empty_open_record_arg() {
-    // The open record also accepts an empty record.
     let mut host = Host::spawn();
     let resp = host.call(
         "run",
@@ -215,7 +205,6 @@ fn run_binds_empty_open_record_arg() {
 
 #[test]
 fn run_rejects_non_record_open_arg() {
-    // A NON-record value for a `record<>` field still fails the positional check.
     let mut host = Host::spawn();
     let resp = host.call(
         "run",
@@ -234,7 +223,6 @@ fn run_rejects_non_record_open_arg() {
 
 #[test]
 fn run_result_open_record_still_denied() {
-    // The relaxation is args-only: an empty `{}` in a RESULT schema still denies.
     let mut host = Host::spawn();
     let resp = host.call(
         "run",
@@ -255,10 +243,6 @@ fn run_result_open_record_still_denied() {
 
 #[test]
 fn commit_inspect_and_call_open_record_arg_field() {
-    // The library commit/call path: a call-target whose `main` takes an open
-    // record arg field commits, indexes with `fill: {}`, and is callable with an
-    // arbitrary record. This is the empower `liquid/soak/dir` `fill: record<>`
-    // shape (item 27).
     let mut host = Host::spawn();
     let src = host.source_dir("openlib");
     let _ = host.library_new("openlib", &src);
@@ -275,7 +259,6 @@ fn commit_inspect_and_call_open_record_arg_field() {
         "a call-target with a `record<>` arg field should commit; got {committed}",
     );
 
-    // inspect: the args schema carries `fill: {}` (open record) verbatim.
     let inspected = host.call(
         "inspect",
         serde_json::json!({"namepath": "openlib:m:soak"}),
@@ -291,7 +274,6 @@ fn commit_inspect_and_call_open_record_arg_field() {
         serde_json::json!({"sum": "int", "fillcols": "int"}),
     );
 
-    // call: an arbitrary `fill` record binds and is usable.
     let called = host.call_np("openlib:m:soak", serde_json::json!({"x": 5, "fill": {"a": 1, "b": 2, "c": 3}}));
     let cenv = success(&called);
     assert_eq!(cenv["result"]["sum"].as_i64(), Some(5), "got {cenv}");
@@ -300,7 +282,6 @@ fn commit_inspect_and_call_open_record_arg_field() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

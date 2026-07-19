@@ -1,12 +1,3 @@
-//! `--deny` tests (operator tool denial at router assembly).
-//!
-//! Verifies:
-//!   - denied tools are ABSENT from tools/list (not registered at all);
-//!   - a tools/call against a denied tool fails at the rmcp layer (never
-//!     a success envelope);
-//!   - denying the full deniable set of 8 leaves exactly the core four
-//!     (info, inspect, processes, kill);
-//!   - an unknown --deny token fails startup (clap fail-fast).
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -176,9 +167,6 @@ fn denied_tool_call_fails_at_protocol_layer() {
             "body": "{ out: 1 }",
         }),
     );
-    // An unregistered tool never yields a success envelope: either a
-    // JSON-RPC error object or an is_error result, depending on the rmcp
-    // layer's rendering.
     let success_envelope = resp
         .get("result")
         .and_then(|r| r.get("structuredContent"))
@@ -207,9 +195,6 @@ fn deny_full_set_leaves_core_four() {
 
 #[test]
 fn unknown_deny_token_fails_startup() {
-    // clap fail-fast: an unknown --deny token exits the process before
-    // serve (a typo silently denying nothing would defeat the operator's
-    // intent).
     let host_bin = env!("CARGO_BIN_EXE_nushell_mcp");
     let data_dir = tempfile::tempdir().expect("data tempdir");
     let cache_dir = tempfile::tempdir().expect("cache tempdir");

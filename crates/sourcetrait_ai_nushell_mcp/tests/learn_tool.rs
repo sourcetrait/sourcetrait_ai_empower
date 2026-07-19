@@ -1,11 +1,3 @@
-//! learn() tool surface test.
-//!
-//! Verifies learn(harness_dir) renders the embedded /nu skill template
-//! and writes <harness_dir>/skills/nu/SKILL.md:
-//! - envelope carries written_path / bytes / version (== CARGO_PKG_VERSION).
-//! - the file exists at the composed path with bytes > 0 matching the body.
-//! - the body is rendered (no literal `{{ version }}`; the stamp shows the
-//!   live version) and retains the skill frontmatter.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -181,7 +173,6 @@ fn learn_writes_versioned_skill() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

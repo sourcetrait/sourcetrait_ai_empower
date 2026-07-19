@@ -1,8 +1,3 @@
-//! Unit tests for `crate::server::lint` (the AST body linter).
-//!
-//! The body lint produces error-severity `Diagnostic`s
-//! (`lint::hardcoded_variable` / `lint::denied_command`) whose `source.path`
-//! is None (a body has no file). The cap bounds the list silently (no `more`).
 
 use crate::*;
 
@@ -18,7 +13,6 @@ fn lint_args(args_schema: &str, body: &str) -> Vec<Diagnostic> {
     lint_body(&engine(), &format!("record<{args_schema}>"), body)
 }
 
-/// The namespaced `kind` strings of the diagnostics, in order.
 fn kinds(v: &[Diagnostic]) -> Vec<String> {
     v.iter().map(|d| d.kind.clone()).collect()
 }
@@ -134,21 +128,12 @@ fn passes_regex_named_flag_parse() {
 
 #[test]
 fn passes_source_path() {
-    // `source <path>` takes a parse-time-const path as positional[0]
-    // (a `source $args.p` is not_a_constant), so flagging it is a false
-    // positive (the_user 2026-06-14). source-not-found is a recoverable parse
-    // error - the source Call still reaches the walker - so this exercises the
-    // receiver-skip, not a parse bail.
     let v = lint("source \"/home/box/lib/util.nu\"; { out: 0 }");
     assert!(v.is_empty(), "got {v:?}");
 }
 
 #[test]
 fn passes_use_and_overlay_paths() {
-    // use / overlay use: a parse-time-const path. On module-not-found (as here)
-    // they fall back to a plain Call whose positional[0] path the receiver-skip
-    // exempts; a resolved module is an Expr::ImportPattern/Overlay the catch-all
-    // skips. Either way the path is not flagged (the_user 2026-06-14).
     let u = lint("use ./helpers/util.nu; { out: 0 }");
     assert!(u.is_empty(), "got {u:?}");
     let o = lint("overlay use ./helpers/util.nu; { out: 0 }");
@@ -183,7 +168,6 @@ fn flags_interpolation_literal_parts() {
 
 #[test]
 fn cap_at_three() {
-    // Four+ violations -- walker caps at 3 and stops silently (no `more`).
     let body = "\
 ^awk 'x'
 cd \"/a/b\"
@@ -204,7 +188,6 @@ cd ~/y
 
 #[test]
 fn under_cap_all_surface() {
-    // Three violations -- right at the cap, all surface.
     let body = "\
 ^awk 'x'
 cd \"/a/b\"
@@ -237,7 +220,6 @@ fn record_field_paths_flagged() {
 
 #[test]
 fn list_items_walked() {
-    // Two paths in a list: both flagged (under cap).
     let v = lint("let xs = [\"/a/b\" \"/c/d\"]; { out: 0 }");
     assert_eq!(v.len(), 2, "got {v:?}");
 }
@@ -276,8 +258,6 @@ fn allowlist_still_passes_under_strict_rule() {
 
 #[test]
 fn flags_abs_path_external_head_denylist() {
-    // ^/usr/bin/awk fires both denied_command (basename = awk) AND
-    // hardcoded_variable (absolute path). Both surface independently.
     let v = lint("^/usr/bin/awk 'x'; { out: 0 }");
     let denylist_count = v.iter().filter(|d| is_denied(d)).count();
     let path_count = v.iter().filter(|d| is_hardcoded(d)).count();

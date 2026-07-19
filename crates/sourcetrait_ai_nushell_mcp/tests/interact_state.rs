@@ -1,8 +1,3 @@
-//! Interact() tool surface smoke.
-//!
-//! Full persistence coverage lives in `tests/interact_persistence.rs`
-//! (env + cd across calls). This file only verifies the tool surface
-//! advertised by `#[tool_router]`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -139,8 +134,6 @@ fn extract_envelope(call_response: &serde_json::Value) -> Option<serde_json::Val
 
 #[test]
 fn interact_lists_both_run_and_interact_tools() {
-    // Sanity check on the tool surface: tools/list should show all 12
-    // tools registered by `#[tool_router]` (membership-checked below).
     let mut host = Host::spawn();
     let id = host.next_id();
     let req = serde_json::json!({
@@ -179,7 +172,6 @@ fn interact_lists_both_run_and_interact_tools() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

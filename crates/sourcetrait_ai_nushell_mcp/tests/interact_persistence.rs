@@ -1,21 +1,3 @@
-//! Cross-call persistence contract for `interact()`.
-//!
-//! Verifies the claims interact() makes against its stateful worker
-//! substrate:
-//!   1. In-body `$env.X = ...` mutations persist into the next call.
-//!   2. In-body `cd <path>` propagates `$env.PWD` into the next call.
-//!   3. Interact state does NOT leak into `run()` (which routes through
-//!      a separate stateless pool worker).
-//!
-//! Mechanism: `build_interact_source` wraps the agent body in a
-//! `def --env __interact [args: A]: nothing -> R { BODY }` invoked
-//! inside a `( ... )` subexpression. `def --env` carries the body's
-//! `$env` + `cd` out to the caller; `()` (not `do {}`) lets them reach
-//! eval-top, where the worker's Stateful branch calls
-//! `merge_env(&mut stack)` so they flow into `engine_state` for the
-//! next call. Agent defs in the body are LOCAL to `__interact` and do
-//! NOT persist -- the old top-level-body form persisted them as an
-//! accidental byproduct, never a contract, so that case is retired.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -212,8 +194,6 @@ fn cd_persists_across_interact_calls() {
 
 #[test]
 fn interact_state_does_not_leak_into_run() {
-    // Helper defined via interact() should NOT be visible to run()
-    // which routes through the separate stateless pool worker.
     let mut host = Host::spawn();
     let _ = host.call(
         "interact",
@@ -225,8 +205,6 @@ fn interact_state_does_not_leak_into_run() {
         }),
     );
 
-    // Now invoke `leaked` via run(). Pool worker doesn't see it; the
-    // worker eval returns an error.
     let resp = host.call(
         "run",
         serde_json::json!({
@@ -249,10 +227,6 @@ fn interact_state_does_not_leak_into_run() {
 
 #[test]
 fn multi_line_body_with_command_then_record_parses() {
-    // Probe P7 (and the smoke_9 failure in C4) showed that subexpression-
-    // wrapping multi-line bodies broke parsing. The new interact template
-    // emits body at top level (no subexpression), so multi-line works the
-    // same as a regular nu script.
     let mut host = Host::spawn();
     let resp = host.call(
         "interact",
@@ -270,7 +244,6 @@ fn multi_line_body_with_command_then_record_parses() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

@@ -1,4 +1,3 @@
-//! call() + inspect() tests over the namepath surface.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -121,7 +120,6 @@ impl Host {
         self.read_id(id)
     }
 
-    /// Establish a fresh library via `library(new)`.
     fn library_new(&mut self, name: &str, src: &Path) -> serde_json::Value {
         self.call_tool(
             "library",
@@ -133,7 +131,6 @@ impl Host {
         )
     }
 
-    /// Scaffold a module/function namepath into an established library.
     fn scaffold(&mut self, namepath: &str) -> serde_json::Value {
         self.call_tool("new", serde_json::json!({"namepaths": [namepath]}))
     }
@@ -158,10 +155,6 @@ fn has_error_path(resp: &serde_json::Value) -> bool {
 }
 
 fn extract_envelope(resp: &serde_json::Value) -> Option<serde_json::Value> {
-    // Success envelopes are inside structuredContent at the top level
-    // (no `error` key). Error envelopes have `error`; this helper is
-    // for the success path. Returns None when an error envelope sits
-    // there instead.
     let sc = resp.get("result")?.get("structuredContent")?.clone();
     if sc.get("error").is_some() {
         return None;
@@ -178,8 +171,6 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
 }
 
 fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
-    // the 1-def `main` contract: main owns the body; the result schema comes
-    // from the `: nothing -> R` output type.
     format!(
         "export def main [args: record<{args_schema}>]: nothing -> record<{result_schema}> {{\n{body}\n}}\n",
     )
@@ -200,7 +191,6 @@ fn call_after_commit_returns_result() {
     let resp = host.call_np("calc:math:double", serde_json::json!({"x": 7}));
     let env = extract_envelope(&resp).unwrap_or_else(|| panic!("call envelope; got {resp}"));
     assert_eq!(env["result"]["out"].as_i64(), Some(14));
-    // No rerun_id, no version_id (HEAD-only).
     assert!(
         env.get("rerun_id").is_none(),
         "call envelope shouldn't echo rerun_id"
@@ -213,8 +203,6 @@ fn call_after_commit_returns_result() {
 
 #[test]
 fn call_after_module_commit_returns_result() {
-    // A call-target always lives in a module (no root functions); a deeper
-    // namepath resolves the same way.
     let mut host = Host::spawn();
     let src = host.source_dir("importable");
     let _ = host.library_new("importable", &src);
@@ -233,7 +221,6 @@ fn call_after_module_commit_returns_result() {
 #[test]
 fn call_unknown_library_errors() {
     let mut host = Host::spawn();
-    // A valid function namepath whose library was never registered.
     let resp = host.call_np("ghost:m:noop", serde_json::json!({"noop": 0}));
     assert!(has_error_path(&resp));
 }
@@ -252,7 +239,6 @@ fn call_bad_module_path_errors() {
     let mut host = Host::spawn();
     let src = host.source_dir("safelib");
     let _ = host.library_new("safelib", &src);
-    // Traversal-y module paths are rejected at namepath validation.
     for bad in ["safelib:../etc:x", "safelib:a/../b:x", "safelib:/abs:x"] {
         let resp = host.call_np(bad, serde_json::json!({"n": 0}));
         assert!(
@@ -274,7 +260,6 @@ fn call_args_typecheck_failure_surfaces() {
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
     let _ = host.call_tool("commit", serde_json::json!({"library": "strictlib"}));
-    // Send a string where int is expected; worker should reject at parse time.
     let resp = host.call_np("strictlib:m:needs_int", serde_json::json!({"x": "five"}));
     assert!(
         has_error_path(&resp),
@@ -301,7 +286,6 @@ fn inspect_returns_function_doc() {
     let env = extract_envelope(&resp).unwrap_or_else(|| panic!("inspect envelope; got {resp}"));
     assert_eq!(env["summary"].as_str(), Some("doubles its input"));
     assert_eq!(env["details"].as_str(), Some("returns the doubled value"));
-    // big meta: inspect is a full node descriptor (coordinate + schemas).
     assert_eq!(env["library"].as_str(), Some("sourcetrait/inspectlib"));
     assert_eq!(env["module_path"].as_str(), Some("math"));
     assert_eq!(env["name"].as_str(), Some("double"));
@@ -367,10 +351,6 @@ fn inspect_unknown_library_errors() {
 
 #[test]
 fn result_record_field_shapes_preserved() {
-    // the_user 2026-06-18: a result record's FIELDS keep their precise scalar
-    // shapes -- incl. path/directory, which the parsed output Type collapses
-    // to string. The schema is read from main's signature source text, so all
-    // four survive verbatim (matching the args-side SyntaxShape fidelity).
     let mut host = Host::spawn();
     let src = host.source_dir("fidelitylib");
     let _ = host.library_new("fidelitylib", &src);
@@ -398,19 +378,12 @@ fn result_record_field_shapes_preserved() {
 
 #[test]
 fn helper_file_pruned_from_info_and_not_callable() {
-    // big meta: an organizational helper file (no `main` sentinel) is
-    // NOT an indexed call-target -> absent from info()'s function list AND not
-    // callable; the real call-target beside it still works. (The pre-big-meta
-    // enumerate bailed on such a file's schema parse, dropping the WHOLE
-    // library from info(); the index walk prunes it cleanly instead.)
     let mut host = Host::spawn();
     let src = host.source_dir("helperlib");
     let _ = host.library_new("helperlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
     write_source(&src, "m/mod.nu", "export use ./util.nu\nexport use real\n");
-    // Organizational helper FLAT FILE: no `main` sentinel, `export use`'d in.
     write_source(&src, "m/util.nu", "export def helper [n: int] { $n * 2 }\n");
-    // A real call-target (dir-module) beside it.
     write_source(
         &src,
         "m/real/mod.nu",
@@ -419,7 +392,6 @@ fn helper_file_pruned_from_info_and_not_callable() {
     let committed = host.call_tool("commit", serde_json::json!({"library": "helperlib"}));
     assert!(!has_error_path(&committed), "commit should succeed; got {committed}");
 
-    // info(): the library is present and module `m` lists ONLY the call-target.
     let info = host.call_tool("info", serde_json::json!({}));
     let libs = info["result"]["structuredContent"]["libraries"]
         .as_array()
@@ -446,12 +418,10 @@ fn helper_file_pruned_from_info_and_not_callable() {
         "only the call-target should be listed; got {fn_names:?}",
     );
 
-    // call() the real target works.
     let ok = host.call_np("helperlib:m:real", serde_json::json!({"x": 41}));
     let env = extract_envelope(&ok).unwrap_or_else(|| panic!("real call; got {ok}"));
     assert_eq!(env["result"]["out"].as_i64(), Some(42));
 
-    // call() the helper file errors -- it is not an indexed call-target.
     let bad = host.call_np("helperlib:m:util", serde_json::json!({"n": 5}));
     assert!(
         has_error_path(&bad),
@@ -461,7 +431,6 @@ fn helper_file_pruned_from_info_and_not_callable() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

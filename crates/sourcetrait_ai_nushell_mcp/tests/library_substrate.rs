@@ -1,15 +1,3 @@
-//! Library substrate tests.
-//!
-//! Verifies:
-//!   - First startup creates `<XDG_DATA_HOME>/sourcetrait/nushell_mcp/keypair/
-//!     {id_nushell_mcp, id_nushell_mcp.pub, allowed_signers}` and the git repo at
-//!     `<XDG_DATA_HOME>/sourcetrait/nushell_mcp/libraries/` with a signed initial commit.
-//!   - `library(new)` writes the library subtree in the MCP repo and lands a
-//!     signed git commit in the repo log.
-//!   - `library(uninstall)` removes the subtree from the MCP repo and lands a
-//!     signed git commit; the agent source_dir is kept.
-//!   - `library(uninstall)` on a missing name is idempotent success (void).
-//!   - `tools/list` returns all 12 tools (membership-checked).
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -36,8 +24,6 @@ impl Host {
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
         let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
-            // Explicit store coordinate so path assertions are
-            // deterministic regardless of the test environment's $USER.
             .args(["--id", "tid", "--namespace", "default"])
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
@@ -63,8 +49,6 @@ impl Host {
     }
 
     fn nushell_mcp_data_dir(&self) -> PathBuf {
-        // <xdg-data>/sourcetrait/nushell_mcp/<id>/<namespace>/ -- the
-        // store coordinate the spawn args select.
         self.data_dir
             .path()
             .join("sourcetrait")
@@ -82,8 +66,6 @@ impl Host {
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {
-        // Fixtures default to author `sourcetrait`; store subtree is under the
-        // `rig/` type-level: `<libraries>/rig/sourcetrait/<name>`.
         self.libraries_dir().join("rig").join("sourcetrait").join(name)
     }
 
@@ -160,7 +142,6 @@ impl Host {
         self.read_id(id)
     }
 
-    /// Establish a fresh library via `library(new)`.
     fn library_new(&mut self, name: &str, src: &Path) -> serde_json::Value {
         self.call(
             "library",
@@ -207,8 +188,6 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
 }
 
 fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
-    // the 1-def `main` contract: main owns the body; the result schema comes
-    // from the `: nothing -> R` output type.
     format!(
         "export def main [args: record<{args_schema}>]: nothing -> record<{result_schema}> {{\n{body}\n}}\n",
     )
@@ -217,9 +196,6 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
 #[test]
 fn substrate_initializes_on_first_startup() {
     let host = Host::spawn();
-    // Substrate files appear after first MCP message handshake (ensure_substrate
-    // runs in run_server BEFORE serve(), so by initialize-response time these
-    // exist).
     let keypair = host.keypair_dir();
     assert!(
         keypair.join("id_nushell_mcp").exists(),
@@ -236,7 +212,6 @@ fn substrate_initializes_on_first_startup() {
     );
     let libs = host.libraries_dir();
     assert!(libs.join(".git").exists(), ".git should exist in libraries");
-    // Initial commit on main.
     let head = std::fs::read_to_string(libs.join(".git").join("HEAD")).expect("read HEAD");
     assert!(
         head.contains("refs/heads/main"),
@@ -281,7 +256,6 @@ fn library_new_writes_repo_and_records_meta() {
     let src = host.source_dir("mylib");
     let resp = host.library_new("mylib", &src);
     assert!(!has_error_path(&resp), "library(new) should succeed; got {resp}");
-    // MCP-side files exist.
     let lib_dir = host.library_dir("mylib");
     assert!(
         lib_dir.exists(),
@@ -294,19 +268,16 @@ fn library_new_writes_repo_and_records_meta() {
     let meta: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&meta_path).expect("read meta"))
             .expect("decode meta");
-    // The 0.0.44 meta holds ONLY source_path (no kind discriminant).
     assert_eq!(meta["source_path"].as_str(), src.to_str(),);
     assert!(
         meta.get("kind").is_none(),
         "meta should not carry a kind field; got {meta}",
     );
-    // Agent source tree seeded with its root mod.nu.
     assert!(src.exists(), "source dir should exist");
     assert!(
         src.join("mod.nu").exists(),
         "source root mod.nu should be seeded",
     );
-    // A signed commit landed in the repo log.
     let log = git_log_subjects(&host.libraries_dir());
     assert!(
         log.iter().any(|s| s == "new library sourcetrait/mylib"),
@@ -320,7 +291,6 @@ fn library_new_reestablish_errors() {
     let src = host.source_dir("dup");
     let r1 = host.library_new("dup", &src);
     assert!(!has_error_path(&r1), "first library(new) should succeed; got {r1}");
-    // Re-establishing an already-registered library is rejected.
     let r2 = host.library_new("dup", &src);
     assert!(
         has_error_path(&r2),
@@ -333,7 +303,6 @@ fn uninstall_removes_subtree_keeps_source() {
     let mut host = Host::spawn();
     let src = host.source_dir("droppable");
     let _ = host.library_new("droppable", &src);
-    // A committed call-target lives in a module (no root functions).
     write_source(&src, "mod.nu", "export module m\n");
     write_source(&src, "m/mod.nu", "export use thing\n");
     write_source(
@@ -356,7 +325,6 @@ fn uninstall_removes_subtree_keeps_source() {
         !host.library_dir("droppable").exists(),
         "lib dir should be gone after uninstall",
     );
-    // uninstall never touches the agent source_dir.
     assert!(src.exists(), "source should remain after uninstall");
     assert!(
         src.join("m/thing/mod.nu").exists(),
@@ -371,7 +339,6 @@ fn uninstall_removes_subtree_keeps_source() {
 
 #[test]
 fn uninstall_missing_succeeds() {
-    // uninstall is idempotent: an unregistered library is a void success.
     let mut host = Host::spawn();
     let resp = host.call(
         "library",
@@ -402,7 +369,6 @@ fn git_log_subjects(repo: &Path) -> Vec<String> {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

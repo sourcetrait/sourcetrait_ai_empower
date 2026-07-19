@@ -1,15 +1,3 @@
-//! Caching + rerun() round-trip tests.
-//!
-//! Verifies:
-//!   1. run() returns a deterministic, non-"0" rerun_id derived from
-//!      (args_schema, result_schema, closure).
-//!   2. Same closure shape returns the same rerun_id across calls.
-//!   3. Different closure returns a different rerun_id.
-//!   4. rerun() reconstructs the cached closure and evaluates with
-//!      the supplied args.
-//!   5. rerun() with an unknown rerun_id surfaces as an error.
-//!   6. rerun() with a malformed rerun_id (non-base62) is rejected.
-//!   7. interact() envelope has no rerun_id field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -227,7 +215,6 @@ fn rerun_roundtrip_with_new_args() {
         "rerun should reuse the cached closure with new args -> 7 * 3 = 21; got {:?}",
         second_env["result"],
     );
-    // rerun envelope MUST NOT echo rerun_id (agent supplied it).
     assert!(
         second_env.get("rerun_id").is_none(),
         "rerun envelope should not include rerun_id; got {second_env}",
@@ -295,7 +282,6 @@ fn interact_envelope_has_no_rerun_id() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

@@ -1,20 +1,3 @@
-//! $env.NONCE transitivity tests.
-//!
-//! Each run / call / interact eval sets `$env.NONCE` to that call's nonce
-//! (the same value the envelope reports). Verifies:
-//!   - a run() body reads it, and it equals the envelope nonce;
-//!   - a nested (non-`--env`) helper def inside the body inherits it;
-//!   - a committed call() target reads it;
-//!   - an interact() body reads it;
-//!   - interact's `hide-env NONCE` is surgical: the body's OWN $env writes
-//!     still persist across calls, while NONCE is fresh per call (a later
-//!     call sees its own nonce, never the prior one).
-//!
-//! Note on "ceases to exist": on the stateful (interact) worker the template
-//! resets $env.NONCE at the top of EVERY call, so a leftover value is never
-//! observable through the tool surface - the meaningful, testable contract is
-//! "every call sees its own nonce + legit env persistence is intact", asserted
-//! below. The stateless paths drop their per-call clone, so nothing lingers.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -205,8 +188,6 @@ fn run_body_sees_nonce_matching_envelope() {
 
 #[test]
 fn run_nested_helper_inherits_nonce() {
-    // A non-`--env` helper def inside the body reads $env.NONCE: env reads
-    // inherit down the call tree, so the ambient nonce reaches helpers.
     let mut host = Host::spawn();
     let resp = host.call_tool(
         "run",
@@ -228,8 +209,6 @@ fn run_nested_helper_inherits_nonce() {
 
 #[test]
 fn call_target_sees_nonce() {
-    // A committed call-target's `main` reads $env.NONCE (set at top-level
-    // before the `use`).
     let mut host = Host::spawn();
     let src = host.source_dir("noncelib");
     let _ = host.library_new("noncelib", &src);
@@ -277,13 +256,6 @@ fn interact_body_sees_nonce() {
 
 #[test]
 fn interact_nonce_is_fresh_per_call_and_keeps_env_persistence() {
-    // Call A copies its nonce into a persisted $env.KEEP and reports what it
-    // saw. Call B reports its own $env.NONCE plus the persisted KEEP. This
-    // proves three things at once on the stateful worker:
-    //   1. the body's own $env write (KEEP) survives across calls -- the
-    //      `hide-env NONCE` is surgical, it does not nuke body env writes;
-    //   2. each call sees its OWN nonce (B's seen == B's envelope nonce);
-    //   3. NONCE is fresh per call -- B does NOT see A's nonce (seen != keep).
     let mut host = Host::spawn();
     let a = host.call_tool(
         "interact",
@@ -310,19 +282,16 @@ fn interact_nonce_is_fresh_per_call_and_keeps_env_persistence() {
     let env_b = envelope(&b);
     let nonce_b = env_b["nonce"].as_str().expect("B nonce").to_string();
     assert_ne!(nonce_a, nonce_b, "each call gets a distinct nonce");
-    // (2) B sees its own nonce.
     assert_eq!(
         env_b["result"]["seen"].as_str(),
         Some(nonce_b.as_str()),
         "B's body should see B's nonce; got {env_b}",
     );
-    // (1) the body's $env.KEEP write from A persisted (== A's nonce).
     assert_eq!(
         env_b["result"]["keep"].as_str(),
         Some(nonce_a.as_str()),
         "A's $env.KEEP write should persist into B; got {env_b}",
     );
-    // (3) NONCE is per-call-fresh, never the prior call's persisted value.
     assert_ne!(
         env_b["result"]["seen"].as_str(),
         env_b["result"]["keep"].as_str(),
@@ -332,7 +301,6 @@ fn interact_nonce_is_fresh_per_call_and_keeps_env_persistence() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

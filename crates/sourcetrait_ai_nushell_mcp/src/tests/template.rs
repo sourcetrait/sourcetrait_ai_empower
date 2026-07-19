@@ -1,5 +1,3 @@
-//! Unit tests for `crate::template` (the run / call / interact source
-//! builders): golden-string equality + a clean-parse gate.
 
 use crate::*;
 
@@ -10,8 +8,6 @@ fn obj(s: &str) -> mcp::JsonObject {
     }
 }
 
-/// Parse the rendered source on the full-shell lint engine; a clean parse (no
-/// parse errors) is the gate the golden strings must clear.
 fn parses_clean(src: &str) -> bool {
     let engine = ParseEngine::new_full();
     let mut ws = nu::StateWorkingSet::new(engine.engine_state());
@@ -94,10 +90,6 @@ fn run_source_multi_line_body() {
 
 #[test]
 fn call_source_typed_args() {
-    // The call target's OWN module is overlaid (nu 0.114 no longer implicitly
-    // imports submodules, so the library root binds nothing to traverse), aliased
-    // so the drive never depends on the target's name, and --prefix'd so the
-    // target's helper exports don't flatten bare into the eval scope.
     let got = build_call_source("sourcetrait/calc", "math", "double", &obj(r#"{"x":6}"#), "nonce123");
     let expected = "$env.NONCE = \"nonce123\"\noverlay use --prefix rig/sourcetrait/calc/math/double as __call\n__call {x: 6}\n";
     assert_eq!(got, expected);
@@ -105,8 +97,6 @@ fn call_source_typed_args() {
 
 #[test]
 fn call_source_nested_module_path() {
-    // A slash-separated module_path stays slash-separated: it is a path segment
-    // of the target's store coordinate, not a drive chain.
     let got = build_call_source("sourcetrait/calc", "math/trig", "sin", &obj(r#"{"x":1}"#), "nonce123");
     let expected = "$env.NONCE = \"nonce123\"\noverlay use --prefix rig/sourcetrait/calc/math/trig/sin as __call\n__call {x: 1}\n";
     assert_eq!(got, expected);
@@ -114,9 +104,6 @@ fn call_source_nested_module_path() {
 
 #[test]
 fn call_source_void_args() {
-    // Void / no-arg main: empty args bind the bare `null` literal so the
-    // `nothing` positional typechecks (a `{}` record would not).
-    // Non-`sourcetrait` author proves the compound library is threaded through.
     let got = build_call_source("acme/util", "net", "ping", &obj("{}"), "nonce123");
     let expected = "$env.NONCE = \"nonce123\"\noverlay use --prefix rig/acme/util/net/ping as __call\n__call null\n";
     assert_eq!(got, expected);
@@ -124,10 +111,6 @@ fn call_source_void_args() {
 
 #[test]
 fn call_source_keyword_named_target_is_aliased() {
-    // The reason the alias exists. `run` became a nushell KEYWORD in 0.114 and
-    // cannot be shadowed by a module under any import form -- a bare drive would
-    // hit the builtin. The synthesized alias sidesteps the namespace entirely, so
-    // a call-target may be named anything (we have `emptwo:almost/rpg:run`).
     let got = build_call_source("sourcetrait/emptwo", "almost/rpg", "run", &obj(r#"{"x":6}"#), "nonce123");
     let expected = "$env.NONCE = \"nonce123\"\noverlay use --prefix rig/sourcetrait/emptwo/almost/rpg/run as __call\n__call {x: 6}\n";
     assert_eq!(got, expected);

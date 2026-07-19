@@ -1,6 +1,3 @@
-//! library() admin-tool tests: install (+ atomic rollback), check
-//! (ok / errors / unregistered / source_dir mismatch), uninstall mismatch,
-//! plus the NU_LIB_DIRS regression (a run() body `use`s a committed library).
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -27,8 +24,6 @@ impl Host {
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
         let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
-            // Explicit store coordinate so path assertions are
-            // deterministic regardless of the test environment's $USER.
             .args(["--id", "tid", "--namespace", "default"])
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
@@ -64,9 +59,6 @@ impl Host {
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {
-        // Fixtures default to author `sourcetrait` (no library.rig.toml); the
-        // store subtree is under the `rig/` type-level:
-        // `<libraries>/rig/sourcetrait/<name>`.
         self.libraries_dir().join("rig").join("sourcetrait").join(name)
     }
 
@@ -206,7 +198,6 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
     )
 }
 
-/// Author a complete `<lib>:m:double` source tree (x * 2) under `src`.
 fn author_double_tree(src: &Path) {
     write_source(src, "mod.nu", "export module m\n");
     write_source(src, "m/mod.nu", "export use double\n");
@@ -219,8 +210,6 @@ fn author_double_tree(src: &Path) {
 
 #[test]
 fn install_brings_shipped_source_into_mcp() {
-    // install = establish + first commit, in one. A complete source tree is
-    // brought in and is immediately callable.
     let mut host = Host::spawn();
     let src = host.source_dir("shiplib");
     author_double_tree(&src);
@@ -232,7 +221,6 @@ fn install_brings_shipped_source_into_mcp() {
         "install summary should report added paths; got {summary}",
     );
     assert!(host.library_dir("shiplib").exists(), "canonical should exist");
-    // Immediately callable.
     let called = host.call_np("shiplib:m:double", serde_json::json!({"x": 6}));
     assert_eq!(
         structured(&called)["result"]["out"].as_i64(),
@@ -243,8 +231,6 @@ fn install_brings_shipped_source_into_mcp() {
 
 #[test]
 fn install_rolls_back_on_validation_failure() {
-    // A shipped source that fails validation (a root call-target) leaves
-    // NOTHING registered: the freshly-built canonical subtree is wiped.
     let mut host = Host::spawn();
     let src = host.source_dir("badship");
     write_source(&src, "mod.nu", "export use thing\n");
@@ -263,7 +249,6 @@ fn install_rolls_back_on_validation_failure() {
         !host.library_dir("badship").exists(),
         "a failed install must leave nothing registered (canonical wiped)",
     );
-    // The name is free again: a fresh establish succeeds.
     let re = host.library_new("badship", &src);
     assert!(
         !has_error_path(&re),
@@ -273,8 +258,6 @@ fn install_rolls_back_on_validation_failure() {
 
 #[test]
 fn check_reports_ok_for_clean_source() {
-    // check validates the in-source tree (cargo-test equivalent); a clean tree
-    // reports ok with no errors/warnings. No commit required.
     let mut host = Host::spawn();
     let src = host.source_dir("checkoklib");
     let _ = host.library_new("checkoklib", &src);
@@ -295,8 +278,6 @@ fn check_reports_ok_for_clean_source() {
 
 #[test]
 fn check_reports_structural_errors() {
-    // A structural defect in the in-source tree (a root call-target) surfaces
-    // as a check error with a namespaced `library::` kind; ok is false.
     let mut host = Host::spawn();
     let src = host.source_dir("checkerrlib");
     let _ = host.library_new("checkerrlib", &src);
@@ -377,12 +358,6 @@ fn invalid_action_errors() {
 
 #[test]
 fn run_body_can_use_a_committed_library() {
-    // NU_LIB_DIRS regression: the worker sets the CONST $NU_LIB_DIRS to the
-    // canonical libraries root, so a run() body can `use` a committed library and
-    // invoke its call-targets. Under nu 0.114 the body imports the MODULE that
-    // owns the call (a library-root import no longer traverses into submodules)
-    // and drives it prefixed. The module is `calc`, not `math`, deliberately --
-    // `math` is a nushell builtin and would win over the imported module.
     let mut host = Host::spawn();
     let src = host.source_dir("uselib");
     let _ = host.library_new("uselib", &src);
@@ -418,7 +393,6 @@ fn run_body_can_use_a_committed_library() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

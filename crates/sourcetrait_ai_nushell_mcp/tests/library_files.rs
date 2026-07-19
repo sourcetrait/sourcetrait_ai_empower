@@ -1,12 +1,3 @@
-//! Library file-set tests (followup #26): which non-`.nu` content a library may
-//! carry, and how it is validated.
-//!
-//! Carried set = `.nu` + root `{library.rig.toml, README.md, LEGAL.md,
-//! LICENSE.txt, LICENSE-*.txt}` + `.gitignore` (any depth) + root `.assets/`
-//! (deny exec extensions) + root `.docs/` (`.md`/`.txt` + `.gitignore`).
-//! Universal: nothing carried is `+x`. Library name not in
-//! `{docs,tools,bin,target}`. `.gitignore` is honored by `git add` at commit
-//! (staging) only -- it is NOT a validation exemption.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -33,8 +24,6 @@ impl Host {
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
         let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
-            // Explicit store coordinate so path assertions are
-            // deterministic regardless of the test environment's $USER.
             .args(["--id", "tid", "--namespace", "default"])
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
@@ -70,8 +59,6 @@ impl Host {
     }
 
     fn canonical_dir(&self, name: &str) -> PathBuf {
-        // Fixtures default to author `sourcetrait`; the store subtree is under
-        // the `rig/` type-level: `<libraries>/rig/sourcetrait/<name>`.
         self.libraries_dir().join("rig").join("sourcetrait").join(name)
     }
 
@@ -192,7 +179,6 @@ fn envelope_error_kind(resp: &serde_json::Value) -> Option<&str> {
         .as_str()
 }
 
-/// All error-bucket diagnostic kinds in the response (empty when none).
 fn error_kinds(resp: &serde_json::Value) -> Vec<String> {
     envelope_error(resp)
         .and_then(|e| e.get("errors"))
@@ -229,8 +215,6 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
     )
 }
 
-/// Author an otherwise-valid `<lib>:m:double` tree so special-file tests start
-/// from a clean baseline (the only diagnostic is the special file under test).
 fn author_valid_base(src: &Path) {
     write_source(src, "mod.nu", "export module m\n");
     write_source(src, "m/mod.nu", "export use double\n");
@@ -256,9 +240,6 @@ fn git_ls_files(repo: &Path, name: &str) -> Vec<String> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// .assets/
-// ---------------------------------------------------------------------------
 
 #[test]
 fn assets_data_files_carried_recursively() {
@@ -297,7 +278,6 @@ fn assets_denies_script_extension() {
 
 #[test]
 fn assets_dotfiles_judged_by_extension() {
-    // .gitignore + .foo (extension-less) pass; .foo.sh (extension `sh`) denied.
     let mut host = Host::spawn();
     let src = host.source_dir("assetdotlib");
     let _ = host.library_new("assetdotlib", &src);
@@ -337,9 +317,6 @@ fn assets_denies_executable_bit() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// .docs/
-// ---------------------------------------------------------------------------
 
 #[test]
 fn docs_md_txt_carried() {
@@ -410,9 +387,6 @@ fn docs_denies_executable_bit() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// root sanctioned files + the source-tree deny rule
-// ---------------------------------------------------------------------------
 
 #[test]
 fn root_sanctioned_files_carried() {
@@ -450,7 +424,6 @@ fn root_denies_unexpected_non_nu_file() {
 
 #[test]
 fn sanctioned_file_in_module_dir_denied_root_only() {
-    // README.md is root-only; the same file inside a module dir is denied.
     let mut host = Host::spawn();
     let src = host.source_dir("modreadmelib");
     let _ = host.library_new("modreadmelib", &src);
@@ -479,9 +452,6 @@ fn executable_nu_file_denied() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// .gitignore anywhere; honor-at-commit-only; nested-dotfile-dir skip
-// ---------------------------------------------------------------------------
 
 #[test]
 fn gitignore_allowed_at_root_and_module() {
@@ -503,9 +473,6 @@ fn gitignore_allowed_at_root_and_module() {
 
 #[test]
 fn gitignore_honored_at_commit_staging_only() {
-    // A carried .gitignore governs `git add` (no --force): an ignored-but-valid
-    // file lands in the canonical on disk but is NOT git-tracked. Validation
-    // still saw + passed it (it's a legal .md).
     let mut host = Host::spawn();
     let src = host.source_dir("honorlib");
     let _ = host.library_new("honorlib", &src);
@@ -538,8 +505,6 @@ fn gitignore_honored_at_commit_staging_only() {
 
 #[test]
 fn nested_assets_dir_is_skipped_not_carried() {
-    // `.assets`/`.docs` are special only at the ROOT; nested in a module dir
-    // they are ordinary skipped dotfiles (not carried, not a second zone).
     let mut host = Host::spawn();
     let src = host.source_dir("nestlib");
     let _ = host.library_new("nestlib", &src);
@@ -556,9 +521,6 @@ fn nested_assets_dir_is_skipped_not_carried() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// name deny-list + install
-// ---------------------------------------------------------------------------
 
 #[test]
 fn library_name_denylist() {
@@ -572,7 +534,6 @@ fn library_name_denylist() {
             "library name `{denied}` should be denied; got {resp}"
         );
     }
-    // A non-denied name still works.
     let src = host.source_dir("okname");
     let ok = host.library_new("okname", &src);
     assert!(!has_error_path(&ok), "a normal name should succeed; got {ok}");
@@ -603,7 +564,6 @@ fn install_carries_assets_and_is_callable() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

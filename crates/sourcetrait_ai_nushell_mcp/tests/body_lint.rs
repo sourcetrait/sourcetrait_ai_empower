@@ -1,9 +1,3 @@
-//! Integration tests for the AST body linter on run() / interact().
-//! Each handler that accepts agent-authored body source short-circuits
-//! on lint violations with the agent-fixable `lint::<class> [L:C]`
-//! report shape. `rerun()` does NOT re-lint per the_user 2026-05-31
-//! design call (trust the cache). Library commit() does NOT lint
-//! authored bodies, so no define-time body-lint coverage lives here.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -138,7 +132,6 @@ fn envelope_error<'a>(resp: &'a serde_json::Value) -> Option<&'a serde_json::Val
     resp.get("result")?.get("structuredContent")?.get("error")
 }
 
-/// The diagnostic kinds in the unified envelope's `errors` bucket.
 fn lint_violation_kinds(resp: &serde_json::Value) -> Vec<String> {
     envelope_error(resp)
         .and_then(|e| e.get("errors"))
@@ -185,7 +178,6 @@ fn lint_rejects_closure_with_denied_external() {
 
 #[test]
 fn lint_passes_clean_closure() {
-    // No lint violations -> reaches the worker -> normal envelope path.
     let mut host = Host::spawn();
     let resp = host.run(serde_json::json!({
         "args_schema": {"x": "int"},
@@ -193,7 +185,6 @@ fn lint_passes_clean_closure() {
         "args": {"x": 5},
         "body": "{ out: ($args.x + 1) }",
     }));
-    // C2: `run` emits structured_content only (no content[] mirror).
     let result = resp.get("result").unwrap_or_else(|| {
         panic!("expected ok result; got {resp}");
     });
@@ -224,9 +215,6 @@ cd \"/a/b\"
     );
 }
 
-// ----------------------------------------------------------------------------
-// Slice 5.2: interact() body lint
-// ----------------------------------------------------------------------------
 
 #[test]
 fn lint_interact_rejects_hardcoded_path() {
@@ -259,7 +247,6 @@ fn lint_interact_rejects_denied_external() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

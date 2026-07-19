@@ -1,4 +1,3 @@
-//! Unit tests for `crate::server::namepath`.
 
 use crate::*;
 
@@ -56,12 +55,9 @@ fn function_one_and_nested() {
 
 #[test]
 fn deny_bare_library() {
-    // Hard cutover: a library must be the compound `<author>/<name>`; a bare
-    // name (no slash) is rejected at every arity.
     assert!(validate("calc").is_err());
     assert!(validate("calc:math").is_err());
     assert!(validate("calc:math:double").is_err());
-    // More than one slash in the library segment is rejected too.
     assert!(validate("a/b/c:math:double").is_err());
 }
 
@@ -72,7 +68,6 @@ fn deny_empty() {
 
 #[test]
 fn deny_root_function() {
-    // `<author>/<name>::function` - the empty-module form is the banned root function
     assert!(validate("sourcetrait/calc::double").is_err());
 }
 
@@ -109,6 +104,5 @@ fn deny_bad_module_path() {
 fn deny_bad_idents() {
     assert!(validate("sourcetrait/1calc:math:double").is_err());
     assert!(validate("sourcetrait/calc:math:1double").is_err());
-    // A bad author segment too.
     assert!(validate("1author/calc:math:double").is_err());
 }

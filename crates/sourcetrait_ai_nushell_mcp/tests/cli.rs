@@ -1,21 +1,7 @@
-//! One-shot CLI tests (`nushell_mcp cli <tool> ...`).
-//!
-//! Verifies:
-//!   - `cli info` prints the envelope as parseable compact JSON, exits 0;
-//!   - the library lifecycle (library new -> commit -> call with a NUON
-//!     args record) works end to end as plain subprocesses;
-//!   - `cli run` accepts NUON schemas/args and evaluates;
-//!   - an error envelope exits 1 (and still prints the envelope);
-//!   - `cli kill` (no-return tool) prints nothing and exits 0.
-//! Inputs are NUON; OUTPUT is bare compact JSON -- one line, no color,
-//! no indentation, always (the cli's consumer is a wrapper, never a
-//! human eye); the stdout of every envelope-bearing invocation must
-//! parse with serde_json.
 
 use std::path::Path;
 use std::process::{Command, Output};
 
-/// Run `nushell_mcp <args...>` one-shot against the given XDG dirs.
 fn cli(args: &[&str], data: &Path, cache: &Path) -> Output {
     let host_bin = env!("CARGO_BIN_EXE_nushell_mcp");
     let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
@@ -32,8 +18,6 @@ fn stdout_str(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// Parse an envelope-bearing invocation's stdout as JSON (the output
-/// contract: bare compact JSON, machine format).
 fn stdout_json(out: &Output) -> serde_json::Value {
     let text = stdout_str(out);
     serde_json::from_str(text.trim())
@@ -209,9 +193,6 @@ fn cli_error_envelope_exits_one() {
 
 #[test]
 fn cli_output_is_bare_compact_json() {
-    // The machine-format contract: bare compact JSON always -- one
-    // line, no ANSI color, no pretty indentation -- so a wrapper's
-    // capture (`| from json`) is byte-clean without a tty branch.
     let data = tempfile::tempdir().expect("data");
     let cache = tempfile::tempdir().expect("cache");
     let out = cli(

@@ -1,12 +1,3 @@
-//! new (scaffold) + commit + strict-validator tests.
-//!
-//! `library(new)` establishes a library; `new([namepaths])` scaffolds module
-//! / function skeletons into it; the (good or bad) source tree is written;
-//! then `commit(name)` validates + upserts it. The strict-validator coverage
-//! (reserved-`main` ban, missing-output-type, extra-export, empty-record
-//! arg/result skeleton, mod.nu inline const/alias/def/let, no-root-function,
-//! comments-only / multiline-signature / organizational-file acceptance, etc.)
-//! is triggered through `commit()`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -33,8 +24,6 @@ impl Host {
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
         let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
-            // Explicit store coordinate so path assertions are
-            // deterministic regardless of the test environment's $USER.
             .args(["--id", "tid", "--namespace", "default"])
             .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
@@ -70,8 +59,6 @@ impl Host {
     }
 
     fn library_dir(&self, name: &str) -> PathBuf {
-        // Fixtures default to author `sourcetrait`; store subtree is under the
-        // `rig/` type-level: `<libraries>/rig/sourcetrait/<name>`.
         self.libraries_dir().join("rig").join("sourcetrait").join(name)
     }
 
@@ -148,7 +135,6 @@ impl Host {
         self.read_id(id)
     }
 
-    /// Establish a fresh library via `library(new)`.
     fn library_new(&mut self, name: &str, src: &Path) -> serde_json::Value {
         self.call(
             "library",
@@ -160,7 +146,6 @@ impl Host {
         )
     }
 
-    /// Scaffold a module/function namepath into an established library.
     fn scaffold(&mut self, namepath: &str) -> serde_json::Value {
         self.call("new", serde_json::json!({"namepaths": [namepath]}))
     }
@@ -218,9 +203,6 @@ fn structural_kinds(resp: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Greppable JSON-serialized form of the error envelope for tests
-/// that match substrings against error messages. Returns the full
-/// response string when no envelope error is present.
 fn error_message(resp: &serde_json::Value) -> String {
     envelope_error(resp)
         .map(|e| e.to_string())
@@ -236,8 +218,6 @@ fn write_source(dir: &Path, rel: &str, contents: &str) {
 }
 
 fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> String {
-    // the 1-def `main` contract: main owns the body; the result schema comes
-    // from the `: nothing -> R` output type.
     format!(
         "export def main [args: record<{args_schema}>]: nothing -> record<{result_schema}> {{\n{body}\n}}\n",
     )
@@ -245,11 +225,6 @@ fn valid_function_source(args_schema: &str, result_schema: &str, body: &str) -> 
 
 #[test]
 fn commit_accepts_path_self_call_target() {
-    // followup #26: `const SELF = (path self)` is valid nu that const-resolves
-    // at parse. The validator registers the file's real ABSOLUTE path as the
-    // nu::parse fname so it resolves during commit too -- a relative fname
-    // errored "Couldn't find current file" (serve already loads real files via
-    // NU_LIB_DIRS). A call-target self-locating via `path self` must commit.
     let mut host = Host::spawn();
     let src = host.source_dir("selflib");
     let _ = host.library_new("selflib", &src);
@@ -269,9 +244,6 @@ fn commit_accepts_path_self_call_target() {
 
 #[test]
 fn commit_accepts_path_self_in_mod_nu_const() {
-    // followup #26 covers all three parse sites: a module-level `export const`
-    // using `path self` exercises validate_mod_nu_ast + scan_reserved_terms
-    // (not just the function-file validator) and must also commit clean.
     let mut host = Host::spawn();
     let src = host.source_dir("modselflib");
     let _ = host.library_new("modselflib", &src);
@@ -314,7 +286,6 @@ fn commit_happy_path_writes_repo_and_meta() {
     assert!(lib.join("math").join("mod.nu").exists());
     assert!(lib.join("math").join("double").join("mod.nu").exists());
 
-    // Meta records ONLY source_path (no kind discriminant in 0.0.44+).
     let meta_text = std::fs::read_to_string(lib.join(".meta/library.json")).unwrap();
     let meta: serde_json::Value = serde_json::from_str(&meta_text).unwrap();
     assert_eq!(meta["source_path"].as_str(), Some(src.to_str().unwrap()));
@@ -329,7 +300,6 @@ fn commit_rejects_mod_nu_with_syntax_error() {
     let mut host = Host::spawn();
     let src = host.source_dir("badmodlib");
     let _ = host.library_new("badmodlib", &src);
-    // Unbalanced angle bracket -- syntax error in mod.nu.
     write_source(&src, "mod.nu", "export module foo\nexport\n");
     write_source(&src, "foo/mod.nu", "");
     let resp = host.call("commit", serde_json::json!({"library": "badmodlib"}));
@@ -349,7 +319,6 @@ fn commit_rejects_mod_nu_referencing_missing_file() {
     let mut host = Host::spawn();
     let src = host.source_dir("missingreflib");
     let _ = host.library_new("missingreflib", &src);
-    // export use references a file that doesn't exist in the tree.
     write_source(&src, "mod.nu", "export use ./does_not_exist.nu\n");
     let resp = host.call("commit", serde_json::json!({"library": "missingreflib"}));
     assert!(
@@ -365,9 +334,6 @@ fn commit_rejects_mod_nu_referencing_missing_file() {
 
 #[test]
 fn commit_accepts_multiline_def_signature() {
-    // The `args: record<...>` sits on a different line from `export def main`.
-    // The AST validator finds the positional via nu_parser's
-    // Signature.required_positional inspection regardless of formatting.
     let mut host = Host::spawn();
     let src = host.source_dir("multilinelib");
     let _ = host.library_new("multilinelib", &src);
@@ -392,7 +358,6 @@ fn commit_rejects_function_with_syntax_error() {
     let _ = host.library_new("syntaxlib", &src);
     write_source(&src, "mod.nu", "export module m\n");
     write_source(&src, "m/mod.nu", "export module broken\n");
-    // Unbalanced brace -- nu_parser surfaces a parse error.
     write_source(
         &src,
         "m/broken/mod.nu",
@@ -409,9 +374,6 @@ fn commit_rejects_function_with_syntax_error() {
 
 #[test]
 fn commit_rejects_main_without_output_type() {
-    // A call-target `main` must declare a `: nothing -> R` output type (the
-    // result-schema source). A bare `[args: ...] { ... }` with no infix
-    // output is rejected.
     let mut host = Host::spawn();
     let src = host.source_dir("badlib1");
     let _ = host.library_new("badlib1", &src);
@@ -434,9 +396,6 @@ fn commit_rejects_main_without_output_type() {
 
 #[test]
 fn commit_accepts_call_target_with_helper_export() {
-    // A call-target file MAY export helpers (and define private defs) beside
-    // `main`; only `main` is the indexed / callable target -- no export-set
-    // restriction (the_user 2026-06-18).
     let mut host = Host::spawn();
     let src = host.source_dir("helperexportlib");
     let _ = host.library_new("helperexportlib", &src);
@@ -453,7 +412,6 @@ fn commit_accepts_call_target_with_helper_export() {
         !has_error_path(&resp),
         "a call-target may export helpers beside main; got {resp}"
     );
-    // call() still targets main.
     let called = host.call(
         "call",
         serde_json::json!({"namepath": "helperexportlib:m:thing", "args": {"x": 5}}),
@@ -467,8 +425,6 @@ fn commit_accepts_call_target_with_helper_export() {
 
 #[test]
 fn commit_rejects_main_empty_record_output() {
-    // An empty `record<>` on the OUTPUT side is the unfleshed-skeleton marker
-    // (the result-schema source); reject it, mirroring the arg side.
     let mut host = Host::spawn();
     let src = host.source_dir("badlib3");
     let _ = host.library_new("badlib3", &src);
@@ -491,8 +447,6 @@ fn commit_rejects_main_empty_record_output() {
 
 #[test]
 fn commit_accepts_mod_nu_with_inline_const() {
-    // Relaxed rule: a mod.nu is a module in its own right, so a private `const`
-    // beside the cascade is allowed.
     let mut host = Host::spawn();
     let src = host.source_dir("constmodlib");
     let _ = host.library_new("constmodlib", &src);
@@ -507,7 +461,6 @@ fn commit_accepts_mod_nu_with_inline_const() {
 
 #[test]
 fn commit_accepts_mod_nu_with_inline_alias() {
-    // Relaxed rule: a private `alias` in mod.nu is allowed.
     let mut host = Host::spawn();
     let src = host.source_dir("aliasmodlib");
     let _ = host.library_new("aliasmodlib", &src);
@@ -522,7 +475,6 @@ fn commit_accepts_mod_nu_with_inline_alias() {
 
 #[test]
 fn commit_rejects_mod_nu_with_let() {
-    // `let` at module body level is a PARSE ERROR per nu_parser's grammar.
     let mut host = Host::spawn();
     let src = host.source_dir("letmodlib");
     let _ = host.library_new("letmodlib", &src);
@@ -538,7 +490,6 @@ fn commit_rejects_mod_nu_with_let() {
 
 #[test]
 fn commit_accepts_mod_nu_with_only_comments() {
-    // Empty body is legal nushell module; our convention accepts it too.
     let mut host = Host::spawn();
     let src = host.source_dir("commentedmodlib");
     let _ = host.library_new("commentedmodlib", &src);
@@ -552,8 +503,6 @@ fn commit_accepts_mod_nu_with_only_comments() {
 
 #[test]
 fn commit_accepts_mod_nu_with_inline_def() {
-    // Relaxed rule: a private `def` helper in mod.nu is allowed (a call-target
-    // mod.nu is a function file; a cascade mod.nu is still a module).
     let mut host = Host::spawn();
     let src = host.source_dir("badlib4");
     let _ = host.library_new("badlib4", &src);
@@ -572,12 +521,6 @@ fn commit_aggregates_multiple_violations() {
     let mut host = Host::spawn();
     let src = host.source_dir("badlib5");
     let _ = host.library_new("badlib5", &src);
-    // Three distinct violations across the tree (== the cap of 3, so all
-    // surface): a bare `def` in mod.nu, an empty-args skeleton, and a main
-    // lacking an output type.
-    // A disallowed decl in mod.nu (`extern` is not part of the cascade/helper
-    // set), an empty-args skeleton, and a main lacking an output type - three
-    // distinct violations (== the cap of 3).
     write_source(&src, "mod.nu", "export module a\nextern noise []\n");
     write_source(
         &src,
@@ -597,8 +540,6 @@ fn commit_aggregates_multiple_violations() {
 
     let resp = host.call("commit", serde_json::json!({"library": "badlib5"}));
     let messages = structural_messages(&resp);
-    // At least three distinct violation messages should appear in the
-    // structural section.
     assert!(
         messages
             .iter()
@@ -617,15 +558,9 @@ fn commit_aggregates_multiple_violations() {
 
 #[test]
 fn commit_caps_structural_violations() {
-    // error-severity diagnostics cap at LINT_VIOLATION_CAP (3) and the walk
-    // early-stops -- a tree with more than 3 violations rejects with exactly
-    // 3 error rows, silently truncated (no `more` marker).
     let mut host = Host::spawn();
     let src = host.source_dir("caplib");
     let _ = host.library_new("caplib", &src);
-    // Four bare `def`s in mod.nu -> four "mod.nu may only contain"
-    // violations, more than the cap of 3.
-    // Four disallowed `extern` decls in mod.nu -> four violations, past the cap.
     write_source(
         &src,
         "mod.nu",
@@ -642,14 +577,9 @@ fn commit_caps_structural_violations() {
 
 #[test]
 fn commit_rejects_root_call_target() {
-    // No root functions: a call-target cannot live at the library root; it
-    // must sit inside a module. A valid `main` written directly at the source
-    // root is a `library::root_function` violation.
     let mut host = Host::spawn();
     let src = host.source_dir("rootfnlib");
     let _ = host.library_new("rootfnlib", &src);
-    // A call-target directory placed directly under the library root - a call
-    // needs a parent module, so this is a root_function violation.
     write_source(&src, "mod.nu", "export use thing\n");
     write_source(
         &src,
@@ -675,10 +605,6 @@ fn commit_rejects_root_call_target() {
 
 #[test]
 fn commit_succeeds_then_check_warns_long_summary() {
-    // A doc summary (here the mod.nu leading comment's first line) longer than
-    // 80 chars is a WARNING, not an error: commit SUCCEEDS, and `library(check)`
-    // surfaces the `lint::summary_length` warning (warnings non-empty; ok stays
-    // true since no structural error blocks).
     let mut host = Host::spawn();
     let src = host.source_dir("doclib");
     let _ = host.library_new("doclib", &src);
@@ -724,7 +650,6 @@ fn commit_succeeds_then_check_warns_long_summary() {
 
 #[test]
 fn commit_accepts_short_summary() {
-    // A <= 80 summary (+ details) on a node commits clean.
     let mut host = Host::spawn();
     let src = host.source_dir("okdoclib");
     let _ = host.library_new("okdoclib", &src);
@@ -777,7 +702,6 @@ fn commit_picks_up_mutated_source() {
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call("commit", serde_json::json!({"library": "livelib"}));
-    // Mutate the source and re-commit.
     write_source(
         &src,
         "m/thing/mod.nu",
@@ -817,10 +741,6 @@ fn committed_library_invokable_via_standalone_driver() {
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
     let _ = host.call("commit", serde_json::json!({"library": "drvilib"}));
-    // The user-facing import form under nu 0.114: import the MODULE that owns the
-    // call (a library-root import no longer traverses into submodules), then drive
-    // it prefixed. The module is `calc`, not `math`, deliberately -- `math` is a
-    // nushell builtin and would win over the imported module.
     let out = Command::new("nu")
         .env("NU_LIB_DIRS", host.libraries_dir())
         .arg("-c")
@@ -839,16 +759,8 @@ fn committed_library_invokable_via_standalone_driver() {
 
 #[test]
 fn commit_validates_by_name_cross_library_use() {
-    // A library whose source `use`s ANOTHER already-committed library by the
-    // AUTHORED path (`use sourcetrait/baselib ...`) must validate at commit: the
-    // validator sets the const $NU_LIB_DIRS to the canonical libraries store
-    // (mirroring the worker's seed_lib_dirs), so a committed sibling resolves
-    // during validation exactly as it does at serve. Without that,
-    // `use sourcetrait/baselib` failed ModuleNotFound at commit though it runs
-    // fine once served.
     let mut host = Host::spawn();
 
-    // baselib: a committed call-target `baselib:m:double` (x -> x*2).
     let base = host.source_dir("baselib");
     let _ = host.library_new("baselib", &base);
     write_source(&base, "mod.nu", "export module m\n");
@@ -864,10 +776,6 @@ fn commit_validates_by_name_cross_library_use() {
         "baselib commit should succeed; got {committed_base}"
     );
 
-    // consumer: its call-target `use`s baselib BY NAME at the file top, the
-    // same shape a game library uses to consume the shared `pelos` loader. It
-    // imports the MODULE owning the call (`baselib/m`) and drives it prefixed --
-    // reachable because `m/mod.nu` wires its call via `export use`.
     let consumer = host.source_dir("consumer");
     let _ = host.library_new("consumer", &consumer);
     write_source(&consumer, "mod.nu", "export module app\n");
@@ -883,7 +791,6 @@ fn commit_validates_by_name_cross_library_use() {
         "a library using a committed sibling by name should commit; got {committed}"
     );
 
-    // And the by-name cross-library `use` resolves + runs at serve time too.
     let called = host.call(
         "call",
         serde_json::json!({"namepath": "consumer:app:compute", "args": {"x": 5}}),
@@ -897,19 +804,11 @@ fn commit_validates_by_name_cross_library_use() {
 
 #[test]
 fn commit_and_call_resolves_authored_self_ref() {
-    // The authored self-use convention END-TO-END: a call-target that imports a
-    // SIBLING module via `use sourcetrait/<lib>/<mod>` and invokes it must both
-    // VALIDATE at commit (the temp author-structured self-view resolves the ref
-    // against the source-under-commit, not-yet-placed at its store path) AND
-    // resolve at serve (the const $NU_LIB_DIRS + author-parented store). This is
-    // exactly the case inline `<lib> <mod> <fn>` self-refs silently failed at serve.
     let mut host = Host::spawn();
     let src = host.source_dir("selfreflib");
     let _ = host.library_new("selfreflib", &src);
-    // base: a pure helper module exporting `val` -> 21.
     write_source(&src, "mod.nu", "export module base\nexport module top\n");
     write_source(&src, "base/mod.nu", "export def val []: nothing -> int { 21 }\n");
-    // top:double self-refs the sibling `base` module by its AUTHORED path.
     write_source(&src, "top/mod.nu", "export use double\n");
     write_source(
         &src,
@@ -934,9 +833,6 @@ fn commit_and_call_resolves_authored_self_ref() {
 
 #[test]
 fn commit_accepts_organizational_file() {
-    // A file with no `main` sentinel is ORGANIZATIONAL: helper defs
-    // + export const, unconstrained signatures, no contract. A helper file at
-    // the library root is fine (only call-targets are banned there).
     let mut host = Host::spawn();
     let src = host.source_dir("orglib");
     let _ = host.library_new("orglib", &src);
@@ -955,7 +851,6 @@ fn commit_accepts_organizational_file() {
 
 #[test]
 fn commit_accepts_mod_nu_with_export_const_and_def() {
-    // mod.nu carries module-level utils/consts alongside the cascade. (leg 1)
     let mut host = Host::spawn();
     let src = host.source_dir("modutillib");
     let _ = host.library_new("modutillib", &src);
@@ -979,7 +874,6 @@ fn commit_accepts_mod_nu_with_export_const_and_def() {
 
 #[test]
 fn commit_rejects_empty_record_skeleton() {
-    // An empty `record<>` positional is the unfleshed-skeleton marker. (leg 1)
     let mut host = Host::spawn();
     let src = host.source_dir("skellib");
     let _ = host.library_new("skellib", &src);
@@ -999,7 +893,6 @@ fn commit_rejects_empty_record_skeleton() {
     );
 }
 
-// ---- the reserved-terms ban ----
 
 #[test]
 fn commit_rejects_private_def_named_reserved() {
@@ -1123,8 +1016,6 @@ fn commit_rejects_param_named_reserved() {
 
 #[test]
 fn commit_accepts_reserved_as_quoted_string_value() {
-    // A quoted string value keeps its quotes in the token, so an exact
-    // `main` value never matches; command refs to the exports pass too.
     let mut host = Host::spawn();
     let src = host.source_dir("strvallib");
     let _ = host.library_new("strvallib", &src);
@@ -1142,13 +1033,11 @@ fn commit_accepts_reserved_as_quoted_string_value() {
     );
 }
 
-// ---- new() scaffold ----
 
 #[test]
 fn library_new_and_scaffold_function() {
     let mut host = Host::spawn();
     let src = host.source_dir("scaffolded");
-    // Establish the library via library(new).
     let r1 = host.library_new("scaffolded", &src);
     assert!(!has_error_path(&r1), "establish should succeed; got {r1}");
     let meta_text = std::fs::read_to_string(
@@ -1165,7 +1054,6 @@ fn library_new_and_scaffold_function() {
         "source root mod.nu should be seeded"
     );
 
-    // Scaffold a function via new([namepath]).
     let r2 = host.scaffold("scaffolded:math:double");
     assert!(
         !has_error_path(&r2),
@@ -1180,8 +1068,6 @@ fn library_new_and_scaffold_function() {
         !fn_src.contains("export def call") && !fn_src.contains("export def resolve"),
         "skeleton should be 1-def main only; got {fn_src:?}"
     );
-    // Additive cascade wiring (NOT regenerate), per the CONDITIONAL convention:
-    // a CALL gets BOTH edges; a PURE module gets `export module` alone.
     let math_mod = std::fs::read_to_string(src.join("math").join("mod.nu")).unwrap();
     assert!(
         math_mod.contains("export module double"),
@@ -1206,11 +1092,6 @@ fn library_new_and_scaffold_function() {
 
 #[test]
 fn scaffolded_call_commits_as_wired() {
-    // End-to-end on the scaffolder's own output: whatever `new()` wires must
-    // satisfy the validator. Scaffold, flesh out the skeleton, commit -- untouched
-    // cascade. This is the lock that keeps the scaffolder and the wiring rules
-    // from drifting apart (an `export module`-only wiring would fail
-    // library::call_wiring here).
     let mut host = Host::spawn();
     let src = host.source_dir("wiredlib");
     let _ = host.library_new("wiredlib", &src);
@@ -1242,7 +1123,6 @@ fn new_leaf_guard_refuses_existing_function() {
     let src = host.source_dir("guarded");
     let _ = host.library_new("guarded", &src);
     let _ = host.scaffold("guarded:m:f");
-    // Scaffolding the same function again -> the leaf-guard rejects.
     let dup = host.scaffold("guarded:m:f");
     assert!(
         has_error_path(&dup),
@@ -1252,7 +1132,6 @@ fn new_leaf_guard_refuses_existing_function() {
 
 #[test]
 fn scaffold_into_unregistered_library_errors() {
-    // new() scaffolds into EXISTING libraries only; it never establishes.
     let mut host = Host::spawn();
     let resp = host.scaffold("nopath:m:f");
     assert!(
@@ -1314,12 +1193,9 @@ fn commit_rejects_unfleshed_skeleton() {
     );
 }
 
-// ---- the dir-module call convention ----
 
 #[test]
 fn commit_rejects_main_in_flat_file() {
-    // `export def main` is reserved for a call target's `<name>/mod.nu`; a flat
-    // file (even one `export use`'d into a module) may not hold one.
     let mut host = Host::spawn();
     let src = host.source_dir("flatmainlib");
     let _ = host.library_new("flatmainlib", &src);
@@ -1342,11 +1218,6 @@ fn commit_rejects_main_in_flat_file() {
 
 #[test]
 fn commit_rejects_call_wired_via_export_module() {
-    // A call target must be wired into its parent via `export use`, never
-    // `export module`. nu 0.114 (#18303) stopped implicitly importing a module's
-    // submodules, so an `export module`-only call is unreachable from a consumer
-    // that imports the parent; `export use` re-exports it (and leaks neither the
-    // target's `main` nor its helpers into the parent).
     let mut host = Host::spawn();
     let src = host.source_dir("wirelib");
     let _ = host.library_new("wirelib", &src);
@@ -1369,7 +1240,6 @@ fn commit_rejects_call_wired_via_export_module() {
 
 #[test]
 fn commit_rejects_call_with_submodule() {
-    // A call target is an edge module and cannot contain a submodule.
     let mut host = Host::spawn();
     let src = host.source_dir("leaflib");
     let _ = host.library_new("leaflib", &src);
@@ -1393,7 +1263,6 @@ fn commit_rejects_call_with_submodule() {
 
 #[test]
 fn commit_rejects_orphan_module() {
-    // A subdirectory module not wired into its parent's cascade is dangling.
     let mut host = Host::spawn();
     let src = host.source_dir("orphanlib");
     let _ = host.library_new("orphanlib", &src);
@@ -1415,16 +1284,6 @@ fn commit_rejects_orphan_module() {
 
 #[test]
 fn commit_accepts_nu_cmd_extra_command() {
-    // The validator's EngineState must carry the SAME command surface the worker
-    // runs against. It used to be a STRICT SUBSET (lang + shell only) while the
-    // worker also loads nu-cmd-extra, so a call-target using `str snake-case` ran
-    // fine on the worker but was REJECTED at commit as
-    // `ExtraPositional("str ", ...)` -- the parser binding a bare `str` and
-    // reading the subcommand word as an extra positional, an opaque error naming
-    // nothing. It must commit AND run.
-    //
-    // The call is wired with BOTH `export module` and `export use` (the_user's
-    // conditional cascade convention), which also locks that shape as valid.
     let mut host = Host::spawn();
     let src = host.source_dir("extralib");
     let _ = host.library_new("extralib", &src);
@@ -1453,8 +1312,6 @@ fn commit_accepts_nu_cmd_extra_command() {
 
 #[test]
 fn commit_accepts_call_with_flat_helper() {
-    // A call target may split a large helper into a flat sibling file and pull
-    // it in privately via `use`.
     let mut host = Host::spawn();
     let src = host.source_dir("callhelperlib");
     let _ = host.library_new("callhelperlib", &src);
@@ -1488,7 +1345,6 @@ fn commit_accepts_call_with_flat_helper() {
 
 #[allow(dead_code)]
 fn _author_prefixed(tool: &str, mut args: serde_json::Value) -> serde_json::Value {
-    // Compound-library convention: default-author bare names at the dispatch boundary.
     fn pfx_lib(s: &str) -> String {
         if s.is_empty() || s.contains("/") {
             s.to_string()

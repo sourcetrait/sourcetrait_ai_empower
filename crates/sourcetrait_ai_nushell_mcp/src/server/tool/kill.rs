@@ -3,6 +3,7 @@ use crate::*;
 /// Parameters for `kill()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct KillParams {
+    /// The nonce of the in-flight call to cancel; list them with processes().
     pub nonce: String,
 }
 

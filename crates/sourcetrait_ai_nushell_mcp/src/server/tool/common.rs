@@ -9,6 +9,7 @@ pub struct RunParams {
     pub result_schema: mcp::JsonObject,
     /// JSON object representation of the strictly typed Nu `record` schema for `$args` as passed to the source-code body.
     pub args: mcp::JsonObject,
+    /// The nushell source-code body; its final value must match result_schema.
     pub body: String,
     /// Optional per-call timeout in milliseconds; defaults to 120000 (2 minutes). The usage is cancelled if it exceeds this.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -56,7 +56,7 @@ Output (partial):
 
 The Output examples in this skill show the raw WIRE shape. An MCP client
 may present `structuredContent` UNWRAPPED - Claude Code renders the
-envelope fields (`result`, `nonce`, `rerun_id`, or `error`) as the top
+envelope fields (`result`, `nonce`, or `error`) as the top
 level of the tool result - so when parsing a result programmatically,
 read the envelope fields where your client presents them, not a
 hardcoded `result.structuredContent` nesting.
@@ -124,8 +124,8 @@ not a nushell_mcp failure, and it does not behave like one:
 So the zero-write recovery is to READ that spill file - the client already wrote
 it for you. Two things the message does not tell you, and you need both:
 
-- The file holds the WHOLE envelope (`{result, nonce, rerun_id}`), not the bare
-  result. Your nonce and rerun_id are in THERE, not in the message.
+- The file holds the WHOLE envelope (`{result, nonce}`), not the bare result.
+  Your nonce is in THERE, not in the message.
 - It is a `.txt`, so a bare `open` hands you a STRING (see "open auto-parses
   known extensions" below). Force the parse:
 
@@ -148,7 +148,7 @@ PAGING MUST BE DESIGNED IN BEFORE THE FIRST CALL. `rerun()` cannot rescue a call
 that already spilled: it re-evaluates the SAME cached body, and that body is
 FROZEN. If it did not already take `skip` / `take`, rerun re-runs it unchanged
 and spills again - and it fails SILENTLY, because records are open, so your extra
-args are accepted and then ignored. (The `rerun_id` you would need is not in the
+args are accepted and then ignored. (The `nonce` you would need is not in the
 oversize message either; it is in the spill file.) So if a big result is possible,
 write the body to page from the start:
 
@@ -159,7 +159,7 @@ let all = (glob ($args.root | path join "**" "*"))
 { total: ($all | length), page: ($all | skip $args.skip | take $args.take) }
 ```
 
-then walk it with `rerun(<rerun_id>, {root: ..., skip: 100, take: 100})`, which
+then walk it with `rerun(<nonce>, {root: ..., skip: 100, take: 100})`, which
 re-uses the cached body with fresh args and writes nothing.
 
 Reach for shm when you must move the WHOLE payload AND you may write.
@@ -1004,8 +1004,7 @@ Output (partial):
         "count": 2,
         "first": { "name": "bob", "ratio": 0.77 }
       },
-      "nonce": "8jPtjMSfRVh",
-      "rerun_id": "isaBZMrHho3"
+      "nonce": "8jPtjMSfRVh"
     },
     "content": []
   }
@@ -1122,7 +1121,8 @@ Output (partial):
 
 The cached schemas + body are reused; only `args` changes per call.
 
-`rerun_id` is the base62 id returned in a prior `run()` envelope.
+`nonce` is the base62 nonce a prior `run()` returned (also the re-fire handle a
+timed-out run carries - `rerun(nonce, args, timeout_ms:)` recovers it).
 
 #### arguments
 
@@ -1130,11 +1130,11 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "rerun_id":   { "type": "string" },
+    "nonce":      { "type": "string" },
     "args":       { "type": "object", "additionalProperties": true },
     "timeout_ms": { "type": ["integer", "null"], "format": "uint64", "minimum": 0 }
   },
-  "required": ["rerun_id", "args"]
+  "required": ["nonce", "args"]
 }
 ```
 
@@ -1144,7 +1144,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "rerun_id": "isaBZMrHho3",
+    "nonce": "isaBZMrHho3",
     "args": { "x": 50 }
   }
 }
@@ -1167,7 +1167,7 @@ Output (partial):
 *List in-flight MCP tool usage.*
 
 Pair with [`kill()`](#kill) to cancel a specific call. Entries are
-`{nonce, tool, started_at, args, ...}`: `rerun` adds `rerun_id`, `call`
+`{nonce, tool, started_at, args, ...}`: `rerun` adds `source_nonce`, `call`
 adds a flat `path` (`<author>/<library>:module/path:name`). Match against your own
 send-set via `args`.
 

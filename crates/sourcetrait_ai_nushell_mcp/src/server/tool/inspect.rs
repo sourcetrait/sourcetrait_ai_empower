@@ -34,8 +34,6 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<InspectParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // namepath -> structured coordinate. inspect accepts any arity:
-        // library / module / function.
         let (library, module_path, name) = match Namepath(p.namepath.clone()).validate() {
             Ok(NamepathRef::Library { library }) => (library, String::new(), None),
             Ok(NamepathRef::Module {

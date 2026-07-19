@@ -29,7 +29,6 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<CallParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // call requires a FUNCTION namepath (library:module/path:function).
         let (library, module_path, name) = match Namepath(p.namepath.clone()).validate() {
             Ok(NamepathRef::Function {
                 library,
@@ -60,9 +59,6 @@ impl NuSh {
             }
         };
         let _guard = lock.read().await;
-        // big meta: the index is the callability authority - the coordinate
-        // must name a registered call-target. A helper file present on disk
-        // but absent from the index is correctly NOT callable.
         let index = match load_index(&library) {
             Ok(i) => i,
             Err(e) => {
@@ -100,8 +96,6 @@ impl NuSh {
                 ));
             }
         };
-        // Mint the nonce BEFORE source synthesis so it can be embedded as
-        // $env.NONCE in the call template.
         let nonce = self.nonce_gen.next(&payload_bytes);
         let source = build_call_source(
             &library,
@@ -110,8 +104,6 @@ impl NuSh {
             &p.args,
             &nonce.to_string(),
         );
-        // The in-flight path IS the namepath (a function namepath is always
-        // library:module/path:name; there are no root functions).
         let path_str = p.namepath.clone();
         let args_json = serde_json::Value::Object(p.args.clone());
         let outcome = match dispatch_pooled(

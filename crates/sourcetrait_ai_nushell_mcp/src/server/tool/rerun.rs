@@ -62,8 +62,6 @@ impl NuSh {
                 ));
             }
         };
-        // Touch mtime for the LRU signal future pruning will use.
-        // Idempotent overwrite -- content is deterministic.
         let _ = fs::write(&path, &cached_bytes);
         let nonce = self.nonce_gen.next(&cached_bytes);
         let source = build_run_source(

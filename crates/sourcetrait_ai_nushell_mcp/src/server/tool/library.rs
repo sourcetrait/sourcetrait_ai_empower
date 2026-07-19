@@ -67,7 +67,6 @@ impl NuSh {
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let source_dir = std::path::Path::new(&p.source_dir);
         match p.action.as_str() {
-            // Establish a fresh, empty library at source_dir + register it.
             "new" => {
                 let lock = match self.library_locks.register(&p.library).await {
                     Ok(l) => l,
@@ -95,8 +94,6 @@ impl NuSh {
                     }
                 }
             }
-            // Bring a shipped/complete source into the mcp: establish + first
-            // commit, atomic.
             "install" => {
                 let lock = match self.library_locks.register(&p.library).await {
                     Ok(l) => l,
@@ -124,7 +121,6 @@ impl NuSh {
                     }
                 }
             }
-            // Validate the in-source tree (cargo-test equivalent); no mutation.
             "check" => {
                 let lock = match self.library_locks.lookup(&p.library).await {
                     Some(l) => l,
@@ -148,7 +144,6 @@ impl NuSh {
                     Err(e) => Ok(error_to_call_result(e, None)),
                 }
             }
-            // Remove from the mcp; source untouched. Idempotent (absent == ok).
             "uninstall" => {
                 let lock = match self.library_locks.lookup(&p.library).await {
                     Some(l) => l,
@@ -179,11 +174,6 @@ impl NuSh {
     }
 }
 
-/// Bucket a `ValidationResult`'s diagnostics into the `check` summary:
-/// Error-severity rows -> `errors` (block a commit), Warning-severity rows ->
-/// `warnings` (advise). `ok` is true iff there are no Error rows. The rows
-/// already carry their namespaced `kind` + `source` + `message`, so no
-/// per-row mapping is needed.
 fn check_summary_from(result: &ValidationResult) -> CheckSummary {
     let (errors, warnings) = Diagnostic::bucket(result.diagnostics.clone());
     CheckSummary {

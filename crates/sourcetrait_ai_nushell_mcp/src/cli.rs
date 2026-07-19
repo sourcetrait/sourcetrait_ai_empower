@@ -160,7 +160,6 @@ pub(crate) enum LibraryCliAction {
 }
 
 impl LibraryCliAction {
-    /// The action string the library() tool takes.
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::New => "new",
@@ -171,27 +170,10 @@ impl LibraryCliAction {
     }
 }
 
-/// Default `--id`: the invoking user's name ($USER), or "default" when
-/// the var is absent. A one-time process read for the zero-config human
-/// case, not a configuration channel -- harness configs always pass
-/// --id explicitly.
 fn default_id() -> String {
     std::env::var("USER").unwrap_or_else(|_| "default".to_string())
 }
 
-/// What: resolve the `--workdir` value into the Config's `work_dir`. An
-/// explicit value has a leading `~` / `~/` expanded against the home dir
-/// (any other form passes through literally, absolute or not); an absent
-/// value defaults to `<home>/proj/equip/<id>` -- the sane user-cli case;
-/// agent harness `.mcp.json` entries always pass `--workdir` explicitly.
-///
-/// Why: `.mcp.json` args reach the process verbatim (no shell), so a
-/// `~/`-form value must expand HERE to be usable; the directories crate's
-/// home view (`BASE_DIRS`) keeps that expansion consistent with every
-/// other path helper. No existence check -- trusted operator config, like
-/// id / namespace.
-///
-/// Where: called once by `host_main` before `CONFIG` is stored.
 fn resolve_work_dir(raw: Option<&str>, id: &str) -> PathBuf {
     match raw {
         Some("~") => BASE_DIRS.home_dir().to_path_buf(),
@@ -203,9 +185,6 @@ fn resolve_work_dir(raw: Option<&str>, id: &str) -> PathBuf {
     }
 }
 
-/// clap value_parser for `--deny` tokens; rejects unknown names with the
-/// valid-token list so a typo fails the startup instead of silently
-/// denying nothing.
 fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
     DeniableTool::from_name(s).ok_or_else(|| {
         format!(
@@ -215,16 +194,6 @@ fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
     })
 }
 
-/// What: the host binary's entry point: parse `HostCli`, store the
-/// runtime `Config` (the set-once global every host-side reader uses),
-/// then either serve MCP over stdio (no subcommand) or run the one-shot
-/// CLI.
-///
-/// Why: CONFIG is stored here -- before serve/one-shot dispatch -- so it
-/// precedes every reader (path helpers, router assembly, worker spawns)
-/// on both paths.
-///
-/// Where: called from `src/main.rs::main`.
 pub fn host_main() {
     let cli = HostCli::parse();
     let work_dir = resolve_work_dir(cli.workdir.as_deref(), &cli.id);
@@ -275,18 +244,6 @@ pub(crate) struct WorkerCli {
     pub mode: CliMode,
 }
 
-/// What: parses the worker process's CLI args via `WorkerCli::parse()`
-/// and returns the resulting lib-side `Mode`. Exits the process via
-/// clap's standard error path if the args are malformed.
-///
-/// Why: factors the clap-specific parsing out of `worker_main` so the
-/// lib's worker entry stays a one-liner + the CLI surface lives in a
-/// dedicated cli module. `Parser` is in scope via the lib.rs prelude
-/// (`pub(crate) use clap::Parser`); the `clap::Parser` /
-/// `clap::ValueEnum` derives reach the macros by path.
-///
-/// Where: called by `worker::run::worker_main` once per worker process
-/// at startup.
 pub(crate) fn parse_worker_mode() -> Mode {
     let p = WorkerCli::parse();
     match p.mode {

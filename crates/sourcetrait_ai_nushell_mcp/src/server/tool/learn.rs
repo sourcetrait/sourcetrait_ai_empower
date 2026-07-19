@@ -15,40 +15,16 @@ pub(crate) struct LearnEnvelope {
     pub version: String,
 }
 
-/// The embedded liquid template for the `/nu` skill. Source-of-truth
-/// for the skill body lives here (the harness `skills/nu/SKILL.md` is
-/// a generated artifact). Only `{{ version }}` / `{{ nu_version }}` in
-/// the stamp line interpolate; the rest is verbatim.
 const NU_SKILL_TEMPLATE: &str = include_str!("../../../assets/templates/nu_skill.md.liquid");
 
-/// Skill name in the Claude-Code layout `<harness_dir>/skills/<name>/SKILL.md`.
 const SKILL_NAME: &str = "nu";
 
-/// What: the liquid render context. Carries the two live values seeded
-/// into the skill stamp.
-///
-/// Why: minimal seeding now (the_user 2026-06-14) -- one live
-/// interpolation proves the pipeline; later expansion adds fields +
-/// `{{ }}` placeholders.
-///
-/// Where: built in `generate_skill`, passed to `liquid::to_object`.
 #[derive(ser::Serialize)]
 struct LearnContext {
     version: String,
     nu_version: String,
 }
 
-/// What: renders the embedded `/nu` skill template with the live
-/// version values and writes it to `<harness_dir>/skills/nu/SKILL.md`,
-/// returning the written path + byte length.
-///
-/// Why: the learn() tool's core. Liquid parser-build / parse / context
-/// / render failures map to `Error::Internal` with a `learn::*` phase
-/// (the_user 2026-06-14) so the agent gets a typed envelope; the
-/// crate's `From<io::Error>` covers the create_dir_all + write `?`
-/// paths under phase "io".
-///
-/// Where: called by `NuSh::learn`.
 pub(crate) fn generate_skill(
     harness_dir: &std::path::Path,
     version: &str,

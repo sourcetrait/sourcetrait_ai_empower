@@ -4,7 +4,6 @@ use crate::*;
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct RunEnvelope {
     /// The source-code body's return value, as a JSON object matching `result_schema`.
-    // `mcp::JsonObject` (not `serde_json::Value`): same JsonSchema-rendering gotcha as RunParams.args.
     pub result: mcp::JsonObject,
     pub nonce: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,8 +43,6 @@ impl NuSh {
                 ));
             }
         };
-        // Mint the nonce BEFORE source synthesis so it can be embedded as
-        // $env.NONCE in the run template.
         let nonce = self.nonce_gen.next(&payload_bytes);
         let source =
             build_run_source(&args_type, &result_type, &p.args, &p.body, &nonce.to_string());
@@ -93,23 +90,6 @@ impl NuSh {
     }
 }
 
-/// What: writes the closure cache file at `closures/<rerun_id>.json`
-/// after a successful `run()`. Creates the parent dir if needed,
-/// serializes the closure metadata (`args_type`, `result_type`,
-/// `body`) into `ClosureCacheBody`, and writes the JSON bytes.
-/// Idempotent: the same rerun_id always produces the same bytes.
-///
-/// Why: rerun() needs a deterministic place to look up the cached
-/// closure by its content-derived id. The unconditional overwrite
-/// touches mtime even on identical content, which sets up future
-/// LRU-style pruning. Returns `io::Result<()>` (slice 6.0): the caller
-/// treats failures as non-fatal -- the agent still gets the successful
-/// eval result, with the `rerun_id` field omitted from the envelope so
-/// the agent knows replay is unavailable for this call.
-///
-/// Where: called by `NuSh::run` after `dispatch_pooled` succeeds
-/// and `RerunHash::of` produces the rerun_id. The matching read
-/// happens in `NuSh::rerun` via `fs::read` + `json::from_slice`.
 fn write_closure_cache(
     rerun_id: &str,
     args_type: &str,

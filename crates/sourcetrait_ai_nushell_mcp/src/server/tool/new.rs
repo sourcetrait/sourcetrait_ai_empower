@@ -26,9 +26,6 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<NewParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // Parse + validate every namepath up front. new() scaffolds INTO
-        // existing libraries, so each must be a Module (2-part) or Function
-        // (3-part); a bare library namepath is rejected (use library(new)).
         let mut targets: Vec<(String, String, Option<String>)> = Vec::new();
         for np in &p.namepaths {
             match Namepath(np.clone()).validate() {
@@ -55,9 +52,6 @@ impl NuSh {
             }
         }
 
-        // Lock every requested library, in canonical (sorted, deduped) order so
-        // two concurrent batches can't deadlock. A library must be registered
-        // (established via library(new|install)) - new() never establishes.
         let mut libs: Vec<String> = targets.iter().map(|(l, _, _)| l.clone()).collect();
         libs.sort();
         libs.dedup();
@@ -80,8 +74,6 @@ impl NuSh {
             guards.push(l.write().await);
         }
 
-        // Pre-check: no target leaf may already exist - abort the whole batch
-        // before scaffolding any (atomic-ish: all-or-nothing on collision).
         for (library, module_path, name) in &targets {
             match scaffold_leaf_exists(library, module_path, name.as_deref()) {
                 Ok(true) => {
@@ -101,7 +93,6 @@ impl NuSh {
             }
         }
 
-        // Scaffold each namepath.
         let mut created = Vec::new();
         for (library, module_path, name) in &targets {
             match scaffold_leaf(library, module_path, name.as_deref()) {

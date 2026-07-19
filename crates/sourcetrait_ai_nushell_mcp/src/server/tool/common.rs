@@ -8,7 +8,6 @@ pub struct RunParams {
     /// The strictly typed Nu `record` schema for the return value, as a JSON object mapping each field name to its type (`{}` for no return value).
     pub result_schema: mcp::JsonObject,
     /// JSON object representation of the strictly typed Nu `record` schema for `$args` as passed to the source-code body.
-    // `mcp::JsonObject` (not `serde_json::Value`): schemars renders Value as the JSON Schema `true` keyword, which the MCP client rejects; a Map renders as `{"type": "object"}`. args must be an object anyway -- it deserializes into a nu record.
     pub args: mcp::JsonObject,
     pub body: String,
     /// Optional per-call timeout in milliseconds; defaults to 120000 (2 minutes). The usage is cancelled if it exceeds this.
@@ -16,17 +15,6 @@ pub struct RunParams {
     pub timeout_ms: Option<u64>,
 }
 
-/// What: on-disk JSON shape of `closures/<rerun_id>.json`. Mirrors
-/// the relevant subset of `RunParams` that uniquely identifies the
-/// closure: schemas + body, no per-call args, no nonce.
-///
-/// Why: rerun() needs enough to reconstruct a `RunParams` and
-/// dispatch through the stateless worker; the schemas are the
-/// typecheck inputs, the body is the executable surface.
-///
-/// Where: serialized by `write_closure_cache` (in `tool::run`) after a
-/// successful `NuSh::run`; deserialized by `NuSh::rerun` via
-/// `json::from_slice` to reconstruct a `RunParams` for replay.
 #[derive(Debug, ser::Deserialize, ser::Serialize)]
 pub(crate) struct ClosureCacheBody {
     pub(crate) args_type: String,
@@ -34,24 +22,6 @@ pub(crate) struct ClosureCacheBody {
     pub(crate) body: String,
 }
 
-/// What: the rmcp server-side state. Owns Arc-wrapped handles to the
-/// two worker subprocesses (stateless + stateful), the NonceGen for
-/// per-call ids, the per-library lock registry for slice-3
-/// concurrency, and rmcp's `ToolRouter` (assembled from the per-tool
-/// router functions across the `server::tool::*` modules).
-///
-/// Why: this is THE singleton the rmcp library serves. Every Arc
-/// field is cheap to clone for concurrent tool calls; the workers
-/// sit behind AsyncMutex because each worker is a single-request
-/// channel; the library_locks sits behind its own internal
-/// concurrency primitive. Fields are `pub(crate)` so the per-tool
-/// handler modules reach them as `self.<field>`.
-///
-/// Where: constructed in `server::run::run_server` after substrate
-/// init and worker spawn; passed to `service.serve(stdio())` which
-/// runs the MCP protocol against the host's stdin/stdout. Every
-/// `#[mcp::tool]` method across the `server::tool::*` modules is a
-/// tool surface entry on this type.
 pub struct NuSh {
     pub(crate) runs_pool: Arc<Pool>,
     pub(crate) interact_worker: Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
@@ -59,33 +29,12 @@ pub struct NuSh {
     pub(crate) library_locks: Arc<LibraryLocks>,
     pub(crate) lint_engine: Arc<ParseEngine>,
     pub(crate) in_flight: Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
-    /// The deny-filtered tool surface; `#[tool_handler(router =
-    /// self.tool_router)]` dispatches list_tools + call_tool off it.
     pub(crate) tool_router: mcp::ToolRouter<NuSh>,
 }
 
-/// Default per-call timeout when `timeout_ms` is omitted (the_user
-/// 2026-06-01: 120s catches hangs without imposing an upper cap).
 pub(crate) const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 
-// TIMEOUT_ERROR_CODE retired in 0.0.34 -- timeouts now emit a typed
-// `Error::WorkerTimeout { timeout_ms }` envelope rather than a JSON-
-// RPC error code. Agent branches on `structuredContent.error.kind ==
-// "worker::timeout"` instead of `error.code == -32001`.
 
-/// What: snapshot of one in-flight tool call. Lives in `NuSh::in_flight`
-/// keyed by the call's nonce string; `processes()` serializes it,
-/// `kill(nonce)` looks up the worker pid through it.
-///
-/// Why: identification + cancellation (slice 5.9) requires the host to
-/// remember which worker process is handling which logical call. `args`
-/// is the agent-supplied data the agent uses to match entries against
-/// their own send-set (the_user 2026-06-01: "if it's doing things
-/// correctly, args should always be different").
-///
-/// Where: inserted at the top of each dispatch (run/interact/rerun/
-/// call), removed via `InFlightCleanup::drop` when dispatch returns.
-/// Read by `NuSh::processes` and `NuSh::kill`.
 pub(crate) struct InFlightEntry {
     pub tool: &'static str,
     pub started_at: u64,
@@ -94,10 +43,6 @@ pub(crate) struct InFlightEntry {
     pub kind: InFlightKind,
 }
 
-/// Tool-specific extra fields per the_user 2026-06-01 per-tool entry
-/// shape lock: run/interact have nothing extra; rerun carries the
-/// `rerun_id` it was invoked with; call carries the
-/// `library:module/path:name` flat string.
 pub(crate) enum InFlightKind {
     Run,
     Interact,
@@ -106,23 +51,6 @@ pub(crate) enum InFlightKind {
 }
 
 impl NuSh {
-    /// What: constructor for `NuSh`. Wraps the interact slot in
-    /// `Arc<tk::AsyncMutex<Option<...>>>` (None = lazy: the first
-    /// interact() spawns it -- the one-shot CLI path), takes the
-    /// already-Arc-wrapped nonce_gen + library_locks directly, and
-    /// initializes the rmcp `tool_router` from the deny-filtered
-    /// `Self::tool_router()` (assembled in `tool::handler` from
-    /// `config().deny`).
-    ///
-    /// Why: all the wrapping happens here so calling code passes plain
-    /// values without juggling layers. The serve path passes
-    /// Some(eagerly-spawned worker) for first-call latency; the one-shot
-    /// CLI passes None so an info/inspect invocation never pays a
-    /// stateful-worker spawn.
-    ///
-    /// Where: called by `server::run::run_server` (Some) and
-    /// `server::oneshot::run_oneshot` (None). Tests spawn their own NuSh
-    /// indirectly via the host binary.
     pub(crate) fn new(
         runs_pool: Arc<Pool>,
         interact_worker: Option<WorkerHandle>,
@@ -142,93 +70,8 @@ impl NuSh {
     }
 }
 
-// outputSchema deviation note (the_user 2026-06-02): a `oneOf(Success,
-// ErrorEnvelope)` wrapper was attempted to formally cover both branches
-// of each tool's wire shape, but Claude Code's MCP client rejected the
-// resulting schemas (root-level `oneOf` lacks `type: "object"`). The
-// pragmatic outcome: per-tool `output_schema` declares the SUCCESS
-// envelope shape only. Error responses at runtime emit
-// `structuredContent.error.{kind, data, nonce?}` per the new error
-// envelope; they don't validate against the declared schema but
-// transit + render fine (Claude Code does not enforce validation on
-// tool results at the structured-content layer). The
-// `Error`/`ErrorEnvelope`/`Where` types are still typed Rust internals
-// (built by handlers + serialized to JSON); only the schema-declaration
-// side of the wire contract is success-only.
 
-// Content::text omission deviation note (the_user 2026-06-02).
-//
-// MCP 2025-11-25 (server/tools.md) says verbatim:
-//
-//   "For backwards compatibility, a tool that returns structured
-//    content SHOULD also return the serialized JSON in a TextContent
-//    block."
-//
-// We ignore that SHOULD. Every nushell_mcp tool handler emits
-// `structured_content: Some(<typed envelope>)` and leaves
-// `content: vec![]`. No text mirror. We own any wire weirdness this
-// causes for MCP clients that depend on the text mirror for display
-// or for parsing -- such clients will not see our envelope contents.
-//
-// What we ship instead: our own opinionated typed envelopes
-// (`RunEnvelope` / `CallEnvelope` / `InteractEnvelope` / `RerunEnvelope`
-// / `InfoEnvelope` / `ProcessesEnvelope` / `ErrorEnvelope`) on
-// `structured_content`. Agents read fields directly off the structured
-// payload. The wire is uniform across success and error semantics; both
-// emit success-shape via `envelope_to_structured` (success path) and
-// `error_to_call_result` (error path, in `server/error.rs`).
-//
-// Domain vs protocol error policy:
-//   - Domain errors (lint violations, library validation, worker
-//     timeout, function-not-defined, closure cache miss, internal
-//     phase failures, etc.) go through `error_to_call_result` ->
-//     success-shape with `structuredContent.error` carrying the typed
-//     `Error`. Agent branches on `structuredContent.error.kind`.
-//   - Genuine MCP-layer failures (deserialize / serialize errors at
-//     the rmcp boundary, unsupported request shapes) are reserved for
-//     `Err(mcp::ErrorData)` JSON-RPC error responses. The current
-//     handler set never hits this path; it remains available if a
-//     future rmcp boundary case demands a true protocol error.
-//
-// Verified rendering in Claude Code's CLI (the_user observed
-// 2026-06-02 via rmcp_explore Section E probes against the spec
-// example shapes):
-//   - success-shape + `structured_content` (no `Content::text`)
-//     -> green bullet, body visible on click-expand (this is the
-//     shape we ship on both success and error semantics)
-//   - `is_error=true` + `structured_content` -> red bullet, no body
-//   - `is_error=true` + `Content::text` -> red bullet, no body
-//   - `is_error=true` + dual-emit (`Content::text` + `structured`)
-//     -> red bullet, no body
-//   - `Err(mcp::ErrorData)` JSON-RPC -32602 -> red bullet, no body
-//
-// Body visibility on the protocol-level error path is not achievable
-// in current Claude Code's CLI. Success-shape carrying the typed error
-// envelope is the only path that surfaces the body. This is why our
-// error handler uses success-shape, not the spec-canonical
-// `is_error=true + Content::text` pattern.
-//
-// Flip cost: adding the `Content::text` mirror per the SHOULD is a
-// one-line addition in `envelope_to_structured` and
-// `error_to_call_result` (serialize the envelope to JSON, push as a
-// `Content::text` block alongside the existing structured payload).
-// The structured payload stays. Flip if a future Claude Code version
-// starts requiring the text mirror, or if portability to other MCP
-// clients becomes a goal.
 
-/// What: serializes the typed success envelope to `structured_content`
-/// and emits an empty `content` vector. Deviates from MCP 2025-11-25
-/// `server/tools.md` SHOULD (omits the `Content::text` mirror) -- see
-/// the "Content::text omission deviation note" block above for the
-/// verbatim spec quote and the policy.
-///
-/// Why: single seam so the structured-only choice lives in one place;
-/// pairs with `error_to_call_result` in `server/error.rs` for the
-/// error-side counterpart.
-///
-/// Where: called by every `#[mcp::tool]` handler across the
-/// `server::tool::*` modules on the success path (run, interact,
-/// rerun, call, info, processes, ...).
 pub(crate) fn envelope_to_structured<T: ser::Serialize>(
     envelope: &T,
 ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
@@ -239,16 +82,6 @@ pub(crate) fn envelope_to_structured<T: ser::Serialize>(
     Ok(result)
 }
 
-/// What: converts the structured `args_schema` + `result_schema`
-/// JSON objects to the `(args_type, result_type)` nu positional-type
-/// strings via `args_schema_to_nu` / `result_schema_to_nu`.
-///
-/// Why: run + interact need the converted
-/// positional types BEFORE lint + template synthesis; a single helper
-/// keeps the conversion seam in one place and short-circuits to
-/// `Error::SchemaInvalid` uniformly on a malformed schema.
-///
-/// Where: called first by `NuSh::run` and `NuSh::interact`.
 pub(crate) fn convert_schemas(
     args_schema: &mcp::JsonObject,
     result_schema: &mcp::JsonObject,
@@ -258,16 +91,6 @@ pub(crate) fn convert_schemas(
     Ok((args_type, result_type))
 }
 
-/// What: lint of a `RunParams` body -- a single pass over the agent's body
-/// returning the aggregated error-severity `Diagnostic` vector (a body
-/// diagnostic has no file, so each row's `source.path` is None).
-///
-/// Why: keeping this as a thin wrapper around `lint_body` (rather than
-/// inlining into the handlers) leaves a clear seam for any future per-tool
-/// diff in lint coverage; today the wrapper is a straight pass-through.
-///
-/// Where: called by `NuSh::run` and `NuSh::interact` before any template
-/// synthesis.
 pub(crate) fn lint_run_params(
     engine: &ParseEngine,
     args_type: &str,
@@ -276,58 +99,16 @@ pub(crate) fn lint_run_params(
     lint_body(engine, args_type, body)
 }
 
-/// What: the shape returned by `dispatch_pooled` / `dispatch_interact`.
-/// Pairs the per-call `Nonce` with the decoded JSON `result` value.
-///
-/// Why: each handler (run/interact/rerun/call) builds its own
-/// envelope on top of this because the envelope shape varies (run
-/// includes rerun_id; interact + rerun + call don't; call has no
-/// rerun caching). Returning a struct instead of a tuple makes the
-/// per-field semantics readable at the call site.
-///
-/// Where: returned by `dispatch_pooled` / `dispatch_interact` to
-/// each `#[mcp::tool]` handler that wraps it into a typed envelope.
 pub(crate) struct DispatchOutcome {
     pub(crate) nonce: Nonce,
     pub(crate) result: json::Value,
 }
 
-/// What: error-side return value from `dispatch_pooled` /
-/// `dispatch_interact`. Pairs the typed `Error` with an optional
-/// `Nonce` -- present when a worker-side log dir at
-/// `$XDG_CACHE_HOME/sourcetrait/nushell_mcp/<x>/<nonce>/` was created (the agent
-/// can fetch stdout/stderr by that nonce).
-///
-/// Why: the dispatch helpers may fail BEFORE or AFTER allocating a
-/// per-call nonce. Returning both `error` and optional `nonce`
-/// (rather than embedding the nonce into a specific Error variant)
-/// keeps the typed Error data shape uniform per kind while
-/// preserving the agent's path back to the cached log dir.
-///
-/// Where: produced internally by the dispatch helpers; the handler
-/// pipes through `error_to_call_result(error, nonce)` to convert
-/// into the wire envelope.
 pub(crate) struct DispatchError {
     pub(crate) error: Error,
     pub(crate) nonce: Option<Nonce>,
 }
 
-/// What: dispatch one tool call against the stateless `runs_pool`.
-/// Acquires a worker from the pool, registers an in-flight entry,
-/// wraps the round-trip in `tk::timeout`, kills the worker on
-/// timeout, returns the `DispatchOutcome` or a typed `DispatchError`
-/// (carrying both the `Error` and the per-call `Nonce` when present
-/// so the handler can attach it to the wire envelope).
-///
-/// Why: replaces the prior `Err(mcp::ErrorData)` shape so each
-/// error path emits a typed `Error` variant -- the handler then
-/// routes through `error_to_call_result` for visible CLI rendering.
-/// The pool gives concurrent execution; in-flight tracking lets
-/// `kill(nonce)` and timeouts target a specific call's worker;
-/// timeout wrap caps every call.
-///
-/// Where: called by `NuSh::run`, `NuSh::rerun`, `NuSh::call` (all
-/// stateless surfaces).
 pub(crate) async fn dispatch_pooled(
     pool: &Arc<Pool>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
@@ -339,8 +120,6 @@ pub(crate) async fn dispatch_pooled(
     kind: InFlightKind,
     timeout_ms: Option<u64>,
 ) -> Result<DispatchOutcome, DispatchError> {
-    // The nonce is minted by the handler (before source synthesis) so it can be
-    // embedded as `$env.NONCE` in the template; dispatch just uses it.
     let nonce_str = nonce.to_string();
     let log_dir = cache_dir(log_kind, nonce);
     fs::create_dir_all(&log_dir).map_err(|e| DispatchError {
@@ -410,19 +189,6 @@ pub(crate) async fn dispatch_pooled(
     Ok(DispatchOutcome { nonce, result })
 }
 
-/// What: dispatch one `interact()` call against the single
-/// stateful worker. Acquires the mutex, lazily respawns the worker if
-/// None (after a prior kill / timeout / death cleared it), registers
-/// in-flight, wraps in `tk::timeout`, kills + clears on timeout or
-/// io error so the NEXT call lazy-respawns.
-///
-/// Why: the stateful worker is a singleton -- it can't pool because
-/// session state is per-worker. Lazy-respawn lets kill/timeout clear
-/// the handle without leaving callers stuck on a dead worker; the
-/// next interact() spawns a fresh one (losing session state, as
-/// the_user 2026-06-01 confirmed).
-///
-/// Where: called only by `NuSh::interact`.
 pub(crate) async fn dispatch_interact(
     interact: &Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
@@ -431,7 +197,6 @@ pub(crate) async fn dispatch_interact(
     args_json: serde_json::Value,
     timeout_ms: Option<u64>,
 ) -> Result<DispatchOutcome, DispatchError> {
-    // Nonce minted by the handler (before source synthesis); see dispatch_pooled.
     let nonce_str = nonce.to_string();
     let log_dir = cache_dir(CacheKind::Interacts, nonce);
     fs::create_dir_all(&log_dir).map_err(|e| DispatchError {
@@ -557,12 +322,4 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-// (timeout_error and TIMEOUT_ERROR_CODE retired; timeouts now emit
-// Error::WorkerTimeout { timeout_ms } via DispatchError. See the
-// timeout branches in `dispatch_pooled` / `dispatch_interact`.)
 
-// (import_error_to_mcp_error / format_violations / format_validation_result
-// retired -- errors are now typed `Error` values routed through
-// `error_to_call_result`, which renders any error to the unified
-// `{ errors, warnings, nonce? }` envelope of `Diagnostic` rows. The
-// violation-bearing variants carry `Vec<Diagnostic>` directly.)

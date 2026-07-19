@@ -40,8 +40,6 @@ impl NuSh {
                 ));
             }
         };
-        // Mint the nonce BEFORE source synthesis so it can be embedded as
-        // $env.NONCE in the interact template.
         let nonce = self.nonce_gen.next(&payload_bytes);
         let source =
             build_interact_source(&args_type, &result_type, &p.args, &p.body, &nonce.to_string());

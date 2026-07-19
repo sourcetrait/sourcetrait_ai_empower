@@ -1,16 +1,5 @@
 use crate::*;
 
-/// What: severity bucket for a `Diagnostic`. `Error` rows block (a commit, a
-/// run) and land in the envelope's `errors`; `Warning` rows advise and land in
-/// `warnings`.
-///
-/// Why: the wire conveys severity through the `errors[]` vs `warnings[]` split,
-/// so this field is `#[serde(skip)]` on `Diagnostic` (absent from the wire AND
-/// the emitted JSON schema). It exists only for the Rust-side `bucket`
-/// partition + `ValidationResult::is_empty` (errors block, warnings don't).
-///
-/// Where: set by `Diagnostic::error` / `Diagnostic::warning`; read by
-/// `Diagnostic::bucket` and `library::ValidationResult::is_empty`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -65,7 +54,6 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    /// Build an Error-severity diagnostic (blocks; lands in `errors`).
     pub(crate) fn error(
         kind: impl Into<String>,
         source: Option<Source>,
@@ -79,7 +67,6 @@ impl Diagnostic {
         }
     }
 
-    /// Build a Warning-severity diagnostic (advisory; lands in `warnings`).
     pub(crate) fn warning(
         kind: impl Into<String>,
         source: Option<Source>,
@@ -93,15 +80,6 @@ impl Diagnostic {
         }
     }
 
-    /// What: partition diagnostics into `(errors, warnings)` by severity,
-    /// preserving order within each bucket.
-    ///
-    /// Why: the wire envelope (`error_to_call_result`) and the `library(check)`
-    /// success summary both present diagnostics split by severity; this is the
-    /// single partition point.
-    ///
-    /// Where: called by `error_to_call_result` (the violation-bearing Error
-    /// variants) and `tool::library::check_summary_from`.
     pub(crate) fn bucket(diagnostics: Vec<Diagnostic>) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
@@ -115,19 +93,6 @@ impl Diagnostic {
     }
 }
 
-/// What: typed error for ergonomic single-condition construction at the call
-/// sites. The two violation-bearing variants carry `Vec<Diagnostic>` (already
-/// the unified rows); every other variant carries its typed data and is
-/// rendered to ONE error-bucket `Diagnostic` at the wire seam.
-///
-/// Why: keeping a typed `Error` lets the impls build + bubble conditions with
-/// `?` and matchable values, while `error_to_call_result` is the single place
-/// that flattens any `Error` to the uniform `{ errors, warnings, nonce? }`
-/// wire shape. There is no longer a serde-tagged wire form on `Error` itself
-/// -- the kind strings live in `kind_str`, the human text in `message`.
-///
-/// Where: built by every tool handler + `server::library` impl on a failure
-/// path; consumed by `error_to_call_result`.
 #[derive(Debug, Clone)]
 pub enum Error {
     LibraryNotRegistered {
@@ -155,9 +120,6 @@ pub enum Error {
         passed: String,
         registered: String,
     },
-    /// commit() / library(check) validation: the unified validator diagnostics
-    /// (structural Error rows + `lint::summary_length` Warning rows). Buckets
-    /// at the wire seam.
     LibraryViolations {
         diagnostics: Vec<Diagnostic>,
     },
@@ -169,8 +131,6 @@ pub enum Error {
         module_path: String,
         name: String,
     },
-    /// run() / interact() body lint: the body-lint diagnostics (all severity
-    /// Error). Buckets at the wire seam (warnings empty).
     LintViolations {
         diagnostics: Vec<Diagnostic>,
     },
@@ -208,14 +168,6 @@ pub enum Error {
 }
 
 impl Error {
-    /// What: the namespaced `kind` string for the single-condition variants
-    /// (`library::not_registered`, `worker::timeout`, ...).
-    ///
-    /// Why: with no serde tag on `Error`, the kind taxonomy lives here. The two
-    /// violation variants carry their own per-`Diagnostic` kinds and are
-    /// bucketed directly, so they never reach this method.
-    ///
-    /// Where: called by `error_to_call_result` for every non-violation variant.
     fn kind_str(&self) -> &'static str {
         match self {
             Self::LibraryNotRegistered { .. } => "library::not_registered",
@@ -242,15 +194,6 @@ impl Error {
         }
     }
 
-    /// What: render the single-condition variant's typed data into the human
-    /// `message` string (the former per-variant `data` folds in here -- no
-    /// loss, it is text either way).
-    ///
-    /// Why: the unified `Diagnostic` carries one `message` instead of a typed
-    /// `data` object; the detail (timeout_ms, passed/registered, reason, ...)
-    /// goes into prose here.
-    ///
-    /// Where: called by `error_to_call_result` for every non-violation variant.
     fn message(&self) -> String {
         match self {
             Self::LibraryNotRegistered { library } => {
@@ -309,17 +252,6 @@ impl Error {
     }
 }
 
-/// What: blanket `From<io::Error>` so library impls can use `?` on `fs::*` and
-/// `process::Command::*` operations to bubble io failures up as
-/// `Error::Internal { phase: "io", reason: ... }` without per-site `.map_err`.
-///
-/// Why: substrate operations (mkdir, fs::write, git commit subprocess) produce
-/// io::Error values whose message strings already carry enough context;
-/// collapsing them to `Error::Internal` keeps the taxonomy tight. Callers
-/// wanting a more specific `phase` do an explicit `.map_err`.
-///
-/// Where: every `?` on an io-fallible call inside the `*_impl` functions in
-/// `server::library`.
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Error::Internal {
@@ -360,20 +292,6 @@ pub struct ErrorBody {
     pub nonce: Option<String>,
 }
 
-/// What: builds a SUCCESS-shape `CallToolResult` carrying the unified error
-/// envelope (`{ error: { errors, warnings, nonce? } }`) in
-/// `structured_content`. The violation-bearing `Error` variants bucket their
-/// carried diagnostics; every other variant renders to a single error-bucket
-/// `Diagnostic` (`kind` from `kind_str`, `source: None`, `message` from
-/// `message`). No `is_error`; no `Err(ErrorData)`.
-///
-/// Why: one uniform `structured_content`-only wire shape across success and
-/// error semantics, so the agent reads `error.errors[]` / `error.warnings[]`
-/// from one place. The nonce is attached when the dispatch had already
-/// allocated a per-call log dir -- the agent can fetch
-/// `<cache>/<kind>/<nonce>/{stdout,stderr}`.
-///
-/// Where: called by every tool handler on a tool-execution error path.
 pub(crate) fn error_to_call_result(
     error: Error,
     nonce: Option<Nonce>,

@@ -11,7 +11,7 @@ pub(crate) async fn run_oneshot(tool: CliTool) -> process::ExitCode {
         );
         let nonce_gen = Arc::new(NonceGen::new());
         let lint_engine = Arc::new(ParseEngine::new_full());
-        let server = NuSh::new(runs_pool, None, nonce_gen, library_locks, lint_engine);
+        let server = NuSh::new(runs_pool, nonce_gen, library_locks, lint_engine);
         let result = match tool {
             CliTool::Info => server.info(mcp::Parameters(InfoParams {})).await,
             CliTool::Inspect { namepath } => {

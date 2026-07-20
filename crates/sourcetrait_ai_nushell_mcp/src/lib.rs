@@ -69,7 +69,7 @@ pub(crate) use crate::{
     server::{
         blocked::shadow_host_fatal_decls,
         cache::{BASE_DIRS, BODY_FILE, CacheKind, cache_dir, data_base_dir, run_body_file},
-        embed::{build_base, eval_stateless},
+        embed::{InteractEngine, build_base, eval_stateless},
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         library::{
             LibraryInfo, LibraryLocks, ValidationResult, check_library,
@@ -202,7 +202,10 @@ pub(crate) mod tk {
         io::{AsyncReadExt, AsyncWriteExt},
         process::{Child, ChildStdin, ChildStdout, Command},
         spawn,
-        sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore, oneshot},
+        sync::{
+            Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore, oneshot,
+            mpsc::{UnboundedSender, unbounded_channel},
+        },
         time::{Duration as TkDuration, interval, timeout},
     };
 }

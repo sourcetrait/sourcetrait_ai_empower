@@ -83,7 +83,7 @@ pub struct NuSh {
     // worker / pool machinery in the deletion slice.
     #[allow(dead_code)]
     pub(crate) runs_pool: Arc<Pool>,
-    pub(crate) interact_worker: Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
+    pub(crate) interact_engine: Arc<tk::AsyncMutex<Option<InteractEngine>>>,
     /// The in-process stateless engine base - each eval clones it onto a
     /// generously-stacked blocking thread (replaces the worker pool).
     pub(crate) base: Arc<nu::EngineState>,
@@ -120,7 +120,6 @@ pub(crate) enum InFlightKind {
 impl NuSh {
     pub(crate) fn new(
         runs_pool: Arc<Pool>,
-        interact_worker: Option<WorkerHandle>,
         nonce_gen: Arc<NonceGen>,
         library_locks: Arc<LibraryLocks>,
         lint_engine: Arc<ParseEngine>,
@@ -133,7 +132,7 @@ impl NuSh {
         let eval_semaphore = Arc::new(tk::Semaphore::new(worker_pool_cap()));
         Self {
             runs_pool,
-            interact_worker: Arc::new(tk::AsyncMutex::new(interact_worker)),
+            interact_engine: Arc::new(tk::AsyncMutex::new(None)),
             base,
             env_jobs,
             eval_semaphore,
@@ -256,7 +255,8 @@ pub(crate) async fn dispatch_pooled(
 }
 
 pub(crate) async fn dispatch_interact(
-    interact: &Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
+    interact: &Arc<tk::AsyncMutex<Option<InteractEngine>>>,
+    env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     nonce: Nonce,
     source: String,
@@ -272,28 +272,25 @@ pub(crate) async fn dispatch_interact(
         },
         nonce: None,
     })?;
-    let mut worker_lock = interact.lock().await;
-    if worker_lock.is_none() {
-        let spawned = WorkerHandle::spawn(Mode::Stateful)
-            .await
-            .map_err(|e| DispatchError {
-                error: Error::WorkerDispatch {
-                    reason: format!("interact respawn: {e}"),
-                },
-                nonce: None,
-            })?;
-        *worker_lock = Some(spawned);
-    }
-    let pid = worker_lock
-        .as_ref()
-        .expect("interact handle present after spawn")
-        .pid();
+    // Lazily spawn the persistent interact engine (a dedicated 64 MB thread owning
+    // the stateful EngineState), then clone the cheap handle out so the eval does
+    // not hold the guard - the engine thread serializes calls itself.
+    let engine = {
+        let mut guard = interact.lock().await;
+        if guard.is_none() {
+            *guard = Some(InteractEngine::spawn(env_jobs.clone()));
+        }
+        guard
+            .as_ref()
+            .expect("interact engine present after spawn")
+            .clone()
+    };
     register_in_flight(
         in_flight,
         nonce_str.clone(),
         "interact",
         args_json,
-        pid,
+        process::id(),
         InFlightKind::Interact,
     )
     .await;
@@ -302,46 +299,23 @@ pub(crate) async fn dispatch_interact(
         key: nonce_str,
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-    let handle = worker_lock
-        .as_mut()
-        .expect("interact handle present after spawn");
-    let send_fut = handle.send_request(log_dir, source);
-    let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), send_fut).await;
-    let response = match timed {
-        Ok(Ok(resp)) => resp,
-        Ok(Err(e)) => {
-            *worker_lock = None;
-            return Err(DispatchError {
-                error: Error::WorkerDispatch {
-                    reason: e.to_string(),
-                },
-                nonce: Some(nonce),
-            });
-        }
-        Err(_) => {
-            kill_worker_pid(pid);
-            *worker_lock = None;
-            return Err(DispatchError {
-                error: Error::WorkerTimeout {
-                    timeout_ms: effective_timeout,
-                },
-                nonce: Some(nonce),
-            });
-        }
-    };
-    drop(worker_lock);
-    if !response.ok {
-        return Err(DispatchError {
-            error: Error::WorkerReturnedError {
-                reason: response
-                    .error
-                    .unwrap_or_else(|| "worker returned ok=false with no error".to_string()),
+    let eval_fut = engine.eval(log_dir, source);
+    let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
+    match timed {
+        Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
+        Ok(Err(reason)) => Err(DispatchError {
+            error: Error::WorkerReturnedError { reason },
+            nonce: Some(nonce),
+        }),
+        // Phase 1 (host-unsafe intermediate): the timeout returns but the interact
+        // thread runs its eval to completion - no cancellation yet (Phase 2).
+        Err(_) => Err(DispatchError {
+            error: Error::WorkerTimeout {
+                timeout_ms: effective_timeout,
             },
             nonce: Some(nonce),
-        });
+        }),
     }
-    let result: json::Value = msgpack::from_slice(&response.value).unwrap_or(json::Value::Null);
-    Ok(DispatchOutcome { nonce, result })
 }
 
 async fn register_in_flight(

@@ -170,3 +170,71 @@ pub(crate) async fn eval_stateless(
         Err(_) => Err("eval thread dropped without result".to_string()),
     }
 }
+
+/// The persistent stateful interact engine: a dedicated long-lived thread owning
+/// one `EngineState` (build_base Stateful, with the plugin-admin family), fed eval
+/// requests over a channel and processing them serially. Replaces the stateful
+/// worker PROCESS - env/cd persist across calls via merge_env; the thread carries
+/// the same generous stack as the stateless executor (P0.7). A caught eval panic
+/// is reported and the loop continues (Phase 4 adds engine rebuild-on-panic/poison).
+#[derive(Clone)]
+pub(crate) struct InteractEngine {
+    tx: tk::UnboundedSender<InteractRequest>,
+}
+
+struct InteractRequest {
+    log_dir: std::path::PathBuf,
+    source: String,
+    respond: tk::oneshot::Sender<Result<json::Value, String>>,
+}
+
+impl InteractEngine {
+    /// Spawn the interact engine thread, injecting the host-owned environment-wide
+    /// jobs table into its persistent engine (P0.8: run() + interact share one
+    /// `env_jobs`, so a bg `job spawn` is visible/killable across both).
+    pub(crate) fn spawn(env_jobs: Arc<std::sync::Mutex<nu::Jobs>>) -> Self {
+        let (tx, mut rx) = tk::unbounded_channel::<InteractRequest>();
+        // If the thread fails to spawn (effectively impossible), `rx` drops with the
+        // closure and every eval() surfaces the closed channel as an error.
+        let _ = std::thread::Builder::new()
+            .stack_size(EVAL_STACK_SIZE)
+            .name("nu-interact".to_string())
+            .spawn(move || {
+                let mut engine = build_base(Mode::Stateful);
+                engine.jobs = env_jobs;
+                while let Some(req) = rx.blocking_recv() {
+                    let outcome = catch_unwind(AssertUnwindSafe(|| {
+                        eval_in_process(&mut engine, &req.log_dir, &req.source, true)
+                    }));
+                    let result = match outcome {
+                        Ok(r) => r,
+                        Err(_) => Err("panic during interact eval (caught)".to_string()),
+                    };
+                    let _ = req.respond.send(result);
+                }
+            });
+        Self { tx }
+    }
+
+    /// Submit one interact eval to the engine thread and await its result. The
+    /// thread serializes calls, so the persistent session state stays consistent
+    /// without holding a lock across the eval.
+    pub(crate) async fn eval(
+        &self,
+        log_dir: std::path::PathBuf,
+        source: String,
+    ) -> Result<json::Value, String> {
+        let (respond, rx) = tk::oneshot::channel();
+        self.tx
+            .send(InteractRequest {
+                log_dir,
+                source,
+                respond,
+            })
+            .map_err(|_| "interact engine thread is gone".to_string())?;
+        match rx.await {
+            Ok(r) => r,
+            Err(_) => Err("interact engine dropped the response".to_string()),
+        }
+    }
+}

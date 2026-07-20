@@ -8,18 +8,9 @@ pub(crate) async fn run_server() {
         1,
         tk::TkDuration::from_secs(60),
     );
-    let interact_worker = WorkerHandle::spawn(Mode::Stateful)
-        .await
-        .expect("spawn interact worker");
     let nonce_gen = Arc::new(NonceGen::new());
     let lint_engine = Arc::new(ParseEngine::new_full());
-    let server = NuSh::new(
-        runs_pool,
-        Some(interact_worker),
-        nonce_gen,
-        library_locks,
-        lint_engine,
-    );
+    let server = NuSh::new(runs_pool, nonce_gen, library_locks, lint_engine);
     let service = server.serve(mcp::stdio()).await.expect("serve stdio");
     service.waiting().await.expect("service waiting");
 }

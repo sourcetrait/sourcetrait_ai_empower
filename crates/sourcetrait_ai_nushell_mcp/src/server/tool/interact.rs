@@ -46,7 +46,8 @@ impl NuSh {
         let args_json = serde_json::Value::Object(p.args.clone());
         let timeout_ms = p.timeout_ms;
         let outcome = match dispatch_interact(
-            &self.interact_worker,
+            &self.interact_engine,
+            &self.env_jobs,
             &self.in_flight,
             nonce,
             source,

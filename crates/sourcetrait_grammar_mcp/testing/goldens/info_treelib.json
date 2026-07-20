@@ -1,0 +1,67 @@
+{
+  "name": "sourcetrait/treelib",
+  "functions": [],
+  "summary": "",
+  "modules": [
+    {
+      "name": "alpha",
+      "summary": "",
+      "submodules": [
+        {
+          "name": "beta",
+          "summary": "",
+          "submodules": [],
+          "functions": [
+            {
+              "name": "b1",
+              "summary": "",
+              "args_schema": {
+                "x": "int",
+                "t": {
+                  "y": "string",
+                  "n": [
+                    "int"
+                  ]
+                }
+              },
+              "result_schema": {
+                "out": {
+                  "y": "string"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "name": "a1",
+          "summary": "",
+          "args_schema": {
+            "s": "string"
+          },
+          "result_schema": {
+            "len": "int"
+          }
+        }
+      ]
+    },
+    {
+      "name": "solo",
+      "summary": "",
+      "submodules": [],
+      "functions": [
+        {
+          "name": "rootfn",
+          "summary": "",
+          "args_schema": {
+            "x": "int"
+          },
+          "result_schema": {
+            "out": "int"
+          }
+        }
+      ]
+    }
+  ]
+}

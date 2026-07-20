@@ -1,4 +1,4 @@
-SourceTrait AI Empower 
+SourceTrait Grammar
 ================================================================================
 [![License Badge]][License] [![Linkable Badge]][Linkable] [![AI Badge]][AI]
 
@@ -8,26 +8,20 @@ SourceTrait AI Empower
 Crates
 --------------------------------------------------------------------------------
 
-### [Nushell MCP](./crates/sourcetrait_ai_nushell_mcp)
-[![Nushell MCP Crate Badge]][Nushell MCP Crate]
+### [Grammar MCP](./crates/sourcetrait_grammar_mcp)
+[![Grammar MCP Crate Badge]][Grammar MCP Crate]
 
-*Nushell engine MCP server*
+*MCP server*
 
-### [Nu Plugin](./crates/sourcetrait_ai_nu_plugin_empower)
+### [Grimoire](./crates/sourcetrait_nu_plugin_grimoire)
 [![Nu Plugin Crate Badge]][Nu Plugin Crate]
 
-*Nu commands*
+*Nu Plugin*
 
-### [Library](./crates/sourcetrait_ai_lib_empower)
+### [Library](./crates/sourcetrait_grammar_lib)
 [![Library Crate Badge]][Library Crate]
 
 *Common library for SourceTrait AI Empower*
-
-### [Know Rust](./crates/sourcetrait_ai_know_rust)
-[![Know Rust Crate Badge]][Know Rust Crate]
-
-*Builds deep-read knowledge skills for Rust projects*
-
 
 AI
 --------------------------------------------------------------------------------
@@ -83,14 +77,12 @@ External dependency licenses are listed in:
 [AI]: #AI
 [AI Badge]: https://img.shields.io/badge/ai-authored-green.svg
 
-[Nushell MCP Crate]: https://crates.io/crates/sourcetrait_ai_nushell_mcp
-[Nushell MCP Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_nushell_mcp.svg
+[Grammar MCP Crate]: https://crates.io/crates/sourcetrait_grammar_mcp
+[Grammar MCP Crate Badge]: https://img.shields.io/crates/v/sourcetrait_grammar_mcp.svg
 
-[Nu Plugin Crate]: https://crates.io/crates/sourcetrait_ai_nu_plugin_empower
-[Nu Plugin Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_nu_plugin_empower.svg
+[Nu Plugin Crate]: https://crates.io/crates/sourcetrait_nu_plugin_grimoire
+[Nu Plugin Crate Badge]: https://img.shields.io/crates/v/sourcetrait_nu_plugin_grimoire.svg
 
-[Library Crate]: https://crates.io/crates/sourcetrait_ai_lib_empower
-[Library Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_lib_empower.svg
+[Library Crate]: https://crates.io/crates/sourcetrait_grammar_lib
+[Library Crate Badge]: https://img.shields.io/crates/v/sourcetrait_grammar_lib.svg
 
-[Know Rust Crate]: https://crates.io/crates/sourcetrait_ai_know_rust
-[Know Rust Crate Badge]: https://img.shields.io/crates/v/sourcetrait_ai_know_rust.svg

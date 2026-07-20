@@ -205,6 +205,19 @@ impl TestServer {
         };
         Self::envelope(self.rt.block_on(self.nush.kill(mcp::Parameters(p))))
     }
+
+    /// The in-process store's libraries git repo dir (the `(test, default)`
+    /// coordinate under the per-binary temp XDG data root), for tests that
+    /// inspect on-disk store artifacts (git-tracked paths, the canonical tree).
+    pub fn libraries_dir(&self) -> std::path::PathBuf {
+        crate::libraries_dir()
+    }
+
+    /// The canonical committed dir for a library by its compound `author/name`
+    /// (under `libraries/rig/`), for on-disk carried-file / meta assertions.
+    pub fn library_dir(&self, name: &str) -> std::path::PathBuf {
+        crate::libraries_dir().join("rig").join(name)
+    }
 }
 
 // ---- envelope readers (shared by the in-process integration tests) ----
@@ -243,6 +256,23 @@ pub fn error_kinds(env: &json::Value) -> Vec<String> {
 
 pub fn has_kind(env: &json::Value, kind: &str) -> bool {
     error_kinds(env).iter().any(|k| k == kind)
+}
+
+/// Every ERROR-bucket diagnostic `message` in the envelope (warnings excluded).
+pub fn error_messages(env: &json::Value) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(arr) = env
+        .get("error")
+        .and_then(|e| e.get("errors"))
+        .and_then(|v| v.as_array())
+    {
+        for d in arr {
+            if let Some(m) = d.get("message").and_then(|m| m.as_str()) {
+                out.push(m.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// The whole error object rendered to a string (for assertion messages).

@@ -4,10 +4,8 @@ use std::process::{Command, Output};
 
 fn cli(args: &[&str], data: &Path, cache: &Path) -> Output {
     let host_bin = env!("CARGO_BIN_EXE_nushell_mcp");
-    let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
     Command::new(host_bin)
         .args(args)
-        .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
         .env("XDG_DATA_HOME", data)
         .env("XDG_CACHE_HOME", cache)
         .output()

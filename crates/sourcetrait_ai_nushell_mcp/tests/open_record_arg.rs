@@ -19,12 +19,10 @@ struct Host {
 impl Host {
     fn spawn() -> Self {
         let host_bin = env!("CARGO_BIN_EXE_nushell_mcp");
-        let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
         let data_dir = tempfile::tempdir().expect("data tempdir");
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
         let source_root = tempfile::tempdir().expect("source tempdir");
         let mut child = Command::new(host_bin)
-            .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
             .env("XDG_CACHE_HOME", cache_dir.path())
             .stdin(Stdio::piped())

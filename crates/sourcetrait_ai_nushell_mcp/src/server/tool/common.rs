@@ -79,10 +79,6 @@ fn write_run_body(
 }
 
 pub struct NuSh {
-    // Retained but unused after the stateless in-process cutover; removed with the
-    // worker / pool machinery in the deletion slice.
-    #[allow(dead_code)]
-    pub(crate) runs_pool: Arc<Pool>,
     pub(crate) interact_engine: Arc<tk::AsyncMutex<Option<InteractEngine>>>,
     /// The in-process stateless engine base - each eval clones it onto a
     /// generously-stacked blocking thread (replaces the worker pool).
@@ -106,7 +102,6 @@ pub(crate) struct InFlightEntry {
     pub tool: &'static str,
     pub started_at: u64,
     pub args: serde_json::Value,
-    pub pid: u32,
     pub kind: InFlightKind,
 }
 
@@ -119,7 +114,6 @@ pub(crate) enum InFlightKind {
 
 impl NuSh {
     pub(crate) fn new(
-        runs_pool: Arc<Pool>,
         nonce_gen: Arc<NonceGen>,
         library_locks: Arc<LibraryLocks>,
         lint_engine: Arc<ParseEngine>,
@@ -131,7 +125,6 @@ impl NuSh {
         let env_jobs = Arc::new(std::sync::Mutex::new(nu::Jobs::default()));
         let eval_semaphore = Arc::new(tk::Semaphore::new(worker_pool_cap()));
         Self {
-            runs_pool,
             interact_engine: Arc::new(tk::AsyncMutex::new(None)),
             base,
             env_jobs,
@@ -225,7 +218,6 @@ pub(crate) async fn dispatch_pooled(
         nonce_str.clone(),
         tool_name,
         args_json,
-        process::id(),
         kind,
     )
     .await;
@@ -290,7 +282,6 @@ pub(crate) async fn dispatch_interact(
         nonce_str.clone(),
         "interact",
         args_json,
-        process::id(),
         InFlightKind::Interact,
     )
     .await;
@@ -323,7 +314,6 @@ async fn register_in_flight(
     nonce_str: String,
     tool_name: &'static str,
     args_json: serde_json::Value,
-    pid: u32,
     kind: InFlightKind,
 ) {
     let mut map = in_flight.lock().await;
@@ -333,7 +323,6 @@ async fn register_in_flight(
             tool: tool_name,
             started_at: now_millis(),
             args: args_json,
-            pid,
             kind,
         },
     );

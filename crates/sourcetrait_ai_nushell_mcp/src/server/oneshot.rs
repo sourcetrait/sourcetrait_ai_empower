@@ -3,15 +3,9 @@ use crate::*;
 pub(crate) async fn run_oneshot(tool: CliTool) -> process::ExitCode {
     let exit_code = async move {
         let library_locks = ensure_substrate().await.expect("ensure_substrate");
-        let runs_pool = Pool::new(
-            Mode::Stateless,
-            worker_pool_cap(),
-            1,
-            tk::TkDuration::from_secs(60),
-        );
         let nonce_gen = Arc::new(NonceGen::new());
         let lint_engine = Arc::new(ParseEngine::new_full());
-        let server = NuSh::new(runs_pool, nonce_gen, library_locks, lint_engine);
+        let server = NuSh::new(nonce_gen, library_locks, lint_engine);
         let result = match tool {
             CliTool::Info => server.info(mcp::Parameters(InfoParams {})).await,
             CliTool::Inspect { namepath } => {

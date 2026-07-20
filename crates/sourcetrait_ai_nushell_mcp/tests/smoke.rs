@@ -17,11 +17,9 @@ struct Host {
 impl Host {
     fn spawn() -> Self {
         let host_bin = env!("CARGO_BIN_EXE_nushell_mcp");
-        let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
         let data_dir = tempfile::tempdir().expect("data tempdir");
         let cache_dir = tempfile::tempdir().expect("cache tempdir");
         let mut child = Command::new(host_bin)
-            .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data_dir.path())
             .env("XDG_CACHE_HOME", cache_dir.path())
             .stdin(Stdio::piped())
@@ -205,7 +203,7 @@ fn smoke_5_external_command() {
 }
 
 #[test]
-fn smoke_6_worker_death_via_exit() {
+fn smoke_6_exit_decl_is_unreachable() {
     let mut host = Host::spawn();
     let args = serde_json::json!({
         "args_schema": {"noop": "int"},
@@ -214,14 +212,17 @@ fn smoke_6_worker_death_via_exit() {
         "body": "{ out: (exit 1; 0) }",
     });
     let resp = host.run(args);
-    let has_error_path = resp
+    let err = resp
         .get("result")
         .and_then(|r| r.get("structuredContent"))
         .and_then(|sc| sc.get("error"))
-        .is_some();
+        .unwrap_or_else(|| {
+            panic!("expected `exit` to be a disabled decl, not a host-fatal process exit; got {resp}")
+        });
+    let msg = err["errors"][0]["message"].as_str().unwrap_or_default();
     assert!(
-        has_error_path,
-        "expected worker exit to surface as error; got {resp}",
+        msg.contains("disabled"),
+        "`exit` must be shadowed by an erroring decl in-process (no host-fatal exit); got {err}",
     );
 }
 

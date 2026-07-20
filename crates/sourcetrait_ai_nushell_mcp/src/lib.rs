@@ -9,7 +9,6 @@ pub(crate) mod server {
     pub(crate) mod nonce;
     pub(crate) mod oneshot;
     pub(crate) mod parse_engine;
-    pub(crate) mod pool;
     pub(crate) mod run;
     pub(crate) mod schema;
     pub(crate) mod tool {
@@ -28,7 +27,6 @@ pub(crate) mod server {
         pub(crate) mod rerun;
         pub(crate) mod run;
     }
-    pub(crate) mod worker_handle;
     #[cfg(test)]
     mod tests {
         mod lint;
@@ -36,21 +34,12 @@ pub(crate) mod server {
         mod schema;
     }
 }
-pub(crate) mod worker {
-    pub(crate) mod base;
-    pub(crate) mod request_loop;
-    pub(crate) mod run;
-}
-pub(crate) mod ipc {
-    pub(crate) mod framing;
-}
 pub(crate) mod cli;
 pub(crate) mod config;
 pub(crate) mod engine;
 pub(crate) mod mode;
 pub(crate) mod plugins;
 pub(crate) mod template;
-pub(crate) mod wire;
 
 #[cfg(test)]
 mod tests {
@@ -58,10 +47,9 @@ mod tests {
 }
 
 pub(crate) use crate::{
-    cli::{CliTool, parse_worker_mode},
+    cli::CliTool,
     config::{CONFIG, Config, DeniableTool, DenySet, config},
     engine::base_context,
-    ipc::framing::{read_frame, read_frame_async, write_frame, write_frame_async},
     mcp::ServiceExt,
     mode::Mode,
     nu::FromValue,
@@ -85,7 +73,6 @@ pub(crate) use crate::{
         parse_engine::{
             ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body, wrap_as_module,
         },
-        pool::Pool,
         run::{run_server, worker_pool_cap},
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},
         tool::{
@@ -104,18 +91,14 @@ pub(crate) use crate::{
             processes::ProcessesParams,
             rerun::RerunParams,
         },
-        worker_handle::{WorkerHandle, kill_worker_pid},
     },
     template::{build_call_source, build_interact_source, build_run_source},
-    wire::{Hello, PROTOCOL_VERSION, RunRequest, RunResponse},
-    worker::base::WarmBase,
 };
 
 pub(crate) use std::{
     collections::HashMap,
     fmt::Display,
     fs, io,
-    io::{Read, Write},
     hash::{Hash, Hasher},
     ops::ControlFlow,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -168,21 +151,12 @@ pub(crate) mod nu {
     pub(crate) use nuon::{ToNuonConfig, from_nuon, to_nuon};
 }
 
-pub(crate) mod sys {
-    pub(crate) use nix::sys::signal::{Signal, kill};
-    pub(crate) use nix::unistd::{Pid, setsid};
-}
-
 pub(crate) mod ser {
     pub(crate) use ::serde::{Deserialize, Serialize};
 }
 
 pub(crate) mod schema {
     pub(crate) use schemars::JsonSchema;
-}
-
-pub(crate) mod msgpack {
-    pub(crate) use rmp_serde::{from_slice, to_vec_named};
 }
 
 pub(crate) mod mcp {
@@ -199,14 +173,12 @@ pub(crate) mod mcp {
 
 pub(crate) mod tk {
     pub(crate) use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        process::{Child, ChildStdin, ChildStdout, Command},
         spawn,
         sync::{
             Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore, oneshot,
             mpsc::{UnboundedSender, unbounded_channel},
         },
-        time::{Duration as TkDuration, interval, timeout},
+        time::{Duration as TkDuration, timeout},
     };
 }
 
@@ -214,4 +186,4 @@ pub(crate) mod json {
     pub(crate) use serde_json::{Value, from_slice, to_value, to_vec};
 }
 
-pub use crate::{cli::host_main, worker::run::worker_main};
+pub use crate::cli::host_main;

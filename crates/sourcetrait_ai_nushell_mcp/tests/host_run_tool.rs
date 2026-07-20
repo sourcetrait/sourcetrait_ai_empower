@@ -38,13 +38,11 @@ fn read_response(
 #[test]
 fn host_tools_list_and_run_stub() {
     let host_bin = env!("CARGO_BIN_EXE_nushell_mcp");
-    let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
 
     let data_dir = tempfile::tempdir().expect("data tempdir");
     let cache_dir = tempfile::tempdir().expect("cache tempdir");
     let host_spawn_start = Instant::now();
     let mut host = Command::new(host_bin)
-        .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
         .env("XDG_DATA_HOME", data_dir.path())
         .env("XDG_CACHE_HOME", cache_dir.path())
         .stdin(Stdio::piped())

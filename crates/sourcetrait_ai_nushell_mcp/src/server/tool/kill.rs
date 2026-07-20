@@ -16,12 +16,11 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<KillParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let map = self.in_flight.lock().await;
-        if let Some(entry) = map.get(&p.nonce) {
-            let pid = entry.pid;
-            drop(map);
-            kill_worker_pid(pid);
-        }
+        // Phase 1 (in-process, pre-cancellation): no per-eval process exists to
+        // SIGKILL, so kill is a race-safe no-op - the in-flight entry is removed by
+        // its own dispatch cleanup guard. Phase 2 re-points this to trigger the
+        // eval's Signals for real cooperative cancellation.
+        let _ = &p.nonce;
         Ok(mcp::CallToolResult::default())
     }
 }

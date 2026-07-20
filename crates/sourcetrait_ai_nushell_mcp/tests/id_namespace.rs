@@ -14,11 +14,9 @@ struct Host {
 impl Host {
     fn spawn_with(args: &[&str], envs: &[(&str, &str)], data: &Path, cache: &Path) -> Self {
         let host_bin = env!("CARGO_BIN_EXE_nushell_mcp");
-        let worker_bin = env!("CARGO_BIN_EXE_nushell_mcp_worker");
         let mut command = Command::new(host_bin);
         command
             .args(args)
-            .env("NUSHELL_MCP_WORKER_PATH", worker_bin)
             .env("XDG_DATA_HOME", data)
             .env("XDG_CACHE_HOME", cache)
             .stdin(Stdio::piped())

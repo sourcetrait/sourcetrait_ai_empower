@@ -46,6 +46,20 @@ fn seed_env(engine_state: &mut nu::EngineState) {
         }
         engine_state.add_env_var(key, nu::Value::string(val, nu::Span::unknown()));
     }
+    // The EQUIP_* trio a body reads ambiently (who-am-I / where-is-my-work). The
+    // worker era carried these as the worker's spawn env; in-process there is no
+    // worker, so set them directly from CONFIG - they are not in the host's env.
+    let cfg = config();
+    let span = nu::Span::unknown();
+    engine_state.add_env_var("EQUIP_ID".to_string(), nu::Value::string(cfg.id.clone(), span));
+    engine_state.add_env_var(
+        "EQUIP_NAMESPACE".to_string(),
+        nu::Value::string(cfg.namespace.clone(), span),
+    );
+    engine_state.add_env_var(
+        "EQUIP_WORK_DIR".to_string(),
+        nu::Value::string(cfg.work_dir.to_string_lossy().into_owned(), span),
+    );
 }
 
 /// Register the canonical libraries dir as the parse-time `$NU_LIB_DIRS` const, so

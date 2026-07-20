@@ -1,0 +1,32 @@
+[package]
+name = "sourcetrait_grammar_know_rust"
+version = "0.0.0-40"
+edition = "2024"
+description = "Rust source scanner for know_rust - extracts type-identifier usages (fn signatures, struct fields, generic bounds, method refs) plus per-file lex+structure facts (items, traits, impls, derives, macros, uses, mods, seams) for the know_rust orientation pipeline"
+authors = ["SourceTrait <development@sourcetrait.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "grammar", "rust", "ast", "scanner"]
+
+[[bin]]
+name = "know_rust"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+indexmap = { workspace = true, features = ["serde"] }
+liquid.workspace = true
+proc-macro2.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+snafu.workspace = true
+syn.workspace = true
+toml.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+toml.workspace = true

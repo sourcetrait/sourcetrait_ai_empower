@@ -1,0 +1,29 @@
+[package]
+name = "sourcetrait_grammar_claudeline"
+version = "0.0.0-1"
+edition = "2024"
+description = "Claude Code statusline renderer + session payload mirror"
+authors = ["SourceTrait <development@sourcetrait.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "grammar", "claude", "statusline"]
+
+[[bin]]
+name = "claudeline"
+path = "src/main.rs"
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+snafu.workspace = true
+sourcetrait_grammar_lib.workspace = true
+xxhash-rust.workspace = true
+
+[dev-dependencies]
+sourcetrait_testing.workspace = true

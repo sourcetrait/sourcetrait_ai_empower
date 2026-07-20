@@ -1,0 +1,30 @@
+[package]
+name = "sourcetrait_grammar_arxivmd"
+version = "0.0.0-1"
+edition = "2024"
+description = "Fetch an arXiv paper and convert it to markdown (arxivmd)"
+authors = ["SourceTrait <development@sourcetrait.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "grammar", "arxiv", "markdown"]
+
+[[bin]]
+name = "arxivmd"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+# nu-engine (default = ["os"]) is pulled in so the `os` feature unifies ON for
+# nuon's nu-engine, matching nu-protocol's default `os` (else E0063 - the field
+# mismatch between nu-protocol/os and a feature-lean nu-engine).
+nu-engine.workspace = true
+nu-protocol.workspace = true
+nuon.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+snafu.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]

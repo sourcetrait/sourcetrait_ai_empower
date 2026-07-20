@@ -1,0 +1,22 @@
+[package]
+name = "sourcetrait_grammar_puremd_mdbook"
+version = "0.0.0-1"
+edition = "2024"
+description = "mdBook preprocessor: reduce chapters to pure markdown (strip HTML, keep bare tables)"
+authors = ["SourceTrait <development@sourcetrait.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "grammar", "mdbook", "preprocessor"]
+
+[[bin]]
+name = "mdbook-puremd"
+path = "src/main.rs"
+
+[dependencies]
+mdbook-preprocessor.workspace = true
+pulldown-cmark.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]

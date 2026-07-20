@@ -22,19 +22,25 @@ impl NuSh {
         // the entry). A wedge (a pure-Rust loop that never polls Signals) cannot be
         // reached - the accepted residual; external children are reaped by the
         // teardown.
-        let pids = {
+        let found = {
             let map = self.in_flight.lock().await;
             match map.get(&p.nonce) {
                 Some(entry) => {
                     entry.cancel.store(true, Ordering::SeqCst);
-                    entry.tracker.collect_pids()
+                    Some(entry.tracker.collect_pids())
                 }
-                None => Vec::new(),
+                None => None,
             }
         };
-        // Reap the external process tree outside the registry lock (blocking /proc
-        // walk + SIGKILL); no-op for an empty set.
-        tree_kill(&pids);
+        // For a real in-flight call the agent explicitly killed, escalate outside
+        // the registry lock (blocking /proc walk + SIGKILL): reap its external tree
+        // AND kill plugin subprocesses to unblock a plugin-wedged call (a plugin
+        // wedge ignores the cancel Signals). An unknown / finished nonce is a pure
+        // no-op.
+        if let Some(pids) = found {
+            tree_kill(&pids);
+            kill_plugin_subprocesses();
+        }
         Ok(mcp::CallToolResult::default())
     }
 }

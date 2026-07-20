@@ -387,4 +387,24 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
+/// Clean-shutdown teardown: cancel every still-in-flight eval and reap its
+/// external process tree + the plugin subprocesses. Called after the MCP service
+/// stops (the client closed stdin), so a disconnect mid-eval never leaks a
+/// process tree.
+pub(crate) async fn teardown_all_in_flight(
+    in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
+) {
+    let pids: Vec<u32> = {
+        let map = in_flight.lock().await;
+        let mut all = Vec::new();
+        for entry in map.values() {
+            entry.cancel.store(true, Ordering::SeqCst);
+            all.extend(entry.tracker.collect_pids());
+        }
+        all
+    };
+    tree_kill(&pids);
+    kill_plugin_subprocesses();
+}
+
 

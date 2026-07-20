@@ -78,13 +78,16 @@ pub(crate) use crate::{
         },
         run::{eval_concurrency_cap, run_server},
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},
-        teardown::{install_child_subreaper, make_tracker, tree_kill},
+        teardown::{
+            install_child_subreaper, kill_plugin_subprocesses, make_tracker, tree_kill,
+        },
         tool::{
             call::CallParams,
             commit::CommitParams,
             common::{
                 CachedRunBody, InFlightKind, NuSh, RunParams, convert_schemas,
                 dispatch_interact, dispatch_pooled, envelope_to_structured, lint_run_params,
+                teardown_all_in_flight,
             },
             info::InfoParams,
             inspect::InspectParams,

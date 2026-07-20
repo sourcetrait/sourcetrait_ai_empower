@@ -8,8 +8,12 @@ pub(crate) async fn run_server() {
     let nonce_gen = Arc::new(NonceGen::new());
     let lint_engine = Arc::new(ParseEngine::new_full());
     let server = NuSh::new(nonce_gen, library_locks, lint_engine);
+    let in_flight = server.in_flight.clone();
     let service = server.serve(mcp::stdio()).await.expect("serve stdio");
     service.waiting().await.expect("service waiting");
+    // Clean-shutdown teardown: the client closed stdin; cancel + reap any eval
+    // still in flight so a disconnect mid-eval leaks no process tree.
+    teardown_all_in_flight(&in_flight).await;
 }
 
 /// Max concurrent in-process evals. `available_parallelism / 2` (min 1): eval

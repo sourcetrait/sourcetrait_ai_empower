@@ -74,6 +74,49 @@ pub(crate) fn tree_kill(tracked: &[u32]) {
     }
 }
 
+/// SIGKILL the host's plugin subprocesses (direct children whose comm starts
+/// with `nu_plugin_`). Unblocks a plugin-WEDGED eval: a hung plugin ignores the
+/// cancel Signals and is not a tracked external, so killing its subprocess closes
+/// the plugin IPC pipe and the eval's plugin read returns an error. Plugins
+/// respawn lazily on next use. Broad by nature - nushell shares plugin
+/// subprocesses across evals - so it fires only on an explicit kill(nonce) + the
+/// shutdown sweep, never on an automatic timeout (the supervisor scopes that
+/// escalation, Phase 5).
+#[cfg(target_os = "linux")]
+pub(crate) fn kill_plugin_subprocesses() {
+    let me = std::process::id();
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
+        let (Some(lparen), Some(rparen)) = (stat.find('('), stat.rfind(')')) else {
+            continue;
+        };
+        let comm = &stat[lparen + 1..rparen];
+        let mut fields = stat[rparen + 1..].split_whitespace();
+        let _state = fields.next();
+        let Some(ppid) = fields.next().and_then(|p| p.parse::<u32>().ok()) else {
+            continue;
+        };
+        if ppid == me && comm.starts_with("nu_plugin_") {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn kill_plugin_subprocesses() {}
+
 /// Every descendant pid of `root`, read from /proc: parse each `/proc/<pid>/stat`
 /// for its ppid (the field after the LAST ')', since the comm field can itself
 /// contain spaces / parens), build the ppid map, then BFS out from `root`.

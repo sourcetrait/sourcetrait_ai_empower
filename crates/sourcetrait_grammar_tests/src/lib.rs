@@ -7,6 +7,7 @@
 //! sibling of `deps/`), so it must be built first:
 //! `cargo build -p sourcetrait_grammar_mcp` (or `cargo test --workspace`).
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -60,6 +61,10 @@ pub struct Host {
     next_id: u64,
     data_home: PathBuf,
     cache_home: PathBuf,
+    /// Responses read while waiting for a different id, kept by id so a caller can
+    /// fire N concurrent requests and read all N back (read_id would otherwise
+    /// discard any response whose id it is not currently waiting for).
+    pending: HashMap<u64, Value>,
 }
 
 impl Drop for Host {
@@ -106,6 +111,7 @@ impl Host {
             next_id: 1,
             data_home,
             cache_home,
+            pending: HashMap::new(),
         };
         host.initialize();
         host
@@ -135,6 +141,9 @@ impl Host {
     }
 
     pub fn read_id(&mut self, expected_id: u64) -> Value {
+        if let Some(msg) = self.pending.remove(&expected_id) {
+            return msg;
+        }
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if Instant::now() >= deadline {
@@ -151,8 +160,16 @@ impl Host {
             }
             let msg: Value = serde_json::from_str(trimmed)
                 .unwrap_or_else(|e| panic!("parse JSON: {e} from {trimmed:?}"));
-            if msg.get("id").and_then(|v| v.as_u64()) == Some(expected_id) {
-                return msg;
+            match msg.get("id").and_then(|v| v.as_u64()) {
+                Some(id) if id == expected_id => return msg,
+                // A response for another in-flight request (pipelined / concurrent
+                // reads): buffer it by id rather than drop it, so a later
+                // read_id(that_id) finds it.
+                Some(id) => {
+                    self.pending.insert(id, msg);
+                }
+                // A notification carries no id; none arrive post-init - skip.
+                None => {}
             }
         }
     }

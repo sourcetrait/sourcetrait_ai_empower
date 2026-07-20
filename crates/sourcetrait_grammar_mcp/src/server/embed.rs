@@ -38,6 +38,8 @@ pub(crate) fn build_base(mode: Mode) -> nu::EngineState {
     engine_state.generate_nu_constant();
     seed_env(&mut engine_state);
     seed_lib_dirs(&mut engine_state);
+    #[cfg(feature = "test-hooks")]
+    crate::server::test_hooks::register_test_hooks(&mut engine_state);
     engine_state
 }
 

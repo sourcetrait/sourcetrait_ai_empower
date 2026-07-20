@@ -14,6 +14,11 @@ keywords = ["sourcetrait", "grammar", "nushell", "mcp"]
 name = "grammar_mcp"
 path = "src/main.rs"
 
+[features]
+# Test-only engine decls (__test_hang / __test_panic) for the lifecycle system
+# tests; never enabled in a shipped build.
+test-hooks = []
+
 [dependencies]
 clap.workspace = true
 directories.workspace = true

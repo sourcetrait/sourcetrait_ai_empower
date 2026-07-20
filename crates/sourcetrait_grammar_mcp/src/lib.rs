@@ -15,6 +15,8 @@ pub(crate) mod server {
     pub(crate) mod schema;
     pub(crate) mod teardown;
     pub(crate) mod watchdog;
+    #[cfg(feature = "test-hooks")]
+    pub(crate) mod test_hooks;
     pub(crate) mod tool {
         pub(crate) mod call;
         pub(crate) mod commit;

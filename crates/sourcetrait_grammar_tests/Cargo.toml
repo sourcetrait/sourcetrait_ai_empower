@@ -10,6 +10,13 @@ homepage = "https://sourcetrait.com"
 categories = []
 keywords = ["sourcetrait", "grammar", "testing"]
 
+[features]
+# The lifecycle tests need the mcp binary built with ITS own `test-hooks` feature
+# (__test_hang / __test_panic). Run both together:
+#   cargo build -p sourcetrait_grammar_mcp --features test-hooks
+#   cargo test -p sourcetrait_grammar_tests --features test-hooks -- --test-threads=1
+test-hooks = []
+
 [dependencies]
 serde_json.workspace = true
 sourcetrait_testing.workspace = true

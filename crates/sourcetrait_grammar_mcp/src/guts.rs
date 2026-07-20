@@ -301,3 +301,69 @@ pub fn valid_function_source(args_schema: &str, result_schema: &str, body: &str)
         "export def main [args: record<{args_schema}>]: nothing -> record<{result_schema}> {{\n{body}\n}}\n",
     )
 }
+
+// ---- lint + template drivers (for the in-process lint / template integration tests) ----
+
+fn to_obj(v: json::Value) -> mcp::JsonObject {
+    match v {
+        json::Value::Object(m) => m,
+        json::Value::Null => mcp::JsonObject::new(),
+        other => panic!("expected a JSON object, got {other}"),
+    }
+}
+
+/// Lint an agent body with the given converted args positional type (as run() /
+/// interact() do), returning each Diagnostic as its wire JSON
+/// (`{kind, source: {path, position}, message}`). Builds a full-shell ParseEngine
+/// per call (the plugin-registry read + heavy engine build is why the lint tests
+/// are integration, not unit).
+pub fn lint_body(args_type: &str, body: &str) -> Vec<json::Value> {
+    let engine = ParseEngine::new_full();
+    crate::lint_body(&engine, args_type, body)
+        .iter()
+        .map(|d| json::to_value(d).expect("diagnostic serializes"))
+        .collect()
+}
+
+/// True if `src` parses clean (no parse errors) on a full-shell ParseEngine - the
+/// check the template tests apply to a rendered run/interact source string.
+pub fn parses_clean(src: &str) -> bool {
+    let engine = ParseEngine::new_full();
+    let mut ws = nu::StateWorkingSet::new(engine.engine_state());
+    let _ = nu::parse(&mut ws, Some("golden.nu"), src.as_bytes(), false);
+    ws.parse_errors.is_empty()
+}
+
+/// The synthesized run() source (server/template.rs) for the given converted
+/// positional types + args JSON.
+pub fn build_run_source(
+    args_type: &str,
+    result_type: &str,
+    args: json::Value,
+    body: &str,
+    nonce: &str,
+) -> String {
+    crate::build_run_source(args_type, result_type, &to_obj(args), body, nonce)
+}
+
+/// The synthesized call() source (the aliased, prefixed overlay of the target).
+pub fn build_call_source(
+    library: &str,
+    module_path: &str,
+    name: &str,
+    args: json::Value,
+    nonce: &str,
+) -> String {
+    crate::build_call_source(library, module_path, name, &to_obj(args), nonce)
+}
+
+/// The synthesized interact() source (the `def --env` subexpression).
+pub fn build_interact_source(
+    args_type: &str,
+    result_type: &str,
+    args: json::Value,
+    body: &str,
+    nonce: &str,
+) -> String {
+    crate::build_interact_source(args_type, result_type, &to_obj(args), body, nonce)
+}

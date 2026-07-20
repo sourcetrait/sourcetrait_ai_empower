@@ -34,7 +34,6 @@ pub(crate) mod server {
     #[cfg(test)]
     mod tests {
         mod emergency;
-        mod lint;
         mod namepath;
         mod schema;
         mod watchdog;
@@ -47,11 +46,6 @@ pub(crate) mod mode;
 pub(crate) mod plugins;
 pub(crate) mod template;
 pub mod guts;
-
-#[cfg(test)]
-mod tests {
-    mod template;
-}
 
 pub(crate) use crate::{
     cli::CliTool,

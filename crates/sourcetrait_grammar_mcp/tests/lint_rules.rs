@@ -1,28 +1,29 @@
+//! The body-lint AST walker's rules, driven directly through `guts::lint_body`.
+//! Integration (not unit): each call builds a full-shell `ParseEngine` (plugin
+//! registry read off disk), the resource caveat. `tests/body_lint.rs` covers the
+//! same lint at the run()/interact() integration boundary.
 
-use crate::*;
+use serde_json::{Value, json};
+use sourcetrait_grammar_mcp::guts::lint_body;
 
-fn engine() -> ParseEngine {
-    ParseEngine::new_full()
+fn lint(body: &str) -> Vec<Value> {
+    lint_body("record<noop: int>", body)
 }
 
-fn lint(body: &str) -> Vec<Diagnostic> {
-    lint_body(&engine(), "record<noop: int>", body)
+fn lint_args(args_schema: &str, body: &str) -> Vec<Value> {
+    lint_body(&format!("record<{args_schema}>"), body)
 }
 
-fn lint_args(args_schema: &str, body: &str) -> Vec<Diagnostic> {
-    lint_body(&engine(), &format!("record<{args_schema}>"), body)
+fn kinds(v: &[Value]) -> Vec<String> {
+    v.iter().map(|d| d["kind"].as_str().expect("kind").to_string()).collect()
 }
 
-fn kinds(v: &[Diagnostic]) -> Vec<String> {
-    v.iter().map(|d| d.kind.clone()).collect()
+fn is_hardcoded(d: &Value) -> bool {
+    d["kind"] == "lint::hardcoded_variable"
 }
 
-fn is_hardcoded(d: &Diagnostic) -> bool {
-    d.kind == "lint::hardcoded_variable"
-}
-
-fn is_denied(d: &Diagnostic) -> bool {
-    d.kind == "lint::denied_command"
+fn is_denied(d: &Value) -> bool {
+    d["kind"] == "lint::denied_command"
 }
 
 #[test]
@@ -228,10 +229,13 @@ fn list_items_walked() {
 fn line_col_within_body() {
     let v = lint("cd \"/a/b\"; { out: 0 }");
     assert_eq!(v.len(), 1, "got {v:?}");
-    let src = v[0].source.as_ref().expect("located body diagnostic");
-    assert_eq!(src.position, [1, 4], "got {:?}", v[0]);
-    assert!(src.path.is_none(), "a body diagnostic has no file; got {:?}", src.path);
-    assert_eq!(v[0].kind, "lint::hardcoded_variable");
+    assert_eq!(v[0]["source"]["position"], json!([1, 4]), "got {:?}", v[0]);
+    assert!(
+        v[0]["source"]["path"].is_null(),
+        "a body diagnostic has no file; got {:?}",
+        v[0]["source"]["path"],
+    );
+    assert_eq!(v[0]["kind"], "lint::hardcoded_variable");
 }
 
 #[test]

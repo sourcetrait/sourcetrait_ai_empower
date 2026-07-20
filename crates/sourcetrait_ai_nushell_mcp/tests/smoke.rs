@@ -244,7 +244,7 @@ fn smoke_9_timeout_fires() {
         .unwrap_or_else(|| panic!("expected error envelope; got {resp}"));
     assert_eq!(
         env["errors"][0]["kind"].as_str(),
-        Some("worker::timeout"),
+        Some("thread::timeout"),
         "got {env}"
     );
     assert!(

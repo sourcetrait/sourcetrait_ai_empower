@@ -174,7 +174,7 @@ fn timeout_then_rerun_recovers() {
     let err = timed_out["result"]["structuredContent"]["error"].clone();
     assert_eq!(
         err["errors"][0]["kind"].as_str(),
-        Some("worker::timeout"),
+        Some("thread::timeout"),
         "the first run should time out; got {timed_out}",
     );
     let nonce = err["nonce"].as_str().expect("timeout envelope nonce").to_string();

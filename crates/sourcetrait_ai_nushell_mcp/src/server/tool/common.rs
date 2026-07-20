@@ -80,22 +80,27 @@ fn write_run_body(
 
 pub struct NuSh {
     pub(crate) interact_engine: Arc<tk::AsyncMutex<Option<InteractEngine>>>,
-    /// The in-process stateless engine base - each eval clones it onto a
-    /// generously-stacked blocking thread (replaces the worker pool).
-    pub(crate) base: Arc<nu::EngineState>,
-    /// Host-owned environment-wide jobs table injected into every eval clone
-    /// (P0.8) - a body's `job spawn` persists + is visible/killable across evals.
+    /// The stateless eval executor: a swappable base + a pre-cloned ready buffer,
+    /// concurrency-bounded; hands each eval a ready clone (server/executor.rs).
+    pub(crate) executor: Arc<Executor>,
+    /// Host-owned environment-wide jobs table shared into every eval (P0.8) - a
+    /// body's `job spawn` persists + is visible/killable across evals + the
+    /// interact lane.
     pub(crate) env_jobs: Arc<std::sync::Mutex<nu::Jobs>>,
-    /// Bounds concurrent in-process evals (the former worker-pool cap).
-    pub(crate) eval_semaphore: Arc<tk::Semaphore>,
     pub(crate) nonce_gen: Arc<NonceGen>,
     pub(crate) library_locks: Arc<LibraryLocks>,
     pub(crate) lint_engine: Arc<ParseEngine>,
+    /// The resource registry, keyed by nonce string: each eval's cancel handle
+    /// plus the self-matching {tool, started_at, args, kind}. processes()
+    /// snapshots it; kill(nonce) triggers the cancel handle.
     pub(crate) in_flight: Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     pub(crate) tool_router: mcp::ToolRouter<NuSh>,
 }
 
 pub(crate) const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+
+/// Pre-clone depth N for the stateless executor's ready buffer (keep 1 ready).
+pub(crate) const READY_POOL_TARGET: usize = 1;
 
 
 pub(crate) struct InFlightEntry {
@@ -103,6 +108,9 @@ pub(crate) struct InFlightEntry {
     pub started_at: u64,
     pub args: serde_json::Value,
     pub kind: InFlightKind,
+    /// This eval's interrupt flag - the `Signals` handle the eval thread polls.
+    /// kill(nonce) / a timeout flips it to cancel the eval cooperatively.
+    pub cancel: Arc<AtomicBool>,
 }
 
 pub(crate) enum InFlightKind {
@@ -121,14 +129,12 @@ impl NuSh {
         // Install nushell's TLS crypto provider once for the in-process engine
         // (the http family reads nushell's own OnceLock; formerly per-worker).
         nu::CRYPTO_PROVIDER.default();
-        let base = Arc::new(build_base(Mode::Stateless));
         let env_jobs = Arc::new(std::sync::Mutex::new(nu::Jobs::default()));
-        let eval_semaphore = Arc::new(tk::Semaphore::new(worker_pool_cap()));
+        let executor = Arc::new(Executor::new(env_jobs.clone(), READY_POOL_TARGET));
         Self {
             interact_engine: Arc::new(tk::AsyncMutex::new(None)),
-            base,
+            executor,
             env_jobs,
-            eval_semaphore,
             nonce_gen,
             library_locks,
             lint_engine,
@@ -178,9 +184,7 @@ pub(crate) struct DispatchError {
 }
 
 pub(crate) async fn dispatch_pooled(
-    base: &Arc<nu::EngineState>,
-    env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>,
-    eval_semaphore: &Arc<tk::Semaphore>,
+    executor: &Arc<Executor>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     log_kind: CacheKind,
     nonce: Nonce,
@@ -203,22 +207,28 @@ pub(crate) async fn dispatch_pooled(
     if let Some(body) = &cache_body {
         write_run_body(&log_dir, body);
     }
-    let permit = eval_semaphore
-        .clone()
+    // Pick up a plugin add/rm (or an external registry edit) before taking a
+    // clone, so this eval runs against current plugin decls (server/executor.rs).
+    executor.refresh_base_if_stale();
+    let permit = executor
+        .semaphore()
         .acquire_owned()
         .await
         .map_err(|e| DispatchError {
-            error: Error::WorkerDispatch {
+            error: Error::ThreadDispatch {
                 reason: format!("eval semaphore: {e}"),
             },
             nonce: None,
         })?;
+    let engine = executor.take_clone();
+    let cancel = Arc::new(AtomicBool::new(false));
     register_in_flight(
         in_flight,
         nonce_str.clone(),
         tool_name,
         args_json,
         kind,
+        cancel.clone(),
     )
     .await;
     let _flight_cleanup = InFlightCleanup {
@@ -226,23 +236,26 @@ pub(crate) async fn dispatch_pooled(
         key: nonce_str,
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-    let eval_fut = eval_stateless(base.clone(), env_jobs.clone(), log_dir, source, permit);
+    let eval_fut = eval_stateless(engine, cancel.clone(), log_dir, source, permit);
     let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
     match timed {
         Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
         Ok(Err(reason)) => Err(DispatchError {
-            error: Error::WorkerReturnedError { reason },
+            error: Error::ThreadReturnedError { reason },
             nonce: Some(nonce),
         }),
-        Err(_) => Err(DispatchError {
-            // Phase 1 (host-unsafe intermediate): no cancellation yet - the eval
-            // thread runs on (holding its permit) until it finishes on its own;
-            // Phase 2 wires Signals + the teardown so a timeout actually reaps it.
-            error: Error::WorkerTimeout {
-                timeout_ms: effective_timeout,
-            },
-            nonce: Some(nonce),
-        }),
+        Err(_) => {
+            // Trigger the eval's Signals so the abandoned thread bails at nushell's
+            // next check point and releases its permit (a wedge cannot be reached -
+            // the residual; external children are reaped by the teardown).
+            cancel.store(true, Ordering::SeqCst);
+            Err(DispatchError {
+                error: Error::ThreadTimeout {
+                    timeout_ms: effective_timeout,
+                },
+                nonce: Some(nonce),
+            })
+        }
     }
 }
 
@@ -277,12 +290,14 @@ pub(crate) async fn dispatch_interact(
             .expect("interact engine present after spawn")
             .clone()
     };
+    let cancel = Arc::new(AtomicBool::new(false));
     register_in_flight(
         in_flight,
         nonce_str.clone(),
         "interact",
         args_json,
         InFlightKind::Interact,
+        cancel.clone(),
     )
     .await;
     let _flight_cleanup = InFlightCleanup {
@@ -290,22 +305,26 @@ pub(crate) async fn dispatch_interact(
         key: nonce_str,
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-    let eval_fut = engine.eval(log_dir, source);
+    let eval_fut = engine.eval(log_dir, source, cancel.clone());
     let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
     match timed {
         Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
         Ok(Err(reason)) => Err(DispatchError {
-            error: Error::WorkerReturnedError { reason },
+            error: Error::ThreadReturnedError { reason },
             nonce: Some(nonce),
         }),
-        // Phase 1 (host-unsafe intermediate): the timeout returns but the interact
-        // thread runs its eval to completion - no cancellation yet (Phase 2).
-        Err(_) => Err(DispatchError {
-            error: Error::WorkerTimeout {
-                timeout_ms: effective_timeout,
-            },
-            nonce: Some(nonce),
-        }),
+        Err(_) => {
+            // Trigger the current interact eval's Signals; a non-wedge bails and the
+            // serial lane frees for the next call (a wedged interact lane is Phase
+            // 4's respawn).
+            cancel.store(true, Ordering::SeqCst);
+            Err(DispatchError {
+                error: Error::ThreadTimeout {
+                    timeout_ms: effective_timeout,
+                },
+                nonce: Some(nonce),
+            })
+        }
     }
 }
 
@@ -315,6 +334,7 @@ async fn register_in_flight(
     tool_name: &'static str,
     args_json: serde_json::Value,
     kind: InFlightKind,
+    cancel: Arc<AtomicBool>,
 ) {
     let mut map = in_flight.lock().await;
     map.insert(
@@ -324,6 +344,7 @@ async fn register_in_flight(
             started_at: now_millis(),
             args: args_json,
             kind,
+            cancel,
         },
     );
 }

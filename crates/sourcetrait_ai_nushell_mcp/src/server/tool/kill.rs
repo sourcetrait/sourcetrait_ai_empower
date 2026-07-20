@@ -16,11 +16,15 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<KillParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // Phase 1 (in-process, pre-cancellation): no per-eval process exists to
-        // SIGKILL, so kill is a race-safe no-op - the in-flight entry is removed by
-        // its own dispatch cleanup guard. Phase 2 re-points this to trigger the
-        // eval's Signals for real cooperative cancellation.
-        let _ = &p.nonce;
+        // Cooperative cancel: flip the eval's interrupt Signals so it bails at
+        // nushell's next check point + frees its permit. An unknown / already-
+        // finished nonce is a race-safe no-op (its dispatch cleanup guard removes
+        // the entry). A wedge (a pure-Rust loop that never polls Signals) cannot be
+        // reached - the accepted residual; external children are reaped by the
+        // teardown.
+        if let Some(entry) = self.in_flight.lock().await.get(&p.nonce) {
+            entry.cancel.store(true, Ordering::SeqCst);
+        }
         Ok(mcp::CallToolResult::default())
     }
 }

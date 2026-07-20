@@ -15,6 +15,18 @@ pub(crate) fn read_registry() -> Option<nu::PluginRegistryFile> {
     nu::PluginRegistryFile::read_from(&mut file, None).ok()
 }
 
+/// Last-modified time of the plugin registry file, or None when it is absent.
+/// The EmbedEngine executor snapshots this when it builds the stateless base and
+/// re-stats it per dispatch (~sub-microsecond): a change - a `plugin add/rm` via
+/// interact() OR an external edit from the user's own shell - means the base's
+/// plugin decls are stale, so the base is rebuilt and the ready-pool re-cloned.
+/// mtime (not content) is the signal because it catches BOTH change sources,
+/// which command-interception could not.
+pub(crate) fn registry_mtime() -> Option<SystemTime> {
+    let path = registry_path()?;
+    fs::metadata(&path).and_then(|m| m.modified()).ok()
+}
+
 pub(crate) fn load_plugin_decls(engine_state: &mut nu::EngineState) {
     let Some(path) = registry_path() else {
         return;

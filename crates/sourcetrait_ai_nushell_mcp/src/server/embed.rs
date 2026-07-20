@@ -1,9 +1,9 @@
-// EmbedEngine (Phase 1): in-process nushell evaluation - the host-side
-// replacement for the worker's `WarmBase` (base.rs) + `eval_source`
-// (request_loop.rs). Built once at host startup, held as `Arc<EngineState>`; each
-// stateless eval clones it onto a blocking thread. Lives beside the worker until
-// the cutover deletes worker/; unwired for now.
-#![allow(dead_code)]
+// EmbedEngine: in-process nushell evaluation - the host-side replacement for the
+// deleted worker's `WarmBase` + `eval_source`. The stateless base is built once
+// and held by the `Executor` (server/executor.rs), which hands each eval a
+// pre-built clone onto a dedicated 64 MB blocking thread; the stateful interact
+// engine is a single long-lived thread. Cancellation rides a per-eval `Signals`
+// flag that server/tool/common.rs registers in the resource registry.
 use crate::*;
 
 /// Build an engine base, mirroring the worker's `WarmBase::new` minus the
@@ -80,6 +80,7 @@ pub(crate) fn eval_in_process(
     engine_state: &mut nu::EngineState,
     log_dir: &std::path::Path,
     source: &str,
+    cancel: Arc<AtomicBool>,
     persist: bool,
 ) -> Result<json::Value, String> {
     let stdout_file = fs::File::create(log_dir.join("stdout"))
@@ -90,7 +91,9 @@ pub(crate) fn eval_in_process(
         .stdout_file(stdout_file)
         .stderr_file(stderr_file)
         .capture_all();
-    engine_state.set_signals(nu::Signals::new(Arc::new(AtomicBool::new(false))));
+    // `cancel` becomes this eval's interrupt Signals: kill(nonce) / a timeout
+    // flip it and nushell bails at its next check point (server/tool/common.rs).
+    engine_state.set_signals(nu::Signals::new(cancel));
     let mut working_set = nu::StateWorkingSet::new(engine_state);
     let block = nu::parse(&mut working_set, None, source.as_bytes(), false);
     if !working_set.parse_errors.is_empty() {
@@ -141,17 +144,20 @@ pub(crate) fn eval_in_process(
 pub(crate) const EVAL_STACK_SIZE: usize = 64 * 1024 * 1024;
 
 /// Run one stateless eval on a dedicated, generously-stacked thread (nu eval is
-/// synchronous blocking Rust; the fresh `EngineState` clone drops when it
-/// returns, reclaiming its memory), bridging the result to async via a oneshot. A
-/// panic is caught. `env_jobs` is the host-owned environment-wide jobs table
-/// injected into the clone (P0.8), so a body's `job spawn` persists across evals.
+/// synchronous blocking Rust; the `engine` clone drops when it returns,
+/// reclaiming its memory), bridging the result to async via a oneshot. A panic is
+/// caught. The caller (the `Executor`) hands a pre-built clone that already
+/// carries the host-owned environment-wide `env_jobs` (P0.8), so a body's
+/// `job spawn` persists + is visible/killable across evals.
 ///
-/// NOTE (Phase 1, the host-unsafe intermediate): there is NO cancellation yet
-/// (Phase 2 wires per-eval Signals + the teardown), so the caller's timeout can
-/// elapse while this thread runs on - a wedged eval leaks the thread + its permit.
+/// Cancellation rides `cancel`: it becomes this eval's `Signals`, so kill(nonce)
+/// / a timeout trigger it and the eval bails at nushell's next check point,
+/// dropping its clone + releasing the permit. A WEDGE (a pure-Rust hot loop that
+/// never polls Signals) cannot be reached - it runs to its natural end holding
+/// the permit (the accepted residual); external children are reaped separately.
 pub(crate) async fn eval_stateless(
-    base: Arc<nu::EngineState>,
-    env_jobs: Arc<std::sync::Mutex<nu::Jobs>>,
+    mut engine: nu::EngineState,
+    cancel: Arc<AtomicBool>,
     log_dir: std::path::PathBuf,
     source: String,
     permit: tk::OwnedSemaphorePermit,
@@ -165,10 +171,8 @@ pub(crate) async fn eval_stateless(
             // its bounded slot occupied, staying visible + bounded rather than
             // leaking a thread while freeing the slot for another wedge.
             let _permit = permit;
-            let mut engine = (*base).clone();
-            engine.jobs = env_jobs;
             let outcome = catch_unwind(AssertUnwindSafe(|| {
-                eval_in_process(&mut engine, &log_dir, &source, false)
+                eval_in_process(&mut engine, &log_dir, &source, cancel, false)
             }));
             let result = match outcome {
                 Ok(r) => r,
@@ -199,6 +203,7 @@ pub(crate) struct InteractEngine {
 struct InteractRequest {
     log_dir: std::path::PathBuf,
     source: String,
+    cancel: Arc<AtomicBool>,
     respond: tk::oneshot::Sender<Result<json::Value, String>>,
 }
 
@@ -218,7 +223,7 @@ impl InteractEngine {
                 engine.jobs = env_jobs;
                 while let Some(req) = rx.blocking_recv() {
                     let outcome = catch_unwind(AssertUnwindSafe(|| {
-                        eval_in_process(&mut engine, &req.log_dir, &req.source, true)
+                        eval_in_process(&mut engine, &req.log_dir, &req.source, req.cancel.clone(), true)
                     }));
                     let result = match outcome {
                         Ok(r) => r,
@@ -237,12 +242,14 @@ impl InteractEngine {
         &self,
         log_dir: std::path::PathBuf,
         source: String,
+        cancel: Arc<AtomicBool>,
     ) -> Result<json::Value, String> {
         let (respond, rx) = tk::oneshot::channel();
         self.tx
             .send(InteractRequest {
                 log_dir,
                 source,
+                cancel,
                 respond,
             })
             .map_err(|_| "interact engine thread is gone".to_string())?;

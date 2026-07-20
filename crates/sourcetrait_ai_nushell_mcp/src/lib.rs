@@ -3,6 +3,7 @@ pub(crate) mod server {
     pub(crate) mod cache;
     pub(crate) mod embed;
     pub(crate) mod error;
+    pub(crate) mod executor;
     pub(crate) mod library;
     pub(crate) mod lint;
     pub(crate) mod namepath;
@@ -53,12 +54,13 @@ pub(crate) use crate::{
     mcp::ServiceExt,
     mode::Mode,
     nu::FromValue,
-    plugins::{list_registered_plugins, load_plugin_decls},
+    plugins::{list_registered_plugins, load_plugin_decls, registry_mtime},
     server::{
         blocked::shadow_host_fatal_decls,
         cache::{BASE_DIRS, BODY_FILE, CacheKind, cache_dir, data_base_dir, run_body_file},
         embed::{InteractEngine, build_base, eval_stateless},
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
+        executor::Executor,
         library::{
             LibraryInfo, LibraryLocks, ValidationResult, check_library,
             check_source_dir, commit_impl, ensure_substrate, enumerate_libraries, establish_library,
@@ -73,7 +75,7 @@ pub(crate) use crate::{
         parse_engine::{
             ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body, wrap_as_module,
         },
-        run::{run_server, worker_pool_cap},
+        run::{eval_concurrency_cap, run_server},
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},
         tool::{
             call::CallParams,

@@ -14,7 +14,7 @@ pub enum Severity {
 ///
 /// Why: replaces the prior `Where` + `WhereSource` carrier with the flat wire
 /// shape the agent consumes. The whole `Source` is `null` (on the
-/// `Diagnostic`) for a non-located diagnostic (a worker timeout, an
+/// `Diagnostic`) for a non-located diagnostic (an eval timeout, an
 /// unregistered-library error).
 ///
 /// Where: built by the body lint (`server::lint`, `path: None`) and the
@@ -27,7 +27,7 @@ pub struct Source {
 }
 
 /// What: one agent-facing diagnostic row. `kind` is the namespaced taxonomy
-/// string (`library::*`, `lint::*`, `worker::*`, ...); `source` is the
+/// string (`library::*`, `lint::*`, `thread::*`, ...); `source` is the
 /// location (`null` when non-located); `message` carries the human detail.
 /// `severity` selects the envelope bucket and is NOT serialized.
 ///
@@ -152,13 +152,13 @@ pub enum Error {
         nonce: String,
         reason: String,
     },
-    WorkerDispatch {
+    ThreadDispatch {
         reason: String,
     },
-    WorkerTimeout {
+    ThreadTimeout {
         timeout_ms: u64,
     },
-    WorkerReturnedError {
+    ThreadReturnedError {
         reason: String,
     },
     Internal {
@@ -184,9 +184,9 @@ impl Error {
             Self::RerunInvalidNonce { .. } => "rerun::invalid_nonce",
             Self::RerunBodyMissing { .. } => "rerun::body_missing",
             Self::RerunBodyDecode { .. } => "rerun::body_decode",
-            Self::WorkerDispatch { .. } => "worker::dispatch",
-            Self::WorkerTimeout { .. } => "worker::timeout",
-            Self::WorkerReturnedError { .. } => "worker::returned_error",
+            Self::ThreadDispatch { .. } => "thread::dispatch",
+            Self::ThreadTimeout { .. } => "thread::timeout",
+            Self::ThreadReturnedError { .. } => "thread::returned_error",
             Self::Internal { .. } => "internal",
             Self::LibraryViolations { .. } | Self::LintViolations { .. } => {
                 unreachable!("violation variants render via bucket, not kind_str")
@@ -241,9 +241,9 @@ impl Error {
             Self::RerunBodyDecode { nonce, reason } => {
                 format!("failed to decode cached run body for nonce `{nonce}`: {reason}")
             }
-            Self::WorkerDispatch { reason } => format!("worker dispatch failed: {reason}"),
-            Self::WorkerTimeout { timeout_ms } => format!("worker timed out after {timeout_ms} ms"),
-            Self::WorkerReturnedError { reason } => reason.clone(),
+            Self::ThreadDispatch { reason } => format!("eval dispatch failed: {reason}"),
+            Self::ThreadTimeout { timeout_ms } => format!("eval timed out after {timeout_ms} ms"),
+            Self::ThreadReturnedError { reason } => reason.clone(),
             Self::Internal { phase, reason } => format!("internal error [{phase}]: {reason}"),
             Self::LibraryViolations { .. } | Self::LintViolations { .. } => {
                 unreachable!("violation variants render via bucket, not message")

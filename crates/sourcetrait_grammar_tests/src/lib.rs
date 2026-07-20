@@ -176,9 +176,10 @@ impl Host {
         }));
     }
 
-    /// A `tools/call`, author-prefixing bare library names (idempotent for
-    /// values already carrying an `author/name`).
-    pub fn call(&mut self, tool: &str, args: Value) -> Value {
+    /// Send a `tools/call` WITHOUT reading its response, returning the request id -
+    /// for pipelined / concurrent requests (e.g. kill mid-run). Read the response
+    /// later with `read_id(id)`. Author-prefixes bare library names (idempotent).
+    pub fn request(&mut self, tool: &str, args: Value) -> u64 {
         let id = self.next_id();
         self.send(&json!({
             "jsonrpc": "2.0",
@@ -186,6 +187,13 @@ impl Host {
             "method": "tools/call",
             "params": {"name": tool, "arguments": author_prefixed(tool, args)}
         }));
+        id
+    }
+
+    /// A `tools/call`, author-prefixing bare library names (idempotent for
+    /// values already carrying an `author/name`).
+    pub fn call(&mut self, tool: &str, args: Value) -> Value {
+        let id = self.request(tool, args);
         self.read_id(id)
     }
 

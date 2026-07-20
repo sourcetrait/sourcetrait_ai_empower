@@ -1,0 +1,27 @@
+name = "grammar"
+tile = "grammar"
+version = "0.0.0-2"
+
+[author]
+name = "sourcetrait"
+title = "SourceTrait"
+email = "development@sourcetrait.com"
+
+[provider]
+name = "github"
+
+[common]
+gear = [
+    "grmr"
+]
+
+[desk]
+gear = [
+    "grmr"
+]
+
+[box]
+gear = [
+    "grmr"
+]
+

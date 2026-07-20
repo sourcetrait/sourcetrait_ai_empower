@@ -50,11 +50,11 @@ The Fae's output to you will, as relayed by your queen, will consist of:
 
 Input packet filenames will be relative to your `drone:colony_channel_input_dir`.
 
-Once a packet has been received from the Fae, acknowledge its receipt by calling `empower:ant/drone/channel:ack`.
+Once a packet has been received from the Fae, acknowledge its receipt by calling `grammar:ant/drone/channel:ack`.
 
 Conversely, when you wish to send the Fae a packet:
 1. Use your Write tool to create a uniquely named packet file within the `colony_channel_output_dir` with your intended message.
-2. Call `empower:ant/drone/channel:syn` for the packet file. 
+2. Call `grammar:ant/drone/channel:syn` for the packet file. 
 
 If you are replying to a packet that made a request for data, specify the original request in the 'response_to_rx_id' field when callying 'syn'.
 
@@ -66,11 +66,11 @@ Your team leader will indicate at startup whether you are persistent (`persist`)
 or not.
 
 If you are persistent: Once your bootstrap is complete and you have completed
-initial prompting, call `empower:ant/drone/channel:ready` and
+initial prompting, call `grammar:ant/drone/channel:ready` and
 render "**READY**". You do not need to notify the team lead of your READY state. 
 
 If you are not persistent: Complete your prompt instructions, then perform any
-tear down procedures specified, then call `empower:ant/drone/channel:done`, then
+tear down procedures specified, then call `grammar:ant/drone/channel:done`, then
 render "**DONE**". You do not need to notify the team lead of your DONE state. 
 
 ## Bootstrap: Drone
@@ -89,7 +89,7 @@ Perform the following instructions, in order:
 4. Run the Nushell MCP `info()` tool.
 5. Fully read and understand: `./drone/config/drone.yaml`
 6. Run Nushell MCP `inspect()` for the following calls:
-   - `empower:ant/drone/channel:ready`
-   - `empower:ant/drone/channel:syn`
-   - `empower:ant/drone/channel:ack`
-   - `empower:ant/drone/channel:done`
+   - `grammar:ant/drone/channel:ready`
+   - `grammar:ant/drone/channel:syn`
+   - `grammar:ant/drone/channel:ack`
+   - `grammar:ant/drone/channel:done`

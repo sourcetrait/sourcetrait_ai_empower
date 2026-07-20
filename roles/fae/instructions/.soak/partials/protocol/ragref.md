@@ -29,7 +29,7 @@ under a short parent category token, then that category should exist as its own
 parent granularity.
 
 Additionally, an item in a journal, state file, or historical document can use:
-- Journal pointer: "{journal:<topic>:<rev>} {journal:nushell_mcp:14}", space separated, all on one line.
+- Journal pointer: "{journal:<topic>:<rev>} {journal:grammar:14}", space separated, all on one line.
 
 A `ref` sub-header is attached tightly to its intended parent header indicating
 its context of usage. No newlines between the parent and the ref heading.

@@ -49,7 +49,7 @@ persist: {infer:drone:persistance}
 ---
 ```
 
-Before launching the drone, call `empower:ant/drone/channel:open` to set up its
+Before launching the drone, call `grammar:ant/drone/channel:open` to set up its
 channel with the Fae. The colony channel input and output directories returned
 from that call are the values used in the preceding yaml.
 
@@ -68,7 +68,7 @@ own if this procedure is followed. You can skip reading that file.
 
 ### Teardown
 
-When asked to stop a drone, do so. Manually call `empower:ant/drone/channel:close`
+When asked to stop a drone, do so. Manually call `grammar:ant/drone/channel:close`
 to formally close its channel with the Fae.
 
 In persistent mode, the drone may also shut itself down, which you will be
@@ -99,7 +99,7 @@ value should be. This is most often used with values read from `./queen/config`.
 ## Fae Communication
 
 You begin communication with your bonded Fae by monitoring the colony channel
-inbox file and then calling `empower:ant/queen/channel:open`.
+inbox file and then calling `grammar:ant/queen/channel:open`.
 
 While monitoring the colony inbox file, you will receive communications from
 your bonded Fae to both you and your drones. Perform the instructions that it
@@ -118,11 +118,11 @@ Your Fae's output to you will, on your channel input file, will consist of:
 Input packets sent from your Fae directly to you will have packet filenames relative to your `queen:colony_channel_input_dir`.
 Input packets sent from your Fae directly to a drone will have packet filenames relative to the drone's `drone:colony_channel_input_dir`.
 
-Once a packet sent directly to you has been received from the Fae, immediately acknowledge its receipt by calling `empower:ant/queen/channel:ack`.
+Once a packet sent directly to you has been received from the Fae, immediately acknowledge its receipt by calling `grammar:ant/queen/channel:ack`.
 
 Conversely, when you wish to send the Fae a packet:
 1. Use your Write tool to create a uniquely named packet file within the `queen:colony_channel_output_dir` with your intended message.
-2. Call `empower:ant/queen/channel:syn` for the packet file. 
+2. Call `grammar:ant/queen/channel:syn` for the packet file. 
 
 If you are replying to a packet that made a request for data, specify the original request in the 'response_to_rx_id' field when callying 'syn'.
 
@@ -146,21 +146,21 @@ Perform the following instructions, in order:
 1. Load the `/nu` skill.
 2. Run the Nushell MCP `info()` tool.
 3. Fully read and understand: `./queen/config/queen.yaml`
-4. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:ai_identity}/status/latest.yaml`
+4. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/grammar/claudeline/{infer:ai_identity}/status/latest.yaml`
    - Note: Your per-session `session_nom` is determined here.
-5. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/empower/claudeline/{infer:bonded:fae:identity}/context/latest.yaml`
+5. Read: `{infer:env:XDG_CACHE_HOME}/sourcetrait/grammar/claudeline/{infer:bonded:fae:identity}/context/latest.yaml`
    - Note: Your bonded fae's per-session `bonded:fae:session_nom` is determined here (vis a vis its `session_nom`).
 7. Run Nushell MCP `inspect()` for the following calls:
-   - `empower:ant/queen/channel:open`
-   - `empower:ant/queen/channel:syn`
-   - `empower:ant/queen/channel:ack`
-   - `empower:ant/queen/channel:close`
-   - `empower:ant/drone/channel:open`
-   - `empower:ant/drone/channel:ready`
-   - `empower:ant/drone/channel:close`
+   - `grammar:ant/queen/channel:open`
+   - `grammar:ant/queen/channel:syn`
+   - `grammar:ant/queen/channel:ack`
+   - `grammar:ant/queen/channel:close`
+   - `grammar:ant/drone/channel:open`
+   - `grammar:ant/drone/channel:ready`
+   - `grammar:ant/drone/channel:close`
 6. Initiate your bonded fae communication channels, in order:
    1. Use your Write tool to initialize an empty `{infer:colony:channel_inbox}`.
    2. Use your Monitor tool to monitor your `{infer:colony:channel_inbox}` for new lines of output written by your bonded Fae.
       - Note: The Monitor tool command: `tail -n 0 -f <file>`
       - Note: Your monitor for this should be named `colony_inbox`
-   3. Call `empower:ant/queen/channel:open`.
+   3. Call `grammar:ant/queen/channel:open`.

@@ -1,4 +1,5 @@
 pub(crate) mod server {
+    pub(crate) mod blocked;
     pub(crate) mod cache;
     pub(crate) mod embed;
     pub(crate) mod error;
@@ -66,6 +67,7 @@ pub(crate) use crate::{
     nu::FromValue,
     plugins::{list_registered_plugins, load_plugin_decls},
     server::{
+        blocked::shadow_host_fatal_decls,
         cache::{BASE_DIRS, BODY_FILE, CacheKind, cache_dir, data_base_dir, run_body_file},
         embed::{build_base, eval_stateless},
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
@@ -145,21 +147,24 @@ pub(crate) mod nu {
     pub(crate) use nu_command::add_shell_command_context;
     pub(crate) use nu_command::tls::CRYPTO_PROVIDER;
     pub(crate) use nu_engine::eval_block;
+    pub(crate) use nu_engine::command_prelude::Call;
     pub(crate) use nu_json::Value as JsonValue;
     pub(crate) use nu_parser::parse;
     pub(crate) use nu_parser::{FlatShape, flatten_block};
     pub(crate) use nu_path::nu_config_dir;
     pub(crate) use nu_plugin_engine::load_plugin_file;
     pub(crate) use nu_protocol::{
-        BlockId, DeclId, FromValue, Module, PipelineData, PluginRegistryFile,
-        PluginRegistryItemData, Record, Signals, Span, Type, Value, VarId,
+        BlockId, Category, DeclId, FromValue, Module, PipelineData, PluginRegistryFile,
+        PluginRegistryItemData, Record, ShellError, Signals, Signature, Span, SyntaxShape, Type,
+        Value, VarId,
         ast::{
-            Argument, Block, Comparison, Expr, Expression, ExternalArgument, ListItem, Operator,
-            Pattern, RecordItem,
+            Argument, Block, Comparison, Expr, Expression, ExternalArgument, ListItem,
+            Operator, Pattern, RecordItem,
         },
         debugger::WithoutDebug,
-        engine::{EngineState, Jobs, Stack, StateWorkingSet},
+        engine::{Command, EngineState, Jobs, Stack, StateWorkingSet},
     };
+    pub(crate) use nu_protocol::shell_error::generic::GenericError;
     pub(crate) use nuon::{ToNuonConfig, from_nuon, to_nuon};
 }
 

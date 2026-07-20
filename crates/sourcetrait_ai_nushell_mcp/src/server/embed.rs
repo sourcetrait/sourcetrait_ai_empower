@@ -18,6 +18,11 @@ pub(crate) fn build_base(mode: Mode) -> nu::EngineState {
     if matches!(mode, Mode::Stateful) {
         engine_state = nu::add_plugin_command_context(engine_state);
     }
+    // Principle 1 (intercept host-death): shadow exit/exec with erroring decls so
+    // an in-process body cannot terminate the shared host - there is no worker
+    // process boundary to absorb it. Must follow the shell context that defines
+    // the real ones (last-registered decl wins name resolution).
+    shadow_host_fatal_decls(&mut engine_state);
     load_plugin_decls(&mut engine_state);
     engine_state.generate_nu_constant();
     seed_env(&mut engine_state);

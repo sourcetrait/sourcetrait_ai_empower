@@ -1,0 +1,15 @@
+[package]
+name = "sourcetrait_grammar_tests"
+version = "0.0.0-1"
+edition = "2024"
+description = "System tests for sourcetrait_grammar (spawn the real binary)"
+authors = ["SourceTrait <development@sourcetrait.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "grammar", "testing"]
+
+[dependencies]
+serde_json.workspace = true
+sourcetrait_testing.workspace = true

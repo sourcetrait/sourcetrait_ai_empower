@@ -9,6 +9,7 @@ members = [
   "crates/sourcetrait_grammar_claudeline",
   "crates/sourcetrait_grammar_puremd_mdbook",
   "crates/sourcetrait_grammar_arxivmd",
+  "crates/sourcetrait_grammar_tests",
 ]
 
 [workspace.dependencies]

@@ -1,8 +1,7 @@
 use crate::*;
 
-pub(crate) fn run_oneshot(tool: CliTool) {
-    let rt = tk::Runtime::new().expect("tokio Runtime::new");
-    let exit_code = rt.block_on(async move {
+pub(crate) async fn run_oneshot(tool: CliTool) -> process::ExitCode {
+    let exit_code = async move {
         let library_locks = ensure_substrate().await.expect("ensure_substrate");
         let runs_pool = Pool::new(
             Mode::Stateless,
@@ -129,9 +128,9 @@ pub(crate) fn run_oneshot(tool: CliTool) {
                 1
             }
         }
-    });
-    drop(rt);
-    process::exit(exit_code);
+    }
+    .await;
+    process::ExitCode::from(exit_code as u8)
 }
 
 fn nuon_record_arg(input: Option<&str>) -> mcp::JsonObject {

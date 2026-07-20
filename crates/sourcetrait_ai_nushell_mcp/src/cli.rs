@@ -194,7 +194,7 @@ fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
     })
 }
 
-pub fn host_main() {
+pub async fn host_main() -> process::ExitCode {
     let cli = HostCli::parse();
     let work_dir = resolve_work_dir(cli.workdir.as_deref(), &cli.id);
     let config = Config {
@@ -205,8 +205,11 @@ pub fn host_main() {
     };
     CONFIG.set(config).expect("CONFIG set once at startup");
     match cli.command {
-        None => run_server(),
-        Some(HostCommand::Cli { tool }) => run_oneshot(tool),
+        None => {
+            run_server().await;
+            process::ExitCode::SUCCESS
+        }
+        Some(HostCommand::Cli { tool }) => run_oneshot(tool).await,
     }
 }
 

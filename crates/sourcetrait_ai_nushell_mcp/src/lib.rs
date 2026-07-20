@@ -194,7 +194,6 @@ pub(crate) mod tk {
     pub(crate) use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         process::{Child, ChildStdin, ChildStdout, Command},
-        runtime::Runtime,
         spawn,
         sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore},
         time::{Duration as TkDuration, interval, timeout},

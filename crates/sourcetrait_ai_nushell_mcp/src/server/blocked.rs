@@ -59,10 +59,14 @@ impl nu::Command for BlockedDecl {
 /// -> an unconditional `panic!` (the nu-command Debug builtin whose whole purpose
 /// is to crash nushell; catch_unwind catches it but it poisons shared mutexes on
 /// the way up, so shadowing it out is cleaner). A full nu 0.114.1 registered-decl
-/// audit found these three the only builtins that terminate the host DIRECTLY from
-/// user input. Not shadowed (a trust-model decision, {followups}): `kill`, which
-/// can signal the host's own pid/process-group through an external `kill` child -
-/// indirect, and the eval body is a trusted substrate.
+/// audit found these three the only builtins that terminate the host DIRECTLY
+/// in-process from user input. The guardrail principle: shadow a vector whose
+/// LOCAL intent (tear down this eval's engine state) would be a GLOBAL host
+/// teardown; a command with explicit target intent stays ALLOWED. So `kill <pid>`
+/// is NOT shadowed - it names a process and means it (killing the host's own pid is
+/// the operator's intent; the body runs as the assigned box user with those rights
+/// and could signal any pid via an external regardless). The shadows guard SURPRISE
+/// self-teardown, not a trusted body's deliberate box actions.
 pub(crate) const HOST_FATAL_DECLS: &[&str] = &["exit", "exec", "panic"];
 
 /// Shadow every host-fatal builtin with an erroring decl on `engine_state`, so a

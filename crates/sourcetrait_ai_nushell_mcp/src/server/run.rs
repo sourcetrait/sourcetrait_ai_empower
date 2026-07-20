@@ -1,6 +1,9 @@
 use crate::*;
 
 pub(crate) async fn run_server() {
+    // Become the subreaper so an eval's orphaned grandchildren stay on our /proc
+    // ppid chain for the tree-kill (server/teardown.rs).
+    install_child_subreaper();
     let library_locks = ensure_substrate().await.expect("ensure_substrate");
     let nonce_gen = Arc::new(NonceGen::new());
     let lint_engine = Arc::new(ParseEngine::new_full());

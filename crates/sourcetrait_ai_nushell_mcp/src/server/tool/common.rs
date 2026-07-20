@@ -111,6 +111,9 @@ pub(crate) struct InFlightEntry {
     /// This eval's interrupt flag - the `Signals` handle the eval thread polls.
     /// kill(nonce) / a timeout flips it to cancel the eval cooperatively.
     pub cancel: Arc<AtomicBool>,
+    /// This eval's external-child tracker (Arc-shared pids). kill / timeout reads
+    /// collect_pids() + tree-kills the process tree (server/teardown.rs).
+    pub tracker: nu::ThreadJob,
 }
 
 pub(crate) enum InFlightKind {
@@ -220,8 +223,13 @@ pub(crate) async fn dispatch_pooled(
             },
             nonce: None,
         })?;
-    let engine = executor.take_clone();
+    let mut engine = executor.take_clone();
     let cancel = Arc::new(AtomicBool::new(false));
+    // Track this eval's external children so a cancel/timeout reaps the whole
+    // process tree (server/teardown.rs): nushell registers each external's pid
+    // into the tracker once it is the engine's background_thread_job.
+    let tracker = make_tracker(cancel.clone());
+    engine.current_job.background_thread_job = Some(tracker.clone());
     register_in_flight(
         in_flight,
         nonce_str.clone(),
@@ -229,6 +237,7 @@ pub(crate) async fn dispatch_pooled(
         args_json,
         kind,
         cancel.clone(),
+        tracker.clone(),
     )
     .await;
     let _flight_cleanup = InFlightCleanup {
@@ -246,9 +255,10 @@ pub(crate) async fn dispatch_pooled(
         }),
         Err(_) => {
             // Trigger the eval's Signals so the abandoned thread bails at nushell's
-            // next check point and releases its permit (a wedge cannot be reached -
-            // the residual; external children are reaped by the teardown).
+            // next check point + releases its permit, and reap any external process
+            // tree it spawned (a pure-Rust wedge cannot be reached - the residual).
             cancel.store(true, Ordering::SeqCst);
+            tree_kill(&tracker.collect_pids());
             Err(DispatchError {
                 error: Error::ThreadTimeout {
                     timeout_ms: effective_timeout,
@@ -291,6 +301,7 @@ pub(crate) async fn dispatch_interact(
             .clone()
     };
     let cancel = Arc::new(AtomicBool::new(false));
+    let tracker = make_tracker(cancel.clone());
     register_in_flight(
         in_flight,
         nonce_str.clone(),
@@ -298,6 +309,7 @@ pub(crate) async fn dispatch_interact(
         args_json,
         InFlightKind::Interact,
         cancel.clone(),
+        tracker.clone(),
     )
     .await;
     let _flight_cleanup = InFlightCleanup {
@@ -305,7 +317,7 @@ pub(crate) async fn dispatch_interact(
         key: nonce_str,
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-    let eval_fut = engine.eval(log_dir, source, cancel.clone());
+    let eval_fut = engine.eval(log_dir, source, cancel.clone(), tracker.clone());
     let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
     match timed {
         Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
@@ -314,10 +326,11 @@ pub(crate) async fn dispatch_interact(
             nonce: Some(nonce),
         }),
         Err(_) => {
-            // Trigger the current interact eval's Signals; a non-wedge bails and the
-            // serial lane frees for the next call (a wedged interact lane is Phase
-            // 4's respawn).
+            // Trigger the current interact eval's Signals + reap its external tree;
+            // a non-wedge bails and the serial lane frees for the next call (a wedged
+            // interact lane is Phase 4's respawn).
             cancel.store(true, Ordering::SeqCst);
+            tree_kill(&tracker.collect_pids());
             Err(DispatchError {
                 error: Error::ThreadTimeout {
                     timeout_ms: effective_timeout,
@@ -335,6 +348,7 @@ async fn register_in_flight(
     args_json: serde_json::Value,
     kind: InFlightKind,
     cancel: Arc<AtomicBool>,
+    tracker: nu::ThreadJob,
 ) {
     let mut map = in_flight.lock().await;
     map.insert(
@@ -345,6 +359,7 @@ async fn register_in_flight(
             args: args_json,
             kind,
             cancel,
+            tracker,
         },
     );
 }

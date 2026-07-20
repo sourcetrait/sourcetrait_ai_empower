@@ -2,6 +2,7 @@ use crate::*;
 
 pub(crate) async fn run_oneshot(tool: CliTool) -> process::ExitCode {
     let exit_code = async move {
+        install_child_subreaper();
         let library_locks = ensure_substrate().await.expect("ensure_substrate");
         let nonce_gen = Arc::new(NonceGen::new());
         let lint_engine = Arc::new(ParseEngine::new_full());

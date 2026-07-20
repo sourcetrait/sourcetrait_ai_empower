@@ -23,7 +23,7 @@ indoc = { version = "2" }
 liquid = { version = "0.26" }
 heck = { version = "0.5" }
 mdbook-preprocessor = { version = "0.5" }
-nix = { version = "0.30", features = ["process", "signal"] }
+nix = { version = "0.31", features = ["process", "signal"] }
 nu-cmd-extra = { git = "https://github.com/nushell/nushell", tag = "0.114.1" }
 nu-cmd-lang = { git = "https://github.com/nushell/nushell", tag = "0.114.1" }
 nu-cmd-plugin = { git = "https://github.com/nushell/nushell", tag = "0.114.1" }

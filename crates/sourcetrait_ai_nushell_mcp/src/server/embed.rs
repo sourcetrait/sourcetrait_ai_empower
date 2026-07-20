@@ -204,6 +204,7 @@ struct InteractRequest {
     log_dir: std::path::PathBuf,
     source: String,
     cancel: Arc<AtomicBool>,
+    tracker: nu::ThreadJob,
     respond: tk::oneshot::Sender<Result<json::Value, String>>,
 }
 
@@ -222,6 +223,9 @@ impl InteractEngine {
                 let mut engine = build_base(Mode::Stateful);
                 engine.jobs = env_jobs;
                 while let Some(req) = rx.blocking_recv() {
+                    // Track this eval's external children (server/teardown.rs) so a
+                    // cancel/timeout can reap them; overwritten fresh each eval.
+                    engine.current_job.background_thread_job = Some(req.tracker.clone());
                     let outcome = catch_unwind(AssertUnwindSafe(|| {
                         eval_in_process(&mut engine, &req.log_dir, &req.source, req.cancel.clone(), true)
                     }));
@@ -243,6 +247,7 @@ impl InteractEngine {
         log_dir: std::path::PathBuf,
         source: String,
         cancel: Arc<AtomicBool>,
+        tracker: nu::ThreadJob,
     ) -> Result<json::Value, String> {
         let (respond, rx) = tk::oneshot::channel();
         self.tx
@@ -250,6 +255,7 @@ impl InteractEngine {
                 log_dir,
                 source,
                 cancel,
+                tracker,
                 respond,
             })
             .map_err(|_| "interact engine thread is gone".to_string())?;

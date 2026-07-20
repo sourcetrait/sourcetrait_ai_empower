@@ -12,6 +12,7 @@ pub(crate) mod server {
     pub(crate) mod parse_engine;
     pub(crate) mod run;
     pub(crate) mod schema;
+    pub(crate) mod teardown;
     pub(crate) mod tool {
         pub(crate) mod call;
         pub(crate) mod commit;
@@ -77,6 +78,7 @@ pub(crate) use crate::{
         },
         run::{eval_concurrency_cap, run_server},
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},
+        teardown::{install_child_subreaper, make_tracker, tree_kill},
         tool::{
             call::CallParams,
             commit::CommitParams,
@@ -147,7 +149,7 @@ pub(crate) mod nu {
             Operator, Pattern, RecordItem,
         },
         debugger::WithoutDebug,
-        engine::{Command, EngineState, Jobs, Stack, StateWorkingSet},
+        engine::{Command, EngineState, Jobs, Mail, Stack, StateWorkingSet, ThreadJob},
     };
     pub(crate) use nu_protocol::shell_error::generic::GenericError;
     pub(crate) use nuon::{ToNuonConfig, from_nuon, to_nuon};

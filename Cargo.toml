@@ -67,3 +67,11 @@ tokio = { version = "1", features = ["macros", "process", "io-util", "rt-multi-t
 toml = { version = "0.8" }
 walkdir = { version = "2" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[profile.release]
+# EmbedEngine principle 1 (nushell_mcp): eval runs in-process on host threads and a
+# panicking body is caught by catch_unwind so it fails one eval, not the host. That
+# REQUIRES unwinding - `panic = "abort"` would make the catch moot and a single bad
+# body would take the whole MCP down. Pinned explicit as an invariant (it is also
+# the default; the lock is to make any future change to abort a deliberate edit).
+panic = "unwind"

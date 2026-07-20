@@ -1,8 +1,8 @@
 use crate::*;
 
-/// A shadow command that replaces a host-fatal builtin (`exit`, `exec`) in the
-/// in-process EmbedEngine: it parses like the real one (a catch-all `rest`) but
-/// always errors at runtime, so a body invoking it fails that single eval
+/// A shadow command that replaces a host-fatal builtin (`exit`, `exec`, `panic`)
+/// in the in-process EmbedEngine: it parses like the real one (a catch-all `rest`)
+/// but always errors at runtime, so a body invoking it fails that single eval
 /// instead of terminating the shared host process.
 ///
 /// EmbedEngine principle 1 (intercept every host-death vector): `exit` calls
@@ -55,8 +55,15 @@ impl nu::Command for BlockedDecl {
 }
 
 /// The host-fatal builtins shadowed out of every in-process engine base:
-/// `exit` -> `std::process::exit`, `exec` -> `execvp` image replacement.
-pub(crate) const HOST_FATAL_DECLS: &[&str] = &["exit", "exec"];
+/// `exit` -> `std::process::exit`, `exec` -> `execvp` image replacement, `panic`
+/// -> an unconditional `panic!` (the nu-command Debug builtin whose whole purpose
+/// is to crash nushell; catch_unwind catches it but it poisons shared mutexes on
+/// the way up, so shadowing it out is cleaner). A full nu 0.114.1 registered-decl
+/// audit found these three the only builtins that terminate the host DIRECTLY from
+/// user input. Not shadowed (a trust-model decision, {followups}): `kill`, which
+/// can signal the host's own pid/process-group through an external `kill` child -
+/// indirect, and the eval body is a trusted substrate.
+pub(crate) const HOST_FATAL_DECLS: &[&str] = &["exit", "exec", "panic"];
 
 /// Shadow every host-fatal builtin with an erroring decl on `engine_state`, so a
 /// run()/interact() body can never call one and take down the shared host. Must

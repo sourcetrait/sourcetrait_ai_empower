@@ -221,7 +221,7 @@ impl InteractEngine {
             .name("nu-interact".to_string())
             .spawn(move || {
                 let mut engine = build_base(Mode::Stateful);
-                engine.jobs = env_jobs;
+                engine.jobs = env_jobs.clone();
                 while let Some(req) = rx.blocking_recv() {
                     // Track this eval's external children (server/teardown.rs) so a
                     // cancel/timeout can reap them; overwritten fresh each eval.
@@ -231,7 +231,22 @@ impl InteractEngine {
                     }));
                     let result = match outcome {
                         Ok(r) => r,
-                        Err(_) => Err("panic during interact eval (caught)".to_string()),
+                        Err(_) => {
+                            // Reset-on-panic: a caught panic may have poisoned the
+                            // shared env_jobs lock or left the persistent engine
+                            // inconsistent. Reset the jobs table past any poison and
+                            // rebuild the interact engine fresh - session env/cd/defs
+                            // are lost, but the host + the lane survive.
+                            if env_jobs.is_poisoned() {
+                                *env_jobs.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    nu::Jobs::default();
+                                env_jobs.clear_poison();
+                            }
+                            engine = build_base(Mode::Stateful);
+                            engine.jobs = env_jobs.clone();
+                            Err("panic during interact eval (caught); interact session reset"
+                                .to_string())
+                        }
                     };
                     let _ = req.respond.send(result);
                 }

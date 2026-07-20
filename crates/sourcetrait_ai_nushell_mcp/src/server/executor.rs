@@ -56,7 +56,7 @@ impl Executor {
 
     /// The concurrency gate: acquire a permit before launching an eval, so at
     /// most `eval_concurrency_cap()` evals run at once. The permit rides in the
-    /// eval thread and releases when it finishes (a wedge holds it - the residual).
+    /// eval thread and releases when it finishes (a hung thread holds it - the residual).
     pub(crate) fn semaphore(&self) -> Arc<tk::Semaphore> {
         self.semaphore.clone()
     }

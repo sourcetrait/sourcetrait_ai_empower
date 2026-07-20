@@ -6,6 +6,17 @@
 // flag that server/tool/common.rs registers in the resource registry.
 use crate::*;
 
+/// Flips a liveness flag true on drop, so the watchdog can tell a finished eval
+/// (normal return OR caught panic - both drop it) from a HUNG thread (stuck where
+/// it never returns, so this never drops). server/watchdog.rs reads the flag.
+struct FinishGuard(Arc<AtomicBool>);
+
+impl Drop for FinishGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 /// Build an engine base, mirroring the worker's `WarmBase::new` minus the
 /// process-boundary concerns. `base_context` (shell + extra, is_interactive=false,
 /// is_mcp=true) + plugin decls + `$nu.*` + seeded env + the parse-time
@@ -152,8 +163,8 @@ pub(crate) const EVAL_STACK_SIZE: usize = 64 * 1024 * 1024;
 ///
 /// Cancellation rides `cancel`: it becomes this eval's `Signals`, so kill(nonce)
 /// / a timeout trigger it and the eval bails at nushell's next check point,
-/// dropping its clone + releasing the permit. A WEDGE (a pure-Rust hot loop that
-/// never polls Signals) cannot be reached - it runs to its natural end holding
+/// dropping its clone + releasing the permit. A HUNG THREAD (a pure-Rust hot loop
+/// that never polls Signals) cannot be reached - it runs to its natural end holding
 /// the permit (the accepted residual); external children are reaped separately.
 pub(crate) async fn eval_stateless(
     mut engine: nu::EngineState,
@@ -161,16 +172,21 @@ pub(crate) async fn eval_stateless(
     log_dir: std::path::PathBuf,
     source: String,
     permit: tk::OwnedSemaphorePermit,
+    finished: Arc<AtomicBool>,
 ) -> Result<json::Value, String> {
     let (tx, rx) = tk::oneshot::channel();
     let spawned = std::thread::Builder::new()
         .stack_size(EVAL_STACK_SIZE)
         .name("nu-eval".to_string())
         .spawn(move || {
-            // The permit rides in the thread: a wedged (uncancellable) eval keeps
+            // The permit rides in the thread: a hung (uncancellable) eval keeps
             // its bounded slot occupied, staying visible + bounded rather than
-            // leaking a thread while freeing the slot for another wedge.
+            // leaking a thread while freeing the slot for another hang.
             let _permit = permit;
+            // Liveness for the watchdog: flips true when this closure ends (normal
+            // OR caught panic); a hung thread never reaches the end, so it stays
+            // false (server/watchdog.rs).
+            let _finish = FinishGuard(finished);
             let outcome = catch_unwind(AssertUnwindSafe(|| {
                 eval_in_process(&mut engine, &log_dir, &source, cancel, false)
             }));
@@ -205,6 +221,7 @@ struct InteractRequest {
     source: String,
     cancel: Arc<AtomicBool>,
     tracker: nu::ThreadJob,
+    finished: Arc<AtomicBool>,
     respond: tk::oneshot::Sender<Result<json::Value, String>>,
 }
 
@@ -223,6 +240,11 @@ impl InteractEngine {
                 let mut engine = build_base(Mode::Stateful);
                 engine.jobs = env_jobs.clone();
                 while let Some(req) = rx.blocking_recv() {
+                    // Liveness for the watchdog: drops at the END of this iteration
+                    // (normal OR caught panic), flipping `finished` true; a hung
+                    // thread never ends the iteration, so it stays false (followup
+                    // #41, server/watchdog.rs).
+                    let _finish = FinishGuard(req.finished.clone());
                     // Track this eval's external children (server/teardown.rs) so a
                     // cancel/timeout can reap them; overwritten fresh each eval.
                     engine.current_job.background_thread_job = Some(req.tracker.clone());
@@ -263,6 +285,7 @@ impl InteractEngine {
         source: String,
         cancel: Arc<AtomicBool>,
         tracker: nu::ThreadJob,
+        finished: Arc<AtomicBool>,
     ) -> Result<json::Value, String> {
         let (respond, rx) = tk::oneshot::channel();
         self.tx
@@ -271,6 +294,7 @@ impl InteractEngine {
                 source,
                 cancel,
                 tracker,
+                finished,
                 respond,
             })
             .map_err(|_| "interact engine thread is gone".to_string())?;

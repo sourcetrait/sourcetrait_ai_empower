@@ -6,8 +6,21 @@ pub(crate) async fn run_server() {
     install_child_subreaper();
     let library_locks = ensure_substrate().await.expect("ensure_substrate");
     let nonce_gen = Arc::new(NonceGen::new());
+    // Per-process id for the emergency log namespacing (<cache>/log/<mcp_nom>/).
+    let mcp_nom = format!("{}", nonce_gen.next(&process::id()));
     let lint_engine = Arc::new(ParseEngine::new_full());
     let server = NuSh::new(nonce_gen, library_locks, lint_engine);
+    // Emergency lane (Phase 5): the watchdog classifies resource trouble onto an
+    // internal channel; one responder appends each Emergency to emergency.nuonl.
+    let (emergency_tx, emergency_rx) = tk::unbounded_channel::<Emergency>();
+    spawn_emergency_responder(emergency_rx, mcp_nom);
+    spawn_watchdog(WatchdogDeps {
+        hung_watch: server.hung_watch.clone(),
+        semaphore: server.executor.semaphore(),
+        cap: eval_concurrency_cap(),
+        env_jobs: server.env_jobs.clone(),
+        tx: emergency_tx,
+    });
     let in_flight = server.in_flight.clone();
     let service = server.serve(mcp::stdio()).await.expect("serve stdio");
     service.waiting().await.expect("service waiting");

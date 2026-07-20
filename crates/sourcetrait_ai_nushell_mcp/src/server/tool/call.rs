@@ -109,6 +109,7 @@ impl NuSh {
         let outcome = match dispatch_pooled(
             &self.executor,
             &self.in_flight,
+            &self.hung_watch,
             CacheKind::Calls,
             nonce,
             source,

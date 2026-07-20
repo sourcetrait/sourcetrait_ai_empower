@@ -49,6 +49,7 @@ impl NuSh {
             &self.interact_engine,
             &self.env_jobs,
             &self.in_flight,
+            &self.hung_watch,
             nonce,
             source,
             args_json,

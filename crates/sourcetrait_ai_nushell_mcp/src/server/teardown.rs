@@ -75,7 +75,7 @@ pub(crate) fn tree_kill(tracked: &[u32]) {
 }
 
 /// SIGKILL the host's plugin subprocesses (direct children whose comm starts
-/// with `nu_plugin_`). Unblocks a plugin-WEDGED eval: a hung plugin ignores the
+/// with `nu_plugin_`). Unblocks a plugin-hung eval: a hung plugin ignores the
 /// cancel Signals and is not a tracked external, so killing its subprocess closes
 /// the plugin IPC pipe and the eval's plugin read returns an error. Plugins
 /// respawn lazily on next use. Broad by nature - nushell shares plugin

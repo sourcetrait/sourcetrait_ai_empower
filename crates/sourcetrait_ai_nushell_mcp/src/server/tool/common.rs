@@ -94,6 +94,10 @@ pub struct NuSh {
     /// plus the self-matching {tool, started_at, args, kind}. processes()
     /// snapshots it; kill(nonce) triggers the cancel handle.
     pub(crate) in_flight: Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
+    /// The hang-detection registry (server/watchdog.rs): cancelled engine threads
+    /// that may still be alive, populated on timeout / kill. The watchdog prunes
+    /// finished entries and confirms hangs past grace.
+    pub(crate) hung_watch: HungRegistry,
     pub(crate) tool_router: mcp::ToolRouter<NuSh>,
 }
 
@@ -114,6 +118,11 @@ pub(crate) struct InFlightEntry {
     /// This eval's external-child tracker (Arc-shared pids). kill / timeout reads
     /// collect_pids() + tree-kills the process tree (server/teardown.rs).
     pub tracker: nu::ThreadJob,
+    /// Liveness: the eval thread flips this true on exit via a Drop guard (a
+    /// caught panic still exits, so it flips; only a thread stuck where it never
+    /// returns leaves it false). The watchdog reads it to confirm / prune hangs;
+    /// kill(nonce) copies it into a HungWatch (server/watchdog.rs).
+    pub finished: Arc<AtomicBool>,
 }
 
 pub(crate) enum InFlightKind {
@@ -142,6 +151,7 @@ impl NuSh {
             library_locks,
             lint_engine,
             in_flight: Arc::new(tk::AsyncMutex::new(HashMap::new())),
+            hung_watch: Arc::new(std::sync::Mutex::new(HashMap::new())),
             tool_router: Self::tool_router(),
         }
     }
@@ -189,6 +199,7 @@ pub(crate) struct DispatchError {
 pub(crate) async fn dispatch_pooled(
     executor: &Arc<Executor>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
+    hung_watch: &HungRegistry,
     log_kind: CacheKind,
     nonce: Nonce,
     source: String,
@@ -225,6 +236,8 @@ pub(crate) async fn dispatch_pooled(
         })?;
     let mut engine = executor.take_clone();
     let cancel = Arc::new(AtomicBool::new(false));
+    let started_at = now_millis();
+    let finished = Arc::new(AtomicBool::new(false));
     // Track this eval's external children so a cancel/timeout reaps the whole
     // process tree (server/teardown.rs): nushell registers each external's pid
     // into the tracker once it is the engine's background_thread_job.
@@ -236,8 +249,10 @@ pub(crate) async fn dispatch_pooled(
         tool_name,
         args_json,
         kind,
+        started_at,
         cancel.clone(),
         tracker.clone(),
+        finished.clone(),
     )
     .await;
     let _flight_cleanup = InFlightCleanup {
@@ -245,7 +260,7 @@ pub(crate) async fn dispatch_pooled(
         key: nonce_str,
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-    let eval_fut = eval_stateless(engine, cancel.clone(), log_dir, source, permit);
+    let eval_fut = eval_stateless(engine, cancel.clone(), log_dir, source, permit, finished.clone());
     let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
     match timed {
         Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
@@ -256,9 +271,22 @@ pub(crate) async fn dispatch_pooled(
         Err(_) => {
             // Trigger the eval's Signals so the abandoned thread bails at nushell's
             // next check point + releases its permit, and reap any external process
-            // tree it spawned (a pure-Rust wedge cannot be reached - the residual).
+            // tree it spawned (a pure-Rust hung eval cannot be reached - the residual).
             cancel.store(true, Ordering::SeqCst);
             tree_kill(&tracker.collect_pids());
+            // Record the cancelled eval for the watchdog: an engine thread still
+            // alive past grace is a confirmed hang (server/watchdog.rs).
+            register_hung(
+                hung_watch,
+                HungWatch {
+                    nonce: nonce.to_string(),
+                    tool: tool_name,
+                    lane: Lane::Stateless,
+                    started_at,
+                    cancelled_at: now_millis(),
+                    finished: finished.clone(),
+                },
+            );
             Err(DispatchError {
                 error: Error::ThreadTimeout {
                     timeout_ms: effective_timeout,
@@ -273,6 +301,7 @@ pub(crate) async fn dispatch_interact(
     interact: &Arc<tk::AsyncMutex<Option<InteractEngine>>>,
     env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
+    hung_watch: &HungRegistry,
     nonce: Nonce,
     source: String,
     args_json: serde_json::Value,
@@ -302,14 +331,18 @@ pub(crate) async fn dispatch_interact(
     };
     let cancel = Arc::new(AtomicBool::new(false));
     let tracker = make_tracker(cancel.clone());
+    let started_at = now_millis();
+    let finished = Arc::new(AtomicBool::new(false));
     register_in_flight(
         in_flight,
         nonce_str.clone(),
         "interact",
         args_json,
         InFlightKind::Interact,
+        started_at,
         cancel.clone(),
         tracker.clone(),
+        finished.clone(),
     )
     .await;
     let _flight_cleanup = InFlightCleanup {
@@ -317,7 +350,7 @@ pub(crate) async fn dispatch_interact(
         key: nonce_str,
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-    let eval_fut = engine.eval(log_dir, source, cancel.clone(), tracker.clone());
+    let eval_fut = engine.eval(log_dir, source, cancel.clone(), tracker.clone(), finished.clone());
     let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
     match timed {
         Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
@@ -327,10 +360,23 @@ pub(crate) async fn dispatch_interact(
         }),
         Err(_) => {
             // Trigger the current interact eval's Signals + reap its external tree;
-            // a non-wedge bails and the serial lane frees for the next call (a wedged
-            // interact lane is Phase 4's respawn).
+            // a non-hung eval bails and the serial lane frees for the next call (a
+            // hung interact lane is Phase 4's respawn).
             cancel.store(true, Ordering::SeqCst);
             tree_kill(&tracker.collect_pids());
+            // Record the cancelled interact eval for the watchdog (followup #41): a
+            // thread still alive past grace is the interact-lane hang.
+            register_hung(
+                hung_watch,
+                HungWatch {
+                    nonce: nonce.to_string(),
+                    tool: "interact",
+                    lane: Lane::Interact,
+                    started_at,
+                    cancelled_at: now_millis(),
+                    finished: finished.clone(),
+                },
+            );
             Err(DispatchError {
                 error: Error::ThreadTimeout {
                     timeout_ms: effective_timeout,
@@ -347,19 +393,22 @@ async fn register_in_flight(
     tool_name: &'static str,
     args_json: serde_json::Value,
     kind: InFlightKind,
+    started_at: u64,
     cancel: Arc<AtomicBool>,
     tracker: nu::ThreadJob,
+    finished: Arc<AtomicBool>,
 ) {
     let mut map = in_flight.lock().await;
     map.insert(
         nonce_str,
         InFlightEntry {
             tool: tool_name,
-            started_at: now_millis(),
+            started_at,
             args: args_json,
             kind,
             cancel,
             tracker,
+            finished,
         },
     );
 }
@@ -380,7 +429,7 @@ impl Drop for InFlightCleanup {
     }
 }
 
-fn now_millis() -> u64 {
+pub(crate) fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

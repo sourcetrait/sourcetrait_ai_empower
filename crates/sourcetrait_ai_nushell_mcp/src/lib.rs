@@ -2,6 +2,7 @@ pub(crate) mod server {
     pub(crate) mod blocked;
     pub(crate) mod cache;
     pub(crate) mod embed;
+    pub(crate) mod emergency;
     pub(crate) mod error;
     pub(crate) mod executor;
     pub(crate) mod library;
@@ -13,6 +14,7 @@ pub(crate) mod server {
     pub(crate) mod run;
     pub(crate) mod schema;
     pub(crate) mod teardown;
+    pub(crate) mod watchdog;
     pub(crate) mod tool {
         pub(crate) mod call;
         pub(crate) mod commit;
@@ -31,9 +33,11 @@ pub(crate) mod server {
     }
     #[cfg(test)]
     mod tests {
+        mod emergency;
         mod lint;
         mod namepath;
         mod schema;
+        mod watchdog;
     }
 }
 pub(crate) mod cli;
@@ -58,8 +62,16 @@ pub(crate) use crate::{
     plugins::{list_registered_plugins, load_plugin_decls, registry_mtime},
     server::{
         blocked::shadow_host_fatal_decls,
-        cache::{BASE_DIRS, BODY_FILE, CacheKind, cache_dir, data_base_dir, run_body_file},
+        cache::{
+            BASE_DIRS, BODY_FILE, CacheKind, cache_base_dir, cache_dir, data_base_dir,
+            run_body_file,
+        },
         embed::{InteractEngine, build_base, eval_stateless},
+        emergency::{
+            BackgroundJobsEmergency, CriticalEmergency, Emergency, EmergencyTx, HostCpuEmergency,
+            HostMemoryEmergency, HungEngineThreadEmergency, VramEmergency,
+            spawn_emergency_responder,
+        },
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         executor::Executor,
         library::{
@@ -81,13 +93,16 @@ pub(crate) use crate::{
         teardown::{
             install_child_subreaper, kill_plugin_subprocesses, make_tracker, tree_kill,
         },
+        watchdog::{
+            HungRegistry, HungWatch, Lane, WatchdogDeps, register_hung, spawn_watchdog,
+        },
         tool::{
             call::CallParams,
             commit::CommitParams,
             common::{
                 CachedRunBody, InFlightKind, NuSh, RunParams, convert_schemas,
                 dispatch_interact, dispatch_pooled, envelope_to_structured, lint_run_params,
-                teardown_all_in_flight,
+                now_millis, teardown_all_in_flight,
             },
             info::InfoParams,
             inspect::InspectParams,
@@ -103,9 +118,10 @@ pub(crate) use crate::{
 };
 
 pub(crate) use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Display,
-    fs, io,
+    fs,
+    io::{self, Write},
     hash::{Hash, Hasher},
     ops::ControlFlow,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -115,7 +131,7 @@ pub(crate) use std::{
         Arc, LazyLock, OnceLock,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 pub(crate) use clap::Parser;
@@ -181,11 +197,12 @@ pub(crate) mod mcp {
 pub(crate) mod tk {
     pub(crate) use tokio::{
         spawn,
+        task::spawn_blocking,
         sync::{
             Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore, oneshot,
-            mpsc::{UnboundedSender, unbounded_channel},
+            mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
         },
-        time::{Duration as TkDuration, timeout},
+        time::{Duration as TkDuration, sleep, timeout},
     };
 }
 

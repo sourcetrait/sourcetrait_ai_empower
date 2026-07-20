@@ -67,6 +67,7 @@ pub(crate) use crate::{
     plugins::{list_registered_plugins, load_plugin_decls},
     server::{
         cache::{BASE_DIRS, BODY_FILE, CacheKind, cache_dir, data_base_dir, run_body_file},
+        embed::{build_base, eval_stateless},
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         library::{
             LibraryInfo, LibraryLocks, ValidationResult, check_library,
@@ -157,7 +158,7 @@ pub(crate) mod nu {
             Pattern, RecordItem,
         },
         debugger::WithoutDebug,
-        engine::{EngineState, Stack, StateWorkingSet},
+        engine::{EngineState, Jobs, Stack, StateWorkingSet},
     };
     pub(crate) use nuon::{ToNuonConfig, from_nuon, to_nuon};
 }
@@ -196,7 +197,7 @@ pub(crate) mod tk {
         io::{AsyncReadExt, AsyncWriteExt},
         process::{Child, ChildStdin, ChildStdout, Command},
         spawn,
-        sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore},
+        sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore, oneshot},
         time::{Duration as TkDuration, interval, timeout},
     };
 }

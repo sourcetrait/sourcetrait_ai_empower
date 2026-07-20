@@ -77,7 +77,9 @@ impl NuSh {
             body: cached.body,
         };
         let outcome = match dispatch_pooled(
-            &self.runs_pool,
+            &self.base,
+            &self.env_jobs,
+            &self.eval_semaphore,
             &self.in_flight,
             CacheKind::Runs,
             nonce,

@@ -79,8 +79,19 @@ fn write_run_body(
 }
 
 pub struct NuSh {
+    // Retained but unused after the stateless in-process cutover; removed with the
+    // worker / pool machinery in the deletion slice.
+    #[allow(dead_code)]
     pub(crate) runs_pool: Arc<Pool>,
     pub(crate) interact_worker: Arc<tk::AsyncMutex<Option<WorkerHandle>>>,
+    /// The in-process stateless engine base - each eval clones it onto a
+    /// generously-stacked blocking thread (replaces the worker pool).
+    pub(crate) base: Arc<nu::EngineState>,
+    /// Host-owned environment-wide jobs table injected into every eval clone
+    /// (P0.8) - a body's `job spawn` persists + is visible/killable across evals.
+    pub(crate) env_jobs: Arc<std::sync::Mutex<nu::Jobs>>,
+    /// Bounds concurrent in-process evals (the former worker-pool cap).
+    pub(crate) eval_semaphore: Arc<tk::Semaphore>,
     pub(crate) nonce_gen: Arc<NonceGen>,
     pub(crate) library_locks: Arc<LibraryLocks>,
     pub(crate) lint_engine: Arc<ParseEngine>,
@@ -114,9 +125,18 @@ impl NuSh {
         library_locks: Arc<LibraryLocks>,
         lint_engine: Arc<ParseEngine>,
     ) -> Self {
+        // Install nushell's TLS crypto provider once for the in-process engine
+        // (the http family reads nushell's own OnceLock; formerly per-worker).
+        nu::CRYPTO_PROVIDER.default();
+        let base = Arc::new(build_base(Mode::Stateless));
+        let env_jobs = Arc::new(std::sync::Mutex::new(nu::Jobs::default()));
+        let eval_semaphore = Arc::new(tk::Semaphore::new(worker_pool_cap()));
         Self {
             runs_pool,
             interact_worker: Arc::new(tk::AsyncMutex::new(interact_worker)),
+            base,
+            env_jobs,
+            eval_semaphore,
             nonce_gen,
             library_locks,
             lint_engine,
@@ -166,7 +186,9 @@ pub(crate) struct DispatchError {
 }
 
 pub(crate) async fn dispatch_pooled(
-    pool: &Arc<Pool>,
+    base: &Arc<nu::EngineState>,
+    env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>,
+    eval_semaphore: &Arc<tk::Semaphore>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     log_kind: CacheKind,
     nonce: Nonce,
@@ -189,19 +211,22 @@ pub(crate) async fn dispatch_pooled(
     if let Some(body) = &cache_body {
         write_run_body(&log_dir, body);
     }
-    let mut guard = pool.acquire().await.map_err(|e| DispatchError {
-        error: Error::WorkerDispatch {
-            reason: format!("pool acquire: {e}"),
-        },
-        nonce: None,
-    })?;
-    let pid = guard.pid();
+    let permit = eval_semaphore
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| DispatchError {
+            error: Error::WorkerDispatch {
+                reason: format!("eval semaphore: {e}"),
+            },
+            nonce: None,
+        })?;
     register_in_flight(
         in_flight,
         nonce_str.clone(),
         tool_name,
         args_json,
-        pid,
+        process::id(),
         kind,
     )
     .await;
@@ -210,43 +235,24 @@ pub(crate) async fn dispatch_pooled(
         key: nonce_str,
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-    let send_fut = guard.send_request(log_dir, source);
-    let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), send_fut).await;
-    let response = match timed {
-        Ok(Ok(resp)) => resp,
-        Ok(Err(e)) => {
-            guard.drop_handle();
-            return Err(DispatchError {
-                error: Error::WorkerDispatch {
-                    reason: e.to_string(),
-                },
-                nonce: Some(nonce),
-            });
-        }
-        Err(_) => {
-            kill_worker_pid(pid);
-            guard.drop_handle();
-            return Err(DispatchError {
-                error: Error::WorkerTimeout {
-                    timeout_ms: effective_timeout,
-                },
-                nonce: Some(nonce),
-            });
-        }
-    };
-    drop(guard);
-    if !response.ok {
-        return Err(DispatchError {
-            error: Error::WorkerReturnedError {
-                reason: response
-                    .error
-                    .unwrap_or_else(|| "worker returned ok=false with no error".to_string()),
+    let eval_fut = eval_stateless(base.clone(), env_jobs.clone(), log_dir, source, permit);
+    let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
+    match timed {
+        Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
+        Ok(Err(reason)) => Err(DispatchError {
+            error: Error::WorkerReturnedError { reason },
+            nonce: Some(nonce),
+        }),
+        Err(_) => Err(DispatchError {
+            // Phase 1 (host-unsafe intermediate): no cancellation yet - the eval
+            // thread runs on (holding its permit) until it finishes on its own;
+            // Phase 2 wires Signals + the teardown so a timeout actually reaps it.
+            error: Error::WorkerTimeout {
+                timeout_ms: effective_timeout,
             },
             nonce: Some(nonce),
-        });
+        }),
     }
-    let result: json::Value = msgpack::from_slice(&response.value).unwrap_or(json::Value::Null);
-    Ok(DispatchOutcome { nonce, result })
 }
 
 pub(crate) async fn dispatch_interact(

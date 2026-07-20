@@ -107,7 +107,9 @@ impl NuSh {
         let path_str = p.namepath.clone();
         let args_json = serde_json::Value::Object(p.args.clone());
         let outcome = match dispatch_pooled(
-            &self.runs_pool,
+            &self.base,
+            &self.env_jobs,
+            &self.eval_semaphore,
             &self.in_flight,
             CacheKind::Calls,
             nonce,

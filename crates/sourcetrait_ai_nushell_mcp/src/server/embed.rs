@@ -114,3 +114,54 @@ pub(crate) fn eval_in_process(
     let json_value = nu::JsonValue::from_value(value).map_err(|e| format!("Value to JSON: {e}"))?;
     json::to_value(&json_value).map_err(|e| format!("json value: {e}"))
 }
+
+/// Generous per-eval stack. P0.7: nu def-recursion is guarded (recursion_limit),
+/// so the only native overflow is pathological parser nesting (~1000-deep clears
+/// at 8 MB, ~10000-deep at 64 MB). 64 MB clears any realistic body; the residual
+/// (deeper nesting) aborts the whole host (accepted, the locked contract).
+pub(crate) const EVAL_STACK_SIZE: usize = 64 * 1024 * 1024;
+
+/// Run one stateless eval on a dedicated, generously-stacked thread (nu eval is
+/// synchronous blocking Rust; the fresh `EngineState` clone drops when it
+/// returns, reclaiming its memory), bridging the result to async via a oneshot. A
+/// panic is caught. `env_jobs` is the host-owned environment-wide jobs table
+/// injected into the clone (P0.8), so a body's `job spawn` persists across evals.
+///
+/// NOTE (Phase 1, the host-unsafe intermediate): there is NO cancellation yet
+/// (Phase 2 wires per-eval Signals + the teardown), so the caller's timeout can
+/// elapse while this thread runs on - a wedged eval leaks the thread + its permit.
+pub(crate) async fn eval_stateless(
+    base: Arc<nu::EngineState>,
+    env_jobs: Arc<std::sync::Mutex<nu::Jobs>>,
+    log_dir: std::path::PathBuf,
+    source: String,
+    permit: tk::OwnedSemaphorePermit,
+) -> Result<json::Value, String> {
+    let (tx, rx) = tk::oneshot::channel();
+    let spawned = std::thread::Builder::new()
+        .stack_size(EVAL_STACK_SIZE)
+        .name("nu-eval".to_string())
+        .spawn(move || {
+            // The permit rides in the thread: a wedged (uncancellable) eval keeps
+            // its bounded slot occupied, staying visible + bounded rather than
+            // leaking a thread while freeing the slot for another wedge.
+            let _permit = permit;
+            let mut engine = (*base).clone();
+            engine.jobs = env_jobs;
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                eval_in_process(&mut engine, &log_dir, &source, false)
+            }));
+            let result = match outcome {
+                Ok(r) => r,
+                Err(_) => Err("panic during eval (caught)".to_string()),
+            };
+            let _ = tx.send(result);
+        });
+    if let Err(e) = spawned {
+        return Err(format!("spawn eval thread: {e}"));
+    }
+    match rx.await {
+        Ok(r) => r,
+        Err(_) => Err("eval thread dropped without result".to_string()),
+    }
+}

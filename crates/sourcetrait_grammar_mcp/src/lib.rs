@@ -46,6 +46,7 @@ pub(crate) mod engine;
 pub(crate) mod mode;
 pub(crate) mod plugins;
 pub(crate) mod template;
+pub mod guts;
 
 #[cfg(test)]
 mod tests {

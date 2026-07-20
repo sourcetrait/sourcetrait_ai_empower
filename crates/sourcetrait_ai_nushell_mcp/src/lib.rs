@@ -1,5 +1,6 @@
 pub(crate) mod server {
     pub(crate) mod cache;
+    pub(crate) mod embed;
     pub(crate) mod error;
     pub(crate) mod library;
     pub(crate) mod lint;

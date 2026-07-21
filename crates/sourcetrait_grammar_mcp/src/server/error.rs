@@ -141,6 +141,10 @@ pub enum Error {
         namepath: String,
         reason: String,
     },
+    PurviewInvalidId {
+        id: String,
+        reason: String,
+    },
     RerunInvalidNonce {
         nonce: String,
         reason: String,
@@ -187,6 +191,7 @@ impl Error {
             Self::FunctionNotDefined { .. } => "function::not_defined",
             Self::SchemaInvalid { .. } => "schema::invalid",
             Self::NamepathInvalid { .. } => "namepath::invalid",
+            Self::PurviewInvalidId { .. } => "purview::invalid_id",
             Self::RerunInvalidNonce { .. } => "rerun::invalid_nonce",
             Self::RerunBodyMissing { .. } => "rerun::body_missing",
             Self::RerunBodyDecode { .. } => "rerun::body_decode",
@@ -241,6 +246,9 @@ impl Error {
             Self::SchemaInvalid { reason } => format!("invalid schema: {reason}"),
             Self::NamepathInvalid { namepath, reason } => {
                 format!("invalid namepath `{namepath}`: {reason}")
+            }
+            Self::PurviewInvalidId { id, reason } => {
+                format!("invalid purview id `{id}`: {reason}")
             }
             Self::RerunInvalidNonce { nonce, reason } => {
                 format!("invalid nonce `{nonce}`: {reason}")

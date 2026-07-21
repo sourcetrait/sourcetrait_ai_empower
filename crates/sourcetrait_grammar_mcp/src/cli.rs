@@ -34,7 +34,8 @@ pub(crate) struct HostCli {
     #[arg(long)]
     pub workdir: Option<String>,
     /// Comma-separated tools to deny: run,rerun,interact,call,learn,new,
-    /// commit,library,channel_open,channel_verified,channel_close,config_channel.
+    /// commit,library,channel_open,channel_verified,channel_close,config_channel,
+    /// purview_list,purview_configure,purview_extend,purview_reset.
     #[arg(long, value_delimiter = ',', value_parser = parse_deniable)]
     pub deny: Vec<DeniableTool>,
     #[command(subcommand)]
@@ -191,7 +192,8 @@ fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
     DeniableTool::from_name(s).ok_or_else(|| {
         format!(
             "unknown tool `{s}`; deniable tools: run, rerun, interact, call, learn, new, \
-             commit, library, channel_open, channel_verified, channel_close, config_channel",
+             commit, library, channel_open, channel_verified, channel_close, config_channel, \
+             purview_list, purview_configure, purview_extend, purview_reset",
         )
     })
 }

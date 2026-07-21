@@ -1013,6 +1013,10 @@ before you return thousands of paths.
 - [`channel_verified()`](#channel_verified) Confirm the channel/Open packet was seen; ends the verify window.
 - [`channel_close()`](#channel_close) Close the host's packet channel.
 - [`config_channel()`](#config_channel) Read or adjust the channel's send-rate thresholds at runtime.
+- [`purview_list()`](#purview_list) List every configured purview, and what is currently in view.
+- [`purview_configure()`](#purview_configure) Set a purview's selectors; an empty list deletes it.
+- [`purview_extend()`](#purview_extend) Bring more purviews into the current view.
+- [`purview_reset()`](#purview_reset) Reset the current view back to the default purview.
 
 The server runs against one STATE STORE selected by its operator config
 (`--id` / `--namespace`; surfaced by `info()` as `id` + `namespace`) -
@@ -1339,10 +1343,15 @@ Output (partial):
 Schema (partial):
 ```json
 {
-  "properties": {},
+  "properties": {
+    "purviews": { "type": "array", "items": { "type": "string" } }
+  },
   "required": []
 }
 ```
+
+`purviews` renders as if those purviews were in view WITHOUT changing what this
+session has in view - the subagent-blinders case. Omit it for the current view.
 
 #### Example
 
@@ -1365,12 +1374,16 @@ Output (partial):
       "namespace": "default",
       "work_dir": "/home/user/ai/emptwo",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
-      "signatures": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n"
+      "signatures": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n",
+      "purview": [ ["default", ["*"]] ]
     },
     "content": []
   }
 }
 ```
+
+`purview` is what is in view, each id beside the selectors it resolves to, and
+`signatures` is FILTERED to it - see [Purviews](#purviews).
 
 `signatures` is the live, version-matched `call()` surface as ONE indented
 text block. Rendered, that value reads:
@@ -1794,11 +1807,76 @@ Schema (partial):
 }
 ```
 
+## Purviews
+
+A PURVIEW is a named, scoped view of the callable namespace, so `info()` can
+stay small on a box carrying many libraries. Its values are namepath PATTERNS
+(the `inspect()` grammar) or exact namepaths: `sourcetrait/`, `acme/geo:`,
+`acme/geo:shape/`, `acme/geo:shape:area` are all legal.
+
+IT IS NOT ACCESS CONTROL. It filters what you KNOW, never what you may call -
+`call()` reaches any registered function regardless of what is in view.
+
+IDs are arbitrary path-like labels: slash-separated snake components, bare
+relative (`default`, `iter/almost`), never a leading `/` or `./`. They have
+nothing to do with library namepaths or filesystem paths.
+
+| id | meaning |
+|---|---|
+| `default` | what a fresh session has in view; CONFIGURABLE |
+| `.` | what is in view right now; DERIVED, never stored |
+| `*` | everything |
+
+An UNCONFIGURED `default` is EVERYTHING, so a fresh namespace is usable before
+anyone configures anything. Configuration persists per store coordinate at
+`<store>/.meta/purviews.nuon`; the CURRENT view is session-resident and starts
+at `default`.
+
+`library(install)` ADDS the new rig's `<author>/<name>:` to `default` - never
+replaces, and an unconfigured `default` materializes its implicit `*` first, so
+the first install writes `['*', 'my/newlib:']` and nothing leaves view.
+`library(uninstall)` removes it everywhere, and DANGLING selectors (no
+registered library can satisfy them) prune whenever the table is written.
+
+### `purview_list()`
+*List every configured purview, and what is currently in view.*
+
+No parameters. Returns `{purviews, current}`, each a list of `[id, selectors]`
+pairs.
+
+### `purview_configure()`
+*Set a purview's selectors; an empty list deletes it.*
+
+`{purview: string, namepaths: list<string>}`. Creates it if absent, REPLACES its
+selectors if present, DELETES it when `namepaths` is empty. The derived `.` and
+`*` cannot be configured. Returns `{purviews, current, pruned}`, where `pruned`
+names selectors dropped for want of a registered library.
+
+```json
+{ "purview": "iter/geo", "namepaths": ["acme/geo:", "acme/mathlib:shape:area"] }
+```
+
+### `purview_extend()`
+*Bring more purviews into the current view.*
+
+`{purviews: list<string>}`, ADDITIVE - nothing in view is disturbed. An unknown
+id is REFUSED rather than silently contributing nothing, since a typo would
+otherwise look exactly like an empty purview. Returns `{added, removed,
+current}`: `added` is a signature block for what CAME INTO view (not the whole
+new view), `removed` the selectors that LEFT, each null when that half did not
+happen.
+
+### `purview_reset()`
+*Reset the current view back to the default purview.*
+
+No parameters. Same delta envelope as extend, where `removed` is the working
+half.
+
 ## Bootstrap: run info() first
 
-`info()` returns the full, version-matched toolset for the current
-session - server + nu versions, loaded plugins, and every library's callable
-surface as one compact signature block. The libraries change between sessions;
+`info()` returns the version-matched toolset for the current session - server +
+nu versions, loaded plugins, and the callable surface your PURVIEW puts in view,
+as one compact signature block. The libraries change between sessions;
 reading them live is how a fresh bootstrap (or a subagent) learns exactly which
 `call()` targets exist now - then `inspect()` for a node's details and its
 source location - rather than trusting a static index that drifts.

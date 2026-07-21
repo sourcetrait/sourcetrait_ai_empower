@@ -113,6 +113,10 @@ pub struct NuSh {
     /// because it is held across that await; the channel's own state lock is a std
     /// Mutex precisely because the emit path must never need a runtime.
     pub(crate) channel_open_lock: Arc<tk::AsyncMutex<()>>,
+    /// Which purview ids this host has in view. SESSION-resident: a purview is a
+    /// view rather than a configuration, so it lives in memory and dies with the
+    /// host, starting at `default`.
+    pub(crate) current_purview: Arc<CurrentPurview>,
     pub(crate) tool_router: mcp::ToolRouter<NuSh>,
 }
 
@@ -173,6 +177,7 @@ impl NuSh {
             // through the same global, so a per-NuSh handle would diverge from it.
             channel: channel_handle(),
             channel_open_lock: Arc::new(tk::AsyncMutex::new(())),
+            current_purview: Arc::new(CurrentPurview::new()),
             tool_router: Self::tool_router(),
         }
     }

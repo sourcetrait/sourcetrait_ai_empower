@@ -105,6 +105,10 @@ transiently fail.
 - [`channel_verified()`](#channel_verified) Confirm the channel/Open packet was seen; ends the verify window.
 - [`channel_close()`](#channel_close) Close the host's packet channel.
 - [`config_channel()`](#config_channel) Read or adjust the channel's send-rate thresholds at runtime.
+- [`purview_list()`](#purview_list) List every configured purview, and what is currently in view.
+- [`purview_configure()`](#purview_configure) Set a purview's selectors; an empty list deletes it.
+- [`purview_extend()`](#purview_extend) Bring more purviews into the current view.
+- [`purview_reset()`](#purview_reset) Reset the current view back to the default purview.
 
 
 ## `run()`
@@ -415,15 +419,25 @@ Output (partial):
 ## `info()`
 *Versions, plugins, and every library's callable signatures.*
 
+`signatures` shows what the CURRENT purview puts in view, not necessarily the
+whole store (see [Purviews](#purviews)).
+
 ### arguments
 
 Schema (partial):
 ```json
 {
-  "properties": {},
+  "properties": {
+    "purviews": { "type": "array", "items": { "type": "string" } }
+  },
   "required": []
 }
 ```
+
+`purviews` renders as if those purviews were in view, WITHOUT changing what the
+session actually has in view. Omit it (or pass `[]`) for the current view - the
+everyday call. Naming purviews is the SUBAGENT BLINDERS case: hand a subagent a
+narrower surface at bootstrap without giving up your own.
 
 ### Example
 
@@ -446,12 +460,16 @@ Output (partial):
       "namespace": "default",
       "work_dir": "/home/user/ai/emptwo",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
-      "signatures": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n"
+      "signatures": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n",
+      "purview": [ ["default", ["*"]] ]
     },
     "content": []
   }
 }
 ```
+
+`purview` is what is in view, each id beside the selectors it resolves to, in
+the order they came into view.
 
 `signatures` is ONE indented text block. Rendered, that value reads:
 
@@ -505,6 +523,11 @@ level: the `record<...>` wrapper is written `<...>`, and there is no space after
 a comma. A VOID renders `<>`, so a call taking nothing and returning nothing
 reads `ping <> <>`. Nested types keep their full spelling -
 `table<name:string,where:directory>`, `oneof<int,nothing>`, `list<string>`.
+
+The block is FILTERED to the current purview. A library appears when its own
+node is in view or when anything inside it is, so a purview naming one module
+still shows the author and library lines above it - the block always spells a
+namepath.
 
 ## `inspect()`
 *Detailed documentation for libraries, modules, and calls.*
@@ -948,6 +971,173 @@ Output (partial):
   }
 }
 ```
+
+## Purviews
+
+A PURVIEW is a named, scoped view of the callable namespace. Its values are
+namepath PATTERNS (the same grammar `inspect()` takes) or exact namepaths, so
+`sourcetrait/` , `acme/geo:` , `acme/geo:shape/` and `acme/geo:shape:area` are
+all legal purview values.
+
+It exists to keep `info()` SMALL. On a box carrying many libraries the block is
+the agent's startup read, and most of it is irrelevant to the task at hand.
+
+IT IS NOT ACCESS CONTROL. A purview filters what an agent KNOWS, never what it
+may call: `call()` reaches any registered function regardless of what is in
+view. Do not build permissions on it.
+
+IDs are arbitrary path-like labels - slash-separated snake components, always
+bare relative (`default`, `iter/almost`, `john/cindy/mary`), never a leading `/`
+or `./`. They are unrelated to library namepaths and to filesystem paths;
+`iter/almost` may or may not refer to anything called almost.
+
+Three built-ins:
+
+| id | meaning |
+|---|---|
+| `default` | what a fresh session has in view; CONFIGURABLE |
+| `.` | what is in view right now; DERIVED, never stored |
+| `*` | everything |
+
+An UNCONFIGURED `default` is EVERYTHING, which is what makes a fresh namespace
+usable before anyone configures anything. Absent is not empty: no purview file
+means nothing has been configured, while a configured purview that resolves to
+nothing shows nothing.
+
+Configuration persists per store coordinate at `<store>/.meta/purviews.nuon`;
+the current view is SESSION-RESIDENT, held by the host process and gone when it
+exits. It starts at `default`.
+
+Two automatic behaviors:
+
+- `library(install)` ADDS the new rig's `<author>/<name>:` pattern to `default`.
+  It never REPLACES: an unconfigured `default` materializes its implicit `*`
+  first, so the first install writes `['*', 'my/newlib:']` and nothing leaves
+  view.
+- `library(uninstall)` removes that pattern everywhere, and DANGLING selectors -
+  ones no registered library can satisfy - are pruned whenever the table is
+  written. A purview pruned down to nothing is deleted, since an empty selector
+  list is already the delete operation.
+
+## `purview_list()`
+*List every configured purview, and what is currently in view.*
+
+### arguments
+
+No parameters.
+
+### Example
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "purviews": [ ["default", ["*"]], ["iter/geo", ["acme/geo:"]] ],
+      "current": [ ["default", ["*"]] ]
+    },
+    "content": []
+  }
+}
+```
+
+## `purview_configure()`
+*Set a purview's selectors; an empty list deletes it.*
+
+Creates the purview if absent, REPLACES its selectors if present. The derived
+built-ins `.` and `*` cannot be configured - they are computed, not stored.
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "purview":   { "type": "string" },
+    "namepaths": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["purview", "namepaths"]
+}
+```
+
+### Example
+
+MCP (partial):
+```json
+{
+  "arguments": {
+    "purview": "iter/geo",
+    "namepaths": ["acme/geo:", "acme/mathlib:shape:area"]
+  }
+}
+```
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "purviews": [ ["default", ["*"]], ["iter/geo", ["acme/geo:", "acme/mathlib:shape:area"]] ],
+      "current": [ ["default", ["*"]] ],
+      "pruned": []
+    },
+    "content": []
+  }
+}
+```
+
+`pruned` reports selectors dropped because no registered library can satisfy
+them - a typo'd author, or a rig that has since been uninstalled.
+
+## `purview_extend()`
+*Bring more purviews into the current view.*
+
+ADDITIVE: nothing already in view is disturbed. An unknown id is REFUSED rather
+than silently contributing nothing, because a typo would otherwise look exactly
+like a purview that is genuinely empty.
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "purviews": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["purviews"]
+}
+```
+
+### Example
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "added": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float>\n",
+      "removed": null,
+      "current": [ ["default", ["*"]], ["iter/geo", ["acme/geo:"]] ]
+    },
+    "content": []
+  }
+}
+```
+
+`added` is a signature block for what CAME INTO view - not the whole new view -
+so the answer to "what can I now see that I could not" is direct. `removed` is
+the selectors that LEFT. Each is null when that half did not happen, which for
+extend is normally `removed`.
+
+## `purview_reset()`
+*Reset the current view back to the default purview.*
+
+The startup state. Shares `purview_extend()`'s delta envelope, where `removed`
+is the working half.
+
+### arguments
+
+No parameters.
 
 ## The embedded API (`grimm *`)
 

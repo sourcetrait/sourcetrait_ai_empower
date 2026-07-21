@@ -225,7 +225,67 @@ impl TestServer {
     }
 
     pub fn info(&self) -> json::Value {
-        Self::envelope(self.rt.block_on(self.nush.info(mcp::Parameters(InfoParams {}))))
+        self.info_as(&[])
+    }
+
+    /// `info()` rendered AS IF the given purview ids were in view - the subagent
+    /// blinders path. An empty slice means the CURRENT purview, and neither form
+    /// changes what actually is in view.
+    pub fn info_as(
+        &self,
+        purviews: &[&str],
+    ) -> json::Value {
+        let p = InfoParams {
+            purviews: purviews.iter().map(|s| s.to_string()).collect(),
+        };
+        Self::envelope(self.rt.block_on(self.nush.info(mcp::Parameters(p))))
+    }
+
+    pub fn purview_list(&self) -> json::Value {
+        Self::envelope(
+            self.rt
+                .block_on(self.nush.purview_list(mcp::Parameters(PurviewListParams {}))),
+        )
+    }
+
+    /// Set a purview's selectors; an EMPTY `namepaths` deletes it.
+    pub fn purview_configure(
+        &self,
+        purview: &str,
+        namepaths: &[&str],
+    ) -> json::Value {
+        let p = PurviewConfigureParams {
+            purview: purview.to_string(),
+            namepaths: namepaths.iter().map(|s| s.to_string()).collect(),
+        };
+        Self::envelope(
+            self.rt
+                .block_on(self.nush.purview_configure(mcp::Parameters(p))),
+        )
+    }
+
+    pub fn purview_extend(
+        &self,
+        purviews: &[&str],
+    ) -> json::Value {
+        let p = PurviewExtendParams {
+            purviews: purviews.iter().map(|s| s.to_string()).collect(),
+        };
+        Self::envelope(self.rt.block_on(self.nush.purview_extend(mcp::Parameters(p))))
+    }
+
+    pub fn purview_reset(&self) -> json::Value {
+        Self::envelope(
+            self.rt
+                .block_on(self.nush.purview_reset(mcp::Parameters(PurviewResetParams {}))),
+        )
+    }
+
+    /// Where this store's purview table lands, for tests asserting the store
+    /// LAYOUT rather than the tool surface - the namespace meta dir is new with
+    /// purviews.
+    pub fn purviews_path(&self) -> std::path::PathBuf {
+        crate::purviews_path()
     }
 
     pub fn learn(&self, harness_dir: &str) -> json::Value {

@@ -616,46 +616,117 @@ pub(crate) fn signature_of(
     format!("{name} {args} {result}")
 }
 
-/// Render one module's calls then its submodules, recursing.
+/// A node's docs coordinate: its module path joined with its own name.
+fn coord_of(
+    parent: &str,
+    name: &str,
+) -> String {
+    if parent.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parent}/{name}")
+    }
+}
+
+/// Render the calls and submodules of one module that `selectors` put in view,
+/// returning whether anything was emitted.
 ///
 /// Calls before submodules: the callables at a level are what a reader scans
 /// for, and a submodule pushes the eye deeper. Each group sorts by name.
-fn push_signature_nodes(
+///
+/// A module line is emitted when the module's OWN node is covered OR when
+/// anything below it was. That second case is what keeps the ANCESTORS of a
+/// deep match present, so the indentation still spells a whole namepath - a
+/// subtree without its ancestors is one a reader cannot turn back into a
+/// coordinate, and the block's whole grammar is its indentation.
+///
+/// A per-node predicate rather than a rooted walk, because a purview is a SET of
+/// selectors: two of them can root in different libraries at different depths,
+/// which no single root expresses, while "is this node covered by any of them"
+/// composes for free.
+fn push_within_nodes(
     out: &mut String,
     depth: usize,
     functions: &[IndexFunction],
     modules: &[IndexModule],
     docs_dir: &std::path::Path,
     parent: &str,
-) {
-    let coord_of = |name: &str| -> String {
-        if parent.is_empty() {
-            name.to_string()
-        } else {
-            format!("{parent}/{name}")
-        }
-    };
+    library: &str,
+    selectors: &[NamepathStr],
+) -> bool {
+    let mut showed = false;
     let mut calls: Vec<&IndexFunction> = functions.iter().collect();
     calls.sort_by(|a, b| a.name.cmp(&b.name));
     for f in calls {
-        let coord = coord_of(&f.name);
+        let node = NamepathRef::Function {
+            library: library.to_string(),
+            module_path: parent.to_string(),
+            name: f.name.clone(),
+        };
+        if !selectors.iter().any(|s| s.covers(&node)) {
+            continue;
+        }
+        let coord = coord_of(parent, &f.name);
         push_signature_line(
             out,
             depth,
             &signature_of(&f.name, f),
             &read_summary(docs_dir, &coord),
         );
+        showed = true;
     }
     let mut subs: Vec<&IndexModule> = modules.iter().collect();
     subs.sort_by(|a, b| a.name.cmp(&b.name));
     for m in subs {
-        let coord = coord_of(&m.name);
+        let coord = coord_of(parent, &m.name);
+        // Rendered into a buffer first: whether the module's own line belongs in
+        // the block is not knowable until its subtree has been walked.
+        let mut body = String::new();
+        let below = push_within_nodes(
+            &mut body,
+            depth + 1,
+            &m.functions,
+            &m.modules,
+            docs_dir,
+            &coord,
+            library,
+            selectors,
+        );
+        let node = NamepathRef::Module {
+            library: library.to_string(),
+            module_path: coord.clone(),
+        };
+        let covered = selectors.iter().any(|s| s.covers(&node));
+        if !below && !covered {
+            continue;
+        }
         push_signature_line(out, depth, &m.name, &read_summary(docs_dir, &coord));
-        push_signature_nodes(out, depth + 1, &m.functions, &m.modules, docs_dir, &coord);
+        out.push_str(&body);
+        showed = true;
     }
+    showed
 }
 
-/// The whole store as ONE indented signature block.
+/// The block for ONE pattern - what a pattern `inspect()` returns.
+///
+/// A thin call into the selector form below, because a single pattern is just a
+/// one-element selector set. There is deliberately no second walk to keep in
+/// step with the first.
+pub(crate) async fn render_signatures_matching(
+    locks: &LibraryLocks,
+    pattern: &NamepathPattern,
+) -> String {
+    render_signatures_within(locks, &[NamepathStr::Pattern(pattern.clone())]).await
+}
+
+/// The store as ONE indented signature block, filtered to a SET of selectors -
+/// the union of everything they put in view.
+///
+/// THE ONE renderer. `info()` shows the current purview through it, a pattern
+/// `inspect()` shows one selector through it, and the whole store is just the
+/// `*` selector - so none of the three can drift from the others. It replaced
+/// the structured `libraries` tree info() used to return: roughly 8 KB of nested
+/// JSON for two libraries, and the agent's first read after the skill.
 ///
 /// NOTHING IS STATED THAT CAN BE INFERRED, and the separators are inferable from
 /// shape alone (the_user): depth 0 is an author and depth 1 a library - a library
@@ -670,40 +741,23 @@ fn push_signature_nodes(
 /// rule - which is re-inference wearing a costume. Shape settles every case
 /// including that one, because a call is recognizable on its own.
 ///
-/// Replaces the structured `libraries` tree info() used to return - roughly 8 KB
-/// of nested JSON for two libraries, and the agent's first read after the skill.
-pub(crate) async fn render_signatures(locks: &LibraryLocks) -> String {
-    render_signatures_matching(locks, &NamepathPattern::All).await
-}
-
-/// The same block, ROOTED at a pattern instead of at the whole store.
+/// A library appears when its OWN node is covered or when anything inside it is.
+/// That is what lets a bare `author/` list a library that has no calls yet,
+/// while a pattern naming a module the library does not have contributes
+/// nothing at all - no orphan author or library heading left behind.
 ///
-/// ONE implementation behind both surfaces, so `info()` and a pattern
-/// `inspect()` can never disagree about what a block looks like: the pattern
-/// only decides WHICH libraries take part and WHERE inside each one the walk
-/// begins. The format itself is `render_signatures` above.
-///
-/// THE ANCESTOR LINES ABOVE THE ROOT ARE STILL EMITTED, because the block's
-/// grammar IS the indentation - depth 0 an author, depth 1 a library, deeper a
-/// module unless it carries the two signature groups. A bare subtree would be
-/// one a reader cannot turn back into a namepath, which is the one thing the
-/// format guarantees.
-///
-/// A pattern matching NOTHING renders EMPTY rather than erroring. A pattern is a
+/// Selectors matching NOTHING render EMPTY rather than erroring. A selector is a
 /// filter, and the unresolved `.` purview stub matches nothing BY DESIGN, so an
 /// empty block is already this format's answer for "no nodes here" - a fresh
 /// namespace renders empty for the same reason.
-pub(crate) async fn render_signatures_matching(
+pub(crate) async fn render_signatures_within(
     locks: &LibraryLocks,
-    pattern: &NamepathPattern,
+    selectors: &[NamepathStr],
 ) -> String {
     let mut out = String::new();
     let mut current_author: Option<String> = None;
     for name in registered_library_names() {
         let Some((author, leaf)) = name.split_once('/') else {
-            continue;
-        };
-        let Some(root) = pattern_root(pattern, &name) else {
             continue;
         };
         let lock = locks.lookup(&name).await;
@@ -718,82 +772,36 @@ pub(crate) async fn render_signatures_matching(
                 continue;
             }
         };
-        // A pattern naming a module this library does not have contributes
-        // nothing - and contributes it BEFORE the author/library lines, so a
-        // miss leaves no orphan heading behind.
-        let Some((functions, modules)) = index_node(&index, &root.module_path) else {
-            continue;
+        let docs_dir = library_docs_dir(&name);
+        // Buffered, because whether this library's heading belongs in the block
+        // is not knowable until its whole tree has been walked.
+        let mut body = String::new();
+        let showed = push_within_nodes(
+            &mut body,
+            2,
+            &index.functions,
+            &index.modules,
+            &docs_dir,
+            "",
+            &name,
+            selectors,
+        );
+        let library_node = NamepathRef::Library {
+            library: name.clone(),
         };
+        let covered = selectors.iter().any(|s| s.covers(&library_node));
+        if !showed && !covered {
+            continue;
+        }
         if current_author.as_deref() != Some(author) {
             // No summary: there is no author-level doc to read.
             push_signature_line(&mut out, 0, author, "");
             current_author = Some(author.to_string());
         }
-        let docs_dir = library_docs_dir(&name);
         push_signature_line(&mut out, 1, leaf, &read_summary(&docs_dir, ""));
-        // The modules between the library root and the pattern's root, each at
-        // its own depth, so the indentation still spells the whole namepath.
-        let mut depth = 2;
-        let mut coord = String::new();
-        for seg in root.module_path.split('/').filter(|s| !s.is_empty()) {
-            coord = if coord.is_empty() {
-                seg.to_string()
-            } else {
-                format!("{coord}/{seg}")
-            };
-            push_signature_line(&mut out, depth, seg, &read_summary(&docs_dir, &coord));
-            depth += 1;
-        }
-        // `:` selects the CALL level and does not descend, which here is just
-        // an empty submodule slice through the one shared walk.
-        let subs: &[IndexModule] = if root.calls_only { &[] } else { modules };
-        push_signature_nodes(&mut out, depth, functions, subs, &docs_dir, &coord);
+        out.push_str(&body);
     }
     out
-}
-
-/// Where a pattern starts inside ONE library, or None when that library takes
-/// no part at all.
-struct PatternRoot {
-    module_path: String,
-    /// `lib:mod:` selects that module's calls without descending.
-    calls_only: bool,
-}
-
-fn pattern_root(
-    pattern: &NamepathPattern,
-    library: &str,
-) -> Option<PatternRoot> {
-    fn root(
-        module_path: &str,
-        calls_only: bool,
-    ) -> PatternRoot {
-        PatternRoot {
-            module_path: module_path.to_string(),
-            calls_only,
-        }
-    }
-    match pattern {
-        NamepathPattern::All => Some(root("", false)),
-        // The purview stub: unresolved, so it names nothing rather than
-        // everything (server/namepath.rs).
-        NamepathPattern::Current => None,
-        NamepathPattern::Author { author } => {
-            let (node_author, _) = library.split_once('/')?;
-            (node_author == author).then(|| root("", false))
-        }
-        NamepathPattern::Library { library: want } => {
-            (library == want).then(|| root("", false))
-        }
-        NamepathPattern::ModuleTree {
-            library: want,
-            module_path,
-        } => (library == want).then(|| root(module_path, false)),
-        NamepathPattern::ModuleCalls {
-            library: want,
-            module_path,
-        } => (library == want).then(|| root(module_path, true)),
-    }
 }
 
 /// A library's documentation. `srcdir` is the COMMITTED CANONICAL directory, not

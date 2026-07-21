@@ -355,6 +355,10 @@ pub(crate) enum DeniableTool {
     ChannelVerified,
     ChannelClose,
     ConfigChannel,
+    PurviewList,
+    PurviewConfigure,
+    PurviewExtend,
+    PurviewReset,
 }
 
 impl DeniableTool {
@@ -372,6 +376,10 @@ impl DeniableTool {
             "channel_verified" => Self::ChannelVerified,
             "channel_close" => Self::ChannelClose,
             "config_channel" => Self::ConfigChannel,
+            "purview_list" => Self::PurviewList,
+            "purview_configure" => Self::PurviewConfigure,
+            "purview_extend" => Self::PurviewExtend,
+            "purview_reset" => Self::PurviewReset,
             _ => return None,
         })
     }

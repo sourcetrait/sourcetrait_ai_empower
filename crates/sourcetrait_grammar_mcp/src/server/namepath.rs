@@ -77,6 +77,26 @@ impl NamepathStr {
     }
 }
 
+impl NamepathStr {
+    /// Does this selector put `node` in view?
+    ///
+    /// A PATTERN covers a SET; an EXACT namepath covers only itself. Purview
+    /// values are allowed to be either - a whole author, or one specific call -
+    /// so answering the same question for both is what lets a purview hold a
+    /// mixed list without ever branching on which kind it got.
+    pub(crate) fn covers(
+        &self,
+        node: &NamepathRef,
+    ) -> bool {
+        match self {
+            Self::Pattern(pattern) => pattern.matches(node),
+            Self::Namepath(namepath) => {
+                namepath.validate().is_ok_and(|exact| &exact == node)
+            }
+        }
+    }
+}
+
 fn is_pattern_shaped(raw: &str) -> bool {
     raw == PATTERN_ALL || raw == PATTERN_CURRENT || raw.ends_with('/') || raw.ends_with(':')
 }

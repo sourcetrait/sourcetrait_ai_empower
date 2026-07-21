@@ -16,6 +16,7 @@ pub(crate) mod server {
     pub(crate) mod nonce;
     pub(crate) mod oneshot;
     pub(crate) mod parse_engine;
+    pub(crate) mod purview;
     pub(crate) mod run;
     pub(crate) mod schema;
     pub(crate) mod teardown;
@@ -39,6 +40,10 @@ pub(crate) mod server {
         pub(crate) mod library;
         pub(crate) mod new;
         pub(crate) mod processes;
+        pub(crate) mod purview_configure;
+        pub(crate) mod purview_extend;
+        pub(crate) mod purview_list;
+        pub(crate) mod purview_reset;
         pub(crate) mod rerun;
         pub(crate) mod run;
     }
@@ -115,12 +120,13 @@ pub(crate) use crate::{
         executor::Executor,
         library::{
             LibraryLocks, ValidationResult, check_library,
-            check_source_dir, commit_impl, ensure_substrate, establish_library, render_signatures,
-            render_signatures_matching, SignaturesDoc,
+            check_source_dir, commit_impl, ensure_substrate, establish_library,
+            render_signatures_matching, render_signatures_within, SignaturesDoc,
             InspectDoc, index_node, inspect_impl, install_impl, is_reserved_term, is_valid_ident,
             is_valid_library,
             is_valid_module_path,
-            libraries_dir, load_index, scaffold_leaf, scaffold_leaf_exists, uninstall_impl,
+            libraries_dir, load_index, registered_library_names, scaffold_leaf,
+            scaffold_leaf_exists, uninstall_impl,
         },
         lint::{LINT_VIOLATION_CAP, lint_body},
         liveness::acquire as acquire_host_lock,
@@ -130,6 +136,12 @@ pub(crate) use crate::{
         parse_engine::{
             LintEngine, ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body,
             wrap_as_module,
+        },
+        purview::{
+            CurrentPurview, PURVIEW_ALL, PURVIEW_DEFAULT, PurviewRow,
+            PurviewView, is_derived_purview, is_valid_purview_id, load_purviews,
+            is_nameable_purview, parse_selectors, prune_dangling, purview_views, purviews_path,
+            resolve_selectors, save_purviews, selector_delta,
         },
         run::{eval_concurrency_cap, run_server},
         schema::{
@@ -161,6 +173,10 @@ pub(crate) use crate::{
             library::LibraryParams,
             new::NewParams,
             processes::ProcessesParams,
+            purview_configure::PurviewConfigureParams,
+            purview_extend::{PurviewDeltaEnvelope, PurviewExtendParams},
+            purview_list::PurviewListParams,
+            purview_reset::PurviewResetParams,
             rerun::RerunParams,
         },
     },

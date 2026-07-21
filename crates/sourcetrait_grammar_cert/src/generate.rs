@@ -30,14 +30,14 @@ impl CertFileKind {
 
 /// Every path argument this tool takes names a PARENT; we own the `certs` leaf under
 /// it. So a caller passes the location it wants involved and never has to know our
-/// filenames, and the same base can be handed to `generate`, `install` and `verify`
+/// filenames, and the same dir can be handed to `generate`, `install` and `verify`
 /// without any of them meaning something subtly different by it.
 ///
-/// The one place this does NOT apply is the system trust anchor dir, which has its own
+/// The one place this does NOT apply is the system trust dir, which has its own
 /// contract with `update-ca-trust` - a `certs` subdir there would simply not be picked
 /// up. That path is used exactly as given.
-pub(crate) fn certs_dir(base: &Path) -> PathBuf {
-    base.join("certs")
+pub(crate) fn certs_dir(dir: &Path) -> PathBuf {
+    dir.join("certs")
 }
 
 /// The install destination inside a SHARED root: `<secret_data>/sourcetrait/grammar/certs`.
@@ -132,7 +132,7 @@ fn restrict(path: &Path) -> Result<()> {
         .map_err(|e| CertError::io(format!("chmod 600 {}", path.display()), e))
 }
 
-/// Mint a self-signed CA and a leaf it signs, into `<base>/certs`.
+/// Mint a self-signed CA and a leaf it signs, into `<dir>/certs`.
 ///
 /// An EXISTING `certs` dir is a hard error, not a no-op. The reference guarded on "all
 /// four artifacts present" and skipped, which is the dangerous shape: a partially
@@ -142,9 +142,9 @@ fn restrict(path: &Path) -> Result<()> {
 /// anchor can happen by accident.
 pub(crate) fn generate(
     config: &CertGenConfig,
-    base: &Path,
+    dir: &Path,
 ) -> Result<CertFiles> {
-    let out_dir = certs_dir(base);
+    let out_dir = certs_dir(dir);
     if out_dir.exists() {
         return Err(CertError::CertsDirExists {
             path: out_dir.display().to_string(),

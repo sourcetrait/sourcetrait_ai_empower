@@ -3,8 +3,8 @@ use crate::*;
 use crate::store::{TrustTarget, kind_of_target};
 
 pub(crate) struct InstallPlan<'a> {
-    /// The base `generate` was given; its artifacts are in `<base>/certs`.
-    pub cert_base: &'a Path,
+    /// The dir `generate` was given; its artifacts are in `<dir>/certs`.
+    pub cert_dir: &'a Path,
     pub name: &'a str,
     pub target: &'a TrustTarget,
     /// The secret DATA home; key material lands in `<it>/sourcetrait/grammar/certs`.
@@ -27,7 +27,7 @@ pub(crate) struct Installed {
 /// to own - surfacing much later as a channel-open failure.
 pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
     // PREFLIGHT: every check before any mutation.
-    let source_dir = crate::generate::certs_dir(plan.cert_base);
+    let source_dir = crate::generate::certs_dir(plan.cert_dir);
     let files = CertFiles::new(&source_dir, plan.name);
     if !files.exist() {
         return Err(CertError::NotACertDir {

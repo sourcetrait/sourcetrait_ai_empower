@@ -21,9 +21,9 @@ struct Cli {
 enum Command {
     /// Mint a local CA and the leaf it signs. Unprivileged.
     Generate {
-        /// Base directory; the artifacts are written to its `certs` subdir, which must
-        /// not already exist.
-        base: PathBuf,
+        /// Directory to write into; the artifacts land in its `certs` subdir, which
+        /// must not already exist.
+        dir: PathBuf,
         /// Parameters: subjects, SANs, validity. Carries no paths. Defaults to the
         /// built-in config.
         #[arg(long)]
@@ -31,8 +31,8 @@ enum Command {
     },
     /// Place the key material and make the system trust the CA.
     Install {
-        /// The base passed to `generate`.
-        base: PathBuf,
+        /// The dir passed to `generate`.
+        dir: PathBuf,
         /// The secret DATA home; key material lands in its
         /// `sourcetrait/grammar/certs` subdir. Defaults to $XDGX_SECRET_DATA_HOME.
         #[arg(long)]
@@ -67,16 +67,16 @@ enum Command {
 
 pub fn run() -> Result<()> {
     match <Cli as clap::Parser>::parse().command {
-        Command::Generate { base, config } => cmd_generate(config.as_deref(), &base),
+        Command::Generate { dir, config } => cmd_generate(config.as_deref(), &dir),
         Command::Install {
-            base,
+            dir,
             secret_data,
             name,
             trust_dir,
             owner,
             update_command,
         } => cmd_install(
-            &base,
+            &dir,
             &resolve_secret_data(secret_data)?,
             &name,
             trust_dir.as_deref(),
@@ -116,13 +116,13 @@ const BUILTIN_CONFIG: &str = include_str!("../assets/certgen.toml");
 
 fn cmd_generate(
     config_path: Option<&Path>,
-    base: &Path,
+    dir: &Path,
 ) -> Result<()> {
     let config = match config_path {
         Some(path) => CertGenConfig::load(path)?,
         None => CertGenConfig::parse(BUILTIN_CONFIG, Path::new("<built-in>"))?,
     };
-    let files = generate(&config, base)?;
+    let files = generate(&config, dir)?;
     for path in files.all() {
         println!("{}", path.display());
     }
@@ -130,7 +130,7 @@ fn cmd_generate(
 }
 
 fn cmd_install(
-    base: &Path,
+    dir: &Path,
     secret_data: &Path,
     name: &str,
     trust_dir: Option<&Path>,
@@ -143,7 +143,7 @@ fn cmd_install(
         None => eprintln!("grammar_cert: trust store from arguments"),
     }
     let installed = install(&crate::install::InstallPlan {
-        cert_base: base,
+        cert_dir: dir,
         name,
         target: &target,
         secret_data,

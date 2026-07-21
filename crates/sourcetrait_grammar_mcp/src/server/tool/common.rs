@@ -88,6 +88,9 @@ pub struct NuSh {
     /// interact lane.
     pub(crate) env_jobs: Arc<std::sync::Mutex<nu::Jobs>>,
     pub(crate) nonce_gen: Arc<NonceGen>,
+    /// This host process's identity, minted once at construction. Namespaces the
+    /// per-process emergency log and is reported by `info()`.
+    pub(crate) mcp_nom: McpNom,
     pub(crate) library_locks: Arc<LibraryLocks>,
     pub(crate) lint_engine: Arc<ParseEngine>,
     /// The resource registry, keyed by nonce string: each eval's cancel handle
@@ -143,11 +146,13 @@ impl NuSh {
         nu::CRYPTO_PROVIDER.default();
         let env_jobs = Arc::new(std::sync::Mutex::new(nu::Jobs::default()));
         let executor = Arc::new(Executor::new(env_jobs.clone(), READY_POOL_TARGET));
+        let mcp_nom = McpNom::mint(&nonce_gen);
         Self {
             interact_engine: Arc::new(tk::AsyncMutex::new(None)),
             executor,
             env_jobs,
             nonce_gen,
+            mcp_nom,
             library_locks,
             lint_engine,
             in_flight: Arc::new(tk::AsyncMutex::new(HashMap::new())),

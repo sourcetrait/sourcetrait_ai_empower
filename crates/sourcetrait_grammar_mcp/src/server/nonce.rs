@@ -12,6 +12,31 @@ impl Display for Nonce {
     }
 }
 
+/// This host PROCESS's own identity, minted once at startup from its pid.
+///
+/// Distinct from `Nonce` in lifetime, not in shape: a Nonce names one eval, this names
+/// the host that ran it. It namespaces per-process artifacts (the emergency log) so two
+/// hosts sharing a store coordinate never clobber each other, and `info()` reports it so
+/// an agent can tell a RESTARTED host from the one it was talking to - which a pid alone
+/// cannot do, since pids are reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct McpNom(Nonce);
+
+impl McpNom {
+    pub(crate) fn mint(nonce_gen: &NonceGen) -> Self {
+        Self(nonce_gen.next(&process::id()))
+    }
+}
+
+impl Display for McpNom {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 pub(crate) struct NonceGen {
     counter: AtomicUsize,
 }

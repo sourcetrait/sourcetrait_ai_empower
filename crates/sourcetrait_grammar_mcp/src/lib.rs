@@ -1,6 +1,10 @@
 pub(crate) mod server {
     pub(crate) mod blocked;
     pub(crate) mod cache;
+    pub(crate) mod channel {
+        pub(crate) mod hub;
+        pub(crate) mod state;
+    }
     pub(crate) mod embed;
     pub(crate) mod emergency;
     pub(crate) mod error;
@@ -77,6 +81,13 @@ pub(crate) use crate::{
             BASE_DIRS, BODY_FILE, CacheKind, cache_base_dir, cache_dir, data_base_dir,
             run_body_file,
         },
+        channel::{
+            hub::start as start_channel_hub,
+            state::{
+                ChannelHandle, ChannelPhase, ChannelSendError, ChannelStatus, HubCommand,
+                escape_line, render_packet,
+            },
+        },
         embed::{InteractEngine, build_base, eval_stateless},
         emergency::{
             BackgroundJobsEmergency, CriticalEmergency, Emergency, EmergencyTx, HostCpuEmergency,
@@ -94,7 +105,7 @@ pub(crate) use crate::{
         },
         lint::{LINT_VIOLATION_CAP, lint_body},
         namepath::{Namepath, NamepathRef},
-        nonce::{Nonce, NonceGen},
+        nonce::{McpNom, Nonce, NonceGen},
         oneshot::run_oneshot,
         parse_engine::{
             ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body, wrap_as_module,
@@ -208,9 +219,26 @@ pub(crate) mod mcp {
     };
 }
 
+pub(crate) mod tls {
+    pub(crate) use tokio_rustls::TlsAcceptor;
+    pub(crate) use tokio_rustls::rustls::ServerConfig;
+    pub(crate) use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+}
+
+pub(crate) mod ws {
+    pub(crate) use tokio_tungstenite::accept_async;
+    pub(crate) use tokio_tungstenite::tungstenite::Message;
+    pub(crate) use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+    pub(crate) use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+}
+
+pub(crate) use futures_util::{SinkExt, StreamExt};
+pub(crate) use tokio_rustls::rustls::pki_types::pem::PemObject;
+
 pub(crate) mod tk {
     pub(crate) use tokio::{
         spawn,
+        net::{TcpListener, TcpStream},
         task::spawn_blocking,
         sync::{
             Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore, oneshot,

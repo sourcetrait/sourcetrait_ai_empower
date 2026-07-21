@@ -152,6 +152,10 @@ pub enum Error {
         nonce: String,
         reason: String,
     },
+    ChannelStart {
+        reason: String,
+    },
+    ChannelNotOpen,
     ThreadDispatch {
         reason: String,
     },
@@ -184,6 +188,8 @@ impl Error {
             Self::RerunInvalidNonce { .. } => "rerun::invalid_nonce",
             Self::RerunBodyMissing { .. } => "rerun::body_missing",
             Self::RerunBodyDecode { .. } => "rerun::body_decode",
+            Self::ChannelStart { .. } => "channel::start",
+            Self::ChannelNotOpen => "channel::not_open",
             Self::ThreadDispatch { .. } => "thread::dispatch",
             Self::ThreadTimeout { .. } => "thread::timeout",
             Self::ThreadReturnedError { .. } => "thread::returned_error",
@@ -240,6 +246,10 @@ impl Error {
             }
             Self::RerunBodyDecode { nonce, reason } => {
                 format!("failed to decode cached run body for nonce `{nonce}`: {reason}")
+            }
+            Self::ChannelStart { reason } => format!("cannot start the channel hub: {reason}"),
+            Self::ChannelNotOpen => {
+                "the channel is not open; call channel_open() first".to_string()
             }
             Self::ThreadDispatch { reason } => format!("eval dispatch failed: {reason}"),
             Self::ThreadTimeout { timeout_ms } => format!("eval timed out after {timeout_ms} ms"),

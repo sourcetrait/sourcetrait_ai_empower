@@ -15,6 +15,9 @@ pub(crate) struct InfoEnvelope {
     /// store it is on.
     pub id: String,
     pub namespace: String,
+    /// This host process's id, stable for its lifetime. A change across two calls
+    /// means the server was restarted.
+    pub mcp_nom: String,
     /// The agent working directory this server was configured with
     /// (`--workdir`), exported to eval bodies as $env.EQUIP_WORK_DIR.
     pub work_dir: String,
@@ -38,6 +41,7 @@ impl NuSh {
             nu_version: env!("NU_VERSION").to_string(),
             id: config().id.clone(),
             namespace: config().namespace.clone(),
+            mcp_nom: self.mcp_nom.to_string(),
             work_dir: config().work_dir.display().to_string(),
             plugins: list_registered_plugins(),
             libraries: enumerate_libraries(&self.library_locks).await,

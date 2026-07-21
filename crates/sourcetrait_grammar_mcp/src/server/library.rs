@@ -26,7 +26,11 @@ pub(crate) struct IndexModule {
     pub modules: Vec<IndexModule>,
 }
 
-pub(crate) const META_FILE: &str = ".meta/library.json";
+pub(crate) const META_FILE: &str = ".meta/library.nuon";
+
+/// The pre-NUON index filename. Nothing writes it any more; it exists so
+/// `migrate_meta_to_nuon` can find a store written by an older host and retire it.
+const LEGACY_META_FILE: &str = ".meta/library.json";
 
 
 pub(crate) fn keypair_dir() -> PathBuf {
@@ -339,11 +343,11 @@ pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) ->
         functions: Vec::new(),
         modules: Vec::new(),
     };
-    let index_bytes = json::to_vec(&index).map_err(|e| Error::Internal {
+    let index_nuon = index_to_nuon(&index).map_err(|reason| Error::Internal {
         phase: "establish::serialize_index".to_string(),
-        reason: e.to_string(),
+        reason,
     })?;
-    fs::write(canonical.join(META_FILE), &index_bytes)?;
+    fs::write(canonical.join(META_FILE), index_nuon.as_bytes())?;
     let rel = library_store_rel(library);
     run_git(&libraries_dir(), &["add", "--", &rel])?;
     run_git(
@@ -463,9 +467,32 @@ pub(crate) fn is_valid_module_path(s: &str) -> bool {
 }
 
 
+/// Render the index as NUON - the house format for anything we persist.
+///
+/// Routed through serde's Value rather than hand-mapping every field: the index types
+/// already derive Serialize/Deserialize and the schemas they carry are `JsonObject`s,
+/// so ONE bridge at the Value layer covers the whole tree and cannot drift from the
+/// structs as they change.
+pub(crate) fn index_to_nuon(index: &LibraryIndex) -> Result<String, String> {
+    let json = json::to_value(index).map_err(|e| e.to_string())?;
+    let value = json_value_to_nu_value(&json);
+    nu::to_nuon(&nu::EngineState::new(), &value, nu::ToNuonConfig::default())
+        .map_err(|e| e.to_string())
+}
+
+/// Parse an index back out of NUON, the mirror of `index_to_nuon`.
+pub(crate) fn index_from_nuon(text: &str) -> Result<LibraryIndex, String> {
+    let value = nu::from_nuon(text, None).map_err(|e| e.to_string())?;
+    // `nu_json` is the FRIENDLY converter (what `to json` emits); serde's own
+    // Serialize on a nu Value would hand back the internal tagged form with spans.
+    let json_compat = nu::JsonValue::from_value(value).map_err(|e| e.to_string())?;
+    let json = json::to_value(&json_compat).map_err(|e| e.to_string())?;
+    json::from_value(json).map_err(|e| e.to_string())
+}
+
 pub(crate) fn load_index(library: &str) -> io::Result<LibraryIndex> {
-    let bytes = fs::read(library_meta_path(library))?;
-    json::from_slice(&bytes)
+    let text = fs::read_to_string(library_meta_path(library))?;
+    index_from_nuon(&text)
         .map_err(|e| io::Error::other(format!("decode index for {library}: {e}")))
 }
 
@@ -2080,11 +2107,11 @@ fn write_meta(
         functions: result.functions.clone(),
         modules: result.modules.clone(),
     };
-    let index_bytes = json::to_vec(&index).map_err(|e| Error::Internal {
+    let index_nuon = index_to_nuon(&index).map_err(|reason| Error::Internal {
         phase: "commit::serialize_index".to_string(),
-        reason: e.to_string(),
+        reason,
     })?;
-    fs::write(canonical.join(META_FILE), &index_bytes)?;
+    fs::write(canonical.join(META_FILE), index_nuon.as_bytes())?;
     let docs_dir = meta_dir.join("docs");
     for doc in &result.docs {
         let dir = if doc.coord.is_empty() {
@@ -2271,9 +2298,70 @@ fn copy_tree_all(src: &std::path::Path, dst: &std::path::Path) -> io::Result<()>
 }
 
 
+/// One-time migration: `.meta/library.json` -> `.meta/library.nuon`.
+///
+/// The index was the last JSON we persisted, against the house rule that anything we
+/// persist is NUON. Changing the FORMAT without migrating existing STORES would be a
+/// silent break rather than a fix: library DETECTION keys on the meta file, so an
+/// unmigrated library simply stops existing - no error, just an empty `info()` and a
+/// `not_registered` on every call.
+///
+/// Idempotent. A store with no legacy file is a no-op; a library that somehow carries
+/// both keeps the `.nuon` it already has and drops the stale `.json`. Returns how many
+/// libraries were touched.
+fn migrate_meta_to_nuon() -> io::Result<usize> {
+    let root = libraries_dir().join(RIG_TYPE_DIR);
+    if !root.exists() {
+        return Ok(0);
+    }
+    let mut migrated = 0usize;
+    for author in fs::read_dir(&root)? {
+        let author = author?;
+        if !author.file_type()?.is_dir() {
+            continue;
+        }
+        for lib in fs::read_dir(author.path())? {
+            let lib = lib?;
+            if !lib.file_type()?.is_dir() {
+                continue;
+            }
+            let legacy = lib.path().join(LEGACY_META_FILE);
+            if !legacy.exists() {
+                continue;
+            }
+            let target = lib.path().join(META_FILE);
+            if !target.exists() {
+                let bytes = fs::read(&legacy)?;
+                let index: LibraryIndex = json::from_slice(&bytes)
+                    .map_err(|e| io::Error::other(format!("decode {}: {e}", legacy.display())))?;
+                let nuon = index_to_nuon(&index)
+                    .map_err(|e| io::Error::other(format!("render {}: {e}", target.display())))?;
+                fs::write(&target, nuon.as_bytes())?;
+            }
+            fs::remove_file(&legacy)?;
+            migrated += 1;
+        }
+    }
+    Ok(migrated)
+}
+
 pub(crate) async fn ensure_substrate() -> io::Result<Arc<LibraryLocks>> {
     ensure_keypair()?;
     ensure_libraries_repo()?;
+    // BEFORE hydration, or an unmigrated store hydrates as empty.
+    let migrated = migrate_meta_to_nuon()?;
+    if migrated > 0 {
+        eprintln!("grammar: migrated {migrated} library index file(s) to NUON");
+        // Hygiene rather than correctness - the files on disk are already right. A
+        // failure here leaves the signed repo dirty until the next commit sweeps it,
+        // which is worth saying out loud but not worth refusing to start over.
+        let dir = libraries_dir();
+        if let Err(e) = run_git(&dir, &["add", "--", RIG_TYPE_DIR])
+            .and_then(|()| run_git(&dir, &["commit", "-m", "migrate library index to NUON"]))
+        {
+            eprintln!("grammar: index migration not committed: {e}");
+        }
+    }
     let locks = Arc::new(LibraryLocks::new());
     locks.hydrate_from_disk().await?;
     Ok(locks)

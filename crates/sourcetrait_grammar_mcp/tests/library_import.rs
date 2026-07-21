@@ -76,8 +76,11 @@ fn commit_happy_path_writes_repo_and_meta() {
     assert!(lib.join("math").join("mod.nu").exists());
     assert!(lib.join("math").join("double").join("mod.nu").exists());
 
-    let meta_text = std::fs::read_to_string(lib.join(".meta/library.json")).unwrap();
-    let meta: serde_json::Value = serde_json::from_str(&meta_text).unwrap();
+    assert!(
+        lib.join(".meta/library.nuon").exists(),
+        "the index is NUON on disk, not JSON",
+    );
+    let meta = s.library_index("sourcetrait/happylib");
     assert_eq!(meta["source_path"].as_str(), Some(src.to_str().unwrap()));
     assert!(
         meta.get("kind").is_none(),
@@ -794,13 +797,11 @@ fn library_new_and_scaffold_function() {
     let src = t.temp_dir().join("scaffolded");
     let r1 = s.library("new", "sourcetrait/scaffolded", src.to_str().unwrap());
     assert!(!has_error(&r1), "establish should succeed; got {r1}");
-    let meta_text = std::fs::read_to_string(
-        s.library_dir("sourcetrait/scaffolded").join(".meta/library.json"),
-    )
-    .unwrap();
-    assert!(
-        meta_text.contains(src.to_str().unwrap()),
-        "meta should record source_path; got {meta_text}",
+    let meta = s.library_index("sourcetrait/scaffolded");
+    assert_eq!(
+        meta["source_path"].as_str(),
+        Some(src.to_str().unwrap()),
+        "meta should record source_path; got {meta}",
     );
     assert!(
         src.join("mod.nu").exists(),

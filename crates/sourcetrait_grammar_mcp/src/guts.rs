@@ -311,6 +311,18 @@ impl TestServer {
     pub fn library_dir(&self, name: &str) -> std::path::PathBuf {
         crate::libraries_dir().join("rig").join(name)
     }
+
+    /// A library's committed index, decoded into the JSON shape assertions are
+    /// written against. The index is NUON on disk (the house format for anything we
+    /// persist); a test checking `source_path` should not have to know that.
+    pub fn library_index(&self, name: &str) -> json::Value {
+        let path = crate::server::library::library_meta_path(name);
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read index {}: {e}", path.display()));
+        let index = crate::server::library::index_from_nuon(&text)
+            .unwrap_or_else(|e| panic!("decode index {}: {e}", path.display()));
+        json::to_value(&index).expect("index serializes")
+    }
 }
 
 // ---- envelope readers (shared by the in-process integration tests) ----

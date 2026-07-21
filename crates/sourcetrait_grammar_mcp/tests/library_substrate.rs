@@ -36,10 +36,9 @@ fn library_new_writes_repo_and_records_meta() {
     let lib_dir = s.library_dir("sourcetrait/mylib");
     assert!(lib_dir.exists(), "lib dir should exist at {}", lib_dir.display());
     assert!(lib_dir.join("mod.nu").exists(), "lib mod.nu should exist");
-    let meta_path = lib_dir.join(".meta/library.json");
-    assert!(meta_path.exists(), "meta sidecar should exist");
-    let meta: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&meta_path).expect("read meta")).expect("decode meta");
+    let meta_path = lib_dir.join(".meta/library.nuon");
+    assert!(meta_path.exists(), "the meta sidecar should exist, and be NUON");
+    let meta = s.library_index("sourcetrait/mylib");
     assert_eq!(meta["source_path"].as_str(), src.to_str());
     assert!(
         meta.get("kind").is_none(),

@@ -46,6 +46,7 @@ pub(crate) mod server {
     mod tests {
         mod channel;
         mod emergency;
+        mod library;
         mod namepath;
         mod schema;
         mod teardown;
@@ -157,7 +158,9 @@ pub(crate) use crate::{
             rerun::RerunParams,
         },
     },
-    template::{build_call_source, build_interact_source, build_run_source},
+    template::{
+        build_call_source, build_interact_source, build_run_source, json_value_to_nu_value,
+    },
 };
 
 pub(crate) use std::{
@@ -271,7 +274,7 @@ pub(crate) mod tk {
 }
 
 pub(crate) mod json {
-    pub(crate) use serde_json::{Value, from_slice, to_value, to_vec};
+    pub(crate) use serde_json::{Value, from_slice, from_value, to_value, to_vec};
 }
 
 pub use crate::cli::host_main;

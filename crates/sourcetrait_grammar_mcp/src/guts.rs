@@ -263,6 +263,24 @@ impl TestServer {
         )
     }
 
+    /// `config_channel` is a PARTIAL update; pass `None` for anything that should not
+    /// move. Returns the policy now in force.
+    pub fn config_channel(
+        &self,
+        warn_window_secs: Option<u64>,
+        warn_rate: Option<u32>,
+        error_window_secs: Option<u64>,
+        error_rate: Option<u32>,
+    ) -> json::Value {
+        let p = ConfigChannelParams {
+            spam_warn_window_secs: warn_window_secs,
+            spam_warn_rate: warn_rate,
+            spam_error_window_secs: error_window_secs,
+            spam_error_rate: error_rate,
+        };
+        Self::envelope(self.rt.block_on(self.nush.config_channel(mcp::Parameters(p))))
+    }
+
     /// `channel_close` is a no-return tool; closing an already-closed channel succeeds.
     pub fn channel_close(&self) -> json::Value {
         Self::envelope(

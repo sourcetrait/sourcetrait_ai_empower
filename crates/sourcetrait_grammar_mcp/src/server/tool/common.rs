@@ -165,7 +165,9 @@ impl NuSh {
             lint_engine,
             in_flight: Arc::new(tk::AsyncMutex::new(HashMap::new())),
             hung_watch: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            channel: Arc::new(ChannelHandle::new()),
+            // The process-wide handle, not a fresh one: an eval reaches the channel
+            // through the same global, so a per-NuSh handle would diverge from it.
+            channel: channel_handle(),
             channel_open_lock: Arc::new(tk::AsyncMutex::new(())),
             tool_router: Self::tool_router(),
         }

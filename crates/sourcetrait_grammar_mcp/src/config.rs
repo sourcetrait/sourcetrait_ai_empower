@@ -30,6 +30,32 @@ const MIN_CHANNEL_PORT: u16 = 1024;
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigToml {
     pub channel: Option<ChannelConfigToml>,
+    pub supervisor: Option<SupervisorConfigToml>,
+}
+
+/// The `[supervisor]` table: when a resource level is worth ONE warning to the agent.
+///
+/// Expressed against the machine's TOTAL capacity rather than as absolute figures, so
+/// the same defaults mean the same thing on a different box and do not silently age.
+#[derive(Debug, Clone, Default, ser::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SupervisorConfigToml {
+    /// Fraction of ALL cores the host's own CPU must reach.
+    pub cpu_warn_fraction: Option<f64>,
+    /// Fraction of total system RAM the host's own RSS must reach.
+    pub ram_warn_fraction: Option<f64>,
+    /// Warn once GPU memory FREE falls below this many MiB.
+    pub vram_warn_headroom_mib: Option<u64>,
+    /// Fraction of a watched filesystem's capacity.
+    pub disk_warn_fraction: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SupervisorConfig {
+    pub cpu_warn_fraction: f64,
+    pub ram_warn_fraction: f64,
+    pub vram_warn_headroom_mib: u64,
+    pub disk_warn_fraction: f64,
 }
 
 /// The `[channel]` table: the wss port and the cert directory, and nothing else.
@@ -45,6 +71,13 @@ pub(crate) struct ChannelConfigToml {
     /// an unprivileged port (1024-65535); 0 is rejected rather than treated as "any".
     pub port: Option<u16>,
     pub cert_dir: Option<String>,
+    /// Windows are INTEGER SECONDS on this surface. MCP args cross as JSON, where a nu
+    /// `duration` cannot be represented, and TOML has no duration type either - so the
+    /// `10s` form lives in the model and the docs, never on a wire or in a file.
+    pub spam_warn_window_secs: Option<u64>,
+    pub spam_warn_rate: Option<u32>,
+    pub spam_error_window_secs: Option<u64>,
+    pub spam_error_rate: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +87,7 @@ pub(crate) struct Config {
     pub work_dir: PathBuf,
     pub deny: DenySet,
     pub channel: ChannelConfig,
+    pub supervisor: SupervisorConfig,
 }
 
 /// The channel hub's operating parameters. The hub reads these rather than the
@@ -67,6 +101,38 @@ pub(crate) struct ChannelConfig {
     pub port: Option<u16>,
     /// Fully expanded at load, like every other path out of config or arguments.
     pub cert_dir: PathBuf,
+    /// The starting spam policy. Runtime changes go through `config_channel`, which
+    /// mutates the channel's live copy rather than this - CONFIG is set once.
+    pub spam: SpamThresholds,
+}
+
+/// How much a single origin may emit before it is warned, and before it is stopped.
+///
+/// Two INDEPENDENT (window, rate) pairs so warn and error can measure different things -
+/// a short window catches a burst, a longer one catches sustained misbehaviour.
+///
+/// THESE VALUES ARE INITIAL. There is no basis for them beyond reasoning; only production
+/// traffic will say what a normal producer actually does. The gap between legitimate and
+/// runaway is enormous rather than marginal - a state lane emits single digits per burst,
+/// a loop emits thousands per second - so the numbers barely affect detection and mostly
+/// decide how often a well-behaved fast command gets flagged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SpamThresholds {
+    pub warn_window: tk::TkDuration,
+    pub warn_rate: u32,
+    pub error_window: tk::TkDuration,
+    pub error_rate: u32,
+}
+
+impl SpamThresholds {
+    /// The longer of the two windows - how far back the counter has to remember.
+    pub(crate) fn retention(&self) -> tk::TkDuration {
+        if self.warn_window > self.error_window {
+            self.warn_window
+        } else {
+            self.error_window
+        }
+    }
 }
 
 impl ChannelConfig {
@@ -102,10 +168,81 @@ fn merged_channel(
              omit it for a kernel-assigned port",
         ));
     }
+    let spam = SpamThresholds {
+        warn_window: secs_field("spam_warn_window_secs", user.spam_warn_window_secs, base.spam_warn_window_secs)?,
+        warn_rate: rate_field("spam_warn_rate", user.spam_warn_rate, base.spam_warn_rate)?,
+        error_window: secs_field("spam_error_window_secs", user.spam_error_window_secs, base.spam_error_window_secs)?,
+        error_rate: rate_field("spam_error_rate", user.spam_error_rate, base.spam_error_rate)?,
+    };
     Ok(ChannelConfig {
         port,
         cert_dir: expand_path(&cert_dir)?,
+        spam,
     })
+}
+
+fn merged_supervisor(
+    user: Option<SupervisorConfigToml>,
+    base: Option<SupervisorConfigToml>,
+) -> Result<SupervisorConfig, String> {
+    let user = user.unwrap_or_default();
+    let base = base.unwrap_or_default();
+    Ok(SupervisorConfig {
+        cpu_warn_fraction: fraction_field(
+            "cpu_warn_fraction",
+            user.cpu_warn_fraction.or(base.cpu_warn_fraction),
+        )?,
+        ram_warn_fraction: fraction_field(
+            "ram_warn_fraction",
+            user.ram_warn_fraction.or(base.ram_warn_fraction),
+        )?,
+        vram_warn_headroom_mib: user
+            .vram_warn_headroom_mib
+            .or(base.vram_warn_headroom_mib)
+            .ok_or_else(|| "the embedded defaults carry no supervisor.vram_warn_headroom_mib".to_string())?,
+        disk_warn_fraction: fraction_field(
+            "disk_warn_fraction",
+            user.disk_warn_fraction.or(base.disk_warn_fraction),
+        )?,
+    })
+}
+
+/// A fraction of total capacity. Outside (0, 1] it would either warn always or never.
+fn fraction_field(
+    name: &str,
+    value: Option<f64>,
+) -> Result<f64, String> {
+    match value {
+        None => Err(format!("the embedded defaults carry no supervisor.{name}")),
+        Some(f) if f <= 0.0 || f > 1.0 => {
+            Err(format!("supervisor.{name} must be greater than 0 and at most 1"))
+        }
+        Some(f) => Ok(f),
+    }
+}
+
+/// A window, in whole seconds. Zero would mean "no window", which is not a rate at all.
+fn secs_field(
+    name: &str,
+    user: Option<u64>,
+    base: Option<u64>,
+) -> Result<tk::TkDuration, String> {
+    match user.or(base) {
+        Some(0) | None => Err(format!("channel.{name} must be a positive number of seconds")),
+        Some(secs) => Ok(tk::TkDuration::from_secs(secs)),
+    }
+}
+
+/// A rate. Zero would forbid the first send outright rather than police a rate.
+fn rate_field(
+    name: &str,
+    user: Option<u32>,
+    base: Option<u32>,
+) -> Result<u32, String> {
+    match user.or(base) {
+        Some(0) | None => Err(format!("channel.{name} must be greater than zero")),
+        Some(rate) => Ok(rate),
+    }
 }
 
 impl Config {
@@ -130,6 +267,7 @@ impl Config {
             work_dir,
             deny,
             channel: merged_channel(user.channel, base.channel)?,
+            supervisor: merged_supervisor(user.supervisor, base.supervisor)?,
         })
     }
 
@@ -216,6 +354,7 @@ pub(crate) enum DeniableTool {
     ChannelOpen,
     ChannelVerified,
     ChannelClose,
+    ConfigChannel,
 }
 
 impl DeniableTool {
@@ -232,6 +371,7 @@ impl DeniableTool {
             "channel_open" => Self::ChannelOpen,
             "channel_verified" => Self::ChannelVerified,
             "channel_close" => Self::ChannelClose,
+            "config_channel" => Self::ConfigChannel,
             _ => return None,
         })
     }

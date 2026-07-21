@@ -15,6 +15,10 @@ pub(crate) async fn run_server() {
     // internal channel; one responder appends each Emergency to emergency.nuonl.
     let (emergency_tx, emergency_rx) = tk::unbounded_channel::<Emergency>();
     spawn_emergency_responder(emergency_rx, mcp_nom);
+    // The channel classifies spam onto the same lane the watchdog uses. Installed here
+    // rather than at construction because the lane does not exist until now; the
+    // one-shot CLI runs no responder, so its channel simply has none.
+    server.channel.install_emergency(emergency_tx.clone());
     spawn_watchdog(WatchdogDeps {
         hung_watch: server.hung_watch.clone(),
         semaphore: server.executor.semaphore(),

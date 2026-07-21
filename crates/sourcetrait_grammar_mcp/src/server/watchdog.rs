@@ -66,16 +66,198 @@ pub(crate) fn register_hung(
 const SAMPLE_INTERVAL: tk::TkDuration = tk::TkDuration::from_secs(2);
 /// A cancelled thread still alive this long past its cancel is CONFIRMED hung.
 const HUNG_GRACE_MS: u64 = 5_000;
-/// Host RSS above this is logged (generous - 8 GiB).
-const RSS_THRESHOLD_KB: u64 = 8 * 1024 * 1024;
-/// Sustained host-process CPU% above this is logged (can exceed 100 multi-core).
-const CPU_THRESHOLD_PCT: f64 = 150.0;
-/// Environment-wide background job count above this is logged.
-const JOBS_THRESHOLD: usize = 32;
+// RESOURCE LEVELS ARE THE AGENT'S CALL, NOT THE HOST'S (the_user). Heavy load is
+// something the agent decides how to react to, and it needs ONE warning over a long
+// period to make that decision - not a stream of them. So every level below fires at
+// most once per episode, only after HOLDING for a full minute, and re-arms only after
+// recovering for a full minute past a LOWER line. The dead band between the two is what
+// stops a value hovering at the threshold from flapping.
+
+/// How long a level must HOLD before it is worth telling the agent about. A momentary
+/// excursion is not an event.
+const LEVEL_SUSTAIN: tk::TkDuration = tk::TkDuration::from_secs(60);
+/// The floor between two warnings about the SAME condition (the_user: 10 minutes is the
+/// MINIMUM, dozens of minutes the intent). The agent needs one signal to decide on, and
+/// repeating it while the condition persists is nagging rather than information.
+///
+/// 30 minutes because an INFERENCE PROJECT RUNS 30-60 MINUTES and holds resources high
+/// for all of it - that is NORMAL, not a fault. At the 10-minute floor such a run would
+/// warn six times about a condition the agent already knows about and chose; at 30 it
+/// warns about twice, which is enough to notice a genuinely sustained level without
+/// talking over the work.
+const LEVEL_REWARN: tk::TkDuration = tk::TkDuration::from_secs(30 * 60);
+
+/// Environment-wide background job count.
+const JOBS_THRESHOLD: f64 = 32.0;
 /// nvidia-smi is sampled every Nth tick (it is a subprocess; keep it coarse).
 const VRAM_SAMPLE_EVERY: u64 = 8;
-/// GPU memory used above this fraction of total is logged.
-const VRAM_USED_FRAC_THRESHOLD: f64 = 0.90;
+
+/// Total system RAM in kB, read once from /proc/meminfo.
+///
+/// The RAM warning is a FRACTION OF THE MACHINE rather than an absolute figure, so it
+/// means the same thing on a box with different memory instead of silently ageing.
+#[cfg(target_os = "linux")]
+fn total_ram_kb() -> Option<f64> {
+    static TOTAL: OnceLock<Option<u64>> = OnceLock::new();
+    let cached = TOTAL.get_or_init(|| {
+        let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
+        parse_mem_total_kb(&meminfo)
+    });
+    (*cached).map(|kb| kb as f64)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn total_ram_kb() -> Option<f64> {
+    None
+}
+
+/// Parse `MemTotal:` (kB) out of /proc/meminfo contents.
+pub(crate) fn parse_mem_total_kb(meminfo: &str) -> Option<u64> {
+    for line in meminfo.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            return rest.split_whitespace().next()?.parse().ok();
+        }
+    }
+    None
+}
+
+/// `df` is SLOW, so it is sampled rarely - five minutes rather than the two-second tick.
+const DISK_SAMPLE_EVERY: u64 = 150;
+
+/// Parse `df -P` output into `(mount, used_pct)` rows.
+///
+/// The mount point is everything after the fifth column, since a mount path may contain
+/// spaces while the five numeric-ish columns before it may not.
+pub(crate) fn parse_df(output: &str) -> Vec<(String, u32)> {
+    let mut rows = Vec::new();
+    for line in output.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 6 {
+            continue;
+        }
+        let Ok(used_pct) = fields[4].trim_end_matches('%').parse::<u32>() else {
+            continue;
+        };
+        rows.push((fields[5..].join(" "), used_pct));
+    }
+    rows
+}
+
+/// Which filesystems we watch, and their gates.
+///
+/// THE BASELINE DECIDES WHAT WE WATCH (the_user). A filesystem already at or above the
+/// line when the host starts is a PRE-EXISTING CONDITION, not something to report: this
+/// box has a 4 KiB `/run/nvidia-ctk-hook…` pseudo-mount sitting at 100% by design, and a
+/// naive threshold rule would warn about it forever. Only those below the line at
+/// startup are enrolled; they warn if they later cross it.
+#[derive(Default)]
+pub(crate) struct DiskWatch {
+    gates: HashMap<String, LevelGate>,
+    baselined: bool,
+}
+
+impl DiskWatch {
+    pub(crate) fn sample(
+        &mut self,
+        rows: &[(String, u32)],
+        threshold_pct: u32,
+        now: Instant,
+    ) -> Vec<Emergency> {
+        if !self.baselined {
+            self.baselined = true;
+            for (mount, used_pct) in rows {
+                if *used_pct < threshold_pct {
+                    self.gates.insert(mount.clone(), LevelGate::default());
+                }
+            }
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (mount, used_pct) in rows {
+            if let Some(gate) = self.gates.get_mut(mount)
+                && gate.sample(
+                    *used_pct as f64,
+                    threshold_pct as f64,
+                    now,
+                    LEVEL_SUSTAIN,
+                    LEVEL_REWARN,
+                )
+            {
+                out.push(Emergency::DiskWarning(DiskWarningEmergency {
+                    mount: mount.clone(),
+                    used_pct: *used_pct,
+                    threshold_pct,
+                }));
+            }
+        }
+        out
+    }
+}
+
+/// Run `df -P` on a blocking pool thread - it can stall on a wedged mount, and must not
+/// take the async runtime with it.
+async fn sample_disk() -> Option<Vec<(String, u32)>> {
+    tk::spawn_blocking(|| {
+        let out = std::process::Command::new("df").arg("-P").output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        Some(parse_df(&String::from_utf8_lossy(&out.stdout)))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// The CPU line, as a percentage: all cores busy is `cores * 100`.
+fn cpu_capacity_pct() -> f64 {
+    std::thread::available_parallelism()
+        .map(|n| n.get() as f64 * 100.0)
+        .unwrap_or(100.0)
+}
+
+/// A debounced level detector with a long re-warn floor.
+///
+/// Fires when a value has been at or above `fire_at` continuously for `sustain`, and not
+/// again until `rewarn` has passed. Any dip below the line restarts the sustain clock,
+/// so a spike is never an event; and because `rewarn` is measured in dozens of minutes,
+/// a value hovering AT the threshold cannot flap - which is why no separate clear
+/// threshold is needed to damp it.
+///
+/// Pure over its own state so it is unit-testable with an injected `now`, like
+/// `scan_hung`.
+#[derive(Default)]
+pub(crate) struct LevelGate {
+    over_since: Option<Instant>,
+    last_fired: Option<Instant>,
+}
+
+impl LevelGate {
+    pub(crate) fn sample(
+        &mut self,
+        value: f64,
+        fire_at: f64,
+        now: Instant,
+        sustain: tk::TkDuration,
+        rewarn: tk::TkDuration,
+    ) -> bool {
+        if value < fire_at {
+            self.over_since = None;
+            return false;
+        }
+        let since = *self.over_since.get_or_insert(now);
+        if now.saturating_duration_since(since) < sustain {
+            return false;
+        }
+        if let Some(last) = self.last_fired
+            && now.saturating_duration_since(last) < rewarn
+        {
+            return false;
+        }
+        self.last_fired = Some(now);
+        true
+    }
+}
 /// Linux `_SC_CLK_TCK` (jiffies/sec); the CPU% conversion assumes the standard
 /// 100. A non-100 kernel skews only the logged percentage, not any action.
 const CLK_TCK: f64 = 100.0;
@@ -235,6 +417,12 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
         // natural home: it already runs off the eval threads, so a /proc scan here
         // cannot be starved by eval saturation (server/teardown.rs).
         let mut reaper = OrphanReaper::new();
+        // One gate per resource level, so each warns at most once per episode.
+        let mut cpu_gate = LevelGate::default();
+        let mut ram_gate = LevelGate::default();
+        let mut vram_gate = LevelGate::default();
+        let mut jobs_gate = LevelGate::default();
+        let mut disk = DiskWatch::default();
         loop {
             tk::sleep(SAMPLE_INTERVAL).await;
             tick += 1;
@@ -259,23 +447,36 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                 ));
             }
 
-            // --- environment-wide background jobs ---
+            // --- resource levels: WARN ONLY, never a reaction (the_user) ---
+            // Heavy load is NORMAL and how to react to it is the agent's call, so these
+            // are one-shot observations gated on a full minute of sustained level.
+            let sample_at = Instant::now();
             let jobs = job_count(&deps.env_jobs);
-            if jobs > JOBS_THRESHOLD {
-                current.push((
-                    "background_jobs".to_string(),
-                    Emergency::BackgroundJobs(BackgroundJobsEmergency { job_count: jobs }),
+            if jobs_gate.sample(
+                jobs as f64,
+                JOBS_THRESHOLD,
+                sample_at,
+                LEVEL_SUSTAIN,
+                LEVEL_REWARN,
+            ) {
+                let _ = deps.tx.send(Emergency::BackgroundJobsWarning(
+                    BackgroundJobsWarningEmergency { job_count: jobs },
                 ));
             }
 
-            // --- host RSS ---
             if let Some(rss) = read_rss_kb()
-                && rss > RSS_THRESHOLD_KB
+                && let Some(total_kb) = total_ram_kb()
+                && ram_gate.sample(
+                    rss as f64,
+                    total_kb * config().supervisor.ram_warn_fraction,
+                    sample_at,
+                    LEVEL_SUSTAIN,
+                    LEVEL_REWARN,
+                )
             {
-                current.push((
-                    "host_memory".to_string(),
-                    Emergency::HostMemory(HostMemoryEmergency { rss_kb: rss }),
-                ));
+                let _ = deps
+                    .tx
+                    .send(Emergency::RamWarning(RamWarningEmergency { rss_kb: rss }));
             }
 
             // --- host CPU (delta since last sample) ---
@@ -285,14 +486,17 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                 let elapsed = sample_now.duration_since(pinst).as_secs_f64();
                 if elapsed > 0.0 {
                     let cpu_pct = (ct.saturating_sub(pt) as f64 / CLK_TCK) / elapsed * 100.0;
-                    if cpu_pct > CPU_THRESHOLD_PCT {
-                        current.push((
-                            "host_cpu".to_string(),
-                            Emergency::HostCpu(HostCpuEmergency {
-                                cpu_pct,
-                                sample_ms: (elapsed * 1000.0) as u64,
-                            }),
-                        ));
+                    if cpu_gate.sample(
+                        cpu_pct,
+                        cpu_capacity_pct() * config().supervisor.cpu_warn_fraction,
+                        sample_at,
+                        LEVEL_SUSTAIN,
+                        LEVEL_REWARN,
+                    ) {
+                        let _ = deps.tx.send(Emergency::CpuWarning(CpuWarningEmergency {
+                            cpu_pct,
+                            sample_ms: (elapsed * 1000.0) as u64,
+                        }));
                     }
                 }
             }
@@ -304,15 +508,31 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
             if tick % VRAM_SAMPLE_EVERY == 0
                 && let Some((used, total)) = sample_vram().await
                 && total > 0
-                && (used as f64 / total as f64) > VRAM_USED_FRAC_THRESHOLD
+                // Headroom, not a fraction: what matters is how much room is LEFT before
+                // the allocation that fails, and 4 GiB free is the same danger whatever
+                // the card's capacity.
+                && vram_gate.sample(
+                    used as f64,
+                    (total as f64 - config().supervisor.vram_warn_headroom_mib as f64).max(0.0),
+                    Instant::now(),
+                    LEVEL_SUSTAIN,
+                    LEVEL_REWARN,
+                )
             {
-                current.push((
-                    "vram".to_string(),
-                    Emergency::Vram(VramEmergency {
-                        used_mib: used,
-                        total_mib: total,
-                    }),
-                ));
+                let _ = deps.tx.send(Emergency::VramWarning(VramWarningEmergency {
+                    used_mib: used,
+                    total_mib: total,
+                }));
+            }
+
+            // --- filesystems (coarse; df is slow, and the first pass is the baseline) ---
+            if (tick == 1 || tick % DISK_SAMPLE_EVERY == 0)
+                && let Some(rows) = sample_disk().await
+            {
+                let threshold_pct = (config().supervisor.disk_warn_fraction * 100.0) as u32;
+                for emergency in disk.sample(&rows, threshold_pct, Instant::now()) {
+                    let _ = deps.tx.send(emergency);
+                }
             }
 
             // --- emit rising edges only ---

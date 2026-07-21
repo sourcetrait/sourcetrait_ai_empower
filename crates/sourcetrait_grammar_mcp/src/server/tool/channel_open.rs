@@ -33,13 +33,19 @@ const UNVERIFIED_REASON: &str = "verification window expired";
 
 /// `$XDGX_SHM_DIR/mcp/<mcp_nom>/inbox`, created here. Phase 3 fills it; this phase only
 /// has to report where it is.
-fn ensure_inbox(mcp_nom: McpNom) -> Result<String, Error> {
+fn ensure_inbox(
+    channel: &ChannelHandle,
+    mcp_nom: McpNom,
+) -> Result<String, Error> {
     let root = expand_path(SHM_ROOT_VAR).map_err(|reason| Error::ChannelStart { reason })?;
     let dir = root
         .join("mcp")
         .join(mcp_nom.to_string())
         .join("inbox");
     fs::create_dir_all(&dir)?;
+    // Handing it to the channel is what lets the emit path write an attachment without
+    // knowing the store coordinate.
+    channel.set_inbox(dir.clone());
     Ok(dir.display().to_string())
 }
 
@@ -85,7 +91,7 @@ impl NuSh {
         &self,
         mcp::Parameters(_p): mcp::Parameters<ChannelOpenParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let inbox = match ensure_inbox(self.mcp_nom) {
+        let inbox = match ensure_inbox(&self.channel, self.mcp_nom) {
             Ok(path) => path,
             Err(error) => return Ok(error_to_call_result(error, None)),
         };

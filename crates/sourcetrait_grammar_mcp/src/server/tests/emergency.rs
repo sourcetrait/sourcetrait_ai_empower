@@ -39,16 +39,29 @@ fn every_kind_serializes_single_line() {
             pool_held: 1,
             pool_cap: 2,
         }),
-        Emergency::HostCpu(HostCpuEmergency {
+        Emergency::CpuWarning(CpuWarningEmergency {
             cpu_pct: 175.5,
             sample_ms: 2000,
         }),
-        Emergency::HostMemory(HostMemoryEmergency { rss_kb: 123456 }),
-        Emergency::Vram(VramEmergency {
+        Emergency::RamWarning(RamWarningEmergency { rss_kb: 123456 }),
+        Emergency::VramWarning(VramWarningEmergency {
             used_mib: 20000,
             total_mib: 24000,
         }),
-        Emergency::BackgroundJobs(BackgroundJobsEmergency { job_count: 40 }),
+        Emergency::BackgroundJobsWarning(BackgroundJobsWarningEmergency { job_count: 40 }),
+        Emergency::ChannelSpamWarning(ChannelSpamWarningEmergency {
+            from: "thread/abc".into(),
+            hits: 10,
+            window_secs: 10,
+            rate: 10,
+        }),
+        Emergency::ChannelSpamError(ChannelSpamErrorEmergency {
+            from: "thread/abc".into(),
+            hits: 15,
+            window_secs: 10,
+            rate: 15,
+            action: "signals triggered".into(),
+        }),
         Emergency::Critical(CriticalEmergency {
             reason: "all stateless engine-thread permits held by hung threads".into(),
             hung: 8,

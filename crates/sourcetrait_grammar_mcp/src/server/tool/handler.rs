@@ -40,6 +40,9 @@ impl NuSh {
         if !deny.denies(DeniableTool::ChannelClose) {
             router = router + Self::channel_close_router();
         }
+        if !deny.denies(DeniableTool::ConfigChannel) {
+            router = router + Self::config_channel_router();
+        }
         router
     }
 }

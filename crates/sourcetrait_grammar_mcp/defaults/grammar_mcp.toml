@@ -21,3 +21,41 @@
 # Where grammar_cert installs the leaf the hub presents. Kept in step with that tool's
 # own layout and its $XDGX_SECRET_DATA_HOME fallback.
 cert_dir = "$XDGX_SECRET_DATA_HOME/sourcetrait/grammar/certs"
+
+# How much ONE origin may emit before it is warned, and before it is stopped. Two
+# independent (window, rate) pairs: a short window catches a burst, a longer one would
+# catch sustained misbehaviour.
+#
+# THESE VALUES ARE INITIAL. There is no basis for them beyond reasoning - only production
+# traffic will say what a normal producer does, so expect to tune them. The channel is a
+# NOTIFICATION lane carrying state summaries, not a serialization lane, so a high rate is
+# misuse by definition rather than load to absorb.
+#
+# Windows are whole seconds here and on config_channel: MCP arguments cross as JSON,
+# which cannot carry a nu duration, and TOML has no duration type either.
+spam_warn_window_secs = 10
+spam_warn_rate = 10
+spam_error_window_secs = 10
+spam_error_rate = 15
+
+# When a resource level is worth ONE warning to the agent.
+#
+# These are WARNINGS ONLY - the host never reacts to them. Heavy load is normal, and how
+# to react is the agent's call. The system itself supplies the error when a level really
+# is exceeded (VRAM ends in an OOM, CPU just slows down); these buy the agent notice
+# before that happens.
+#
+# Expressed against the machine's TOTAL capacity rather than as absolute figures, so the
+# same defaults mean the same thing on a different box instead of silently ageing.
+[supervisor]
+# Warn once the host's own CPU reaches this fraction of ALL cores.
+cpu_warn_fraction = 0.80
+# Warn once the host's own RSS reaches this fraction of total system RAM.
+ram_warn_fraction = 0.80
+# Warn once GPU memory FREE falls below this - capacity minus 4 GiB of headroom.
+vram_warn_headroom_mib = 4096
+# Warn once a WATCHED filesystem reaches this fraction. Which filesystems are watched is
+# decided by a baseline `df` at startup: anything already at or above the line is a
+# pre-existing condition and is never enrolled (this box carries a 4 KiB pseudo-mount
+# sitting at 100% by design). df is slow, so it is sampled every five minutes.
+disk_warn_fraction = 0.80

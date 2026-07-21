@@ -23,10 +23,13 @@ pub(crate) type EmergencyRx = tk::UnboundedReceiver<Emergency>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum EmergencyKind {
     HungEngineThread,
-    HostCpu,
-    HostMemory,
-    Vram,
-    BackgroundJobs,
+    CpuWarning,
+    RamWarning,
+    VramWarning,
+    BackgroundJobsWarning,
+    DiskWarning,
+    ChannelSpamWarning,
+    ChannelSpamError,
     Critical,
 }
 
@@ -34,10 +37,13 @@ impl EmergencyKind {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::HungEngineThread => "hung_engine_thread",
-            Self::HostCpu => "host_cpu",
-            Self::HostMemory => "host_memory",
-            Self::Vram => "vram",
-            Self::BackgroundJobs => "background_jobs",
+            Self::CpuWarning => "cpu_warning",
+            Self::RamWarning => "ram_warning",
+            Self::VramWarning => "vram_warning",
+            Self::BackgroundJobsWarning => "background_jobs_warning",
+            Self::DiskWarning => "disk_warning",
+            Self::ChannelSpamWarning => "channel_spam_warning",
+            Self::ChannelSpamError => "channel_spam_error",
             Self::Critical => "critical",
         }
     }
@@ -65,23 +71,23 @@ pub(crate) struct HungEngineThreadEmergency {
 
 /// Sustained host-process CPU over the sample window (all threads; can exceed
 /// 100 on multi-core). Ambiguous alone - a legit heavy transform looks the same -
-/// so it is DATA, not an action trigger.
+/// so it is DATA, not an action trigger, which is what the Warning suffix marks.
 #[derive(Clone, Debug)]
-pub(crate) struct HostCpuEmergency {
+pub(crate) struct CpuWarningEmergency {
     pub cpu_pct: f64,
     pub sample_ms: u64,
 }
 
 /// Host-process resident set size (VmRSS) above the generous threshold. Data.
 #[derive(Clone, Debug)]
-pub(crate) struct HostMemoryEmergency {
+pub(crate) struct RamWarningEmergency {
     pub rss_kb: u64,
 }
 
 /// GPU memory in use above the threshold fraction (summed across GPUs, from
 /// nvidia-smi). Data - attribution to our eval children is a later refinement.
 #[derive(Clone, Debug)]
-pub(crate) struct VramEmergency {
+pub(crate) struct VramWarningEmergency {
     pub used_mib: u64,
     pub total_mib: u64,
 }
@@ -90,8 +96,41 @@ pub(crate) struct VramEmergency {
 /// A body's `job spawn` persists past its eval; an unbounded accrual is the
 /// signal. Data.
 #[derive(Clone, Debug)]
-pub(crate) struct BackgroundJobsEmergency {
+pub(crate) struct BackgroundJobsWarningEmergency {
     pub job_count: usize,
+}
+
+/// A watched filesystem reached the warning line. Data, like the rest of the Warning
+/// family - the system supplies the actual error (ENOSPC) if it ever fills.
+#[derive(Clone, Debug)]
+pub(crate) struct DiskWarningEmergency {
+    pub mount: String,
+    pub used_pct: u32,
+    pub threshold_pct: u32,
+}
+
+/// An origin crossed the SOFT send threshold on the channel. Fired ONCE per origin, so
+/// the report about spam never becomes spam itself. It names WHO and how fast, and
+/// deliberately carries NO payload example - the agent is already being spammed by that,
+/// and can investigate the cause itself.
+#[derive(Clone, Debug)]
+pub(crate) struct ChannelSpamWarningEmergency {
+    pub from: String,
+    pub hits: u32,
+    pub window_secs: u64,
+    pub rate: u32,
+}
+
+/// An origin crossed the HARD threshold and was STOPPED. `action` records what the host
+/// actually did about it, since the lever differs between a foreground eval and a job
+/// that outlived its own.
+#[derive(Clone, Debug)]
+pub(crate) struct ChannelSpamErrorEmergency {
+    pub from: String,
+    pub hits: u32,
+    pub window_secs: u64,
+    pub rate: u32,
+    pub action: String,
 }
 
 /// The unambiguous total-failure case: something is 100% wrong and the
@@ -111,10 +150,13 @@ pub(crate) struct CriticalEmergency {
 #[derive(Clone, Debug)]
 pub(crate) enum Emergency {
     HungEngineThread(HungEngineThreadEmergency),
-    HostCpu(HostCpuEmergency),
-    HostMemory(HostMemoryEmergency),
-    Vram(VramEmergency),
-    BackgroundJobs(BackgroundJobsEmergency),
+    CpuWarning(CpuWarningEmergency),
+    RamWarning(RamWarningEmergency),
+    VramWarning(VramWarningEmergency),
+    BackgroundJobsWarning(BackgroundJobsWarningEmergency),
+    DiskWarning(DiskWarningEmergency),
+    ChannelSpamWarning(ChannelSpamWarningEmergency),
+    ChannelSpamError(ChannelSpamErrorEmergency),
     Critical(CriticalEmergency),
 }
 
@@ -122,10 +164,13 @@ impl Emergency {
     pub(crate) fn kind(&self) -> EmergencyKind {
         match self {
             Self::HungEngineThread(_) => EmergencyKind::HungEngineThread,
-            Self::HostCpu(_) => EmergencyKind::HostCpu,
-            Self::HostMemory(_) => EmergencyKind::HostMemory,
-            Self::Vram(_) => EmergencyKind::Vram,
-            Self::BackgroundJobs(_) => EmergencyKind::BackgroundJobs,
+            Self::CpuWarning(_) => EmergencyKind::CpuWarning,
+            Self::RamWarning(_) => EmergencyKind::RamWarning,
+            Self::VramWarning(_) => EmergencyKind::VramWarning,
+            Self::BackgroundJobsWarning(_) => EmergencyKind::BackgroundJobsWarning,
+            Self::DiskWarning(_) => EmergencyKind::DiskWarning,
+            Self::ChannelSpamWarning(_) => EmergencyKind::ChannelSpamWarning,
+            Self::ChannelSpamError(_) => EmergencyKind::ChannelSpamError,
             Self::Critical(_) => EmergencyKind::Critical,
         }
     }
@@ -155,19 +200,37 @@ impl Emergency {
                 r.insert("pool_held", nu::Value::int(h.pool_held as i64, span));
                 r.insert("pool_cap", nu::Value::int(h.pool_cap as i64, span));
             }
-            Self::HostCpu(c) => {
+            Self::CpuWarning(c) => {
                 r.insert("cpu_pct", nu::Value::float(c.cpu_pct, span));
                 r.insert("sample_ms", nu::Value::int(c.sample_ms as i64, span));
             }
-            Self::HostMemory(m) => {
+            Self::RamWarning(m) => {
                 r.insert("rss_kb", nu::Value::int(m.rss_kb as i64, span));
             }
-            Self::Vram(v) => {
+            Self::VramWarning(v) => {
                 r.insert("used_mib", nu::Value::int(v.used_mib as i64, span));
                 r.insert("total_mib", nu::Value::int(v.total_mib as i64, span));
             }
-            Self::BackgroundJobs(b) => {
+            Self::BackgroundJobsWarning(b) => {
                 r.insert("job_count", nu::Value::int(b.job_count as i64, span));
+            }
+            Self::DiskWarning(d) => {
+                r.insert("mount", nu::Value::string(d.mount.clone(), span));
+                r.insert("used_pct", nu::Value::int(d.used_pct as i64, span));
+                r.insert("threshold_pct", nu::Value::int(d.threshold_pct as i64, span));
+            }
+            Self::ChannelSpamWarning(w) => {
+                r.insert("from", nu::Value::string(w.from.clone(), span));
+                r.insert("hits", nu::Value::int(w.hits as i64, span));
+                r.insert("window_secs", nu::Value::int(w.window_secs as i64, span));
+                r.insert("rate", nu::Value::int(w.rate as i64, span));
+            }
+            Self::ChannelSpamError(e) => {
+                r.insert("from", nu::Value::string(e.from.clone(), span));
+                r.insert("hits", nu::Value::int(e.hits as i64, span));
+                r.insert("window_secs", nu::Value::int(e.window_secs as i64, span));
+                r.insert("rate", nu::Value::int(e.rate as i64, span));
+                r.insert("action", nu::Value::string(e.action.clone(), span));
             }
             Self::Critical(c) => {
                 r.insert("reason", nu::Value::string(c.reason.clone(), span));

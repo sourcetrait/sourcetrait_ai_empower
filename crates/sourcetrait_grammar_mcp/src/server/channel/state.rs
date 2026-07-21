@@ -33,9 +33,47 @@ pub(crate) struct ChannelStatus {
     pub claimed: bool,
 }
 
+/// What the spam counter decided about one send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpamVerdict {
+    /// Under both thresholds.
+    Clear,
+    /// Crossed the soft threshold for the FIRST time. Warn once, keep operating - the
+    /// agent may react, though nothing depends on it doing so.
+    Warn { hits: u32, window_secs: u64 },
+    /// Crossed the hard threshold. Refuse the send and stop the offender. `notify` is
+    /// true only on the FIRST crossing of an episode: the refusal has to persist for
+    /// every later send, but announcing it every time would make the report about spam
+    /// into spam itself.
+    Stop {
+        hits: u32,
+        window_secs: u64,
+        notify: bool,
+    },
+}
+
+/// One origin's recent sends, plus whether it has already been warned and stopped in
+/// this episode. Both flags reset when the window empties and the origin is evicted, so
+/// a producer that goes quiet and later misbehaves again is a fresh episode.
+#[derive(Default)]
+struct OriginCounter {
+    hits: Vec<Instant>,
+    warned: bool,
+    stopped: bool,
+}
+
 struct ChannelInner {
     phase: ChannelPhase,
     url: Option<String>,
+    /// The live spam policy. Seeded from CONFIG at construction; `config_channel`
+    /// mutates THIS rather than CONFIG, which is set once at startup.
+    spam: SpamThresholds,
+    /// Recent sends per origin. Bounded by eviction rather than by a cap: an origin
+    /// whose window empties is dropped, so this holds only currently-emitting work.
+    counters: HashMap<String, OriginCounter>,
+    /// Installed by `run_server` after the emergency lane exists. Absent on the
+    /// one-shot CLI path, which runs no long-lived tasks.
+    emergency: Option<EmergencyTx>,
     /// Rendered, newline-escaped NUON lines, one per packet.
     packets: Option<tk::UnboundedSender<String>>,
     /// The planned-close signal, deliberately NOT sharing the packet queue: a close
@@ -48,6 +86,9 @@ struct ChannelInner {
     /// cancel. Verification, a close, and a re-open all drop it, so a timer can only
     /// ever fire against the open it was armed for.
     verify_cancel: Option<tk::oneshot::Sender<()>>,
+    /// The inbox directory, set at open. Survives a close deliberately: an attachment
+    /// already written stays readable by nonce after the channel goes.
+    inbox: Option<PathBuf>,
 }
 
 /// Why an emit was refused. The variants are deliberately distinguishable: a consumer
@@ -94,27 +135,49 @@ pub(crate) enum ChannelVerifyError {
 /// needs no runtime handle.
 pub(crate) struct ChannelHandle {
     inner: std::sync::Mutex<ChannelInner>,
-}
-
-impl Default for ChannelHandle {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Mints every `MsgId` on this channel. Held here rather than passed in, so the
+    /// emit path needs nothing threaded to it and all ids share one counter.
+    nonce_gen: Arc<NonceGen>,
 }
 
 impl ChannelHandle {
-    pub(crate) fn new() -> Self {
+    /// Takes its starting policy rather than reading CONFIG, so the handle is
+    /// constructible without a process-global - which is what lets the state machine and
+    /// the counter be unit-tested at all.
+    pub(crate) fn new(spam: SpamThresholds) -> Self {
         Self {
             inner: std::sync::Mutex::new(ChannelInner {
                 phase: ChannelPhase::Closed,
                 url: None,
+                spam,
+                counters: HashMap::new(),
+                emergency: None,
                 packets: None,
                 close: None,
                 shutdown: None,
                 claimed: None,
                 verify_cancel: None,
+                inbox: None,
             }),
+            nonce_gen: Arc::new(NonceGen::new()),
         }
+    }
+
+    pub(crate) fn nonce_gen(&self) -> &NonceGen {
+        &self.nonce_gen
+    }
+
+    /// Where attachments land. Set by `channel_open`, which owns the path and creates
+    /// the directory, so the emit path needs no knowledge of the store coordinate.
+    pub(crate) fn set_inbox(
+        &self,
+        dir: PathBuf,
+    ) {
+        self.lock().inbox = Some(dir);
+    }
+
+    pub(crate) fn inbox(&self) -> Option<PathBuf> {
+        self.lock().inbox.clone()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ChannelInner> {
@@ -245,6 +308,155 @@ impl ChannelHandle {
             ChannelPhase::Verified => push_locked(&inner, line),
         }
     }
+}
+
+impl ChannelHandle {
+    /// Install the emergency lane. Separate from construction because the lane is built
+    /// in `run_server`, after the handle exists.
+    pub(crate) fn install_emergency(
+        &self,
+        tx: EmergencyTx,
+    ) {
+        self.lock().emergency = Some(tx);
+    }
+
+    pub(crate) fn thresholds(&self) -> SpamThresholds {
+        self.lock().spam
+    }
+
+    /// Apply a PARTIAL update - only the supplied fields move - and return what is now
+    /// in force, so a caller sees the effective policy rather than assuming its own.
+    pub(crate) fn set_thresholds(
+        &self,
+        warn_window_secs: Option<u64>,
+        warn_rate: Option<u32>,
+        error_window_secs: Option<u64>,
+        error_rate: Option<u32>,
+    ) -> Result<SpamThresholds, String> {
+        let mut inner = self.lock();
+        let mut spam = inner.spam;
+        if let Some(secs) = warn_window_secs {
+            spam.warn_window = positive_window("spam_warn_window_secs", secs)?;
+        }
+        if let Some(rate) = warn_rate {
+            spam.warn_rate = positive_rate("spam_warn_rate", rate)?;
+        }
+        if let Some(secs) = error_window_secs {
+            spam.error_window = positive_window("spam_error_window_secs", secs)?;
+        }
+        if let Some(rate) = error_rate {
+            spam.error_rate = positive_rate("spam_error_rate", rate)?;
+        }
+        inner.spam = spam;
+        Ok(spam)
+    }
+
+    /// Record one send by `from` and say what it costs.
+    ///
+    /// Counting keys on the ORIGIN, which is host-stamped, so a body cannot spread its
+    /// traffic across identities to stay under the rate. Every origin's window is pruned
+    /// on each call and an origin whose window empties is EVICTED, so the map holds only
+    /// currently-emitting work rather than one entry per origin for the host's life.
+    pub(crate) fn record_send(
+        &self,
+        from: &str,
+    ) -> SpamVerdict {
+        self.record_send_at(from, Instant::now())
+    }
+
+    /// The counting itself, with `now` injected so it is unit-testable without sleeping -
+    /// the same shape `scan_hung` uses for the watchdog.
+    pub(crate) fn record_send_at(
+        &self,
+        from: &str,
+        now: Instant,
+    ) -> SpamVerdict {
+        let mut inner = self.lock();
+        let spam = inner.spam;
+        let retention = spam.retention();
+        inner.counters.retain(|_, counter| {
+            counter
+                .hits
+                .retain(|at| now.saturating_duration_since(*at) < retention);
+            !counter.hits.is_empty()
+        });
+        let counter = inner.counters.entry(from.to_string()).or_default();
+        counter.hits.push(now);
+        let within = |window: tk::TkDuration| -> u32 {
+            counter
+                .hits
+                .iter()
+                .filter(|at| now.saturating_duration_since(**at) < window)
+                .count() as u32
+        };
+        let errors = within(spam.error_window);
+        if errors >= spam.error_rate {
+            let notify = !counter.stopped;
+            counter.stopped = true;
+            return SpamVerdict::Stop {
+                hits: errors,
+                window_secs: spam.error_window.as_secs(),
+                notify,
+            };
+        }
+        let warns = within(spam.warn_window);
+        if warns >= spam.warn_rate && !counter.warned {
+            counter.warned = true;
+            return SpamVerdict::Warn {
+                hits: warns,
+                window_secs: spam.warn_window.as_secs(),
+            };
+        }
+        SpamVerdict::Clear
+    }
+
+    /// Push an Emergency onto the internal lane, if one is installed.
+    pub(crate) fn fire_emergency(
+        &self,
+        emergency: Emergency,
+    ) {
+        if let Some(tx) = &self.lock().emergency {
+            let _ = tx.send(emergency);
+        }
+    }
+}
+
+fn positive_window(
+    name: &str,
+    secs: u64,
+) -> Result<tk::TkDuration, String> {
+    if secs == 0 {
+        Err(format!("{name} must be a positive number of seconds"))
+    } else {
+        Ok(tk::TkDuration::from_secs(secs))
+    }
+}
+
+fn positive_rate(
+    name: &str,
+    rate: u32,
+) -> Result<u32, String> {
+    if rate == 0 {
+        Err(format!("{name} must be greater than zero"))
+    } else {
+        Ok(rate)
+    }
+}
+
+/// The host's ONE channel, reachable from an eval.
+///
+/// A process-global rather than a threaded parameter: the channel is one-per-process by
+/// design, exactly like CONFIG, and the alternative is passing an `Arc<ChannelHandle>`
+/// through NuSh -> dispatch -> eval_stateless / InteractEngine -> eval_in_process ->
+/// register_nuapi, five signatures on the hot eval path, for a value that can never vary
+/// per eval. `NuSh` reads the same handle rather than owning its own, so the two can
+/// never diverge.
+static CHANNEL: OnceLock<Arc<ChannelHandle>> = OnceLock::new();
+
+pub(crate) fn channel_handle() -> Arc<ChannelHandle> {
+    CHANNEL
+        .get_or_init(|| Arc::new(ChannelHandle::new(config().channel.spam)))
+        .clone()
 }
 
 fn claimed_of(inner: &ChannelInner) -> bool {

@@ -19,11 +19,29 @@ pub(crate) const DEBUG_FILE: &str = "debug.nuonl";
 #[derive(Clone)]
 pub(crate) struct NuapiCall {
     log_dir: PathBuf,
+    origin: String,
 }
 
 impl NuapiCall {
     pub(crate) fn new(log_dir: PathBuf) -> Self {
-        Self { log_dir }
+        // The log dir is NAMED for the eval's nonce, so the packet origin falls out of
+        // the path this already carries - nothing extra threads through the eval
+        // signatures to get it. The nonce is random enough that run / call / interact
+        // need no distinguishing.
+        let nonce = log_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Self {
+            log_dir,
+            origin: format!("thread/{nonce}"),
+        }
+    }
+
+    /// The host-stamped `from` for anything this eval emits. A body cannot forge it,
+    /// because it never supplies it.
+    pub(crate) fn origin(&self) -> String {
+        self.origin.clone()
     }
 
     /// Append `data` to `<log_dir>/debug.nuonl` as ONE line of NUON.

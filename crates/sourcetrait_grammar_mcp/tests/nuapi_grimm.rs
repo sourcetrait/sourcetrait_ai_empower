@@ -18,13 +18,13 @@ fn read_back(s: &TestServer, nonce: &str, result_schema: serde_json::Value, body
 }
 
 #[test]
-fn dbg_and_channel_send_each_append_one_line() {
+fn dbg_appends_one_line_per_call() {
     let s = TestServer::new();
     let env = s.run(
         json!({}),
         json!({"ok": "bool"}),
         json!({}),
-        "grimm dbg {a: 1, b: \"two\"}\ngrimm channel_send [[x, y]; [1, 2]]\n{ ok: true }",
+        "grimm dbg {a: 1, b: \"two\"}\ngrimm dbg [[x, y]; [1, 2]]\n{ ok: true }",
     );
     assert!(!has_error(&env), "body should run; got {env}");
     let nonce = env["nonce"].as_str().expect("nonce");
@@ -38,10 +38,27 @@ fn dbg_and_channel_send_each_append_one_line() {
     );
     assert_eq!(back["result"]["count"].as_i64(), Some(2), "one line per call; got {back}");
     assert_eq!(back["result"]["first_a"].as_i64(), Some(1), "got {back}");
-    assert_eq!(
-        back["result"]["second_x"].as_i64(),
-        Some(1),
-        "channel_send writes the table verbatim (stubbed to dbg); got {back}",
+    assert_eq!(back["result"]["second_x"].as_i64(), Some(1), "got {back}");
+}
+
+/// `channel_send` is no longer stubbed to `dbg`: it is the real notification lane, so
+/// with no channel open it REFUSES rather than quietly writing a file. A written record
+/// nobody was told about is worse than no record.
+#[test]
+fn channel_send_without_a_channel_refuses() {
+    let s = TestServer::new();
+    let env = s.run(
+        json!({}),
+        json!({"ok": "bool"}),
+        json!({}),
+        "grimm channel_send \"foo/bar/Car\" {state: \"done\"}\n{ ok: true }",
+    );
+    assert!(has_error(&env), "an unopened channel must refuse; got {env}");
+    let text = error_text(&env).to_lowercase();
+    assert!(
+        text.contains("channel is not open"),
+        "the refusal should name the cause; got {}",
+        error_text(&env),
     );
 }
 

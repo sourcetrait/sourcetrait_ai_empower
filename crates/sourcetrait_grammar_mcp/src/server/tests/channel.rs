@@ -1,6 +1,18 @@
 use crate::*;
 use crate::server::channel::state::{MsgId, escape_line};
 
+/// A permissive starting policy, so a test that is not ABOUT the thresholds never trips
+/// them. The ones that are set their own explicitly, rather than leaning on the shipped
+/// defaults - those are INITIAL values and expected to move.
+fn test_policy() -> SpamThresholds {
+    SpamThresholds {
+        warn_window: tk::TkDuration::from_secs(10),
+        warn_rate: 1_000,
+        error_window: tk::TkDuration::from_secs(10),
+        error_rate: 10_000,
+    }
+}
+
 /// Install a hub-shaped channel without a hub: the handle only ever holds the two
 /// senders, the shutdown oneshot and the claimed flag, so the state machine is testable
 /// without binding a socket or reading a certificate.
@@ -10,7 +22,7 @@ fn open_handle() -> (
     tk::oneshot::Receiver<(u16, String)>,
     Arc<AtomicBool>,
 ) {
-    let handle = ChannelHandle::new();
+    let handle = ChannelHandle::new(test_policy());
     let (packets, packet_rx) = tk::unbounded_channel::<String>();
     let (close, close_rx) = tk::oneshot::channel::<(u16, String)>();
     let (shutdown, _shutdown_rx) = tk::oneshot::channel::<()>();
@@ -38,7 +50,7 @@ fn claimed_handle() -> (
 
 #[test]
 fn a_fresh_handle_is_closed() {
-    let handle = ChannelHandle::new();
+    let handle = ChannelHandle::new(test_policy());
     let status = handle.status();
     assert_eq!(status.phase, ChannelPhase::Closed);
     assert!(status.url.is_none());
@@ -62,7 +74,7 @@ fn install_opens_and_tracks_the_live_claim() {
 #[test]
 fn verification_requires_a_claim() {
     assert_eq!(
-        ChannelHandle::new().mark_verified(),
+        ChannelHandle::new(test_policy()).mark_verified(),
         Err(ChannelVerifyError::NotOpen),
     );
     let (handle, _packets, _close, claimed) = open_handle();
@@ -81,7 +93,7 @@ fn verification_requires_a_claim() {
 #[test]
 fn emit_is_refused_until_verified_and_the_reasons_are_distinguishable() {
     assert_eq!(
-        ChannelHandle::new().emit("x".to_string()),
+        ChannelHandle::new(test_policy()).emit("x".to_string()),
         Err(ChannelSendError::NotOpen),
         "no channel at all",
     );
@@ -104,7 +116,7 @@ fn a_control_packet_bypasses_the_verification_gate() {
     assert!(handle.send_control("greeting".to_string()).is_ok());
     assert_eq!(packets.try_recv().ok().as_deref(), Some("greeting"));
     assert_eq!(
-        ChannelHandle::new().send_control("x".to_string()),
+        ChannelHandle::new(test_policy()).send_control("x".to_string()),
         Err(ChannelSendError::NotOpen),
         "a closed channel still refuses control packets",
     );
@@ -266,6 +278,107 @@ fn an_attachment_is_carried_by_name() {
     assert_eq!(
         record.get("from").and_then(|v| v.as_str().ok()),
         Some("thread/abc"),
+    );
+}
+
+/// A tight, explicit policy so the tests do not depend on the shipped defaults - which
+/// are INITIAL values and expected to move once production says what a normal producer
+/// does.
+fn with_policy(
+    handle: &ChannelHandle,
+    warn_rate: u32,
+    error_rate: u32,
+) {
+    handle
+        .set_thresholds(Some(10), Some(warn_rate), Some(10), Some(error_rate))
+        .expect("valid policy");
+}
+
+#[test]
+fn the_soft_threshold_warns_exactly_once_per_origin() {
+    let handle = ChannelHandle::new(test_policy());
+    with_policy(&handle, 3, 100);
+    let now = Instant::now();
+    assert_eq!(handle.record_send_at("thread/a", now), SpamVerdict::Clear);
+    assert_eq!(handle.record_send_at("thread/a", now), SpamVerdict::Clear);
+    assert!(
+        matches!(handle.record_send_at("thread/a", now), SpamVerdict::Warn { hits: 3, .. }),
+        "the third send reaches the rate",
+    );
+    assert_eq!(
+        handle.record_send_at("thread/a", now),
+        SpamVerdict::Clear,
+        "ONE warning per abuser - a report about spam must not itself become spam",
+    );
+}
+
+#[test]
+fn the_hard_threshold_stops_and_outranks_the_warning() {
+    let handle = ChannelHandle::new(test_policy());
+    with_policy(&handle, 2, 3);
+    let now = Instant::now();
+    handle.record_send_at("thread/a", now);
+    assert!(matches!(handle.record_send_at("thread/a", now), SpamVerdict::Warn { .. }));
+    assert!(
+        matches!(handle.record_send_at("thread/a", now), SpamVerdict::Stop { hits: 3, .. }),
+        "the hard threshold is checked first, so crossing both reports the stop",
+    );
+}
+
+#[test]
+fn origins_are_counted_separately() {
+    let handle = ChannelHandle::new(test_policy());
+    with_policy(&handle, 2, 100);
+    let now = Instant::now();
+    handle.record_send_at("thread/a", now);
+    assert_eq!(
+        handle.record_send_at("thread/b", now),
+        SpamVerdict::Clear,
+        "one origin's traffic must not flag another's",
+    );
+    assert!(matches!(handle.record_send_at("thread/a", now), SpamVerdict::Warn { .. }));
+}
+
+#[test]
+fn hits_outside_the_window_stop_counting_and_the_origin_is_evicted() {
+    let handle = ChannelHandle::new(test_policy());
+    with_policy(&handle, 3, 100);
+    let start = Instant::now();
+    handle.record_send_at("thread/a", start);
+    handle.record_send_at("thread/a", start);
+    // Past the 10s window, so the two earlier hits no longer count and this reads as a
+    // first send rather than a third.
+    let later = start + tk::TkDuration::from_secs(11);
+    assert_eq!(handle.record_send_at("thread/a", later), SpamVerdict::Clear);
+    assert_eq!(
+        handle.record_send_at("thread/a", later),
+        SpamVerdict::Clear,
+        "and the window really did reset rather than merely skipping one",
+    );
+}
+
+#[test]
+fn thresholds_update_partially_and_reject_zero() {
+    let handle = ChannelHandle::new(test_policy());
+    with_policy(&handle, 5, 9);
+    let updated = handle
+        .set_thresholds(None, Some(7), None, None)
+        .expect("partial update");
+    assert_eq!(updated.warn_rate, 7, "the supplied field moves");
+    assert_eq!(updated.error_rate, 9, "and an omitted one does not");
+    assert_eq!(updated.warn_window.as_secs(), 10);
+    assert!(
+        handle.set_thresholds(None, Some(0), None, None).is_err(),
+        "a zero rate would forbid the first send rather than police a rate",
+    );
+    assert!(
+        handle.set_thresholds(Some(0), None, None, None).is_err(),
+        "a zero window is not a rate at all",
+    );
+    assert_eq!(
+        handle.thresholds().warn_rate,
+        7,
+        "a rejected update must not have partially applied",
     );
 }
 

@@ -27,6 +27,7 @@ pub(crate) mod server {
         pub(crate) mod channel_open;
         pub(crate) mod channel_verified;
         pub(crate) mod commit;
+        pub(crate) mod config_channel;
         pub(crate) mod common;
         pub(crate) mod handler;
         pub(crate) mod info;
@@ -77,8 +78,8 @@ pub(crate) use crate::{
     },
     cli::CliTool,
     config::{
-        CONFIG, Config, ConfigToml, DeniableTool, DenySet, config, default_id, default_work_dir,
-        expand_path,
+        CONFIG, Config, ConfigToml, DeniableTool, DenySet, SpamThresholds, config, default_id,
+        default_work_dir, expand_path,
     },
     engine::base_context,
     mcp::ServiceExt,
@@ -93,16 +94,19 @@ pub(crate) use crate::{
             run_body_file,
         },
         channel::{
-            hub::{open_packet, start as start_channel_hub},
+            hub::{FROM_MCP, open_packet, start as start_channel_hub},
             state::{
                 ChannelHandle, ChannelPhase, ChannelSendError, ChannelVerifyError,
-                MAX_FRAME_BYTES, mint_msg_id, render_nuon, render_packet,
+                MAX_FRAME_BYTES, SpamVerdict, channel_handle, mint_msg_id, render_nuon,
+                render_packet,
             },
         },
         embed::{InteractEngine, build_base, eval_stateless},
         emergency::{
-            BackgroundJobsEmergency, CriticalEmergency, Emergency, EmergencyTx, HostCpuEmergency,
-            HostMemoryEmergency, HungEngineThreadEmergency, VramEmergency, append_line,
+            BackgroundJobsWarningEmergency, ChannelSpamErrorEmergency,
+            ChannelSpamWarningEmergency, CpuWarningEmergency, CriticalEmergency,
+            DiskWarningEmergency, Emergency, EmergencyTx, HungEngineThreadEmergency,
+            RamWarningEmergency, VramWarningEmergency, append_line,
             spawn_emergency_responder,
         },
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
@@ -135,6 +139,7 @@ pub(crate) use crate::{
             channel_close::ChannelCloseParams,
             channel_verified::ChannelVerifiedParams,
             commit::CommitParams,
+            config_channel::ConfigChannelParams,
             common::{
                 CachedRunBody, InFlightKind, NuSh, RunParams, convert_schemas,
                 dispatch_interact, dispatch_pooled, envelope_to_structured, lint_run_params,

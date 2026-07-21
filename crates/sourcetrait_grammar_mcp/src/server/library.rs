@@ -606,8 +606,23 @@ pub(crate) fn signature_of(
 ///
 /// An indexed module always has something below it: the validator prunes any
 /// module with no call-target beneath it, so there is no empty third case.
+///
+/// A MIXED module - submodules AND direct calls - takes `/`, and its calls carry
+/// their own leading `:` to override it (`call_prefix_under`).
 fn module_trailing(m: &IndexModule) -> &'static str {
     if m.modules.is_empty() { ":" } else { "/" }
+}
+
+/// The separator a DIRECT CALL of `m` must carry in front of its own name.
+///
+/// Normally a node's separator comes from its parent's trailing character, and
+/// nothing is needed. A MIXED module breaks that: it ends in `/` for its
+/// submodules, but a call is reached with `:`. So the call line states the
+/// separator itself - `:cook_fries` - and assembly takes the LINE's leading
+/// character over the parent's trailing one (the_user). Concatenation still
+/// yields the coordinate: `...:alpha` + `:a1` -> `...:alpha:a1`.
+fn call_prefix_under(m: &IndexModule) -> &'static str {
+    if module_trailing(m) == "/" { ":" } else { "" }
 }
 
 /// Render one module's calls then its submodules, recursing.
@@ -621,6 +636,7 @@ fn push_signature_nodes(
     modules: &[IndexModule],
     docs_dir: &std::path::Path,
     parent: &str,
+    call_prefix: &str,
 ) {
     let coord_of = |name: &str| -> String {
         if parent.is_empty() {
@@ -636,7 +652,7 @@ fn push_signature_nodes(
         push_signature_line(
             out,
             depth,
-            &signature_of(&f.name, f),
+            &signature_of(&format!("{call_prefix}{}", f.name), f),
             &read_doc(docs_dir, &coord, "summary.md"),
         );
     }
@@ -650,7 +666,15 @@ fn push_signature_nodes(
             &format!("{}{}", m.name, module_trailing(m)),
             &read_doc(docs_dir, &coord, "summary.md"),
         );
-        push_signature_nodes(out, depth + 1, &m.functions, &m.modules, docs_dir, &coord);
+        push_signature_nodes(
+            out,
+            depth + 1,
+            &m.functions,
+            &m.modules,
+            docs_dir,
+            &coord,
+            call_prefix_under(m),
+        );
     }
 }
 
@@ -692,12 +716,15 @@ pub(crate) async fn render_signatures(locks: &LibraryLocks) -> String {
             &format!("{leaf}:"),
             &read_doc(&docs_dir, "", "summary.md"),
         );
+        // A library ends in `:`, so anything directly beneath it needs no
+        // separator of its own.
         push_signature_nodes(
             &mut out,
             2,
             &index.functions,
             &index.modules,
             &docs_dir,
+            "",
             "",
         );
     }

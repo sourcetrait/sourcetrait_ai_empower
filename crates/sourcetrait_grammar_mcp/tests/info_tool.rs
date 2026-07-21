@@ -199,6 +199,39 @@ fn a_void_renders_as_empty_angles() {
 
 #[test]
 #[named]
+fn a_mixed_module_states_its_own_call_separator() {
+    let t = testing::test!({ .using_temp_dir() });
+    let s = TestServer::new();
+    let src = t.temp_dir().join("mixedlib");
+    let _ = s.library("new", "sourcetrait/mixedlib", src.to_str().unwrap());
+    write_source(&src, "mod.nu", "export module m\n");
+    // `m` holds BOTH a submodule and a direct call - the one case a single
+    // trailing character cannot describe.
+    write_source(&src, "m/mod.nu", "export module deep\nexport use here\n");
+    write_source(
+        &src,
+        "m/here/mod.nu",
+        &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+    );
+    write_source(&src, "m/deep/mod.nu", "export use down\n");
+    write_source(
+        &src,
+        "m/deep/down/mod.nu",
+        &valid_function_source("y: int", "out: int", "{ out: $args.y }"),
+    );
+    let committed = s.commit("sourcetrait/mixedlib");
+    assert!(!has_error(&committed), "commit failed: {committed}");
+
+    assert_eq!(
+        library_block(&signatures(&s), "mixedlib"),
+        " mixedlib:\n  m/\n   :here <x:int> <out:int>\n   deep:\n    down <y:int> <out:int>\n",
+        "`m` takes `/` for its submodule, so its DIRECT call states its own `:` \
+         - assembling gives sourcetrait/mixedlib:m:here, not :m/here",
+    );
+}
+
+#[test]
+#[named]
 fn an_author_heads_its_group_exactly_once() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

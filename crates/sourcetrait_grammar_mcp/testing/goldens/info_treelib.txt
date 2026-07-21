@@ -1,6 +1,6 @@
  treelib:
   alpha/
-   a1 <s:string> <len:int>
+   :a1 <s:string> <len:int>
    beta:
     b1 <x:int,t:record<y:string,n:list<int>>> <out:record<y:string>>
   solo:

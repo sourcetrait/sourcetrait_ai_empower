@@ -487,6 +487,20 @@ That is the exact string `call()` and `inspect()` take. Truncating instead at a
 trailing character gives the PATTERN for that subtree - `acme/geo:shape/` is
 everything under `shape`, `acme/geo:shape/plane:` is that module's calls.
 
+A module holding BOTH submodules and calls takes `/`, and its DIRECT calls then
+state their own separator with a leading `:`:
+
+```txt
+ mylib:
+  m/
+   :here <x:int> <out:int>
+   deep:
+    down <y:int> <out:int>
+```
+
+Assembly always takes a LINE's leading character over its parent's trailing one,
+so `:here` is `mylib:m:here` while `down` is `mylib:m/deep:down`.
+
 A node's one-line summary follows as ` # ...`, omitted ENTIRELY when the node is
 undocumented. Within a level, calls come before submodules and each group sorts
 by name; libraries sort by author, then name.

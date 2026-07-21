@@ -1,36 +1,32 @@
 use crate::*;
 
-/// Where each artifact ends up. `generate` deliberately knows none of this.
+use crate::store::{TrustTarget, kind_of_target};
+
 pub(crate) struct InstallPlan<'a> {
     /// The base `generate` was given; its artifacts are in `<base>/certs`.
     pub cert_base: &'a Path,
-    /// Filename stem, matching the `name` used at generate time.
     pub name: &'a str,
-    /// The resolved trust-store layout: anchor dir, anchor extension, refresh command.
-    /// The anchor dir is the one path used verbatim - the store owns its layout, so no
-    /// `certs` leaf goes there.
-    pub store: &'a crate::store::Resolved,
-    /// Base for the runtime key material; the keys land in `<base>/certs`.
-    pub secret_base: &'a Path,
-    /// User to hand the non-anchor artifacts to. Defaults to `$SUDO_USER`.
+    pub target: &'a TrustTarget,
+    /// The secret DATA home; key material lands in `<it>/sourcetrait/grammar/certs`.
+    pub secret_data: &'a Path,
+    /// User to hand the key material to. Defaults to `$SUDO_USER`.
     pub owner: Option<&'a str>,
 }
 
 pub(crate) struct Installed {
-    pub anchor: PathBuf,
+    /// Where the CA ended up: a file, or the keychain that ingested it.
+    pub trusted_at: PathBuf,
     pub secrets: Vec<PathBuf>,
     pub owner: Option<String>,
 }
 
-/// Place every artifact, then hand the non-anchor ones back to the invoking user.
+/// Place the key material, then make the system trust the CA.
 ///
-/// The ownership step is not housekeeping. `install` runs under `sudo`, so anything it
-/// creates is root-owned; leave it that way and the unprivileged MCP cannot read the CA
-/// key it is supposed to own, which surfaces much later as a channel-open failure long
-/// after the install reported success.
+/// Ownership is not housekeeping: under `sudo` everything we create is root-owned, and
+/// leaving it that way means the unprivileged host cannot read the key it is supposed
+/// to own - surfacing much later as a channel-open failure.
 pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
-    // PREFLIGHT: every check before any mutation, so a bad argument cannot leave the
-    // system half-installed.
+    // PREFLIGHT: every check before any mutation.
     let source_dir = crate::generate::certs_dir(plan.cert_base);
     let files = CertFiles::new(&source_dir, plan.name);
     if !files.exist() {
@@ -40,16 +36,14 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
         });
     }
 
-    // The anchor dir must ALREADY EXIST. We never create it: its existence is the
-    // evidence that this platform's trust store is where we think it is, and creating
-    // it would turn a typo into a silent success - a cert dropped in a directory
-    // nothing reads, with the trust never taking and no error to show for it.
-    if let crate::store::Placement::AnchorDir { dir, .. } = &plan.store.placement {
-        require_existing_dir(dir, "trust anchor dir")?;
+    // The trust dir must ALREADY EXIST. Creating it would turn a typo into a silent
+    // success - a cert in a directory nothing reads.
+    if let TrustTarget::Dir { dir, .. } = plan.target {
+        require_existing_dir(dir, "trust dir")?;
     }
-    require_existing_dir(plan.secret_base, "secret base")?;
+    require_existing_dir(plan.secret_data, "secret data dir")?;
 
-    let secret_dir = crate::generate::certs_dir(plan.secret_base);
+    let secret_dir = crate::generate::secret_certs_dir(plan.secret_data);
     if secret_dir.exists() {
         return Err(CertError::CertsDirExists {
             path: secret_dir.display().to_string(),
@@ -57,15 +51,11 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
     }
     let owner = resolve_owner(plan.owner)?;
 
-    // ACT. Our own key material first: it is the reversible half, and placing the
-    // anchor last means a failure here never leaves a trusted CA whose key we did not
-    // finish installing.
-    fs::create_dir_all(&secret_dir)
-        .map_err(|e| CertError::io(format!("creating {}", secret_dir.display()), e))?;
+    // ACT. Key material first - it is the half we can roll back.
+    let created = create_private_chain(plan.secret_data, &secret_dir, &owner)?;
     let mut secrets = Vec::new();
-    // The authority PUBLIC cert rides along too. It is not a secret, but `verify` needs
-    // the CA body to look for in the trust store, and carrying it here keeps verify
-    // working identically whether the anchor became a file or a keychain entry.
+    // The CA PUBLIC cert rides along so `verify` has the body to look for, whichever
+    // model took the trust.
     for source in [
         &files.authority_private,
         &files.authority_public,
@@ -76,23 +66,95 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
             .file_name()
             .ok_or_else(|| CertError::msg("a cert artifact has no file name"))?;
         let dest = secret_dir.join(name);
-        copy(source, &dest)?;
+        if let Err(e) = copy(source, &dest) {
+            rollback(&created);
+            return Err(e);
+        }
+        if let Some((_, uid, gid)) = &owner
+            && let Err(e) = chown_to(&dest, *uid, *gid)
+        {
+            rollback(&created);
+            return Err(e);
+        }
         secrets.push(dest);
     }
-    if let Some((_, uid, gid)) = &owner {
-        chown_to(&secret_dir, *uid, *gid)?;
-        for path in &secrets {
-            chown_to(path, *uid, *gid)?;
-        }
-    }
 
-    let anchor = place_anchor(&plan.store.placement, &files.authority_public, plan.name)?;
+    // Roll the key material back if the trust step fails, so a failed refresh leaves
+    // nothing behind and the command can simply be re-run.
+    let trusted_at = match trust_ca(plan.target, &files.authority_public, plan.name) {
+        Ok(p) => p,
+        Err(e) => {
+            rollback(&created);
+            return Err(e);
+        }
+    };
 
     Ok(Installed {
-        anchor,
+        trusted_at,
         secrets,
         owner: owner.map(|(user, _, _)| user),
     })
+}
+
+/// Create each level of `<secret_data>/sourcetrait/grammar/certs` explicitly at 0700
+/// and hand each to the owner.
+///
+/// `create_dir_all` takes its mode from the umask, so under root's usual 022 every
+/// level came out 0755 - a world-traversable directory holding a CA key - and only the
+/// leaf was ever chowned, leaving root-owned dirs in someone else's secret tree.
+/// Returns the levels we created, newest last, for rollback.
+fn create_private_chain(
+    secret_data: &Path,
+    secret_dir: &Path,
+    owner: &Option<(String, u32, u32)>,
+) -> Result<Vec<PathBuf>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let relative = secret_dir
+        .strip_prefix(secret_data)
+        .map_err(|_| CertError::msg("secret dir is not under the secret data home"))?;
+
+    let mut created = Vec::new();
+    let mut path = secret_data.to_path_buf();
+    for component in relative.components() {
+        path = path.join(component);
+        if path.exists() {
+            continue;
+        }
+        if let Err(e) = fs::create_dir(&path) {
+            rollback(&created);
+            return Err(CertError::io(format!("creating {}", path.display()), e));
+        }
+        created.push(path.clone());
+
+        let mut perms = match fs::metadata(&path) {
+            Ok(m) => m.permissions(),
+            Err(e) => {
+                rollback(&created);
+                return Err(CertError::io(format!("stat {}", path.display()), e));
+            }
+        };
+        perms.set_mode(0o700);
+        if let Err(e) = fs::set_permissions(&path, perms) {
+            rollback(&created);
+            return Err(CertError::io(format!("chmod 700 {}", path.display()), e));
+        }
+        if let Some((_, uid, gid)) = owner
+            && let Err(e) = chown_to(&path, *uid, *gid)
+        {
+            rollback(&created);
+            return Err(e);
+        }
+    }
+    Ok(created)
+}
+
+/// Remove what we created, deepest first. Best-effort: a rollback failure must not mask
+/// the error that triggered it.
+fn rollback(created: &[PathBuf]) {
+    for path in created.iter().rev() {
+        let _ = fs::remove_dir_all(path);
+    }
 }
 
 fn require_existing_dir(
@@ -114,9 +176,8 @@ fn require_existing_dir(
     Ok(())
 }
 
-/// `$SUDO_USER` when the caller did not name one. Absent (a non-sudo run) means there
-/// is nobody to hand ownership to and the files already belong to the right user, so
-/// the step is skipped rather than guessed at.
+/// `$SUDO_USER` when the caller did not name one. Absent means a non-sudo run, where
+/// the files already belong to the right user.
 fn resolve_owner(explicit: Option<&str>) -> Result<Option<(String, u32, u32)>> {
     let name = match explicit {
         Some(n) => n.to_string(),
@@ -154,10 +215,8 @@ fn chown_to(
     })
 }
 
-/// Copy, creating NOTHING. An earlier cut created the destination's parent, which is
-/// how a typo'd `--anchor-dir` would have become a freshly-minted system directory
-/// holding a cert nothing reads. Directories are either ours to make deliberately
-/// (the `certs` leaf) or must already exist.
+/// Copy, creating NOTHING. Directories are either ours to make deliberately or must
+/// already exist.
 fn copy(
     from: &Path,
     to: &Path,
@@ -168,30 +227,42 @@ fn copy(
     Ok(())
 }
 
-/// Hand the CA certificate to whichever trust model this platform uses, returning where
-/// it landed (a file path, or the keychain it was ingested into).
-fn place_anchor(
-    placement: &crate::store::Placement,
+/// The filename we drop into a SHARED system trust dir, vendor-prefixed.
+///
+/// A bare `<name>.pem` there is the same mistake as a bare `certs/` in the secret data
+/// home: the directory belongs to the box, so an unqualified name both collides and
+/// says nothing about who installed it.
+pub(crate) fn trust_file_name(
+    name: &str,
+    extension: &str,
+) -> String {
+    format!("{}_{name}.{extension}", lib_grammar::consts::SOURCETRAIT)
+}
+
+/// Make the system trust our CA, returning where it landed.
+fn trust_ca(
+    target: &TrustTarget,
     authority_public: &Path,
     name: &str,
 ) -> Result<PathBuf> {
-    match placement {
-        crate::store::Placement::AnchorDir {
+    let _ = kind_of_target(target);
+    match target {
+        TrustTarget::Dir {
             dir,
             extension,
             update_command,
-            ..
         } => {
-            let anchor = dir.join(format!("{name}.{extension}"));
-            copy(authority_public, &anchor)?;
-            // NO arguments of our own. An earlier cut passed `extract`, which couples
-            // us to one distribution's subcommand vocabulary even while the command
-            // itself is a flag; bare `update-ca-trust` already extracts, and the bare
-            // form is equally correct for `update-ca-certificates`.
-            run(update_command, &[])?;
-            Ok(anchor)
+            let placed = dir.join(trust_file_name(name, extension));
+            copy(authority_public, &placed)?;
+            // No arguments of our own: bare `update-ca-trust` already extracts, and the
+            // bare form is equally correct for `update-ca-certificates`.
+            if let Err(e) = run(update_command, &[]) {
+                let _ = fs::remove_file(&placed);
+                return Err(e);
+            }
+            Ok(placed)
         }
-        crate::store::Placement::Keychain { program, keychain } => {
+        TrustTarget::Keychain { program, keychain } => {
             let cert = authority_public.to_string_lossy().into_owned();
             let key = keychain.to_string_lossy().into_owned();
             run(program, &["add-trusted-cert", "-d", "-r", "trustRoot", "-k", &key, &cert])?;

@@ -1,4 +1,4 @@
-use crate::verify::{bundle_contains, pem_body};
+use crate::verify::{contains_cert, pem_body};
 
 const ANCHOR: &str = "\
 -----BEGIN CERTIFICATE-----
@@ -33,17 +33,17 @@ xxxxxxxxxxxxxxxxxxAAAAAAAAAAAA
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 -----END CERTIFICATE-----
 ";
-    assert!(bundle_contains(rewrapped, ANCHOR));
+    assert!(contains_cert(rewrapped, ANCHOR));
 }
 
 #[test]
 fn reports_absence() {
     let other = "-----BEGIN CERTIFICATE-----\nZZZZ\n-----END CERTIFICATE-----\n";
-    assert!(!bundle_contains(other, ANCHOR));
+    assert!(!contains_cert(other, ANCHOR));
 }
 
 #[test]
 fn an_empty_anchor_never_matches() {
-    assert!(!bundle_contains("anything at all", ""));
-    assert!(!bundle_contains("", ANCHOR));
+    assert!(!contains_cert("anything at all", ""));
+    assert!(!contains_cert("", ANCHOR));
 }

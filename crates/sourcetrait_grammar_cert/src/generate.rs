@@ -40,6 +40,20 @@ pub(crate) fn certs_dir(base: &Path) -> PathBuf {
     base.join("certs")
 }
 
+/// The install destination inside a SHARED root: `<secret_data>/sourcetrait/grammar/certs`.
+///
+/// The vendor + app segments are not decoration. `$XDGX_SECRET_DATA_HOME` belongs to the
+/// box, not to us, so dropping a bare `certs` dir at its root would collide with every
+/// other application that ever wants one. Same shape as the store's own keypair under
+/// `$XDG_DATA_HOME/sourcetrait/grammar/`, and the segments come from `lib_grammar` so
+/// the two cannot disagree about where the vendor prefix is.
+pub(crate) fn secret_certs_dir(secret_data: &Path) -> PathBuf {
+    secret_data
+        .join(lib_grammar::consts::SOURCETRAIT)
+        .join(lib_grammar::consts::GRAMMAR)
+        .join("certs")
+}
+
 pub(crate) struct CertFiles {
     pub(crate) authority_private: PathBuf,
     pub(crate) authority_public: PathBuf,

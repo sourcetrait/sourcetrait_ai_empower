@@ -1,48 +1,40 @@
 use crate::*;
 
-/// How a platform ingests a trust anchor.
+/// How a platform ingests a CA certificate.
 ///
-/// Two genuinely different MODELS, which is why this is a fieldful enum rather than a
-/// table of paths. A Linux trust store is a DIRECTORY you drop a file into followed by
-/// a refresh command; macOS has no such directory - it hands the certificate to
-/// `security`, which puts it in a keychain. No amount of changing `--anchor-dir` turns
-/// one into the other.
-///
-/// This is not a portability promise. We run on one box. It is here because picking one
-/// distribution's layout as THE default would be an arbitrary choice with no upside,
-/// and because macOS is a real development path even though it will never run a server.
+/// A fieldful enum because the MODELS differ, not the paths: a Linux store is a
+/// directory you drop a cert into plus a refresh command; macOS hands it to `security`
+/// and has no such directory.
 pub(crate) enum TrustStore {
-    AnchorDir(AnchorDirStore),
+    TrustDir(TrustDirStore),
     Keychain(KeychainStore),
 }
 
-/// The Copy discriminant, for naming a model without its payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrustStoreKind {
-    AnchorDir,
+    TrustDir,
     Keychain,
 }
 
 impl TrustStore {
     pub(crate) fn kind(&self) -> TrustStoreKind {
         match self {
-            Self::AnchorDir(_) => TrustStoreKind::AnchorDir,
+            Self::TrustDir(_) => TrustStoreKind::TrustDir,
             Self::Keychain(_) => TrustStoreKind::Keychain,
         }
     }
 
     pub(crate) fn id(&self) -> &'static str {
         match self {
-            Self::AnchorDir(s) => s.id,
+            Self::TrustDir(s) => s.id,
             Self::Keychain(s) => s.id,
         }
     }
 
-    /// Is this the layout actually present on the running system? The same existence
-    /// check that stops us writing blindly is what identifies the platform.
+    /// The same existence check that stops us writing blindly identifies the platform.
     fn present(&self) -> bool {
         match self {
-            Self::AnchorDir(s) => Path::new(s.anchor_dir).is_dir(),
+            Self::TrustDir(s) => Path::new(s.trust_dir).is_dir(),
             Self::Keychain(s) => {
                 Path::new(s.program).is_file() && Path::new(s.keychain).exists()
             }
@@ -50,13 +42,11 @@ impl TrustStore {
     }
 }
 
-pub(crate) struct AnchorDirStore {
+pub(crate) struct TrustDirStore {
     pub id: &'static str,
-    pub anchor_dir: &'static str,
-    /// `update-ca-certificates` only processes files ending `.crt`, so the extension
-    /// belongs to the store. This is why "just change the path" does not move you
-    /// between layouts.
-    pub anchor_extension: &'static str,
+    pub trust_dir: &'static str,
+    /// `update-ca-certificates` only processes `.crt`, so the extension is per-store.
+    pub cert_extension: &'static str,
     pub update_command: &'static str,
     /// The extracted bundle `verify` reads back.
     pub bundle: &'static str,
@@ -69,26 +59,25 @@ pub(crate) struct KeychainStore {
     pub keychain: &'static str,
 }
 
-/// The layouts we recognize, most-specific first.
 pub(crate) const KNOWN: &[TrustStore] = &[
-    TrustStore::AnchorDir(AnchorDirStore {
+    TrustStore::TrustDir(TrustDirStore {
         id: "pki-ca-trust",
-        anchor_dir: "/etc/pki/ca-trust/source/anchors",
-        anchor_extension: "pem",
+        trust_dir: "/etc/pki/ca-trust/source/anchors",
+        cert_extension: "pem",
         update_command: "update-ca-trust",
         bundle: "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
     }),
-    TrustStore::AnchorDir(AnchorDirStore {
+    TrustStore::TrustDir(TrustDirStore {
         id: "ca-certificates-trust-source",
-        anchor_dir: "/etc/ca-certificates/trust-source/anchors",
-        anchor_extension: "pem",
+        trust_dir: "/etc/ca-certificates/trust-source/anchors",
+        cert_extension: "pem",
         update_command: "update-ca-trust",
         bundle: "/etc/ssl/certs/ca-certificates.crt",
     }),
-    TrustStore::AnchorDir(AnchorDirStore {
+    TrustStore::TrustDir(TrustDirStore {
         id: "ca-certificates",
-        anchor_dir: "/usr/local/share/ca-certificates",
-        anchor_extension: "crt",
+        trust_dir: "/usr/local/share/ca-certificates",
+        cert_extension: "crt",
         update_command: "update-ca-certificates",
         bundle: "/etc/ssl/certs/ca-certificates.crt",
     }),
@@ -103,19 +92,12 @@ pub(crate) fn detect() -> Option<&'static TrustStore> {
     KNOWN.iter().find(|s| s.present())
 }
 
-/// The layout `install` / `verify` will actually use, after any explicit overrides.
-pub(crate) struct Resolved {
-    pub placement: Placement,
-    /// Which known layout was detected, if any.
-    pub detected: Option<&'static str>,
-}
-
-pub(crate) enum Placement {
-    AnchorDir {
+/// Where `install` puts the CA cert. Carries only what installing needs.
+pub(crate) enum TrustTarget {
+    Dir {
         dir: PathBuf,
         extension: String,
         update_command: String,
-        bundle: PathBuf,
     },
     Keychain {
         program: String,
@@ -123,72 +105,92 @@ pub(crate) enum Placement {
     },
 }
 
-impl Resolved {
-    pub(crate) fn kind(&self) -> TrustStoreKind {
-        match self.placement {
-            Placement::AnchorDir { .. } => TrustStoreKind::AnchorDir,
-            Placement::Keychain { .. } => TrustStoreKind::Keychain,
-        }
+/// Where `verify` reads the trusted set from. Carries only what verifying needs.
+pub(crate) enum TrustSource {
+    Bundle(PathBuf),
+    Keychain {
+        program: String,
+        keychain: PathBuf,
+    },
+}
+
+pub(crate) fn kind_of_target(target: &TrustTarget) -> TrustStoreKind {
+    match target {
+        TrustTarget::Dir { .. } => TrustStoreKind::TrustDir,
+        TrustTarget::Keychain { .. } => TrustStoreKind::Keychain,
     }
 }
 
-/// Overrides apply per field on top of the detected layout. Passing `--anchor-dir`
-/// selects the directory model explicitly, which is also the escape hatch for a layout
-/// we do not know.
-pub(crate) fn resolve(
-    anchor_dir: Option<&Path>,
+/// Resolve the install target. Each command resolves ONLY its own fields - an earlier
+/// cut shared one resolver, so `install --trust-dir` demanded a `--bundle` it does not
+/// expose and could not be run at all on a keychain platform.
+pub(crate) fn resolve_target(
+    trust_dir: Option<&Path>,
     update_command: Option<&str>,
-    bundle: Option<&Path>,
-) -> Result<Resolved> {
+) -> Result<(TrustTarget, Option<&'static str>)> {
     let store = detect();
+    let detected_dir = match store {
+        Some(TrustStore::TrustDir(s)) => Some(s),
+        _ => None,
+    };
 
-    // An explicit --anchor-dir means the caller is asserting the directory model, even
-    // on a box where detection found something else.
-    if let Some(dir) = anchor_dir {
-        let detected_dir = match store {
-            Some(TrustStore::AnchorDir(s)) => Some(s),
-            _ => None,
-        };
-        return Ok(Resolved {
-            placement: Placement::AnchorDir {
+    if let Some(dir) = trust_dir {
+        let update_command = update_command
+            .map(str::to_string)
+            .or_else(|| detected_dir.map(|s| s.update_command.to_string()))
+            .ok_or_else(|| missing("--update-command"))?;
+        return Ok((
+            TrustTarget::Dir {
                 dir: dir.to_path_buf(),
-                extension: detected_dir.map(|s| s.anchor_extension).unwrap_or("pem").to_string(),
-                update_command: update_command
-                    .map(str::to_string)
-                    .or_else(|| detected_dir.map(|s| s.update_command.to_string()))
-                    .ok_or_else(|| undetected("--update-command"))?,
-                bundle: bundle
-                    .map(Path::to_path_buf)
-                    .or_else(|| detected_dir.map(|s| PathBuf::from(s.bundle)))
-                    .ok_or_else(|| undetected("--bundle"))?,
+                extension: detected_dir.map(|s| s.cert_extension).unwrap_or("pem").to_string(),
+                update_command,
             },
-            detected: store.map(TrustStore::id),
-        });
+            store.map(TrustStore::id),
+        ));
     }
 
     match store {
-        Some(TrustStore::AnchorDir(s)) => Ok(Resolved {
-            placement: Placement::AnchorDir {
-                dir: PathBuf::from(s.anchor_dir),
-                extension: s.anchor_extension.to_string(),
+        Some(TrustStore::TrustDir(s)) => Ok((
+            TrustTarget::Dir {
+                dir: PathBuf::from(s.trust_dir),
+                extension: s.cert_extension.to_string(),
                 update_command: update_command.unwrap_or(s.update_command).to_string(),
-                bundle: bundle
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| PathBuf::from(s.bundle)),
             },
-            detected: Some(s.id),
-        }),
-        Some(TrustStore::Keychain(s)) => Ok(Resolved {
-            placement: Placement::Keychain {
+            Some(s.id),
+        )),
+        Some(TrustStore::Keychain(s)) => Ok((
+            TrustTarget::Keychain {
                 program: s.program.to_string(),
                 keychain: PathBuf::from(s.keychain),
             },
-            detected: Some(s.id),
-        }),
-        None => Err(undetected("--anchor-dir")),
+            Some(s.id),
+        )),
+        None => Err(missing("--trust-dir")),
     }
 }
 
-fn undetected(flag: &str) -> CertError {
+/// Resolve where the trusted set is read from. A `--bundle` on a keychain platform is
+/// an ERROR rather than silently dropped.
+pub(crate) fn resolve_source(bundle: Option<&Path>) -> Result<TrustSource> {
+    let store = detect();
+    if let Some(path) = bundle {
+        if let Some(TrustStore::Keychain(_)) = store {
+            return Err(CertError::msg(
+                "--bundle does not apply to a keychain trust store",
+            ));
+        }
+        return Ok(TrustSource::Bundle(path.to_path_buf()));
+    }
+    match store {
+        Some(TrustStore::TrustDir(s)) => Ok(TrustSource::Bundle(PathBuf::from(s.bundle))),
+        Some(TrustStore::Keychain(s)) => Ok(TrustSource::Keychain {
+            program: s.program.to_string(),
+            keychain: PathBuf::from(s.keychain),
+        }),
+        None => Err(missing("--bundle")),
+    }
+}
+
+fn missing(flag: &str) -> CertError {
     CertError::msg(format!("no known trust store found; pass {flag}"))
 }

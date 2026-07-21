@@ -24,6 +24,8 @@ pub(crate) use crate::{
     verify::verify,
 };
 
+pub(crate) use sourcetrait_grammar_lib as lib_grammar;
+
 pub(crate) use std::{
     fs,
     net::IpAddr,

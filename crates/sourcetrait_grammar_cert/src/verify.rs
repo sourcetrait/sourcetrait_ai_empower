@@ -1,66 +1,78 @@
 use crate::*;
 
+use crate::store::TrustSource;
+
 pub(crate) struct VerifyPlan<'a> {
-    /// Base whose `certs` leaf holds the installed material.
-    pub secret_base: &'a Path,
+    /// The secret DATA home whose `sourcetrait/grammar/certs` leaf holds the material.
+    pub secret_data: &'a Path,
     pub name: &'a str,
-    pub store: &'a crate::store::Resolved,
+    pub source: &'a TrustSource,
+    /// The CA cert to look for. Defaults to the installed copy, but can be given so a
+    /// manually-placed CA still verifies.
+    pub ca_cert: Option<&'a Path>,
 }
 
 pub(crate) struct Verified {
-    pub key_path: PathBuf,
+    pub keys_read: Vec<PathBuf>,
     pub trust_source: String,
-    pub anchor_trusted: bool,
+    pub ca_trusted: bool,
 }
 
-/// Close the install loop: did the anchor actually take, and can the unprivileged user
-/// read its own key?
+/// Did the CA actually become trusted, and can the unprivileged user read the keys it
+/// needs at runtime?
 ///
-/// The key check READS the file rather than stating it, deliberately. `install` runs as
-/// root and a stat succeeds regardless of ownership, so a stat would happily pass on a
-/// root-owned key the MCP cannot open - precisely the failure this exists to catch, and
-/// one that would otherwise surface much later as a channel-open error. Run this AS THE
-/// INVOKING USER, never under sudo, or it proves nothing.
+/// The key check READS rather than stats: `install` runs as root and a stat succeeds
+/// regardless of ownership, so a stat would pass on a root-owned key the host cannot
+/// open. Run this AS THE INVOKING USER, never under sudo, or it proves nothing.
 pub(crate) fn verify(plan: &VerifyPlan<'_>) -> Result<Verified> {
-    let secret_dir = crate::generate::certs_dir(plan.secret_base);
+    let secret_dir = crate::generate::secret_certs_dir(plan.secret_data);
 
-    let key_path = secret_dir.join(format!("authority_{}.key.pem", plan.name));
-    let key = fs::read_to_string(&key_path)
-        .map_err(|e| CertError::io(format!("reading {}", key_path.display()), e))?;
-    if !key.contains("PRIVATE KEY") {
-        return Err(CertError::msg(format!(
-            "{} is not a PEM private key",
-            key_path.display(),
-        )));
+    // BOTH private keys. The server serves TLS with the ENTITY key, so checking only
+    // the authority key would pass while the key actually used at runtime was
+    // unreadable.
+    let mut keys_read = Vec::new();
+    for key_name in [
+        format!("authority_{}.key.pem", plan.name),
+        format!("entity_{}.key.pem", plan.name),
+    ] {
+        let path = secret_dir.join(&key_name);
+        let text = fs::read_to_string(&path)
+            .map_err(|e| CertError::io(format!("reading {}", path.display()), e))?;
+        if !text.contains("PRIVATE KEY") {
+            return Err(CertError::msg(format!(
+                "{} is not a PEM private key",
+                path.display(),
+            )));
+        }
+        keys_read.push(path);
     }
 
-    let anchor_path = secret_dir.join(format!("authority_{}.pem", plan.name));
-    let anchor = fs::read_to_string(&anchor_path)
-        .map_err(|e| CertError::io(format!("reading {}", anchor_path.display()), e))?;
+    let ca_path = plan
+        .ca_cert
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| secret_dir.join(format!("authority_{}.pem", plan.name)));
+    let ca = fs::read_to_string(&ca_path)
+        .map_err(|e| CertError::io(format!("reading {}", ca_path.display()), e))?;
 
-    let (trust_source, bundle) = trust_bundle(&plan.store.placement)?;
+    let (trust_source, trusted_set) = read_trusted_set(plan.source)?;
 
     Ok(Verified {
-        key_path,
+        keys_read,
         trust_source,
-        anchor_trusted: bundle_contains(&bundle, &anchor),
+        ca_trusted: contains_cert(&trusted_set, &ca),
     })
 }
 
-/// Every trusted certificate on this system, as PEM text, plus a label for where it
-/// came from.
-///
-/// The two models differ only in HOW the text is obtained - a file on the anchor-dir
-/// platforms, a `security` query on macOS - so the comparison below stays identical for
-/// both rather than growing a second implementation.
-fn trust_bundle(placement: &crate::store::Placement) -> Result<(String, String)> {
-    match placement {
-        crate::store::Placement::AnchorDir { bundle, .. } => {
-            let text = fs::read_to_string(bundle)
-                .map_err(|e| CertError::io(format!("reading {}", bundle.display()), e))?;
-            Ok((bundle.display().to_string(), text))
+/// Every trusted certificate as PEM text, plus a label for where it came from. The two
+/// models differ only in HOW the text is obtained, so the comparison stays shared.
+fn read_trusted_set(source: &TrustSource) -> Result<(String, String)> {
+    match source {
+        TrustSource::Bundle(path) => {
+            let text = fs::read_to_string(path)
+                .map_err(|e| CertError::io(format!("reading {}", path.display()), e))?;
+            Ok((path.display().to_string(), text))
         }
-        crate::store::Placement::Keychain { program, keychain } => {
+        TrustSource::Keychain { program, keychain } => {
             let key = keychain.to_string_lossy().into_owned();
             let output = process::Command::new(program)
                 .args(["find-certificate", "-a", "-p", &key])
@@ -81,22 +93,18 @@ fn trust_bundle(placement: &crate::store::Placement) -> Result<(String, String)>
     }
 }
 
-/// Does the trust store carry this certificate?
-///
-/// Compared on the base64 body with ALL whitespace stripped, because the store's copy
-/// is regenerated rather than byte-copied: line wrapping and surrounding commentary
-/// differ from the source anchor, so a literal substring test on the PEM would report a
-/// false negative on a perfectly good install - the wrong direction for a verification
-/// step to fail in.
-pub(crate) fn bundle_contains(
-    bundle: &str,
-    anchor_pem: &str,
+/// Compared on the base64 body with all whitespace stripped: the store's copy is
+/// regenerated rather than byte-copied, so wrapping and commentary differ and a literal
+/// PEM substring test would report a false negative on a good install.
+pub(crate) fn contains_cert(
+    trusted_set: &str,
+    cert_pem: &str,
 ) -> bool {
-    let body = pem_body(anchor_pem);
+    let body = pem_body(cert_pem);
     if body.is_empty() {
         return false;
     }
-    strip_whitespace(bundle).contains(&body)
+    strip_whitespace(trusted_set).contains(&body)
 }
 
 pub(crate) fn pem_body(pem: &str) -> String {

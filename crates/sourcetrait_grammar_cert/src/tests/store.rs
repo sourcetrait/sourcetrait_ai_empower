@@ -1,22 +1,16 @@
-use crate::store::{KNOWN, Placement, TrustStore, TrustStoreKind, resolve};
+use crate::store::{KNOWN, TrustStore, TrustStoreKind, TrustTarget, resolve_target};
 
 /// The table is a claim about real systems, so guard the details that are easy to get
-/// wrong and impossible to notice: an anchor dir must be absolute, and the Debian-family
-/// entry must use `.crt` - `update-ca-certificates` ignores anything else, which would
-/// look like a successful install that never took.
+/// wrong and impossible to notice.
 #[test]
 fn known_layouts_are_well_formed() {
     assert!(!KNOWN.is_empty());
     for store in KNOWN {
         match store {
-            TrustStore::AnchorDir(s) => {
-                assert!(s.anchor_dir.starts_with('/'), "{} anchor dir must be absolute", s.id);
+            TrustStore::TrustDir(s) => {
+                assert!(s.trust_dir.starts_with('/'), "{} trust dir must be absolute", s.id);
                 assert!(s.bundle.starts_with('/'), "{} bundle must be absolute", s.id);
-                assert!(
-                    !s.anchor_extension.starts_with('.'),
-                    "{} extension is joined with a dot already",
-                    s.id,
-                );
+                assert!(!s.cert_extension.starts_with('.'), "{} joins the dot itself", s.id);
                 assert!(!s.update_command.is_empty());
             }
             TrustStore::Keychain(s) => {
@@ -32,13 +26,13 @@ fn update_ca_certificates_requires_crt() {
     let debian = KNOWN
         .iter()
         .find_map(|s| match s {
-            TrustStore::AnchorDir(a) if a.update_command == "update-ca-certificates" => Some(a),
+            TrustStore::TrustDir(d) if d.update_command == "update-ca-certificates" => Some(d),
             _ => None,
         })
         .expect("the ca-certificates layout is in the table");
     assert_eq!(
-        debian.anchor_extension, "crt",
-        "update-ca-certificates only processes .crt, so a .pem anchor would be ignored",
+        debian.cert_extension, "crt",
+        "update-ca-certificates only processes .crt, so a .pem cert would be ignored",
     );
 }
 
@@ -48,42 +42,47 @@ fn ids_are_unique() {
     ids.sort_unstable();
     let before = ids.len();
     ids.dedup();
-    assert_eq!(before, ids.len(), "layout ids must be unique");
+    assert_eq!(before, ids.len());
 }
 
 #[test]
 fn kind_mirrors_the_variant() {
     for store in KNOWN {
         let expected = match store {
-            TrustStore::AnchorDir(_) => TrustStoreKind::AnchorDir,
+            TrustStore::TrustDir(_) => TrustStoreKind::TrustDir,
             TrustStore::Keychain(_) => TrustStoreKind::Keychain,
         };
         assert_eq!(store.kind(), expected);
     }
 }
 
-/// An explicit `--anchor-dir` asserts the directory model, whatever this box detects -
-/// it is the escape hatch for a layout the table does not know.
+/// `install` must never demand a flag it does not expose. An earlier cut shared one
+/// resolver with `verify`, so `--trust-dir` asked for a `--bundle` that install has no
+/// way to supply - unreachable on any keychain platform.
 #[test]
-fn an_explicit_anchor_dir_selects_the_directory_model() {
-    let resolved = resolve(
-        Some(std::path::Path::new("/tmp/anchors")),
+fn install_resolution_never_asks_for_a_bundle() {
+    let (target, _) = resolve_target(
+        Some(std::path::Path::new("/tmp/trust")),
         Some("true"),
-        Some(std::path::Path::new("/tmp/bundle.pem")),
     )
-    .expect("fully overridden");
-    assert_eq!(resolved.kind(), TrustStoreKind::AnchorDir);
-    match resolved.placement {
-        Placement::AnchorDir {
+    .expect("a trust dir plus a refresh command is sufficient to install");
+    match target {
+        TrustTarget::Dir {
             dir,
             update_command,
-            bundle,
             ..
         } => {
-            assert_eq!(dir, std::path::Path::new("/tmp/anchors"));
+            assert_eq!(dir, std::path::Path::new("/tmp/trust"));
             assert_eq!(update_command, "true");
-            assert_eq!(bundle, std::path::Path::new("/tmp/bundle.pem"));
         }
-        Placement::Keychain { .. } => panic!("an explicit anchor dir must not resolve to a keychain"),
+        TrustTarget::Keychain { .. } => panic!("an explicit trust dir must select the dir model"),
     }
+}
+
+/// The file dropped into a SHARED system dir carries the vendor prefix; a bare
+/// `<name>.pem` there collides and says nothing about who installed it.
+#[test]
+fn trust_file_name_is_vendor_prefixed() {
+    assert_eq!(crate::install::trust_file_name("grammar", "pem"), "sourcetrait_grammar.pem");
+    assert_eq!(crate::install::trust_file_name("test", "crt"), "sourcetrait_test.crt");
 }

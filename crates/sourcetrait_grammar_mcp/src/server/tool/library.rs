@@ -27,7 +27,7 @@ pub(crate) struct InstallSummary {
     pub removed: Vec<String>,
 }
 
-/// `check` summary: the library's `cargo test`. Error-severity rows block a
+/// `check` summary: the library's validation pass. Error-severity rows block a
 /// commit; Warning-severity rows advise. The rows are the unified
 /// `Diagnostic`s bucketed by severity; `ok` is true iff there are no errors.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]

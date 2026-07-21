@@ -10,7 +10,7 @@ fn deny_removes_tools_from_list() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--deny", "run,interact,learn"]);
     let names = host.tool_names();
-    assert_eq!(names.len(), 9, "12 - 3 denied = 9; got {names:?}");
+    assert_eq!(names.len(), 12, "15 - 3 denied = 12; got {names:?}");
     for absent in ["run", "interact", "learn"] {
         assert!(
             !names.contains(&absent.to_string()),
@@ -18,7 +18,18 @@ fn deny_removes_tools_from_list() {
         );
     }
     for present in [
-        "rerun", "call", "new", "commit", "library", "info", "inspect", "processes", "kill",
+        "rerun",
+        "call",
+        "new",
+        "commit",
+        "library",
+        "channel_open",
+        "channel_verified",
+        "channel_close",
+        "info",
+        "inspect",
+        "processes",
+        "kill",
     ] {
         assert!(
             names.contains(&present.to_string()),
@@ -55,7 +66,10 @@ fn deny_full_set_leaves_core_four() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(
         t.temp_dir(),
-        &["--deny", "run,rerun,interact,call,learn,new,commit,library"],
+        &[
+            "--deny",
+            "run,rerun,interact,call,learn,new,commit,library,channel_open,channel_verified,channel_close",
+        ],
     );
     let mut names = host.tool_names();
     names.sort();

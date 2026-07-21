@@ -9,12 +9,34 @@ use crate::*;
 /// v4 reset read as a TLS verdict during P3; the leaf carries IP SANs for this.
 const BIND: &str = "127.0.0.1";
 
-const HOST_FROM: &str = "host";
-const KIND_CHANNEL_OPEN: &str = "ChannelOpen";
+/// The origin stamped on a host-originated packet. Plain `mcp`, not `mcp/<id>`: the
+/// channel is 1:1, so there is no second MCP to tell apart.
+pub(crate) const FROM_MCP: &str = "mcp";
+
+/// A CORE model drops the vendor prefix; everything else carries its own.
+pub(crate) const MODEL_OPEN: &str = "channel/Open";
 
 /// RFC 6455 "try again later"; the plan's refusal code for a second claimant.
 const CLOSE_CLAIMED: u16 = 1013;
 const CLAIM_REASON: &str = "channel already claimed";
+
+/// The host's `channel/Open` control packet - the thing the agent verifies by SEEING.
+///
+/// Built in one place because it has two emitters: the hub greets a freshly connected
+/// peer with it, and `channel_open` re-sends it on an EXISTING channel, where a failing
+/// send is what reveals a peer that has actually gone.
+pub(crate) fn open_packet(
+    nonce_gen: &NonceGen,
+    mcp_nom: McpNom,
+) -> Result<String, String> {
+    let span = nu::Span::unknown();
+    let mut data = nu::Record::new();
+    data.insert("mcp_nom", nu::Value::string(mcp_nom.to_string(), span));
+    let event = nu::Value::record(data, span);
+    let event_nuon = render_nuon(&event)?;
+    let id = mint_msg_id(nonce_gen, FROM_MCP, MODEL_OPEN, &event_nuon, None);
+    render_packet(id, FROM_MCP, MODEL_OPEN, &event, None)
+}
 
 fn server_config() -> Result<Arc<tls::ServerConfig>, Error> {
     let (leaf_path, key_path) = config().channel.cert_paths();
@@ -46,6 +68,7 @@ fn server_config() -> Result<Arc<tls::ServerConfig>, Error> {
 pub(crate) async fn start(
     handle: &ChannelHandle,
     mcp_nom: McpNom,
+    nonce_gen: Arc<NonceGen>,
 ) -> Result<String, Error> {
     let tls_config = server_config()?;
     // 0 is the SYSCALL's "assign me one" convention, not a configurable value - the
@@ -64,30 +87,36 @@ pub(crate) async fn start(
         })?
         .port();
     let url = format!("wss://{BIND}:{port}");
-    let (tx, rx) = tk::unbounded_channel::<HubCommand>();
+    let (packet_tx, packet_rx) = tk::unbounded_channel::<String>();
+    let (close_tx, close_rx) = tk::oneshot::channel::<(u16, String)>();
     let (shutdown_tx, shutdown_rx) = tk::oneshot::channel::<()>();
     let claimed = Arc::new(AtomicBool::new(false));
     tk::spawn(accept_loop(
         listener,
         tls::TlsAcceptor::from(tls_config),
-        rx,
+        packet_rx,
+        close_rx,
         shutdown_rx,
         claimed.clone(),
         mcp_nom,
+        nonce_gen,
     ));
-    handle.install(url.clone(), tx, shutdown_tx, claimed);
+    handle.install(url.clone(), packet_tx, close_tx, shutdown_tx, claimed);
     Ok(url)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn accept_loop(
     listener: tk::TcpListener,
     acceptor: tls::TlsAcceptor,
-    rx: tk::UnboundedReceiver<HubCommand>,
+    packet_rx: tk::UnboundedReceiver<String>,
+    close_rx: tk::oneshot::Receiver<(u16, String)>,
     shutdown_rx: tk::oneshot::Receiver<()>,
     claimed: Arc<AtomicBool>,
     mcp_nom: McpNom,
+    nonce_gen: Arc<NonceGen>,
 ) {
-    let mut rx_slot = Some(rx);
+    let mut peer_slot = Some((packet_rx, close_rx));
     let mut shutdown_rx = shutdown_rx;
     loop {
         tokio::select! {
@@ -103,8 +132,15 @@ async fn accept_loop(
                     .is_ok();
                 let acceptor = acceptor.clone();
                 if won {
-                    if let Some(rx) = rx_slot.take() {
-                        tk::spawn(serve_peer(tcp, acceptor, rx, mcp_nom));
+                    if let Some((packet_rx, close_rx)) = peer_slot.take() {
+                        tk::spawn(serve_peer(
+                            tcp,
+                            acceptor,
+                            packet_rx,
+                            close_rx,
+                            mcp_nom,
+                            nonce_gen.clone(),
+                        ));
                     }
                 } else {
                     tk::spawn(refuse_peer(tcp, acceptor));
@@ -118,8 +154,10 @@ async fn accept_loop(
 async fn serve_peer(
     tcp: tk::TcpStream,
     acceptor: tls::TlsAcceptor,
-    mut rx: tk::UnboundedReceiver<HubCommand>,
+    mut packets: tk::UnboundedReceiver<String>,
+    close_rx: tk::oneshot::Receiver<(u16, String)>,
     mcp_nom: McpNom,
+    nonce_gen: Arc<NonceGen>,
 ) {
     let Ok(tls_stream) = acceptor.accept(tcp).await else {
         return;
@@ -131,40 +169,47 @@ async fn serve_peer(
     // The plan's step-3 verification: the agent proves the channel by SEEING a real
     // packet, so the host emits one the moment a peer connects. There is no separate
     // ack channel by design.
-    let span = nu::Span::unknown();
-    let mut data = nu::Record::new();
-    data.insert("mcp_nom", nu::Value::string(mcp_nom.to_string(), span));
-    let opened = render_packet(
-        &mcp_nom.to_string(),
-        HOST_FROM,
-        KIND_CHANNEL_OPEN,
-        nu::Value::record(data, span),
-    );
-    if let Ok(line) = opened
+    if let Ok(line) = open_packet(&nonce_gen, mcp_nom)
         && socket.send(ws::Message::text(line)).await.is_err()
     {
         return;
     }
 
+    let mut close_rx = close_rx;
     loop {
         tokio::select! {
-            cmd = rx.recv() => match cmd {
-                Some(HubCommand::Packet(line)) => {
+            line = packets.recv() => match line {
+                Some(line) => {
+                    // The last point before the wire, so the guard lives here: an
+                    // oversize frame is dropped whole by the client and a cap-exact one
+                    // arrives corrupted, so neither may be written (P8).
+                    if line.len() >= MAX_FRAME_BYTES {
+                        eprintln!(
+                            "grammar: channel packet of {} bytes refused (max {})",
+                            line.len(),
+                            MAX_FRAME_BYTES,
+                        );
+                        continue;
+                    }
                     if socket.send(ws::Message::text(line)).await.is_err() {
                         break;
                     }
                 }
-                Some(HubCommand::Close { code, reason }) => {
+                None => break,
+            },
+            // A planned close rides its OWN signal, so it can never wait behind queued
+            // packets - without the explicit frame the agent sees a bare 1006.
+            closing = &mut close_rx => {
+                if let Ok((code, reason)) = closing {
                     let frame = ws::CloseFrame {
                         code: ws::CloseCode::from(code),
                         reason: reason.into(),
                     };
                     let _ = socket.send(ws::Message::Close(Some(frame))).await;
                     let _ = socket.flush().await;
-                    break;
                 }
-                None => break,
-            },
+                break;
+            }
             incoming = socket.next() => match incoming {
                 // Polling the read half is not optional: it is what lets tungstenite
                 // answer pings and observe the peer's own close.

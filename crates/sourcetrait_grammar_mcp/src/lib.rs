@@ -23,6 +23,9 @@ pub(crate) mod server {
     pub(crate) mod test_hooks;
     pub(crate) mod tool {
         pub(crate) mod call;
+        pub(crate) mod channel_close;
+        pub(crate) mod channel_open;
+        pub(crate) mod channel_verified;
         pub(crate) mod commit;
         pub(crate) mod common;
         pub(crate) mod handler;
@@ -39,6 +42,7 @@ pub(crate) mod server {
     }
     #[cfg(test)]
     mod tests {
+        mod channel;
         mod emergency;
         mod namepath;
         mod schema;
@@ -73,8 +77,8 @@ pub(crate) use crate::{
     },
     cli::CliTool,
     config::{
-        CONFIG, ChannelConfig, ChannelConfigToml, Config, ConfigToml, DeniableTool, DenySet,
-        config, default_id, default_work_dir, expand_path,
+        CONFIG, Config, ConfigToml, DeniableTool, DenySet, config, default_id, default_work_dir,
+        expand_path,
     },
     engine::base_context,
     mcp::ServiceExt,
@@ -89,10 +93,10 @@ pub(crate) use crate::{
             run_body_file,
         },
         channel::{
-            hub::start as start_channel_hub,
+            hub::{open_packet, start as start_channel_hub},
             state::{
-                ChannelHandle, ChannelPhase, ChannelSendError, ChannelStatus, HubCommand,
-                escape_line, render_packet,
+                ChannelHandle, ChannelPhase, ChannelSendError, ChannelVerifyError,
+                MAX_FRAME_BYTES, mint_msg_id, render_nuon, render_packet,
             },
         },
         embed::{InteractEngine, build_base, eval_stateless},
@@ -128,6 +132,8 @@ pub(crate) use crate::{
         },
         tool::{
             call::CallParams,
+            channel_close::ChannelCloseParams,
+            channel_verified::ChannelVerifiedParams,
             commit::CommitParams,
             common::{
                 CachedRunBody, InFlightKind, NuSh, RunParams, convert_schemas,

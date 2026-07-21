@@ -101,6 +101,14 @@ pub struct NuSh {
     /// that may still be alive, populated on timeout / kill. The watchdog prunes
     /// finished entries and confirms hangs past grace.
     pub(crate) hung_watch: HungRegistry,
+    /// The host's single packet channel. Present from startup but CLOSED - channels
+    /// are optional and the hub starts lazily on the first `channel_open()`, so a
+    /// session that never opens one pays nothing for it.
+    pub(crate) channel: Arc<ChannelHandle>,
+    /// Serializes `channel_open`'s decide-then-start, which spans an await. Async
+    /// because it is held across that await; the channel's own state lock is a std
+    /// Mutex precisely because the emit path must never need a runtime.
+    pub(crate) channel_open_lock: Arc<tk::AsyncMutex<()>>,
     pub(crate) tool_router: mcp::ToolRouter<NuSh>,
 }
 
@@ -157,6 +165,8 @@ impl NuSh {
             lint_engine,
             in_flight: Arc::new(tk::AsyncMutex::new(HashMap::new())),
             hung_watch: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            channel: Arc::new(ChannelHandle::new()),
+            channel_open_lock: Arc::new(tk::AsyncMutex::new(())),
             tool_router: Self::tool_router(),
         }
     }

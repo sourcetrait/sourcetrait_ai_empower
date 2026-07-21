@@ -4,7 +4,7 @@ use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-/// initialize -> tools/list (exactly 12) -> a run() round-trip. The rmcp stdio
+/// initialize -> tools/list (exactly 15) -> a run() round-trip. The rmcp stdio
 /// transport + handshake are the system surface here.
 #[test]
 #[named]
@@ -13,10 +13,23 @@ fn tools_list_and_run_round_trip() {
     let mut host = Host::spawn(t.temp_dir());
 
     let names = host.tool_names();
-    assert_eq!(names.len(), 12, "expected 12 tools; got {names:?}");
+    assert_eq!(names.len(), 15, "expected 15 tools; got {names:?}");
     for expected in [
-        "run", "interact", "rerun", "call", "processes", "kill", "info", "learn", "new", "commit",
-        "library", "inspect",
+        "run",
+        "interact",
+        "rerun",
+        "call",
+        "processes",
+        "kill",
+        "info",
+        "learn",
+        "new",
+        "commit",
+        "library",
+        "inspect",
+        "channel_open",
+        "channel_verified",
+        "channel_close",
     ] {
         assert!(
             names.contains(&expected.to_string()),

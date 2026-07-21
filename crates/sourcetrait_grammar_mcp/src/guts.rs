@@ -250,6 +250,27 @@ impl TestServer {
         Self::envelope(self.rt.block_on(self.nush.kill(mcp::Parameters(p))))
     }
 
+    /// `channel_verified` is a no-return tool: the envelope is JSON null on success.
+    ///
+    /// There is deliberately no `channel_open` here. That one binds a real socket and
+    /// presents a CA-issued leaf, so an in-process test would be asserting the box's
+    /// certificate installation rather than this crate; it is exercised live on the
+    /// test channel instead.
+    pub fn channel_verified(&self) -> json::Value {
+        Self::envelope(
+            self.rt
+                .block_on(self.nush.channel_verified(mcp::Parameters(ChannelVerifiedParams {}))),
+        )
+    }
+
+    /// `channel_close` is a no-return tool; closing an already-closed channel succeeds.
+    pub fn channel_close(&self) -> json::Value {
+        Self::envelope(
+            self.rt
+                .block_on(self.nush.channel_close(mcp::Parameters(ChannelCloseParams {}))),
+        )
+    }
+
     /// The in-process store's libraries git repo dir (the `(test, default)`
     /// coordinate under the per-binary temp XDG data root), for tests that
     /// inspect on-disk store artifacts (git-tracked paths, the canonical tree).

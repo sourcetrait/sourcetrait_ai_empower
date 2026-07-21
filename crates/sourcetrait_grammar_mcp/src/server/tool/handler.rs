@@ -31,6 +31,15 @@ impl NuSh {
         if !deny.denies(DeniableTool::Library) {
             router = router + Self::library_router();
         }
+        if !deny.denies(DeniableTool::ChannelOpen) {
+            router = router + Self::channel_open_router();
+        }
+        if !deny.denies(DeniableTool::ChannelVerified) {
+            router = router + Self::channel_verified_router();
+        }
+        if !deny.denies(DeniableTool::ChannelClose) {
+            router = router + Self::channel_close_router();
+        }
         router
     }
 }

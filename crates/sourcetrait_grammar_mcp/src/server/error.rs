@@ -156,6 +156,8 @@ pub enum Error {
         reason: String,
     },
     ChannelNotOpen,
+    ChannelNotClaimed,
+    ChannelPeerGone,
     ThreadDispatch {
         reason: String,
     },
@@ -190,6 +192,8 @@ impl Error {
             Self::RerunBodyDecode { .. } => "rerun::body_decode",
             Self::ChannelStart { .. } => "channel::start",
             Self::ChannelNotOpen => "channel::not_open",
+            Self::ChannelNotClaimed => "channel::not_claimed",
+            Self::ChannelPeerGone => "channel::peer_gone",
             Self::ThreadDispatch { .. } => "thread::dispatch",
             Self::ThreadTimeout { .. } => "thread::timeout",
             Self::ThreadReturnedError { .. } => "thread::returned_error",
@@ -251,6 +255,13 @@ impl Error {
             Self::ChannelNotOpen => {
                 "the channel is not open; call channel_open() first".to_string()
             }
+            Self::ChannelNotClaimed => "nothing has connected to the channel yet; start \
+                 a Monitor at the wss endpoint channel_open() returned, see the \
+                 channel/Open packet, then verify"
+                .to_string(),
+            Self::ChannelPeerGone => "the channel's peer connection is gone; call \
+                 channel_close() then channel_open() for a fresh channel"
+                .to_string(),
             Self::ThreadDispatch { reason } => format!("eval dispatch failed: {reason}"),
             Self::ThreadTimeout { timeout_ms } => format!("eval timed out after {timeout_ms} ms"),
             Self::ThreadReturnedError { reason } => reason.clone(),

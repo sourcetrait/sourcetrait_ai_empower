@@ -156,6 +156,17 @@ fn cmd_install(
     for path in &installed.secrets {
         println!("{}", path.display());
     }
+    match installed.staging {
+        crate::install::Staging::Removed(path) => {
+            eprintln!("grammar_cert: removed staging {}", path.display());
+        }
+        crate::install::Staging::Kept { path, reason } => {
+            eprintln!(
+                "grammar_cert: staging {} still holds a CA private key - {reason}",
+                path.display(),
+            );
+        }
+    }
     Ok(())
 }
 

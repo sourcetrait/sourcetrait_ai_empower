@@ -34,6 +34,7 @@ pub(crate) struct Installed {
     /// Where the CA ended up: a file, or the keychain that ingested it.
     pub trusted_at: PathBuf,
     pub secrets: Vec<PathBuf>,
+    pub staging: Staging,
 }
 
 /// Place the key material, then make the system trust the CA.
@@ -111,10 +112,84 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
         }
     };
 
+    // Only now that everything has succeeded: staging still holds a copy of the CA
+    // PRIVATE KEY, and leaving it is the kind of duplicate nobody remembers to clean
+    // up. Deliberately last - on any earlier failure staging survives intact and the
+    // command is simply re-runnable, which move-instead-of-copy would have taken away
+    // by destroying the source before the trust step could fail.
+    let staging = consume_staging(&source_dir, &files);
+
     Ok(Installed {
         trusted_at,
         secrets,
+        staging,
     })
+}
+
+/// What became of the staging dir.
+pub(crate) enum Staging {
+    Removed(PathBuf),
+    /// Left in place, with the reason. NOT an error: the install itself succeeded, and
+    /// the caller is told so they can deal with the key material still sitting there.
+    Kept { path: PathBuf, reason: String },
+}
+
+/// Remove the staging dir, but ONLY if it holds exactly the artifacts we put there.
+///
+/// A blind `remove_dir_all` is the deletion mirror of blindly creating a system path:
+/// the dir came from an argument, so anything else living in it belongs to someone
+/// else. We inventory first, delete the known files by name, and finish with
+/// `remove_dir` rather than `remove_dir_all` - so if anything at all is left, the
+/// removal fails instead of recursing into it.
+pub(crate) fn consume_staging(
+    dir: &Path,
+    files: &CertFiles,
+) -> Staging {
+    let expected: Vec<String> = files
+        .all()
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            return Staging::Kept {
+                path: dir.to_path_buf(),
+                reason: format!("cannot read it: {e}"),
+            };
+        }
+    };
+    let mut unexpected = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !expected.contains(&name) {
+            unexpected.push(name);
+        }
+    }
+    if !unexpected.is_empty() {
+        unexpected.sort();
+        return Staging::Kept {
+            path: dir.to_path_buf(),
+            reason: format!("it holds files we did not create: {}", unexpected.join(", ")),
+        };
+    }
+
+    for path in files.all() {
+        if let Err(e) = fs::remove_file(path) {
+            return Staging::Kept {
+                path: dir.to_path_buf(),
+                reason: format!("cannot remove {}: {e}", path.display()),
+            };
+        }
+    }
+    match fs::remove_dir(dir) {
+        Ok(()) => Staging::Removed(dir.to_path_buf()),
+        Err(e) => Staging::Kept {
+            path: dir.to_path_buf(),
+            reason: format!("cannot remove the emptied dir: {e}"),
+        },
+    }
 }
 
 /// Create every missing level down to `target` at 0700.

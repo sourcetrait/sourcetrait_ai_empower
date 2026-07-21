@@ -101,6 +101,10 @@ transiently fail.
 - [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
 - [`library()`](#library) Library administration: new, install, check, uninstall.
 - [`learn()`](#learn) Generate the latest `/nu` SKILL.md.
+- [`channel_open()`](#channel_open) Open the host's packet channel and return the endpoint to watch.
+- [`channel_verified()`](#channel_verified) Confirm the channel/Open packet was seen; ends the verify window.
+- [`channel_close()`](#channel_close) Close the host's packet channel.
+- [`config_channel()`](#config_channel) Read or adjust the channel's send-rate thresholds at runtime.
 
 
 ## `run()`
@@ -710,3 +714,165 @@ Output (partial):
   }
 }
 ```
+
+## The channel
+
+A single loopback WSS stream carrying structured packets from inside the host to
+the agent's Monitor.
+
+IT IS A NOTIFICATION LANE, NOT A SERIALIZATION LANE. A packet says "state changed,
+here is a small summary"; the agent fetches the actual data itself. Bulk belongs in
+`attached` (below), in a file, or in `grimm dbg` when it is only a trace.
+
+Channels are OPTIONAL and LAZY: the hub binds on the first `channel_open()`, so a
+session that never opens one pays nothing for it.
+
+### The handshake, in order
+
+1. `channel_open()` -> `{status, wss, inbox}`.
+2. Point a Monitor at `wss`. The FIRST connection claims the channel; another is
+   refused with close `1013 channel already claimed`.
+3. The host sends an `mcp/channel/Open` packet on connect. SEEING it is the proof -
+   there is no separate ack channel.
+4. `channel_verified()`. Until then, emitting is forbidden and an attempt tears the
+   channel down. The window is 5 minutes; on expiry the host closes with `1008`.
+
+### The packet
+
+```
+record<
+  id: string,                    # host-stamped message id
+  from: string,                  # origin: `mcp` for the host, `thread/<nonce>` for an eval
+  model: string,                 # the shape the event carries
+  event: oneof<record, table>,   # the state summary; ALWAYS present
+  attached?: string              # inbox filename - the NAME, never the content
+>
+```
+
+`mcp/` IS RESERVED for host-originated models (`mcp/channel/Open`,
+`mcp/channel/spam/*`, `mcp/supervisor/*`), so a model path can be checked for
+provenance mechanically. `grimm channel_send` refuses a model under that prefix.
+
+Packets are NUON, one per frame, newline-escaped. The usable frame maximum is
+1048575 bytes.
+
+### Close codes
+
+| code | meaning |
+|---|---|
+| `1000 channel closed` | `channel_close()` - planned |
+| `1001 host shutting down` | the host exited (stdin closed, or TERM/INT/HUP) |
+| `1008 ...` | the peer failed the handshake |
+| `1013 channel already claimed` | a second claimant was refused |
+| bare `1006` | the host DIED - the only code the host never sends |
+
+## `channel_open()`
+*Open the host's packet channel and return the endpoint to watch.*
+
+Starts the hub if none is running, otherwise reports the running one. `status` is
+`new` or `existing`; on `existing` with a live peer the host re-sends
+`mcp/channel/Open`, so a peer that has gone away surfaces here as an error. The
+verify window is armed on both paths.
+
+### arguments
+
+No parameters.
+
+### Example
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "status": "new",
+      "wss": "wss://127.0.0.1:34623",
+      "inbox": "/dev/shm/box/mcp/1JOAPgBt0PN/inbox"
+    },
+    "content": []
+  }
+}
+```
+
+## `channel_verified()`
+*Confirm the channel/Open packet was seen; ends the verify window.*
+
+The authentication step: the same agent that drives the MCP over stdio proves it
+owns the claiming connection. REQUIRES a claim - start the Monitor first, or it
+fails `channel::not_claimed`. No-return; success carries no payload.
+
+### arguments
+
+No parameters.
+
+## `channel_close()`
+*Close the host's packet channel.*
+
+Closes with `1000 channel closed`. Idempotent - closing an already-closed channel
+succeeds. No-return.
+
+### arguments
+
+No parameters.
+
+## `config_channel()`
+*Read or adjust the channel's send-rate thresholds at runtime.*
+
+A PARTIAL update: supply only what should move, and the policy now in force is
+returned, so a caller never has to assume its own change took. Passing no fields
+reads the current policy. Thresholds only - the port and cert directory cannot
+change under a live hub.
+
+Windows are INTEGER SECONDS: MCP arguments cross as JSON, which cannot carry a nu
+`duration`.
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "spam_warn_window_secs":  { "type": ["integer", "null"], "format": "uint64" },
+    "spam_warn_rate":         { "type": ["integer", "null"], "format": "uint32" },
+    "spam_error_window_secs": { "type": ["integer", "null"], "format": "uint64" },
+    "spam_error_rate":        { "type": ["integer", "null"], "format": "uint32" }
+  }
+}
+```
+
+### Example
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "spam_warn_window_secs": 10,
+      "spam_warn_rate": 10,
+      "spam_error_window_secs": 10,
+      "spam_error_rate": 15
+    },
+    "content": []
+  }
+}
+```
+
+## The embedded API (`grimm *`)
+
+Commands that exist ONLY inside a run / call / interact body. They are ordinary
+two-word nushell subcommands, so a body needs no `use`.
+
+- `grimm dbg <data>` - append a record or table to `debug.nuonl` in this call's own
+  nonce log dir, one NUON line per call. Structured tracing that never touches fd 1
+  and does not have to fit in the result envelope.
+- `grimm channel_send <model> <event> [attached]` -> the message id. `event` is the
+  state summary that goes on the wire; `attached` is bulk the host writes to the
+  inbox and NAMES on the wire. The two slots are what keep data off the channel.
+
+`data` / `event` / `attached` are each `oneof<record, table>`.
+
+SENDING TOO FAST IS THE ONE THING THE HOST STOPS, because it implies a bug rather
+than load: crossing the soft threshold warns once and keeps operating, and crossing
+the hard one refuses the send AND stops the offender - including a detached `job`
+that catches the error and loops. A closed or unverified channel refuses and writes
+nothing.

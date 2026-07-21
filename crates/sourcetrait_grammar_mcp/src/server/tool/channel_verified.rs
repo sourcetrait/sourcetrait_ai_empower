@@ -7,7 +7,7 @@ pub struct ChannelVerifiedParams {}
 #[mcp::tool_router(router = channel_verified_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Confirm the ChannelOpen packet was seen; ends the verify window."
+        description = "Confirm the channel/Open packet was seen; ends the verify window."
     )]
     pub(crate) async fn channel_verified(
         &self,

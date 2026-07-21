@@ -19,12 +19,12 @@ fn test_policy() -> SpamThresholds {
 fn open_handle() -> (
     ChannelHandle,
     tk::UnboundedReceiver<String>,
-    tk::oneshot::Receiver<(u16, String)>,
+    tk::oneshot::Receiver<ChannelCloseSignal>,
     Arc<AtomicBool>,
 ) {
     let handle = ChannelHandle::new(test_policy());
     let (packets, packet_rx) = tk::unbounded_channel::<String>();
-    let (close, close_rx) = tk::oneshot::channel::<(u16, String)>();
+    let (close, close_rx) = tk::oneshot::channel::<ChannelCloseSignal>();
     let (shutdown, _shutdown_rx) = tk::oneshot::channel::<()>();
     let claimed = Arc::new(AtomicBool::new(false));
     handle.install(
@@ -41,7 +41,7 @@ fn open_handle() -> (
 fn claimed_handle() -> (
     ChannelHandle,
     tk::UnboundedReceiver<String>,
-    tk::oneshot::Receiver<(u16, String)>,
+    tk::oneshot::Receiver<ChannelCloseSignal>,
 ) {
     let (handle, packet_rx, close_rx, claimed) = open_handle();
     claimed.store(true, Ordering::SeqCst);
@@ -141,11 +141,13 @@ fn close_signals_on_its_own_lane_not_the_packet_queue() {
     let (handle, mut packets, mut close, _claimed) = open_handle();
     handle.send_control("queued".to_string()).expect("queued");
     assert!(handle.close(1000, "done"));
+    let (code, reason, done) = close.try_recv().expect("the close rides its own lane");
     assert_eq!(
-        close.try_recv(),
-        Ok((1000, "done".to_string())),
+        (code, reason.as_str()),
+        (1000, "done"),
         "a planned close must never wait behind traffic, or the agent sees a bare 1006",
     );
+    assert!(done.is_none(), "a plain close asks for no flush ack");
     assert_eq!(
         packets.try_recv().ok().as_deref(),
         Some("queued"),
@@ -153,6 +155,34 @@ fn close_signals_on_its_own_lane_not_the_packet_queue() {
     );
     assert_eq!(handle.status().phase, ChannelPhase::Closed);
     assert!(!handle.close(1000, "again"), "closing twice is a no-op");
+}
+
+#[test]
+fn close_and_await_hands_back_a_flush_ack() {
+    let (handle, _packets, mut close, _claimed) = open_handle();
+    let mut done_rx = handle
+        .close_and_await(1001, "host shutting down")
+        .expect("an open channel has something to close");
+    let (code, reason, done_tx) = close.try_recv().expect("the close was signalled");
+    assert_eq!((code, reason.as_str()), (1001, "host shutting down"));
+    // The hub fires this AFTER flushing the frame, which is what lets a shutting-down
+    // host wait for the close to reach the wire instead of racing its own exit and
+    // leaving the peer a bare 1006.
+    done_tx
+        .expect("a shutdown close carries an ack sender")
+        .send(())
+        .expect("ack");
+    assert!(done_rx.try_recv().is_ok(), "the waiter observes the flush");
+}
+
+#[test]
+fn close_and_await_on_a_closed_channel_has_nothing_to_wait_for() {
+    assert!(
+        ChannelHandle::new(test_policy())
+            .close_and_await(1001, "host shutting down")
+            .is_none(),
+        "no channel means no frame to wait for, so shutdown must not block on one",
+    );
 }
 
 #[test]

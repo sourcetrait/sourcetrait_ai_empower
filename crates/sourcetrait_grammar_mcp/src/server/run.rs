@@ -46,7 +46,29 @@ pub(crate) async fn run_server() {
     service.waiting().await.expect("service waiting");
     // Clean-shutdown teardown: the client closed stdin; cancel + reap any eval
     // still in flight so a disconnect mid-eval leaks no process tree.
+    close_channel_for_shutdown().await;
     teardown_all_in_flight(&in_flight, &env_jobs).await;
+}
+
+/// RFC 6455 "going away" - a server shutting down, which is exactly this.
+const CLOSE_GOING_AWAY: u16 = 1001;
+const SHUTDOWN_REASON: &str = "host shutting down";
+
+/// How long a shutdown will wait for the close frame to reach the wire. Bounded
+/// because a peer that has already gone must never hold the shutdown open.
+const CLOSE_FLUSH_GRACE: tk::TkDuration = tk::TkDuration::from_millis(500);
+
+/// Tell the channel's peer we are going away, and wait for the frame to be flushed.
+///
+/// Without this a shutting-down host simply vanishes and the agent sees a bare 1006,
+/// indistinguishable from a crashed host - the very distinction the explicit close
+/// frame exists to provide. The frame is written by the hub task, so the wait is an
+/// ACK rather than a sleep: a sleep long enough to usually work is the shape of bug
+/// this campaign already paid for once.
+async fn close_channel_for_shutdown() {
+    if let Some(done) = channel_handle().close_and_await(CLOSE_GOING_AWAY, SHUTDOWN_REASON) {
+        let _ = tk::timeout(CLOSE_FLUSH_GRACE, done).await;
+    }
 }
 
 /// Sweep on TERM / INT / HUP, then exit with the conventional `128 + signo`.
@@ -84,6 +106,7 @@ fn spawn_signal_sweep(
             _ = interrupt.recv() => nix::sys::signal::Signal::SIGINT as i32,
             _ = hangup.recv() => nix::sys::signal::Signal::SIGHUP as i32,
         };
+        close_channel_for_shutdown().await;
         teardown_all_in_flight(&in_flight, &env_jobs).await;
         process::exit(128 + signo);
     });

@@ -25,6 +25,16 @@ pub(crate) enum ChannelPhase {
     Verified,
 }
 
+/// What a planned close carries to the hub: the code, the reason, and an OPTIONAL
+/// completion sender the hub fires once the frame has actually been flushed.
+///
+/// The completion half exists for SHUTDOWN. The frame is written by the hub task
+/// asynchronously, so a caller that exits the process immediately after asking for a
+/// close races that write and leaves the peer with exactly the bare 1006 the explicit
+/// close exists to prevent. Awaiting an ack makes the ordering deterministic instead of
+/// a sleep long enough to usually work.
+pub(crate) type CloseSignal = (u16, String, Option<tk::oneshot::Sender<()>>);
+
 /// A snapshot a caller can hold without keeping the lock.
 #[derive(Clone, Debug)]
 pub(crate) struct ChannelStatus {
@@ -79,7 +89,7 @@ struct ChannelInner {
     /// The planned-close signal, deliberately NOT sharing the packet queue: a close
     /// must never wait behind traffic, because without an explicit close frame the
     /// agent sees a bare 1006 and cannot tell shutdown from a crash (P11).
-    close: Option<tk::oneshot::Sender<(u16, String)>>,
+    close: Option<tk::oneshot::Sender<CloseSignal>>,
     shutdown: Option<tk::oneshot::Sender<()>>,
     claimed: Option<Arc<AtomicBool>>,
     /// Holding this sender is what keeps the verify timer armed; DROPPING it is the
@@ -199,7 +209,7 @@ impl ChannelHandle {
         &self,
         url: String,
         packets: tk::UnboundedSender<String>,
-        close: tk::oneshot::Sender<(u16, String)>,
+        close: tk::oneshot::Sender<CloseSignal>,
         shutdown: tk::oneshot::Sender<()>,
         claimed: Arc<AtomicBool>,
     ) {
@@ -257,8 +267,27 @@ impl ChannelHandle {
         if matches!(inner.phase, ChannelPhase::Closed) {
             return false;
         }
-        close_locked(&mut inner, code, reason);
+        close_locked(&mut inner, code, reason, None);
         true
+    }
+
+    /// Close, handing back a receiver that fires once the frame is on the wire.
+    ///
+    /// For SHUTDOWN, where the process is about to exit and would otherwise race the
+    /// hub's write. `None` means there was nothing to close, so there is nothing to
+    /// wait for either.
+    pub(crate) fn close_and_await(
+        &self,
+        code: u16,
+        reason: &str,
+    ) -> Option<tk::oneshot::Receiver<()>> {
+        let mut inner = self.lock();
+        if matches!(inner.phase, ChannelPhase::Closed) {
+            return None;
+        }
+        let (done_tx, done_rx) = tk::oneshot::channel::<()>();
+        close_locked(&mut inner, code, reason, Some(done_tx));
+        Some(done_rx)
     }
 
     /// Close ONLY while still unverified - the verify timer's expiry action.
@@ -275,7 +304,7 @@ impl ChannelHandle {
         if !matches!(inner.phase, ChannelPhase::Open) {
             return false;
         }
-        close_locked(&mut inner, code, reason);
+        close_locked(&mut inner, code, reason, None);
         true
     }
 
@@ -483,9 +512,10 @@ fn close_locked(
     inner: &mut ChannelInner,
     code: u16,
     reason: &str,
+    done: Option<tk::oneshot::Sender<()>>,
 ) {
     if let Some(tx) = inner.close.take() {
-        let _ = tx.send((code, reason.to_string()));
+        let _ = tx.send((code, reason.to_string(), done));
     }
     inner.phase = ChannelPhase::Closed;
     inner.url = None;

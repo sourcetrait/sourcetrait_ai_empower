@@ -88,7 +88,7 @@ pub(crate) async fn start(
         .port();
     let url = format!("wss://{BIND}:{port}");
     let (packet_tx, packet_rx) = tk::unbounded_channel::<String>();
-    let (close_tx, close_rx) = tk::oneshot::channel::<(u16, String)>();
+    let (close_tx, close_rx) = tk::oneshot::channel::<ChannelCloseSignal>();
     let (shutdown_tx, shutdown_rx) = tk::oneshot::channel::<()>();
     let claimed = Arc::new(AtomicBool::new(false));
     tk::spawn(accept_loop(
@@ -110,7 +110,7 @@ async fn accept_loop(
     listener: tk::TcpListener,
     acceptor: tls::TlsAcceptor,
     packet_rx: tk::UnboundedReceiver<String>,
-    close_rx: tk::oneshot::Receiver<(u16, String)>,
+    close_rx: tk::oneshot::Receiver<ChannelCloseSignal>,
     shutdown_rx: tk::oneshot::Receiver<()>,
     claimed: Arc<AtomicBool>,
     mcp_nom: McpNom,
@@ -155,7 +155,7 @@ async fn serve_peer(
     tcp: tk::TcpStream,
     acceptor: tls::TlsAcceptor,
     mut packets: tk::UnboundedReceiver<String>,
-    close_rx: tk::oneshot::Receiver<(u16, String)>,
+    close_rx: tk::oneshot::Receiver<ChannelCloseSignal>,
     mcp_nom: McpNom,
     nonce_gen: Arc<NonceGen>,
 ) {
@@ -188,13 +188,18 @@ async fn serve_peer(
             biased;
 
             closing = &mut close_rx => {
-                if let Ok((code, reason)) = closing {
+                if let Ok((code, reason, done)) = closing {
                     let frame = ws::CloseFrame {
                         code: ws::CloseCode::from(code),
                         reason: reason.into(),
                     };
                     let _ = socket.send(ws::Message::Close(Some(frame))).await;
                     let _ = socket.flush().await;
+                    // AFTER the flush, so a shutting-down caller learns the frame
+                    // actually reached the wire rather than merely being queued.
+                    if let Some(done) = done {
+                        let _ = done.send(());
+                    }
                 }
                 break;
             }

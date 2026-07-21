@@ -252,7 +252,7 @@ fn helper_file_pruned_from_info_and_not_callable() {
     let signatures = info["signatures"].as_str().expect("signatures block");
     assert_eq!(
         library_block(signatures, "helperlib"),
-        " helperlib:\n  m:\n   real <x:int> <out:int>\n",
+        " helperlib\n  m\n   real <x:int> <out:int>\n",
         "only the call-target is listed - the organizational helper file is \
          pruned from the index, so it never reaches the block",
     );

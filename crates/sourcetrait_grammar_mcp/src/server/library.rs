@@ -616,36 +616,6 @@ pub(crate) fn signature_of(
     format!("{name} {args} {result}")
 }
 
-/// The hierarchy character a module line ends in.
-///
-/// IT IS THE PATTERN THAT ZOOMS INTO THAT NODE, which is what makes every line
-/// of the block directly actionable rather than merely descriptive: `/`
-/// DESCENDS the module tree, `:` selects the CALL level, exactly as the two
-/// separators already mean in a namepath. A module carrying submodules is
-/// therefore `/` - that pattern covers its whole subtree, calls included - and
-/// a leaf module holding only calls is `:`.
-///
-/// An indexed module always has something below it: the validator prunes any
-/// module with no call-target beneath it, so there is no empty third case.
-///
-/// A MIXED module - submodules AND direct calls - takes `/`, and its calls carry
-/// their own leading `:` to override it (`call_prefix_under`).
-fn module_trailing(m: &IndexModule) -> &'static str {
-    if m.modules.is_empty() { ":" } else { "/" }
-}
-
-/// The separator a DIRECT CALL of `m` must carry in front of its own name.
-///
-/// Normally a node's separator comes from its parent's trailing character, and
-/// nothing is needed. A MIXED module breaks that: it ends in `/` for its
-/// submodules, but a call is reached with `:`. So the call line states the
-/// separator itself - `:cook_fries` - and assembly takes the LINE's leading
-/// character over the parent's trailing one (the_user). Concatenation still
-/// yields the coordinate: `...:alpha` + `:a1` -> `...:alpha:a1`.
-fn call_prefix_under(m: &IndexModule) -> &'static str {
-    if module_trailing(m) == "/" { ":" } else { "" }
-}
-
 /// Render one module's calls then its submodules, recursing.
 ///
 /// Calls before submodules: the callables at a level are what a reader scans
@@ -657,7 +627,6 @@ fn push_signature_nodes(
     modules: &[IndexModule],
     docs_dir: &std::path::Path,
     parent: &str,
-    call_prefix: &str,
 ) {
     let coord_of = |name: &str| -> String {
         if parent.is_empty() {
@@ -673,7 +642,7 @@ fn push_signature_nodes(
         push_signature_line(
             out,
             depth,
-            &signature_of(&format!("{call_prefix}{}", f.name), f),
+            &signature_of(&f.name, f),
             &read_summary(docs_dir, &coord),
         );
     }
@@ -681,32 +650,28 @@ fn push_signature_nodes(
     subs.sort_by(|a, b| a.name.cmp(&b.name));
     for m in subs {
         let coord = coord_of(&m.name);
-        push_signature_line(
-            out,
-            depth,
-            &format!("{}{}", m.name, module_trailing(m)),
-            &read_summary(docs_dir, &coord),
-        );
-        push_signature_nodes(
-            out,
-            depth + 1,
-            &m.functions,
-            &m.modules,
-            docs_dir,
-            &coord,
-            call_prefix_under(m),
-        );
+        push_signature_line(out, depth, &m.name, &read_summary(docs_dir, &coord));
+        push_signature_nodes(out, depth + 1, &m.functions, &m.modules, docs_dir, &coord);
     }
 }
 
 /// The whole store as ONE indented signature block.
 ///
-/// Structure is the indentation and the TRAILING CHARACTER is the kind:
-/// `<author>/` heads a group and carries no summary (there is no author-level
-/// doc), `<library>:` opens a library, a module is bare, and a call carries its
-/// two signature groups. Replaces the structured `libraries` tree info() used to
-/// return - roughly 8 KB of nested JSON for two libraries, and the agent's first
-/// read after the skill.
+/// NOTHING IS STATED THAT CAN BE INFERRED, and the separators are inferable from
+/// shape alone (the_user): depth 0 is an author and depth 1 a library - a library
+/// is ALWAYS the two levels `<author>/<name>` - everything deeper is a module
+/// UNLESS it carries the two signature groups, which makes it a call. So a reader
+/// joins author to library with `/`, module segments with `/`, and puts `:` before
+/// the first module and before the call.
+///
+/// Trailing hierarchy characters were tried and REMOVED. They cost bytes and did
+/// not buy the property they were for: a module holding both submodules and calls
+/// cannot be described by any single one, so `a/b:c/` + `:call` needs an override
+/// rule - which is re-inference wearing a costume. Shape settles every case
+/// including that one, because a call is recognizable on its own.
+///
+/// Replaces the structured `libraries` tree info() used to return - roughly 8 KB
+/// of nested JSON for two libraries, and the agent's first read after the skill.
 pub(crate) async fn render_signatures(locks: &LibraryLocks) -> String {
     let mut out = String::new();
     let mut current_author: Option<String> = None;
@@ -727,27 +692,13 @@ pub(crate) async fn render_signatures(locks: &LibraryLocks) -> String {
             }
         };
         if current_author.as_deref() != Some(author) {
-            push_signature_line(&mut out, 0, &format!("{author}/"), "");
+            // No summary: there is no author-level doc to read.
+            push_signature_line(&mut out, 0, author, "");
             current_author = Some(author.to_string());
         }
         let docs_dir = library_docs_dir(&name);
-        push_signature_line(
-            &mut out,
-            1,
-            &format!("{leaf}:"),
-            &read_summary(&docs_dir, ""),
-        );
-        // A library ends in `:`, so anything directly beneath it needs no
-        // separator of its own.
-        push_signature_nodes(
-            &mut out,
-            2,
-            &index.functions,
-            &index.modules,
-            &docs_dir,
-            "",
-            "",
-        );
+        push_signature_line(&mut out, 1, leaf, &read_summary(&docs_dir, ""));
+        push_signature_nodes(&mut out, 2, &index.functions, &index.modules, &docs_dir, "");
     }
     out
 }

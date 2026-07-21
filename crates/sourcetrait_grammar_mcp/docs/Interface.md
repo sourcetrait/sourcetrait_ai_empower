@@ -446,7 +446,7 @@ Output (partial):
       "namespace": "default",
       "work_dir": "/home/user/ai/emptwo",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
-      "signatures": "acme/\n geo: # planar geometry helpers\n  shape/\n   plane:\n    area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n"
+      "signatures": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n"
     },
     "content": []
   }
@@ -456,50 +456,45 @@ Output (partial):
 `signatures` is ONE indented text block. Rendered, that value reads:
 
 ```txt
-acme/
- geo: # planar geometry helpers
-  shape/
-   plane:
+acme
+ geo # planar geometry helpers
+  shape
+   plane
     area <width:float,height:float> <area:float> # result is in the inputs' unit, squared
 ```
 
-STRUCTURE IS THE INDENTATION - one space per level - and the TRAILING CHARACTER
-IS THE SEPARATOR THAT JOINS TO THE NEXT LEVEL:
+STRUCTURE IS THE INDENTATION - one space per level - and NOTHING IS STATED THAT
+CAN BE INFERRED. There are no separator characters in the block; a reader
+recovers a node's kind from its POSITION and its SHAPE:
 
 | line | kind |
 |---|---|
-| `<author>/` | an author, heading its group; carries no summary |
-| `<name>:` | a library |
-| `<name>/` | a module holding submodules |
-| `<name>:` | a module holding calls |
-| `<name> <args> <result>` | a call |
+| depth 0 | an author; carries no summary |
+| depth 1 | a library - always the two levels `<author>/<name>` |
+| deeper, no signature groups | a module |
+| deeper, WITH `<args> <result>` | a call |
 
-EVERY LINE IS A NAMEPATH. Concatenate the tokens from the top of the block down
-to any line and you have that node's coordinate, with no joining rule to
-remember - which is why the trailing character varies by what a node contains.
-In the block above:
+To build a namepath: join the author to the library with `/`, then `:`, then the
+module segments with `/`, then `:` before the call.
 
 ```txt
-acme/ + geo: + shape/ + plane: + area   ->   acme/geo:shape/plane:area
+acme   geo   shape   plane   area   ->   acme/geo:shape/plane:area
 ```
 
-That is the exact string `call()` and `inspect()` take. Truncating instead at a
-trailing character gives the PATTERN for that subtree - `acme/geo:shape/` is
-everything under `shape`, `acme/geo:shape/plane:` is that module's calls.
-
-A module holding BOTH submodules and calls takes `/`, and its DIRECT calls then
-state their own separator with a leading `:`:
+A CALL IS RECOGNIZABLE ON ITS OWN, because it always carries BOTH signature
+groups - a void renders `<>`, never nothing at all. That is what tells a reader
+where the module path ends, so a module holding both submodules and calls needs
+no marking of any kind:
 
 ```txt
- mylib:
-  m/
-   :here <x:int> <out:int>
-   deep:
+ mylib
+  m
+   here <x:int> <out:int>
+   deep
     down <y:int> <out:int>
 ```
 
-Assembly always takes a LINE's leading character over its parent's trailing one,
-so `:here` is `mylib:m:here` while `down` is `mylib:m/deep:down`.
+`here` is `mylib:m:here`; `down` is `mylib:m/deep:down`.
 
 A node's one-line summary follows as ` # ...`, omitted ENTIRELY when the node is
 undocumented. Within a level, calls come before submodules and each group sorts

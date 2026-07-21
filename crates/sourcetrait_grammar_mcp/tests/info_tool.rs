@@ -119,7 +119,7 @@ fn info_renders_a_committed_library_as_a_signature_block() {
         "the treelib signature block drifted from the golden",
     );
     assert!(
-        block.contains("sourcetrait/\n"),
+        block.contains("sourcetrait\n"),
         "the author heads its own group and carries no summary; got:\n{block}",
     );
 }
@@ -144,7 +144,7 @@ fn the_indentation_is_the_hierarchy() {
 
     assert_eq!(
         library_block(&signatures(&s), "implib"),
-        " implib:\n  math:\n   double <x:int> <out:int>\n",
+        " implib\n  math\n   double <x:int> <out:int>\n",
         "one space per level, and an undocumented node carries no ` # `",
     );
 }
@@ -168,7 +168,7 @@ fn summaries_ride_the_line_and_are_omitted_when_absent() {
 
     assert_eq!(
         library_block(&signatures(&s), "doctreelib"),
-        " doctreelib: # the doctree library\n  m: # the m module\n   fn <x:int> <out:int> # the fn summary\n",
+        " doctreelib # the doctree library\n  m # the m module\n   fn <x:int> <out:int> # the fn summary\n",
         "summary is part of the line, on every kind that has one",
     );
 }
@@ -192,7 +192,7 @@ fn a_void_renders_as_empty_angles() {
 
     assert_eq!(
         library_block(&signatures(&s), "voidlib"),
-        " voidlib:\n  m:\n   ping <> <>\n",
+        " voidlib\n  m\n   ping <> <>\n",
         "a void arg list and a void result each render `<>`, never `<nothing>`",
     );
 }
@@ -220,7 +220,7 @@ fn a_multi_line_summary_is_flattened_onto_its_line() {
     let block = library_block(&signatures(&s), "wraplib");
     assert_eq!(
         block,
-        " wraplib:\n  m:\n   go <x:int> <out:int> # Runs the thing against the other thing, gating each step as it goes.\n",
+        " wraplib\n  m\n   go <x:int> <out:int> # Runs the thing against the other thing, gating each step as it goes.\n",
         "a two-line summary must be FLATTENED onto its own line",
     );
     assert_eq!(
@@ -239,8 +239,10 @@ fn a_mixed_module_states_its_own_call_separator() {
     let src = t.temp_dir().join("mixedlib");
     let _ = s.library("new", "sourcetrait/mixedlib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export module m\n");
-    // `m` holds BOTH a submodule and a direct call - the one case a single
-    // trailing character cannot describe.
+    // `m` holds BOTH a submodule and a direct call. This is the case that sank
+    // the trailing-character format - no single character describes it - and it
+    // needs NOTHING special here, because a call is recognizable by its own
+    // shape rather than by what its parent announced.
     write_source(&src, "m/mod.nu", "export module deep\nexport use here\n");
     write_source(
         &src,
@@ -258,9 +260,10 @@ fn a_mixed_module_states_its_own_call_separator() {
 
     assert_eq!(
         library_block(&signatures(&s), "mixedlib"),
-        " mixedlib:\n  m/\n   :here <x:int> <out:int>\n   deep:\n    down <y:int> <out:int>\n",
-        "`m` takes `/` for its submodule, so its DIRECT call states its own `:` \
-         - assembling gives sourcetrait/mixedlib:m:here, not :m/here",
+        " mixedlib\n  m\n   here <x:int> <out:int>\n   deep\n    down <y:int> <out:int>\n",
+        "a mixed module needs no marker: `here` is a call because it CARRIES the \
+         two signature groups, so a reader knows the module path ended at `m` \
+         and reads sourcetrait/mixedlib:m:here, while `deep` continues it",
     );
 }
 
@@ -284,7 +287,7 @@ fn an_author_heads_its_group_exactly_once() {
         assert!(!has_error(&committed), "commit {name} failed: {committed}");
     }
     let block = signatures(&s);
-    let heads = block.lines().filter(|l| *l == "sourcetrait/").count();
+    let heads = block.lines().filter(|l| *l == "sourcetrait").count();
     assert_eq!(
         heads, 1,
         "the author line is emitted once per GROUP, not once per library; got:\n{block}",

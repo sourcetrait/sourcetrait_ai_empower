@@ -396,7 +396,7 @@ pub fn library_block(
     signatures: &str,
     leaf: &str,
 ) -> String {
-    let head = format!(" {leaf}:");
+    let head = format!(" {leaf}");
     let mut out: Vec<&str> = Vec::new();
     for line in signatures.lines() {
         if out.is_empty() {

@@ -7,7 +7,7 @@ config (the `.mcp.json` server entry's `args`, or the invoking command
 line):
 
 ```
-grammar [--id <string>] [--namespace <string>] [--workdir <path>] [--deny <csv>]
+grammar_mcp [--id <string>] [--namespace <string>] [--workdir <path>] [--deny <csv>]
 ```
 
 - `--id` (default: `$USER`) - the agent identity owning the state store.
@@ -34,7 +34,7 @@ Every store is fully private per `(id, namespace)`:
 
 ```
 $XDG_DATA_HOME/sourcetrait/grammar/<id>/<namespace>/{keypair,libraries}
-$XDG_CACHE_HOME/sourcetrait/grammar/<id>/<namespace>/{runs,interacts,calls,closures}
+$XDG_CACHE_HOME/sourcetrait/grammar/<id>/<namespace>/{runs,interacts,calls}
 ```
 
 Eval bodies and committed call-targets read `$env.EQUIP_ID` /
@@ -48,12 +48,12 @@ Example `.mcp.json` entries (one binary, two channels):
   "mcpServers": {
     "nushell": {
       "type": "stdio",
-      "command": "/path/to/grammar",
+      "command": "/path/to/grammar_mcp",
       "args": ["--id", "emptwo", "--workdir", "~/ai/emptwo"]
     },
     "grammar_test": {
       "type": "stdio",
-      "command": "/path/to/build/grammar",
+      "command": "/path/to/build/grammar_mcp",
       "args": ["--id", "emptwo", "--namespace", "test", "--workdir", "~/ai/emptwo"]
     }
   }
@@ -62,7 +62,7 @@ Example `.mcp.json` entries (one binary, two channels):
 
 ## One-shot CLI
 
-`grammar cli <tool> ...` runs ONE tool in-process against the
+`grammar_mcp cli <tool> ...` runs ONE tool in-process against the
 configured store and prints the envelope as bare compact JSON on
 stdout - one line, machine format, no color (`| from json` and
 captured output are byte-clean) - no agent, no MCP client. The cli is
@@ -72,12 +72,12 @@ are single-quoted NUON strings; an omitted args value is the empty
 record.
 
 ```nu
-grammar cli info
-grammar --id emptwo cli inspect sourcetrait/grammar:pid:list_ai
-grammar cli call sourcetrait/geo:shape:area '{width: 3.0, height: 4.0}'
-grammar cli library new sourcetrait/mylib ~/src/mylib
-grammar cli commit sourcetrait/mylib
-grammar cli run --args-schema '{x: int}' --args '{x: 5}' --result-schema '{out: int}' '{ out: ($args.x + 1) }'
+grammar_mcp cli info
+grammar_mcp --id emptwo cli inspect sourcetrait/grammar:pid:list_ai
+grammar_mcp cli call sourcetrait/geo:shape:area '{width: 3.0, height: 4.0}'
+grammar_mcp cli library new sourcetrait/mylib ~/src/mylib
+grammar_mcp cli commit sourcetrait/mylib
+grammar_mcp cli run --args-schema '{x: int}' --args '{x: 5}' --result-schema '{out: int}' '{ out: ($args.x + 1) }'
 ```
 
 All 12 tools are mirrored. Caveats: `interact` is single-shot (session
@@ -171,8 +171,7 @@ Output (partial):
         "count": 2,
         "first": { "name": "bob", "ratio": 0.77 }
       },
-      "nonce": "8jPtjMSfRVh",
-      "rerun_id": "isaBZMrHho3"
+      "nonce": "8jPtjMSfRVh"
     },
     "content": []
   }
@@ -237,9 +236,11 @@ Output (partial):
 ## `call()`
 *Invoke a committed library function with typed args.*
 
-`namepath` is the function coordinate `library:module/path:function` (a
-callable always lives in a module - there are no root functions). Discover
-live targets + their schemas with [`info()`](#info) / [`inspect()`](#inspect).
+`namepath` is the function coordinate
+`<author>/<library>:module/path:function` (a callable always lives in a
+module - there are no root functions; the library is always the compound
+`<author>/<name>`). Discover live targets + their schemas with
+[`info()`](#info) / [`inspect()`](#inspect).
 
 ### arguments
 
@@ -261,7 +262,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "namepath": "geo:shape:area",
+    "namepath": "acme/geo:shape:area",
     "args": { "width": 3.0, "height": 4.0 }
   }
 }
@@ -285,7 +286,10 @@ Output (partial):
 
 The cached schemas + body are reused; only `args` changes per call.
 
-`rerun_id` is the base62 id returned in a prior `run()` envelope.
+`nonce` is the base62 nonce a prior `run()` returned - the nonce IS the
+re-evaluation handle, and a rerun's own nonce is itself one. A run that
+timed out is still rerunnable: its body was cached before dispatch, so
+`rerun(nonce, args, timeout_ms: bigger)` recovers it.
 
 ### arguments
 
@@ -293,11 +297,11 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "rerun_id":   { "type": "string" },
+    "nonce":      { "type": "string" },
     "args":       { "type": "object", "additionalProperties": true },
     "timeout_ms": { "type": ["integer", "null"], "format": "uint64", "minimum": 0 }
   },
-  "required": ["rerun_id", "args"]
+  "required": ["nonce", "args"]
 }
 ```
 
@@ -307,7 +311,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "rerun_id": "isaBZMrHho3",
+    "nonce": "isaBZMrHho3",
     "args": { "x": 50 }
   }
 }
@@ -432,15 +436,15 @@ Output (partial):
   "result": {
     "structuredContent": {
       "name": "grammar",
-      "version": "0.0.46",
-      "nu_version": "0.113.1",
+      "version": "0.0.0-88",
+      "nu_version": "0.114.1",
       "id": "emptwo",
       "namespace": "default",
       "work_dir": "/home/user/ai/emptwo",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
       "libraries": [
         {
-          "name": "geo",
+          "name": "acme/geo",
           "path": "/abs/path/to/source/geo",
           "summary": "planar geometry helpers",
           "modules": [
@@ -470,8 +474,8 @@ Output (partial):
 ## `inspect()`
 *Detailed documentation of a specific callable library, module, function.*
 
-`namepath` is `library`, `library:module/path`, or
-`library:module/path:function` - inspect any of the three arities.
+`namepath` is `<author>/<library>`, `<author>/<library>:module/path`, or
+`<author>/<library>:module/path:function` - inspect any of the three arities.
 
 ### arguments
 
@@ -490,7 +494,7 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "namepath": "geo:shape:area" }
+  "arguments": { "namepath": "acme/geo:shape:area" }
 }
 ```
 
@@ -499,7 +503,7 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "library": "geo",
+      "library": "acme/geo",
       "module_path": "shape",
       "name": "area",
       "summary": "result is in the inputs' unit, squared",
@@ -515,11 +519,13 @@ Output (partial):
 ## `new()`
 *Scaffold modules / functions (by namepath) into existing libraries.*
 
-Batch-scaffolds module (`library:module/path`) or function
-(`library:module/path:function`) skeletons into ALREADY-ESTABLISHED
+Batch-scaffolds module (`<author>/<library>:module/path`) or function
+(`<author>/<library>:module/path:function`) skeletons into ALREADY-ESTABLISHED
 libraries (establish one with [`library()`](#library) `new`); the namepaths
-may span multiple libraries. Additive - refuses to scaffold over an
-existing leaf. Edit the files, then [`commit()`](#commit).
+may span multiple libraries. A function scaffolds as a dir-module holding a
+single `main` (`<name>/mod.nu`), wired into its parent by both
+`export module <name>` and `export use <name>`. Additive - refuses to
+scaffold over an existing leaf. Edit the files, then [`commit()`](#commit).
 
 ### arguments
 
@@ -539,7 +545,7 @@ MCP (partial):
 ```json
 {
   "arguments": {
-    "namepaths": ["geo:shape:area", "geo:shape:perimeter"]
+    "namepaths": ["acme/geo:shape:area", "acme/geo:shape:perimeter"]
   }
 }
 ```
@@ -551,8 +557,8 @@ Output (partial):
     "structuredContent": {
       "created": [
         "/abs/path/to/source/geo/shape",
-        "/abs/path/to/source/geo/shape/area.nu",
-        "/abs/path/to/source/geo/shape/perimeter.nu"
+        "/abs/path/to/source/geo/shape/area/mod.nu",
+        "/abs/path/to/source/geo/shape/perimeter/mod.nu"
       ]
     },
     "content": []
@@ -580,7 +586,7 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "library": "geo" }
+  "arguments": { "library": "acme/geo" }
 }
 ```
 
@@ -589,8 +595,8 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "added": ["geo/shape/area.nu", "geo/shape/mod.nu"],
-      "modified": ["geo/mod.nu"],
+      "added": ["rig/acme/geo/shape/area/mod.nu", "rig/acme/geo/shape/mod.nu"],
+      "modified": ["rig/acme/geo/mod.nu"],
       "removed": []
     },
     "content": []
@@ -602,10 +608,12 @@ Output (partial):
 *Library administration: new, install, check, uninstall.*
 
 The admin tool over a whole library. `action` is one of:
+`library` is always the compound `<author>/<name>`; a bare name is rejected.
+
 - `new` - establish a fresh, empty library at `source_dir` + register it.
 - `install` - bring a complete/shipped source into the MCP (establish +
   first commit, atomic: a validation failure registers nothing).
-- `check` - validate the in-source tree (the library's `cargo test`); no
+- `check` - run the library's validation pass over the in-source tree; no
   mutation. Errors block a commit; warnings are advisory.
 - `uninstall` - remove the library from the MCP. The agent `source_dir` is
   never touched. Idempotent: an absent library is success.
@@ -633,7 +641,7 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "action": "check", "library": "geo", "source_dir": "/abs/path/to/source/geo" }
+  "arguments": { "action": "check", "library": "acme/geo", "source_dir": "/abs/path/to/source/geo" }
 }
 ```
 
@@ -651,7 +659,7 @@ commit, warnings advise; each is a list of diagnostics):
         "ok": true,
         "errors": [],
         "warnings": [
-          { "kind": "lint::summary_length", "source": { "path": "geo/mod.nu", "position": [1, 1] }, "message": "doc summary line exceeds 80 characters" }
+          { "kind": "lint::summary_length", "source": { "path": "acme/geo/mod.nu", "position": [1, 1] }, "message": "doc summary line exceeds 80 characters" }
         ]
       }
     },
@@ -696,7 +704,7 @@ Output (partial):
     "structuredContent": {
       "written_path": "/abs/path/to/harness/skills/nu/SKILL.md",
       "bytes": 30000,
-      "version": "0.0.46"
+      "version": "0.0.0-88"
     },
     "content": []
   }

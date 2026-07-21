@@ -15,11 +15,53 @@ use std::sync::Once;
 
 static TEST_CONFIG: Once = Once::new();
 
+const INPROC_PREFIX: &str = "grammar_inproc_";
+
+/// Remove the temp stores left by test processes that have since exited.
+///
+/// Each test BINARY gets its own `grammar_inproc_<pid>` root holding a full
+/// libraries git repo + keypair, and a test harness returns from `main` with no
+/// hook we can hang teardown on - statics never run `Drop`, and there is no
+/// atexit here. Left alone the roots accumulate one per run, forever (a real
+/// sweep found 128 of them, ~20 MB). So each run sweeps the DEAD ones on the way
+/// IN: a leftover whose pid is gone from /proc cannot be in use by anyone. That
+/// bounds the litter to at most one store per currently-running test binary
+/// instead of one per run ever.
+///
+/// Linux-gated like the rest of the /proc work (server/teardown.rs); elsewhere it
+/// is a no-op rather than a guess, since without a liveness check the sweep could
+/// delete a live concurrent binary's store. Best-effort throughout - a failed
+/// sweep must never fail a test. Pid REUSE only defers a removal by one round.
+#[cfg(target_os = "linux")]
+fn sweep_dead_test_stores(temp: &std::path::Path) {
+    let Ok(entries) = fs::read_dir(temp) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(pid) = name
+            .strip_prefix(INPROC_PREFIX)
+            .and_then(|p| p.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == process::id() || PathBuf::from(format!("/proc/{pid}")).exists() {
+            continue;
+        }
+        let _ = fs::remove_dir_all(entry.path());
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sweep_dead_test_stores(_temp: &std::path::Path) {}
+
 /// Point the process-global XDG roots at a per-binary temp dir and seed CONFIG,
 /// once, before any `BASE_DIRS` access.
 fn ensure_test_config() {
     TEST_CONFIG.call_once(|| {
-        let root = std::env::temp_dir().join(format!("grammar_inproc_{}", process::id()));
+        let temp = std::env::temp_dir();
+        sweep_dead_test_stores(&temp);
+        let root = temp.join(format!("{INPROC_PREFIX}{}", process::id()));
         let _ = fs::create_dir_all(root.join("data"));
         let _ = fs::create_dir_all(root.join("cache"));
         // SAFETY: the Once serializes this, and it runs before the first

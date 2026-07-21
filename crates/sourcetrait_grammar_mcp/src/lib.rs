@@ -116,7 +116,8 @@ pub(crate) use crate::{
         library::{
             LibraryInfo, LibraryLocks, ValidationResult, check_library,
             check_source_dir, commit_impl, ensure_substrate, enumerate_libraries, establish_library,
-            index_node, inspect_impl, install_impl, is_valid_ident, is_valid_library,
+            index_node, inspect_impl, install_impl, is_reserved_term, is_valid_ident,
+            is_valid_library,
             is_valid_module_path,
             libraries_dir, load_index, scaffold_leaf, scaffold_leaf_exists, uninstall_impl,
         },

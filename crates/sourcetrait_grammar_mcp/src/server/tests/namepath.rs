@@ -1,5 +1,8 @@
 
 use crate::*;
+// Not in the lib.rs re-export hub: nothing outside this module consumes them
+// until the tool surface does, and a test-only item is reached by path.
+use crate::server::namepath::{NamepathPattern, NamepathStr};
 
 fn validate(s: &str) -> Result<NamepathRef, Error> {
     Namepath(s.to_string()).validate()
@@ -105,4 +108,227 @@ fn deny_bad_idents() {
     assert!(validate("sourcetrait/1calc:math:double").is_err());
     assert!(validate("sourcetrait/calc:math:1double").is_err());
     assert!(validate("1author/calc:math:double").is_err());
+}
+
+fn classify(s: &str) -> NamepathStr {
+    NamepathStr::parse(s).unwrap_or_else(|e| panic!("classify {s:?}: {e:?}"))
+}
+
+fn pat(s: &str) -> NamepathPattern {
+    match classify(s) {
+        NamepathStr::Pattern(p) => p,
+        NamepathStr::Namepath(n) => {
+            panic!("{s:?} classified exact ({}), expected a pattern", n.0)
+        }
+    }
+}
+
+fn lib_ref(library: &str) -> NamepathRef {
+    NamepathRef::Library {
+        library: library.into(),
+    }
+}
+
+fn mod_ref(
+    library: &str,
+    module_path: &str,
+) -> NamepathRef {
+    NamepathRef::Module {
+        library: library.into(),
+        module_path: module_path.into(),
+    }
+}
+
+fn call_ref(
+    library: &str,
+    module_path: &str,
+    name: &str,
+) -> NamepathRef {
+    NamepathRef::Function {
+        library: library.into(),
+        module_path: module_path.into(),
+        name: name.into(),
+    }
+}
+
+#[test]
+fn exact_shapes_classify_as_namepaths() {
+    for s in [
+        "sourcetrait",
+        "sourcetrait/calc",
+        "sourcetrait/calc:math",
+        "sourcetrait/calc:math/trig",
+        "sourcetrait/calc:math:double",
+    ] {
+        assert!(
+            matches!(classify(s), NamepathStr::Namepath(_)),
+            "{s:?} should classify exact",
+        );
+    }
+}
+
+#[test]
+fn a_bare_author_is_exact_in_shape_and_still_invalid() {
+    // Classification is by SHAPE; validity is a separate, unchanged question. An
+    // author names no addressable coordinate, so it classifies exact and errors -
+    // it does NOT become a pattern and does not gain a descriptor.
+    let NamepathStr::Namepath(np) = classify("sourcetrait") else {
+        panic!("a bare author must classify as exact, not as a pattern");
+    };
+    assert!(
+        np.validate().is_err(),
+        "an author is exact in shape but is not a valid exact coordinate",
+    );
+}
+
+#[test]
+fn trailing_hierarchy_characters_classify_as_patterns() {
+    for s in [
+        "sourcetrait/",
+        "sourcetrait/calc:",
+        "sourcetrait/calc:math/",
+        "sourcetrait/calc:math:",
+        "*",
+        ".",
+    ] {
+        assert!(
+            matches!(classify(s), NamepathStr::Pattern(_)),
+            "{s:?} should classify as a pattern",
+        );
+    }
+}
+
+#[test]
+fn each_pattern_form_parses_to_its_variant() {
+    assert_eq!(
+        pat("sourcetrait/"),
+        NamepathPattern::Author {
+            author: "sourcetrait".into(),
+        },
+    );
+    assert_eq!(
+        pat("sourcetrait/calc:"),
+        NamepathPattern::Library {
+            library: "sourcetrait/calc".into(),
+        },
+    );
+    assert_eq!(
+        pat("sourcetrait/calc:math/"),
+        NamepathPattern::ModuleTree {
+            library: "sourcetrait/calc".into(),
+            module_path: "math".into(),
+        },
+    );
+    assert_eq!(
+        pat("sourcetrait/calc:math:"),
+        NamepathPattern::ModuleCalls {
+            library: "sourcetrait/calc".into(),
+            module_path: "math".into(),
+        },
+    );
+    assert_eq!(pat("*"), NamepathPattern::All);
+    assert_eq!(pat("."), NamepathPattern::Current);
+}
+
+#[test]
+fn deny_invalid_pattern_bodies() {
+    for s in [
+        "sourcetrait/calc/",              // past a library the separator is `:`
+        "1author/",                       // bad ident
+        "main/",                          // reserved
+        "/",                              // empty author
+        ":",                              // empty library
+        "calc:",                          // bare library, no author
+        "sourcetrait/calc:a//b:",         // bad module path
+        "sourcetrait/calc:math:double:",  // there is no level below a call
+    ] {
+        assert!(NamepathStr::parse(s).is_err(), "{s:?} should be rejected");
+    }
+}
+
+#[test]
+fn author_matches_on_the_whole_segment() {
+    let p = pat("sourcetrait/");
+    assert!(p.matches(&lib_ref("sourcetrait/calc")));
+    assert!(p.matches(&mod_ref("sourcetrait/calc", "math")));
+    assert!(p.matches(&call_ref("sourcetrait/calc", "math", "double")));
+    assert!(
+        !p.matches(&lib_ref("sourcetraitx/calc")),
+        "a prefix is not an author",
+    );
+    assert!(!p.matches(&lib_ref("bob/calc")));
+}
+
+#[test]
+fn library_covers_everything_in_it_and_nothing_outside() {
+    let p = pat("sourcetrait/calc:");
+    assert!(p.matches(&lib_ref("sourcetrait/calc")));
+    assert!(p.matches(&mod_ref("sourcetrait/calc", "math")));
+    assert!(p.matches(&call_ref("sourcetrait/calc", "math/trig", "sin")));
+    assert!(!p.matches(&lib_ref("sourcetrait/other")));
+    assert!(!p.matches(&call_ref("sourcetrait/other", "math", "sin")));
+}
+
+#[test]
+fn module_tree_compares_on_segment_boundaries() {
+    let p = pat("sourcetrait/calc:math/");
+    assert!(
+        p.matches(&mod_ref("sourcetrait/calc", "math")),
+        "the module itself is at the root of its own subtree",
+    );
+    assert!(p.matches(&mod_ref("sourcetrait/calc", "math/trig")));
+    assert!(p.matches(&call_ref("sourcetrait/calc", "math/trig", "sin")));
+    assert!(
+        !p.matches(&mod_ref("sourcetrait/calc", "mathematics")),
+        "`math` must not cover `mathematics` - a prefix is not a parent",
+    );
+    assert!(
+        !p.matches(&lib_ref("sourcetrait/calc")),
+        "the library sits ABOVE the module, so it is not below the pattern",
+    );
+}
+
+#[test]
+fn module_calls_selects_only_direct_calls() {
+    let p = pat("sourcetrait/calc:math:");
+    assert!(p.matches(&call_ref("sourcetrait/calc", "math", "double")));
+    assert!(
+        !p.matches(&mod_ref("sourcetrait/calc", "math")),
+        "a module is not a call",
+    );
+    assert!(
+        !p.matches(&call_ref("sourcetrait/calc", "math/trig", "sin")),
+        "`:` selects the call level, it does not descend",
+    );
+    assert!(!p.matches(&call_ref("sourcetrait/other", "math", "double")));
+}
+
+#[test]
+fn the_two_module_forms_differ_by_separator() {
+    // `/` DESCENDS the module tree; `:` selects the CALL level - the same thing
+    // each separator already means in an exact namepath.
+    let tree = pat("sourcetrait/calc:math/");
+    let calls = pat("sourcetrait/calc:math:");
+    let submodule = mod_ref("sourcetrait/calc", "math/trig");
+    assert!(tree.matches(&submodule));
+    assert!(!calls.matches(&submodule));
+}
+
+#[test]
+fn all_matches_every_kind() {
+    let p = pat("*");
+    assert!(p.matches(&lib_ref("bob/burgers")));
+    assert!(p.matches(&mod_ref("bob/burgers", "fries")));
+    assert!(p.matches(&call_ref("bob/burgers", "fries", "cook")));
+}
+
+#[test]
+fn an_unresolved_current_matches_nothing() {
+    // `.` is a STUB until purview resolves it to that purview's own patterns.
+    // Matching NOTHING is the safe unresolved reading - matching everything
+    // would silently expose the whole store wherever a `.` was left unresolved.
+    let p = pat(".");
+    assert!(!p.matches(&lib_ref("bob/burgers")));
+    assert!(!p.matches(&mod_ref("bob/burgers", "fries")));
+    assert!(!p.matches(&call_ref("bob/burgers", "fries", "cook")));
 }

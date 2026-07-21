@@ -1593,7 +1593,7 @@ fn scan_reserved_terms(
     }
 }
 
-fn is_reserved_term(s: &str) -> bool {
+pub(crate) fn is_reserved_term(s: &str) -> bool {
     s == "main"
 }
 

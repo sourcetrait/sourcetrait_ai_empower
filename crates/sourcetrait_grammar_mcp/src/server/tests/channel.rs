@@ -262,13 +262,13 @@ fn an_event() -> nu::Value {
 }
 
 fn an_id() -> MsgId {
-    mint_msg_id(&NonceGen::new(), "mcp", "channel/Open", "{}", None)
+    mint_msg_id(&NonceGen::new(), "mcp", "mcp/channel/Open", "{}", None)
 }
 
 #[test]
 fn a_rendered_packet_is_one_line_and_parses_back() {
     let event = an_event();
-    let line = render_packet(an_id(), "mcp", "channel/Open", &event, None).expect("render");
+    let line = render_packet(an_id(), "mcp", "mcp/channel/Open", &event, None).expect("render");
     assert!(!line.contains('\n'), "a packet must never span lines: {line:?}");
 
     let value = nu::from_nuon(&line, None).expect("valid NUON record");
@@ -280,7 +280,7 @@ fn a_rendered_packet_is_one_line_and_parses_back() {
     assert_eq!(record.get("from").and_then(|v| v.as_str().ok()), Some("mcp"));
     assert_eq!(
         record.get("model").and_then(|v| v.as_str().ok()),
-        Some("channel/Open"),
+        Some("mcp/channel/Open"),
     );
     assert!(
         record.get("attached").is_none(),
@@ -415,8 +415,8 @@ fn thresholds_update_partially_and_reject_zero() {
 #[test]
 fn ids_are_distinct_for_identical_packets() {
     let nonce_gen = NonceGen::new();
-    let a = mint_msg_id(&nonce_gen, "mcp", "channel/Open", "{}", None);
-    let b = mint_msg_id(&nonce_gen, "mcp", "channel/Open", "{}", None);
+    let a = mint_msg_id(&nonce_gen, "mcp", "mcp/channel/Open", "{}", None);
+    let b = mint_msg_id(&nonce_gen, "mcp", "mcp/channel/Open", "{}", None);
     assert_ne!(
         a.to_string(),
         b.to_string(),

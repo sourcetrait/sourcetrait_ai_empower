@@ -175,20 +175,34 @@ impl Emergency {
         }
     }
 
-    /// Render this Emergency as a SINGLE-LINE NUON record - one `emergency.nuonl`
-    /// line. Every field is a flat scalar (int / float / string with no embedded
-    /// newlines), so the record never spans lines. `ts` is the responder's
-    /// log-write time (ms since epoch); `mcp_nom` namespaces the log per process.
-    pub(crate) fn to_nuon_line(
-        &self,
-        ts: u64,
-        mcp_nom: &str,
-    ) -> Result<String, String> {
+    /// The RESERVED model path this condition rides under on the channel.
+    ///
+    /// `mcp/` is a RESERVATION (the_user): every host-originated model lives beneath
+    /// it, which is what lets a model path from a FOREIGN source be checked
+    /// mechanically - anything claiming `mcp/` is not entitled to it. The reservation
+    /// is enforced today at the one place a non-host picks a model, `grimm
+    /// channel_send`, and will serve the mcp-to-mcp peer surface the same way.
+    pub(crate) fn model(&self) -> &'static str {
+        match self.kind() {
+            EmergencyKind::HungEngineThread => "mcp/supervisor/HungEngineThread",
+            EmergencyKind::CpuWarning => "mcp/supervisor/CpuWarning",
+            EmergencyKind::RamWarning => "mcp/supervisor/RamWarning",
+            EmergencyKind::VramWarning => "mcp/supervisor/VramWarning",
+            EmergencyKind::BackgroundJobsWarning => "mcp/supervisor/BackgroundJobsWarning",
+            EmergencyKind::DiskWarning => "mcp/supervisor/DiskWarning",
+            EmergencyKind::ChannelSpamWarning => "mcp/channel/spam/Warning",
+            EmergencyKind::ChannelSpamError => "mcp/channel/spam/Error",
+            EmergencyKind::Critical => "mcp/supervisor/Critical",
+        }
+    }
+
+    /// The variant's OWN fields, without the envelope the log adds.
+    ///
+    /// Shared by the log line and the channel packet, so the durable record and the
+    /// notification can never disagree about what a condition reported.
+    fn event_record(&self) -> nu::Record {
         let span = nu::Span::unknown();
         let mut r = nu::Record::new();
-        r.insert("ts", nu::Value::int(ts as i64, span));
-        r.insert("mcp_nom", nu::Value::string(mcp_nom.to_string(), span));
-        r.insert("kind", nu::Value::string(self.kind().name().to_string(), span));
         match self {
             Self::HungEngineThread(h) => {
                 r.insert("nonce", nu::Value::string(h.nonce.clone(), span));
@@ -238,6 +252,26 @@ impl Emergency {
                 r.insert("cap", nu::Value::int(c.cap as i64, span));
             }
         }
+        r
+    }
+
+    /// Render this Emergency as a SINGLE-LINE NUON record - one `emergency.nuonl`
+    /// line. Every field is a flat scalar (int / float / string with no embedded
+    /// newlines), so the record never spans lines. `ts` is the responder's
+    /// log-write time (ms since epoch); `mcp_nom` namespaces the log per process.
+    pub(crate) fn to_nuon_line(
+        &self,
+        ts: u64,
+        mcp_nom: &str,
+    ) -> Result<String, String> {
+        let span = nu::Span::unknown();
+        let mut r = nu::Record::new();
+        r.insert("ts", nu::Value::int(ts as i64, span));
+        r.insert("mcp_nom", nu::Value::string(mcp_nom.to_string(), span));
+        r.insert("kind", nu::Value::string(self.kind().name().to_string(), span));
+        for (key, value) in self.event_record() {
+            r.insert(key, value);
+        }
         nu::to_nuon(
             &nu::EngineState::new(),
             &nu::Value::record(r, span),
@@ -271,9 +305,35 @@ pub(crate) fn append_line(
     Ok(())
 }
 
-/// Spawn the sole EmergencyResponder: drain the channel and APPEND each Emergency
-/// as a NUON record line to `emergency.nuonl`. Logging is its ONLY action
-/// (classify-first). Ends when every producer (the watchdog) drops the sender.
+/// Put one Emergency on the channel as a packet under its reserved `mcp/` model.
+///
+/// THIS IS WHY THE WARNING FAMILY EXISTS AT ALL. Those conditions are notice BEFORE
+/// the system's own error arrives, so the agent can act while it still has room - and
+/// a line in a log file nobody reads cannot deliver notice. The durable record stays
+/// the log; this is the notification.
+///
+/// Through `emit`, so it is VERIFICATION-GATED like any other telemetry: an unproven
+/// peer must not receive host state. A closed or unverified channel simply drops it,
+/// which is correct rather than an error - channels are OPTIONAL, and the log already
+/// holds the record. No rate limiting is applied or needed: the `LevelGate` upstream
+/// already bounds each condition to roughly one report per episode.
+fn announce(em: &Emergency) {
+    let channel = channel_handle();
+    let event = nu::Value::record(em.event_record(), nu::Span::unknown());
+    let Ok(event_nuon) = render_nuon(&event) else {
+        return;
+    };
+    let id = mint_msg_id(channel.nonce_gen(), FROM_MCP, em.model(), &event_nuon, None);
+    if let Ok(line) = render_packet(id, FROM_MCP, em.model(), &event, None) {
+        let _ = channel.emit(line);
+    }
+}
+
+/// Spawn the sole EmergencyResponder: drain the channel, APPEND each Emergency as a
+/// NUON record line to `emergency.nuonl`, and ANNOUNCE it on the packet channel.
+///
+/// The log is written FIRST and unconditionally, so the durable record never depends
+/// on a channel being open. Ends when every producer drops the sender.
 pub(crate) fn spawn_emergency_responder(
     mut rx: EmergencyRx,
     mcp_nom: String,
@@ -292,6 +352,7 @@ pub(crate) fn spawn_emergency_responder(
                 }
                 Err(e) => eprintln!("grammar: emergency serialize failed: {e}"),
             }
+            announce(&em);
         }
     });
 }

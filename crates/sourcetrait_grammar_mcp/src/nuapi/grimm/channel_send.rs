@@ -1,9 +1,5 @@
 use crate::*;
 
-/// A CORE model drops the vendor prefix; everything else carries its own.
-const MODEL_SPAM_WARNING: &str = "channel/spam/Warning";
-const MODEL_SPAM_ERROR: &str = "channel/spam/Error";
-
 /// RFC 6455 policy violation - the peer was emitted to before it proved itself.
 const CLOSE_UNVERIFIED_EMIT: u16 = 1008;
 const UNVERIFIED_EMIT_REASON: &str = "emit before verification";
@@ -56,6 +52,19 @@ impl nu::Command for GrimmChannelSend {
         _input: nu::PipelineData,
     ) -> Result<nu::PipelineData, nu::ShellError> {
         let model: String = call.req(engine_state, stack, 0)?;
+        // The `mcp/` RESERVATION. A body is not the host, so letting it stamp a model
+        // under that prefix would let it forge a host control packet - and would destroy
+        // the property the reservation exists for, that provenance is checkable from the
+        // path alone. Refused here because this is the one place a non-host picks a model.
+        if model.starts_with(MCP_RESERVED_PREFIX) {
+            return Err(shell_error(
+                &format!(
+                    "`{MCP_RESERVED_PREFIX}` is reserved for host-originated models; \
+                     choose a model path outside it",
+                ),
+                call.head,
+            ));
+        }
         let event: nu::Value = call.req(engine_state, stack, 1)?;
         require_record_or_table(&event, call.head)?;
         let attached: Option<nu::Value> = call.opt(engine_state, stack, 2)?;
@@ -98,7 +107,6 @@ impl nu::Command for GrimmChannelSend {
                         rate,
                     },
                 ));
-                notify_spam(&channel, MODEL_SPAM_WARNING, &from, hits, window_secs, rate, None);
             }
             SpamVerdict::Stop {
                 hits,
@@ -122,15 +130,6 @@ impl nu::Command for GrimmChannelSend {
                             action: action.clone(),
                         },
                     ));
-                    notify_spam(
-                        &channel,
-                        MODEL_SPAM_ERROR,
-                        &from,
-                        hits,
-                        window_secs,
-                        rate,
-                        Some(&action),
-                    );
                 }
                 return Err(shell_error(
                     &format!(
@@ -218,40 +217,6 @@ fn stop_offender(engine_state: &nu::EngineState) -> String {
         // The table entry is dropped either way; only killing its processes can fail, and
         // an external the job left behind is the tree-kill machinery's to reap.
         Err(e) => format!("signals triggered; job {job_id} removed, kill incomplete: {e}"),
-    }
-}
-
-/// Tell the agent about the abuse ON the channel, as well as through the emergency lane.
-///
-/// Carries no payload example: the agent is already being spammed by that, and it can
-/// investigate the cause itself. Uses the control path, since a warning about traffic
-/// must not itself be subject to the rate it is reporting.
-#[allow(clippy::too_many_arguments)]
-fn notify_spam(
-    channel: &ChannelHandle,
-    model: &str,
-    from: &str,
-    hits: u32,
-    window_secs: u64,
-    rate: u32,
-    action: Option<&str>,
-) {
-    let span = nu::Span::unknown();
-    let mut event = nu::Record::new();
-    event.insert("origin", nu::Value::string(from.to_string(), span));
-    event.insert("hits", nu::Value::int(hits as i64, span));
-    event.insert("window_secs", nu::Value::int(window_secs as i64, span));
-    event.insert("rate", nu::Value::int(rate as i64, span));
-    if let Some(action) = action {
-        event.insert("action", nu::Value::string(action.to_string(), span));
-    }
-    let event = nu::Value::record(event, span);
-    let Ok(event_nuon) = render_nuon(&event) else {
-        return;
-    };
-    let id = mint_msg_id(channel.nonce_gen(), FROM_MCP, model, &event_nuon, None);
-    if let Ok(line) = render_packet(id, FROM_MCP, model, &event, None) {
-        let _ = channel.send_control(line);
     }
 }
 

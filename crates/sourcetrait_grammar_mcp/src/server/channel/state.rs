@@ -1,5 +1,15 @@
 use crate::*;
 
+/// The model-path prefix RESERVED for host-originated packets (the_user).
+///
+/// Every model the HOST stamps lives beneath it - `mcp/channel/Open`,
+/// `mcp/supervisor/*`, `mcp/channel/spam/*`. The value of a reservation is that it
+/// makes provenance a MECHANICAL check: any model claiming `mcp/` from a source that is
+/// not the host can be rejected without interpreting it. Enforced today at the one place
+/// a non-host chooses a model (`grimm channel_send`), and available to the mcp-to-mcp
+/// peer surface on the same terms.
+pub(crate) const MCP_RESERVED_PREFIX: &str = "mcp/";
+
 /// The usable frame maximum (P8).
 ///
 /// A hard `<`, never a `<=` against 1 MiB: a frame landing EXACTLY on the cap arrives

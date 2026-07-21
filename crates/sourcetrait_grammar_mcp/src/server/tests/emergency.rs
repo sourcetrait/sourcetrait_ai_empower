@@ -27,8 +27,26 @@ fn to_nuon_line_is_single_line_and_parses() {
 }
 
 #[test]
-fn every_kind_serializes_single_line() {
-    let ems = vec![
+fn every_model_lives_under_the_mcp_reservation_and_is_distinct() {
+    // The reservation is only worth anything if it holds for EVERY host-originated
+    // model - one variant escaping it turns a mechanical provenance check back into a
+    // judgement call. Distinctness matters because the model is what the agent routes on.
+    let models: Vec<&str> = all_kinds().iter().map(|em| em.model()).collect();
+    for model in &models {
+        assert!(
+            model.starts_with(MCP_RESERVED_PREFIX),
+            "{model} must live under the {MCP_RESERVED_PREFIX} reservation",
+        );
+    }
+    let mut unique = models.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), models.len(), "models must be distinct: {models:?}");
+}
+
+/// One of every variant, so neither test can silently miss a newly added Emergency.
+fn all_kinds() -> Vec<Emergency> {
+    vec![
         Emergency::HungEngineThread(HungEngineThreadEmergency {
             nonce: "n".into(),
             lane: "interact".into(),
@@ -67,8 +85,12 @@ fn every_kind_serializes_single_line() {
             hung: 8,
             cap: 8,
         }),
-    ];
-    for em in ems {
+    ]
+}
+
+#[test]
+fn every_kind_serializes_single_line() {
+    for em in all_kinds() {
         let want = em.kind().name().to_string();
         let line = em.to_nuon_line(1, "nom").unwrap();
         assert!(!line.contains('\n'), "line spans multiple lines: {line:?}");

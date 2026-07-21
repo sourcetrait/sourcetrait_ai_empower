@@ -98,6 +98,31 @@ fn a_record_with_an_embedded_newline_stays_one_line() {
     );
 }
 
+/// The `mcp/` RESERVATION. A body is not the host, so it must not be able to stamp a
+/// model the host reserves - otherwise it could forge a control packet, and provenance
+/// would stop being checkable from the model path alone.
+///
+/// Refused BEFORE the channel state is consulted, so the answer does not depend on
+/// whether a channel happens to be open.
+#[test]
+fn a_body_cannot_claim_the_mcp_reservation() {
+    let s = TestServer::new();
+    for model in ["mcp/channel/Open", "mcp/supervisor/CpuWarning", "mcp/anything"] {
+        let env = s.run(
+            json!({}),
+            json!({"ok": "bool"}),
+            json!({}),
+            &format!("grimm channel_send \"{model}\" {{x: 1}}\n{{ ok: true }}"),
+        );
+        assert!(has_error(&env), "`{model}` should be refused; got {env}");
+        assert!(
+            error_text(&env).contains("reserved"),
+            "the refusal should name the reservation; got {}",
+            error_text(&env),
+        );
+    }
+}
+
 /// A literal is rejected by the signature's `oneof<record, table>` shape at parse
 /// time; a DYNAMIC value reaches `run` unchecked, which is what the runtime guard
 /// is for. Both must fail.

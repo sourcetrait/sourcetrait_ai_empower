@@ -13,8 +13,10 @@ const BIND: &str = "127.0.0.1";
 /// channel is 1:1, so there is no second MCP to tell apart.
 pub(crate) const FROM_MCP: &str = "mcp";
 
-/// A CORE model drops the vendor prefix; everything else carries its own.
-pub(crate) const MODEL_OPEN: &str = "channel/Open";
+/// Host-originated models live under the `mcp/` RESERVATION (the_user), which is what
+/// makes "is this model path allowed from that source" a mechanical check rather than a
+/// judgement. See `MCP_RESERVED_PREFIX`.
+pub(crate) const MODEL_OPEN: &str = "mcp/channel/Open";
 
 /// RFC 6455 "try again later"; the plan's refusal code for a second claimant.
 const CLOSE_CLAIMED: u16 = 1013;

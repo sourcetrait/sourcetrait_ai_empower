@@ -98,8 +98,8 @@ pub(crate) use crate::{
             hub::{FROM_MCP, open_packet, start as start_channel_hub},
             state::{
                 ChannelHandle, ChannelPhase, ChannelSendError, ChannelVerifyError,
-                CloseSignal as ChannelCloseSignal, MAX_FRAME_BYTES, SpamVerdict,
-                channel_handle, mint_msg_id, render_nuon, render_packet,
+                CloseSignal as ChannelCloseSignal, MAX_FRAME_BYTES, MCP_RESERVED_PREFIX,
+                SpamVerdict, channel_handle, mint_msg_id, render_nuon, render_packet,
             },
         },
         embed::{InteractEngine, build_base, eval_stateless},

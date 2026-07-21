@@ -1,0 +1,27 @@
+[package]
+name = "sourcetrait_grammar_cert"
+version = "0.0.0-1"
+edition = "2024"
+description = "Local TLS certificate authority tooling for the grammar platform (grammar_cert)"
+authors = ["SourceTrait <development@sourcetrait.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "grammar", "tls", "certificate"]
+
+[[bin]]
+name = "grammar_cert"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+nix.workspace = true
+rcgen.workspace = true
+serde.workspace = true
+snafu.workspace = true
+time.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+sourcetrait_testing.workspace = true

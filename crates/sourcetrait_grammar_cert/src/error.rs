@@ -55,16 +55,6 @@ pub enum CertError {
         stderr: String,
     },
 
-    #[snafu(display("cannot resolve user {user}: {reason}"))]
-    UnknownUser { user: String, reason: String },
-
-    #[snafu(display("changing ownership of {path} to uid {uid}: {source}"))]
-    Chown {
-        path: String,
-        uid: u32,
-        source: nix::errno::Errno,
-    },
-
     #[snafu(display("{message}"))]
     Msg { message: String },
 }

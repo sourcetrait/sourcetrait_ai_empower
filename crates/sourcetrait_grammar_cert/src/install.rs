@@ -28,22 +28,20 @@ pub(crate) struct InstallPlan<'a> {
     pub target: &'a TrustTarget,
     /// The secret DATA home; key material lands in `<it>/sourcetrait/grammar/certs`.
     pub secret_data: SecretData<'a>,
-    /// User to hand the key material to. Defaults to `$SUDO_USER`.
-    pub owner: Option<&'a str>,
 }
 
 pub(crate) struct Installed {
     /// Where the CA ended up: a file, or the keychain that ingested it.
     pub trusted_at: PathBuf,
     pub secrets: Vec<PathBuf>,
-    pub owner: Option<String>,
 }
 
 /// Place the key material, then make the system trust the CA.
 ///
-/// Ownership is not housekeeping: under `sudo` everything we create is root-owned, and
-/// leaving it that way means the unprivileged host cannot read the key it is supposed
-/// to own - surfacing much later as a channel-open failure.
+/// Runs UNPRIVILEGED, elevating only the few commands that touch the system trust store
+/// (`run_privileged`). That is what removes the ownership problem rather than managing
+/// it: the key material is created by the invoking user in the first place, so there is
+/// nothing root-owned to hand back.
 pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
     // PREFLIGHT: every check before any mutation.
     let source_dir = crate::generate::certs_dir(plan.cert_dir);
@@ -78,10 +76,8 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
             path: secret_dir.display().to_string(),
         });
     }
-    let owner = resolve_owner(plan.owner)?;
-
     // ACT. Key material first - it is the half we can roll back.
-    let created = create_private_chain(&secret_dir, &owner)?;
+    let created = create_private_chain(&secret_dir)?;
     let mut secrets = Vec::new();
     // The CA PUBLIC cert rides along so `verify` has the body to look for, whichever
     // model took the trust.
@@ -102,12 +98,6 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
             rollback(&created);
             return Err(e);
         }
-        if let Some((_, uid, gid)) = &owner
-            && let Err(e) = chown_to(&dest, *uid, *gid)
-        {
-            rollback(&created);
-            return Err(e);
-        }
         secrets.push(dest);
     }
 
@@ -124,11 +114,10 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
     Ok(Installed {
         trusted_at,
         secrets,
-        owner: owner.map(|(user, _, _)| user),
     })
 }
 
-/// Create every missing level down to `target` at 0700, owned by `owner`.
+/// Create every missing level down to `target` at 0700.
 ///
 /// Walks up to the first ancestor that exists, so this covers the secret data home
 /// ITSELF as well as our subdirs under it - it is our own non-standard path, so nothing
@@ -138,10 +127,7 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
 /// takes its mode from the umask: under root's usual 022 every level came out 0755, a
 /// world-traversable directory around a CA key. Returns what we created, newest last,
 /// for rollback.
-fn create_private_chain(
-    target: &Path,
-    owner: &Option<(String, u32, u32)>,
-) -> Result<Vec<PathBuf>> {
+fn create_private_chain(target: &Path) -> Result<Vec<PathBuf>> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut missing = Vec::new();
@@ -174,12 +160,6 @@ fn create_private_chain(
         if let Err(e) = fs::set_permissions(&path, perms) {
             rollback(&created);
             return Err(CertError::io(format!("chmod 700 {}", path.display()), e));
-        }
-        if let Some((_, uid, gid)) = owner
-            && let Err(e) = chown_to(&path, *uid, *gid)
-        {
-            rollback(&created);
-            return Err(e);
         }
     }
     Ok(created)
@@ -223,45 +203,6 @@ fn require_existing_dir(
     Ok(())
 }
 
-/// `$SUDO_USER` when the caller did not name one. Absent means a non-sudo run, where
-/// the files already belong to the right user.
-fn resolve_owner(explicit: Option<&str>) -> Result<Option<(String, u32, u32)>> {
-    let name = match explicit {
-        Some(n) => n.to_string(),
-        None => match std::env::var("SUDO_USER") {
-            Ok(n) if !n.is_empty() => n,
-            _ => return Ok(None),
-        },
-    };
-    let user = nix::unistd::User::from_name(&name)
-        .map_err(|e| CertError::UnknownUser {
-            user: name.clone(),
-            reason: e.to_string(),
-        })?
-        .ok_or_else(|| CertError::UnknownUser {
-            user: name.clone(),
-            reason: "no such user in the password database".to_string(),
-        })?;
-    Ok(Some((name, user.uid.as_raw(), user.gid.as_raw())))
-}
-
-fn chown_to(
-    path: &Path,
-    uid: u32,
-    gid: u32,
-) -> Result<()> {
-    nix::unistd::chown(
-        path,
-        Some(nix::unistd::Uid::from_raw(uid)),
-        Some(nix::unistd::Gid::from_raw(gid)),
-    )
-    .map_err(|source| CertError::Chown {
-        path: path.display().to_string(),
-        uid,
-        source,
-    })
-}
-
 /// Copy, creating NOTHING. Directories are either ours to make deliberately or must
 /// already exist.
 fn copy(
@@ -300,11 +241,13 @@ fn trust_ca(
             update_command,
         } => {
             let placed = dir.join(trust_file_name(name, extension));
-            copy(authority_public, &placed)?;
+            let src = authority_public.to_string_lossy().into_owned();
+            let dst = placed.to_string_lossy().into_owned();
+            run_privileged("cp", &[&src, &dst])?;
             // No arguments of our own: bare `update-ca-trust` already extracts, and the
             // bare form is equally correct for `update-ca-certificates`.
-            if let Err(e) = run(update_command, &[]) {
-                let _ = fs::remove_file(&placed);
+            if let Err(e) = run_privileged(update_command, &[]) {
+                let _ = run_privileged("rm", &["-f", &dst]);
                 return Err(e);
             }
             Ok(placed)
@@ -312,10 +255,49 @@ fn trust_ca(
         TrustTarget::Keychain { program, keychain } => {
             let cert = authority_public.to_string_lossy().into_owned();
             let key = keychain.to_string_lossy().into_owned();
-            run(program, &["add-trusted-cert", "-d", "-r", "trustRoot", "-k", &key, &cert])?;
+            run_privileged(
+                program,
+                &["add-trusted-cert", "-d", "-r", "trustRoot", "-k", &key, &cert],
+            )?;
             Ok(keychain.clone())
         }
     }
+}
+
+/// Run a command that needs root, elevating only if we are not already root.
+///
+/// `install` itself runs UNPRIVILEGED and elevates just these few commands. Two reasons.
+/// `sudo grammar_cert` cannot resolve at all - sudo's `secure_path` does not include our
+/// install home - whereas `cp`, `update-ca-trust` and `security` are all on it. And
+/// running unprivileged means the key material is created as the invoking user, so
+/// there is no root-created file to hand back and no chown step to get wrong.
+///
+/// sudo is handed an ARGV, never a shell string: no quoting, no word splitting, nothing
+/// a path with a space or a quote can turn into a second command.
+///
+/// Stdio is INHERITED rather than captured, or sudo's password prompt would be
+/// swallowed and the call would appear to hang.
+fn run_privileged(
+    command: &str,
+    args: &[&str],
+) -> Result<()> {
+    if nix::unistd::Uid::effective().is_root() {
+        return run(command, args);
+    }
+    let mut argv = vec![command];
+    argv.extend_from_slice(args);
+    let status = process::Command::new("sudo")
+        .args(&argv)
+        .status()
+        .map_err(|e| CertError::io("running sudo".to_string(), e))?;
+    if !status.success() {
+        return Err(CertError::Command {
+            command: format!("sudo {command}"),
+            status: status.to_string(),
+            stderr: String::new(),
+        });
+    }
+    Ok(())
 }
 
 fn run(

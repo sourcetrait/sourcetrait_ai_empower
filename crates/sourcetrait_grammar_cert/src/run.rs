@@ -42,9 +42,6 @@ enum Command {
         /// Override the detected trust store with a directory-model trust dir.
         #[arg(long)]
         trust_dir: Option<PathBuf>,
-        /// User to hand the key material to. Defaults to `$SUDO_USER`.
-        #[arg(long)]
-        owner: Option<String>,
         #[arg(long)]
         update_command: Option<String>,
     },
@@ -73,7 +70,6 @@ pub fn run() -> Result<()> {
             secret_data,
             name,
             trust_dir,
-            owner,
             update_command,
         } => {
             let (secret_path, from_env) = resolve_secret_data(secret_data)?;
@@ -83,7 +79,6 @@ pub fn run() -> Result<()> {
                 from_env,
                 &name,
                 trust_dir.as_deref(),
-                owner.as_deref(),
                 update_command.as_deref(),
             )
         }
@@ -139,7 +134,6 @@ fn cmd_install(
     secret_data_from_env: bool,
     name: &str,
     trust_dir: Option<&Path>,
-    owner: Option<&str>,
     update_command: Option<&str>,
 ) -> Result<()> {
     let (target, detected) = crate::store::resolve_target(trust_dir, update_command)?;
@@ -157,15 +151,10 @@ fn cmd_install(
         name,
         target: &target,
         secret_data: secret,
-        owner,
     })?;
     println!("{}", installed.trusted_at.display());
     for path in &installed.secrets {
         println!("{}", path.display());
-    }
-    match installed.owner {
-        Some(user) => eprintln!("grammar_cert: key material owned by {user}"),
-        None => eprintln!("grammar_cert: ownership unchanged (no --owner, no $SUDO_USER)"),
     }
     Ok(())
 }

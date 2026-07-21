@@ -1,0 +1,20 @@
+# The embedded base every load merges onto. A user file overrides field by field;
+# anything absent from both falls through to the code defaults.
+#
+# Paths are STRINGS so this file stays portable: a leading `~` or `$VAR` expands at
+# load, with the XDG family honoring the basedir spec fallbacks.
+
+namespace = "default"
+
+[channel]
+# Where grammar_cert installs what the hub serves. Kept in step with that tool's own
+# layout and its $XDGX_SECRET_DATA_HOME fallback.
+cert_dir = "$XDGX_SECRET_DATA_HOME/sourcetrait/grammar/certs"
+# Filename stem: entity_<name>.pem and entity_<name>.key.pem.
+cert_name = "grammar"
+# Loopback literal the hub binds and advertises. An IP rather than a name on purpose:
+# a name that resolves to both families makes a client try one, reset it, and complete
+# on the other, which reads like a TLS verdict rather than a plain reset.
+bind = "127.0.0.1"
+# How long channel_open() waits for channel_verified() before tearing the hub down.
+verify_timeout_secs = 300

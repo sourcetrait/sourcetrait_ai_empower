@@ -71,12 +71,14 @@ fn ensure_test_config() {
             std::env::set_var("XDG_DATA_HOME", root.join("data"));
             std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
         }
-        let _ = CONFIG.set(Config {
-            id: "test".to_string(),
-            namespace: "default".to_string(),
-            work_dir: root.join("work"),
-            deny: DenySet::default(),
-        });
+        // Built from the embedded defaults so the harness picks up every field
+        // (including [channel]) without restating them; only the store coordinate and
+        // work dir are test-specific.
+        let mut config = Config::default();
+        config.id = "test".to_string();
+        config.namespace = "default".to_string();
+        config.work_dir = root.join("work");
+        let _ = CONFIG.set(config);
     });
 }
 

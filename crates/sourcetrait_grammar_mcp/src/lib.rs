@@ -68,7 +68,10 @@ pub(crate) use crate::{
         dbg::GrimmDbg,
     },
     cli::CliTool,
-    config::{CONFIG, Config, DeniableTool, DenySet, config},
+    config::{
+        CONFIG, ChannelConfig, ChannelConfigToml, Config, ConfigToml, DeniableTool, DenySet,
+        config, expand_path, overlay_toml,
+    },
     engine::base_context,
     mcp::ServiceExt,
     mode::Mode,

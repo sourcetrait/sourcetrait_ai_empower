@@ -1,17 +1,5 @@
 use crate::*;
 
-/// Loopback literal the hub binds and advertises.
-///
-/// An IP rather than `localhost` on purpose: P3 showed the client tries IPv4, resets it,
-/// and completes on IPv6 when a name resolves to both, which turned a plain reset into
-/// something that read like a TLS verdict. A literal removes the ambiguity, and the leaf
-/// carries IP SANs for exactly this.
-const LOOPBACK: &str = "127.0.0.1";
-
-const CERT_DIR: &str = "certs";
-const LEAF_CERT: &str = "entity_grammar.pem";
-const LEAF_KEY: &str = "entity_grammar.key.pem";
-
 const HOST_FROM: &str = "host";
 const KIND_CHANNEL_OPEN: &str = "ChannelOpen";
 
@@ -19,24 +7,11 @@ const KIND_CHANNEL_OPEN: &str = "ChannelOpen";
 const CLOSE_CLAIMED: u16 = 1013;
 const CLAIM_REASON: &str = "channel already claimed";
 
-/// The leaf the hub presents, and its key.
-///
-/// Mirrors `grammar_cert`'s installed layout and its `$XDGX_SECRET_DATA_HOME` fallback,
-/// so the tool that installs and the host that serves agree without a config knob.
-fn cert_paths() -> Result<(PathBuf, PathBuf), Error> {
-    let base = std::env::var("XDGX_SECRET_DATA_HOME").map_err(|_| Error::ChannelStart {
-        reason: "XDGX_SECRET_DATA_HOME is unset; install certificates with grammar_cert"
-            .to_string(),
-    })?;
-    let dir = PathBuf::from(base)
-        .join(lib_grammar::consts::SOURCETRAIT)
-        .join(lib_grammar::consts::GRAMMAR)
-        .join(CERT_DIR);
-    Ok((dir.join(LEAF_CERT), dir.join(LEAF_KEY)))
-}
-
 fn server_config() -> Result<Arc<tls::ServerConfig>, Error> {
-    let (leaf_path, key_path) = cert_paths()?;
+    let (leaf_path, key_path) = config()
+        .channel
+        .cert_paths()
+        .map_err(|reason| Error::ChannelStart { reason })?;
     let leaf = tls::CertificateDer::from_pem_file(&leaf_path).map_err(|e| Error::ChannelStart {
         reason: format!("read {}: {e}", leaf_path.display()),
     })?;
@@ -66,11 +41,12 @@ pub(crate) async fn start(
     handle: &ChannelHandle,
     mcp_nom: McpNom,
 ) -> Result<String, Error> {
-    let config = server_config()?;
-    let listener = tk::TcpListener::bind((LOOPBACK, 0u16))
+    let tls_config = server_config()?;
+    let bind = config().channel.bind.clone();
+    let listener = tk::TcpListener::bind((bind.as_str(), 0u16))
         .await
         .map_err(|e| Error::ChannelStart {
-            reason: format!("bind {LOOPBACK}: {e}"),
+            reason: format!("bind {bind}: {e}"),
         })?;
     let port = listener
         .local_addr()
@@ -78,13 +54,13 @@ pub(crate) async fn start(
             reason: format!("local_addr: {e}"),
         })?
         .port();
-    let url = format!("wss://{LOOPBACK}:{port}");
+    let url = format!("wss://{bind}:{port}");
     let (tx, rx) = tk::unbounded_channel::<HubCommand>();
     let (shutdown_tx, shutdown_rx) = tk::oneshot::channel::<()>();
     let claimed = Arc::new(AtomicBool::new(false));
     tk::spawn(accept_loop(
         listener,
-        tls::TlsAcceptor::from(config),
+        tls::TlsAcceptor::from(tls_config),
         rx,
         shutdown_rx,
         claimed.clone(),

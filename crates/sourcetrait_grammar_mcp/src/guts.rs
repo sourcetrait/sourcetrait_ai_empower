@@ -255,6 +255,16 @@ impl TestServer {
         crate::libraries_dir()
     }
 
+    /// The per-call log dir for a run-family nonce - where the eval's captured
+    /// stdout/stderr, its cached body, and the embedded API's `debug.nuonl` land.
+    /// For tests asserting on-disk call artifacts.
+    pub fn run_log_dir(&self, nonce: &str) -> std::path::PathBuf {
+        crate::run_body_file(nonce)
+            .parent()
+            .expect("a run body path always has a parent dir")
+            .to_path_buf()
+    }
+
     /// The canonical committed dir for a library by its compound `author/name`
     /// (under `libraries/rig/`), for on-disk carried-file / meta assertions.
     pub fn library_dir(&self, name: &str) -> std::path::PathBuf {

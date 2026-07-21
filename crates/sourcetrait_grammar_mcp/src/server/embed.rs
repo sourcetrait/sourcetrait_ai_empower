@@ -142,6 +142,12 @@ pub(crate) fn eval_in_process(
     // flip it and nushell bails at its next check point (server/tool/common.rs).
     engine_state.set_signals(nu::Signals::new(cancel));
     let mut working_set = nu::StateWorkingSet::new(engine_state);
+    // The embedded API (`grimm dbg` / `grimm channel_send`), registered per eval so
+    // each decl carries THIS call's log dir. Must precede the parse - command names
+    // resolve at parse time - and rides out on the same render/merge_delta below.
+    // Named `grimm`, not after any transport: the same API is meant to survive into
+    // an equip-daemon that speaks something other than MCP.
+    register_nuapi(&mut working_set, log_dir);
     let block = nu::parse(&mut working_set, None, source.as_bytes(), false);
     if !working_set.parse_errors.is_empty() {
         let msgs: Vec<String> = working_set

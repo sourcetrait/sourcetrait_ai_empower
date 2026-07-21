@@ -41,6 +41,13 @@ pub(crate) mod server {
         mod watchdog;
     }
 }
+pub(crate) mod nuapi {
+    pub(crate) mod grimm {
+        pub(crate) mod channel_send;
+        pub(crate) mod common;
+        pub(crate) mod dbg;
+    }
+}
 pub(crate) mod cli;
 pub(crate) mod config;
 pub(crate) mod engine;
@@ -50,11 +57,17 @@ pub(crate) mod template;
 pub mod guts;
 
 pub(crate) use crate::{
+    nuapi::grimm::{
+        channel_send::GrimmChannelSend,
+        common::{NuapiCall, data_shape, register_nuapi, require_record_or_table},
+        dbg::GrimmDbg,
+    },
     cli::CliTool,
     config::{CONFIG, Config, DeniableTool, DenySet, config},
     engine::base_context,
     mcp::ServiceExt,
     mode::Mode,
+    nu::CallExt,
     nu::FromValue,
     plugins::{list_registered_plugins, load_plugin_decls, registry_mtime},
     server::{
@@ -66,7 +79,7 @@ pub(crate) use crate::{
         embed::{InteractEngine, build_base, eval_stateless},
         emergency::{
             BackgroundJobsEmergency, CriticalEmergency, Emergency, EmergencyTx, HostCpuEmergency,
-            HostMemoryEmergency, HungEngineThreadEmergency, VramEmergency,
+            HostMemoryEmergency, HungEngineThreadEmergency, VramEmergency, append_line,
             spawn_emergency_responder,
         },
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
@@ -150,6 +163,7 @@ pub(crate) mod nu {
     pub(crate) use nu_command::add_shell_command_context;
     pub(crate) use nu_command::tls::CRYPTO_PROVIDER;
     pub(crate) use nu_engine::eval_block;
+    pub(crate) use nu_engine::CallExt;
     pub(crate) use nu_engine::command_prelude::Call;
     pub(crate) use nu_json::Value as JsonValue;
     pub(crate) use nu_parser::parse;
@@ -157,7 +171,8 @@ pub(crate) mod nu {
     pub(crate) use nu_path::nu_config_dir;
     pub(crate) use nu_plugin_engine::load_plugin_file;
     pub(crate) use nu_protocol::{
-        BlockId, Category, DeclId, FromValue, Module, PipelineData, PluginRegistryFile,
+        BlockId, Category, CollectionColumns, DeclId, FromValue, Module, PipelineData,
+        PluginRegistryFile,
         PluginRegistryItemData, Record, ShellError, Signals, Signature, Span, SyntaxShape, Type,
         Value, VarId,
         ast::{

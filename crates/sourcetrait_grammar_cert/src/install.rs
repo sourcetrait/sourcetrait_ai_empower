@@ -30,6 +30,8 @@ pub(crate) struct Installed {
 /// key it is supposed to own, which surfaces much later as a channel-open failure long
 /// after the install reported success.
 pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
+    // PREFLIGHT: every check before any mutation, so a bad argument cannot leave the
+    // system half-installed.
     let source_dir = crate::generate::certs_dir(plan.cert_base);
     let files = CertFiles::new(&source_dir, plan.name);
     if !files.exist() {
@@ -39,12 +41,26 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
         });
     }
 
-    let anchor = plan.anchor_dir.join(format!("{}.pem", plan.name));
-    copy(&files.authority_public, &anchor)?;
-    run_update(plan.update_command)?;
+    // The anchor dir must ALREADY EXIST. We never create it: its existence is the
+    // evidence that this platform's trust store is where we think it is, and creating
+    // it would turn a typo into a silent success - a cert dropped in a directory
+    // nothing reads, with the trust never taking and no error to show for it.
+    require_existing_dir(plan.anchor_dir, "trust anchor dir")?;
+    require_existing_dir(plan.secret_base, "secret base")?;
 
     let secret_dir = crate::generate::certs_dir(plan.secret_base);
-    ensure_dir(&secret_dir)?;
+    if secret_dir.exists() {
+        return Err(CertError::CertsDirExists {
+            path: secret_dir.display().to_string(),
+        });
+    }
+    let owner = resolve_owner(plan.owner)?;
+
+    // ACT. Our own key material first: it is the reversible half, and placing the
+    // anchor last means a failure here never leaves a trusted CA whose key we did not
+    // finish installing.
+    fs::create_dir_all(&secret_dir)
+        .map_err(|e| CertError::io(format!("creating {}", secret_dir.display()), e))?;
     let mut secrets = Vec::new();
     for source in [
         &files.authority_private,
@@ -58,8 +74,6 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
         copy(source, &dest)?;
         secrets.push(dest);
     }
-
-    let owner = resolve_owner(plan.owner)?;
     if let Some((_, uid, gid)) = &owner {
         chown_to(&secret_dir, *uid, *gid)?;
         for path in &secrets {
@@ -67,11 +81,34 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
         }
     }
 
+    let anchor = plan.anchor_dir.join(format!("{}.pem", plan.name));
+    copy(&files.authority_public, &anchor)?;
+    run_update(plan.update_command)?;
+
     Ok(Installed {
         anchor,
         secrets,
         owner: owner.map(|(user, _, _)| user),
     })
+}
+
+fn require_existing_dir(
+    path: &Path,
+    what: &str,
+) -> Result<()> {
+    if !path.exists() {
+        return Err(CertError::MissingDir {
+            what: what.to_string(),
+            path: path.display().to_string(),
+        });
+    }
+    if !path.is_dir() {
+        return Err(CertError::NotADir {
+            what: what.to_string(),
+            path: path.display().to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// `$SUDO_USER` when the caller did not name one. Absent (a non-sudo run) means there
@@ -114,21 +151,14 @@ fn chown_to(
     })
 }
 
-fn ensure_dir(dir: &Path) -> Result<()> {
-    if !dir.exists() {
-        fs::create_dir_all(dir)
-            .map_err(|e| CertError::io(format!("creating {}", dir.display()), e))?;
-    }
-    Ok(())
-}
-
+/// Copy, creating NOTHING. An earlier cut created the destination's parent, which is
+/// how a typo'd `--anchor-dir` would have become a freshly-minted system directory
+/// holding a cert nothing reads. Directories are either ours to make deliberately
+/// (the `certs` leaf) or must already exist.
 fn copy(
     from: &Path,
     to: &Path,
 ) -> Result<()> {
-    if let Some(parent) = to.parent() {
-        ensure_dir(parent)?;
-    }
     fs::copy(from, to).map_err(|e| {
         CertError::io(format!("copying {} to {}", from.display(), to.display()), e)
     })?;

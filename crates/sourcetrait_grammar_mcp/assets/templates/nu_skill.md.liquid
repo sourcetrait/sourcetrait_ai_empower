@@ -238,6 +238,70 @@ the call's captured stdout/stderr log by nonce. It is per-call and does
 NOT persist - a later call (even on the stateful interact lane) sees its
 own fresh nonce, never a prior one.
 
+## The embedded API a body can call (`grimm *`)
+
+Rust commands that exist ONLY inside a run / call / interact body. They are ordinary
+two-word nushell subcommands, so a body needs no `use` - the name IS the command. They
+resolve in a committed library's `main` too, and in a `job spawn` closure that outlives
+the eval that spawned it.
+
+- `grimm dbg <data>` - append a record or table to `debug.nuonl` in THIS call's nonce
+  log dir, one NUON line per call. Use it when the interesting values are MID-body
+  rather than in the return: it does not touch fd 1, does not have to fit in the result
+  envelope, and keeps types. Read it back afterwards from
+  `<cache>/<kind>/<nonce>/debug.nuonl`.
+- `grimm channel_send <model> <event> [attached]` -> the message id. The notification
+  lane (below).
+
+`data` / `event` / `attached` are each `oneof<record, table>`; anything else is
+rejected, as a literal at parse time and as a dynamic value at run time.
+
+## The channel: notifications to the agent
+
+A loopback WSS stream from inside the host to your Monitor. Open it when a long body
+should TELL you something as it works, rather than making you poll.
+
+IT IS A NOTIFICATION LANE, NOT A SERIALIZATION LANE. An event says "state changed,
+here is a tiny summary"; you fetch the real data yourself. Put anything bulky in
+`attached`, which the host writes to the inbox and NAMES on the wire - or write a nuon
+file, or use `grimm dbg` when it is only a trace.
+
+THE HANDSHAKE, in order - it does not work out of order:
+
+1. `channel_open()` -> `{status, wss, inbox}`.
+2. Start a Monitor on that `wss` URL. The FIRST connection claims the channel.
+3. WAIT to see the `mcp/channel/Open` packet arrive on the Monitor. Seeing it IS the
+   proof; there is no separate ack.
+4. `channel_verified()`. It REQUIRES a live claim, so calling it before the Monitor
+   connects fails `channel::not_claimed`. Emitting before this point is refused AND
+   tears the channel down.
+5. `channel_close()` when done.
+
+The packet:
+
+```
+{id: <string>, from: <string>, model: <string>, event: <record|table>, attached?: <string>}
+```
+
+`from` is host-stamped and cannot be forged: `mcp` for the host, `thread/<nonce>` for
+an eval - and that nonce is the emitting call's own, so a packet traces back to its
+run. `mcp/` IS RESERVED for host-originated models, so `grimm channel_send` refuses a
+model under it; pick your own path (`myproject/thing/Changed`).
+
+ALWAYS `from nuon` a packet; never pattern-match its text. NUON renders a string bare
+when unambiguous and quoted otherwise, so the SAME field renders differently depending
+on content.
+
+SENDING TOO FAST IS THE ONE THING THE HOST STOPS, because a flood implies a bug rather
+than load. Crossing the soft threshold warns once and keeps going; crossing the hard one
+refuses the send and STOPS the offender - including a detached job that catches the
+error and loops. Adjust with `config_channel()` if a legitimate producer is close to the
+line.
+
+Close codes tell you what happened: `1000` planned, `1001` the host shut down, `1008` a
+failed handshake, `1013` someone else already claimed it, and a bare `1006` means the
+host DIED - the only one the host never sends.
+
 ## Library Ecosystem
 
 Nu ecosystem libraries are custom authored Nu module hierarchies that export:
@@ -930,6 +994,10 @@ before you return thousands of paths.
 - [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
 - [`library()`](#library) Library administration: new, install, check, uninstall.
 - [`learn()`](#learn) Generate the latest `/nu` SKILL.md.
+- [`channel_open()`](#channel_open) Open the host's packet channel and return the endpoint to watch.
+- [`channel_verified()`](#channel_verified) Confirm the channel/Open packet was seen; ends the verify window.
+- [`channel_close()`](#channel_close) Close the host's packet channel.
+- [`config_channel()`](#config_channel) Read or adjust the channel's send-rate thresholds at runtime.
 
 The server runs against one STATE STORE selected by its operator config
 (`--id` / `--namespace`; surfaced by `info()` as `id` + `namespace`) -
@@ -1563,6 +1631,60 @@ Output (partial):
       "version": "{{ version }}"
     },
     "content": []
+  }
+}
+```
+
+### `channel_open()`
+*Open the host's packet channel and return the endpoint to watch.*
+
+No parameters. Starts the hub if none is running, else reports the running one.
+Returns `{status, wss, inbox}` where `status` is `new` or `existing`. Channels are
+OPTIONAL and LAZY - the hub binds on the first call, so a session that never opens
+one pays nothing. Arms a 5-minute verify window on both paths.
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "status": "new",
+      "wss": "wss://127.0.0.1:34623",
+      "inbox": "/dev/shm/box/mcp/1JOAPgBt0PN/inbox"
+    }
+  }
+}
+```
+
+### `channel_verified()`
+*Confirm the channel/Open packet was seen; ends the verify window.*
+
+No parameters, no return. REQUIRES a live claim: start the Monitor and see
+`mcp/channel/Open` first, or it fails `channel::not_claimed`.
+
+### `channel_close()`
+*Close the host's packet channel.*
+
+No parameters, no return. Closes with `1000 channel closed`; idempotent.
+
+### `config_channel()`
+*Read or adjust the channel's send-rate thresholds at runtime.*
+
+A PARTIAL update - supply only what should move - returning the policy now in force,
+so you never have to assume your change took. Passing nothing reads the policy.
+Windows are INTEGER SECONDS (MCP args cross as JSON, which cannot carry a nu
+`duration`). Thresholds only: the port and cert dir cannot change under a live hub.
+
+#### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "spam_warn_window_secs":  { "type": ["integer", "null"], "format": "uint64" },
+    "spam_warn_rate":         { "type": ["integer", "null"], "format": "uint32" },
+    "spam_error_window_secs": { "type": ["integer", "null"], "format": "uint64" },
+    "spam_error_rate":        { "type": ["integer", "null"], "format": "uint32" }
   }
 }
 ```

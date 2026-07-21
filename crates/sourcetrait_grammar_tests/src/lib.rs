@@ -117,6 +117,12 @@ impl Host {
         host
     }
 
+    /// The spawned host's pid - for tests that inspect its process tree from /proc
+    /// (e.g. that it reaps the orphans the subreaper adopts).
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// The XDG_DATA_HOME the child was spawned with (root of its store subtree).
     pub fn data_home(&self) -> &Path {
         &self.data_home

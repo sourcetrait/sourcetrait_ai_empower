@@ -38,6 +38,7 @@ pub(crate) mod server {
         mod emergency;
         mod namepath;
         mod schema;
+        mod teardown;
         mod watchdog;
     }
 }
@@ -101,7 +102,8 @@ pub(crate) use crate::{
         run::{eval_concurrency_cap, run_server},
         schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},
         teardown::{
-            install_child_subreaper, kill_plugin_subprocesses, make_tracker, tree_kill,
+            OrphanReaper, install_child_subreaper, kill_plugin_subprocesses, make_tracker,
+            tree_kill,
         },
         watchdog::{
             HungRegistry, HungWatch, Lane, WatchdogDeps, register_hung, spawn_watchdog,

@@ -28,6 +28,116 @@ pub(crate) fn make_tracker(cancel: Arc<AtomicBool>) -> nu::ThreadJob {
     )
 }
 
+/// How long a zombie must persist before we treat it as ABANDONED and harvest it.
+///
+/// This grace IS the safety mechanism. A legitimate waiter - `Command::output()` inside
+/// `run_git`, or nushell's own external handling - reaps its child within milliseconds
+/// of that child exiting, so a zombie still sitting there seconds later belongs to
+/// nobody. That is what lets us avoid a blanket `waitpid(-1, WNOHANG)`, which would race
+/// those waiters and steal the exit status out from under them; their wait then fails
+/// ECHILD, turning a working `run_git` into a spurious error.
+const REAP_GRACE_SECS: u64 = 5;
+
+/// Parse `(state, ppid)` out of a `/proc/<pid>/stat` line.
+///
+/// Fields are counted after the LAST ')', because the comm field is unquoted and can
+/// itself contain spaces and parens. After it, index 0 is state (field 3) and index 1 is
+/// ppid (field 4).
+pub(crate) fn parse_state_ppid(stat: &str) -> Option<(String, u32)> {
+    let rparen = stat.rfind(')')?;
+    let mut fields = stat[rparen + 1..].split_whitespace();
+    let state = fields.next()?.to_string();
+    let ppid = fields.next()?.parse().ok()?;
+    Some((state, ppid))
+}
+
+/// Harvests children the subreaper ADOPTED that nobody is waiting on.
+///
+/// `install_child_subreaper` makes us the parent of every orphan in an eval's process
+/// tree - which is what keeps them on our /proc ppid chain for `tree_kill` - and with
+/// that we inherit the DUTY to reap them. An adopted child that exits with no waiter
+/// otherwise stays a zombie for the life of the host, holding a pid and a process-table
+/// slot and polluting every `ps` / /proc sweep we do.
+///
+/// The recurring source is `git commit`, which detaches its own auto-maintenance
+/// (`gc --auto`): one leaked zombie per commit, and the library lifecycle commits on
+/// every new / commit / uninstall. Nothing about it is git-specific though - any
+/// external that daemonizes a child lands here the same way.
+///
+/// Only the SERVE path needs this. A one-shot CLI process exits promptly, at which point
+/// its orphans reparent to init and are reaped there.
+pub(crate) struct OrphanReaper {
+    /// pid -> when we first observed it as a zombie. Entries clear when the pid is
+    /// harvested or disappears (someone else got there first).
+    seen: HashMap<u32, Instant>,
+}
+
+impl Default for OrphanReaper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OrphanReaper {
+    pub(crate) fn new() -> Self {
+        Self {
+            seen: HashMap::new(),
+        }
+    }
+
+    /// One pass: observe our zombie children, and harvest the ones past the grace
+    /// window. Cheap enough for the watchdog's tick - a /proc scan of stat files, and
+    /// usually nothing to reap.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn reap(&mut self) {
+        let zombies = zombie_children_of(process::id());
+        // Forget anything no longer present, so the map tracks only live zombies.
+        self.seen.retain(|pid, _| zombies.contains(pid));
+        for pid in zombies {
+            let first_seen = *self.seen.entry(pid).or_insert_with(Instant::now);
+            if first_seen.elapsed().as_secs() < REAP_GRACE_SECS {
+                continue;
+            }
+            // WNOHANG so a surprise never blocks the watchdog. A pid someone else
+            // already reaped returns ECHILD, which is exactly the no-op we want.
+            let _ = nix::sys::wait::waitpid(
+                nix::unistd::Pid::from_raw(pid as i32),
+                Some(nix::sys::wait::WaitPidFlag::WNOHANG),
+            );
+            self.seen.remove(&pid);
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn reap(&mut self) {}
+}
+
+/// Our own direct children currently in state `Z`. An adopted orphan becomes a direct
+/// child of ours on reparent, so this covers both.
+#[cfg(target_os = "linux")]
+fn zombie_children_of(parent: u32) -> Vec<u32> {
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
+        if let Some((state, ppid)) = parse_state_ppid(&stat)
+            && state == "Z"
+            && ppid == parent
+        {
+            out.push(pid);
+        }
+    }
+    out
+}
+
 /// Make the host the subreaper so an eval's orphaned grandchildren reparent to
 /// us (kept on the /proc ppid chain for the descendant walk). Best-effort; call
 /// once at host startup.

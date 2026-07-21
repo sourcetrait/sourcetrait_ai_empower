@@ -230,9 +230,15 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
         let mut prev_active: HashSet<String> = HashSet::new();
         let mut prev_cpu: Option<(u64, Instant)> = None;
         let mut tick: u64 = 0;
+        // The subreaper adopts every orphan in an eval's process tree, so the host owes
+        // them a wait() or they accrue as zombies for its lifetime. This tick is the
+        // natural home: it already runs off the eval threads, so a /proc scan here
+        // cannot be starved by eval saturation (server/teardown.rs).
+        let mut reaper = OrphanReaper::new();
         loop {
             tk::sleep(SAMPLE_INTERVAL).await;
             tick += 1;
+            reaper.reap();
             let now = now_millis();
             let mut current: Vec<(String, Emergency)> = Vec::new();
 

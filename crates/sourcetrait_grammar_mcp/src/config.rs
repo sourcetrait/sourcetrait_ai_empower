@@ -28,14 +28,18 @@ pub(crate) struct ConfigToml {
     pub channel: Option<ChannelConfigToml>,
 }
 
-/// The `[channel]` table.
+/// The `[channel]` table: the wss port and the cert directory, and nothing else.
+///
+/// Everything else about the channel is fixed by design rather than configured. It is
+/// a loopback socket serving a single host, so there is no address to choose and no
+/// peer policy to express - the bind is 127.0.0.1 by construction, which is what makes
+/// "only localhost gets in" a property of the socket rather than a rule to enforce.
 #[derive(Debug, Clone, Default, ser::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ChannelConfigToml {
+    /// 0 (the default) means the kernel picks any available port.
+    pub port: Option<u16>,
     pub cert_dir: Option<String>,
-    pub cert_name: Option<String>,
-    pub bind: Option<String>,
-    pub verify_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,11 +55,11 @@ pub(crate) struct Config {
 /// environment directly, so the cert location is configurable without a rebuild.
 #[derive(Debug, Clone)]
 pub(crate) struct ChannelConfig {
+    /// 0 = kernel-assigned. The agent learns the real endpoint from `channel_open`'s
+    /// return, so a random port is the sane default and a pinned one is the exception.
+    pub port: u16,
     /// UNEXPANDED on purpose - see `cert_paths`.
     pub cert_dir: String,
-    pub cert_name: String,
-    pub bind: String,
-    pub verify_timeout_secs: u64,
 }
 
 impl ChannelConfig {
@@ -69,9 +73,10 @@ impl ChannelConfig {
     /// which is the moment it actually matters.
     pub(crate) fn cert_paths(&self) -> Result<(PathBuf, PathBuf), String> {
         let dir = expand_path(&self.cert_dir)?;
+        let name = lib_grammar::consts::GRAMMAR;
         Ok((
-            dir.join(format!("entity_{}.pem", self.cert_name)),
-            dir.join(format!("entity_{}.key.pem", self.cert_name)),
+            dir.join(format!("entity_{name}.pem")),
+            dir.join(format!("entity_{name}.key.pem")),
         ))
     }
 }
@@ -86,23 +91,9 @@ fn merged_channel(
     let Some(cert_dir) = user.cert_dir.or(base.cert_dir) else {
         return Err("the embedded defaults carry no channel.cert_dir".to_string());
     };
-    let Some(cert_name) = user.cert_name.or(base.cert_name) else {
-        return Err("the embedded defaults carry no channel.cert_name".to_string());
-    };
-    let Some(bind) = user.bind.or(base.bind) else {
-        return Err("the embedded defaults carry no channel.bind".to_string());
-    };
-    let Some(verify_timeout_secs) = user.verify_timeout_secs.or(base.verify_timeout_secs) else {
-        return Err("the embedded defaults carry no channel.verify_timeout_secs".to_string());
-    };
-    if verify_timeout_secs == 0 {
-        return Err("channel.verify_timeout_secs must be positive".to_string());
-    }
     Ok(ChannelConfig {
+        port: user.port.or(base.port).unwrap_or(0),
         cert_dir,
-        cert_name,
-        bind,
-        verify_timeout_secs,
     })
 }
 

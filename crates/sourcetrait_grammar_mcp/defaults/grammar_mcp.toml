@@ -9,14 +9,10 @@
 # load, with the XDG family honoring the basedir spec fallbacks.
 
 [channel]
-# Where grammar_cert installs what the hub serves. Kept in step with that tool's own
-# layout and its $XDGX_SECRET_DATA_HOME fallback.
+# 0 lets the kernel pick any available port, which is the default: the agent learns the
+# real endpoint from channel_open's return, so nothing needs a fixed one. Pin it only if
+# something outside that flow has to predict the address.
+port = 0
+# Where grammar_cert installs the leaf the hub presents. Kept in step with that tool's
+# own layout and its $XDGX_SECRET_DATA_HOME fallback.
 cert_dir = "$XDGX_SECRET_DATA_HOME/sourcetrait/grammar/certs"
-# Filename stem: entity_<name>.pem and entity_<name>.key.pem.
-cert_name = "grammar"
-# Loopback literal the hub binds and advertises. An IP rather than a name on purpose:
-# a name that resolves to both families makes a client try one, reset it, and complete
-# on the other, which reads like a TLS verdict rather than a plain reset.
-bind = "127.0.0.1"
-# How long channel_open() waits for channel_verified() before tearing the hub down.
-verify_timeout_secs = 300

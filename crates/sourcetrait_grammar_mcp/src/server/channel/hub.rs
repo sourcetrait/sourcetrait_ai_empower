@@ -1,5 +1,14 @@
 use crate::*;
 
+/// The hub binds loopback, always, and this is not configurable.
+///
+/// The channel is a single-host design, so "only localhost gets in" is a property of
+/// the socket rather than a policy to enforce - the kernel will not route anything else
+/// to a 127.0.0.1 listener, which is why there is no peer allow/deny list anywhere.
+/// A literal rather than `localhost` also removes the resolution ambiguity that made a
+/// v4 reset read as a TLS verdict during P3; the leaf carries IP SANs for this.
+const BIND: &str = "127.0.0.1";
+
 const HOST_FROM: &str = "host";
 const KIND_CHANNEL_OPEN: &str = "ChannelOpen";
 
@@ -42,19 +51,21 @@ pub(crate) async fn start(
     mcp_nom: McpNom,
 ) -> Result<String, Error> {
     let tls_config = server_config()?;
-    let bind = config().channel.bind.clone();
-    let listener = tk::TcpListener::bind((bind.as_str(), 0u16))
+    // Port 0 (the default) means kernel-assigned; a pinned one is honored as given.
+    let listener = tk::TcpListener::bind((BIND, config().channel.port))
         .await
         .map_err(|e| Error::ChannelStart {
-            reason: format!("bind {bind}: {e}"),
+            reason: format!("bind {BIND}: {e}"),
         })?;
+    // Read the port back rather than trusting the configured value: with 0 it is the
+    // only way to know it, and with a pinned one it confirms what we actually got.
     let port = listener
         .local_addr()
         .map_err(|e| Error::ChannelStart {
             reason: format!("local_addr: {e}"),
         })?
         .port();
-    let url = format!("wss://{bind}:{port}");
+    let url = format!("wss://{BIND}:{port}");
     let (tx, rx) = tk::unbounded_channel::<HubCommand>();
     let (shutdown_tx, shutdown_rx) = tk::oneshot::channel::<()>();
     let claimed = Arc::new(AtomicBool::new(false));

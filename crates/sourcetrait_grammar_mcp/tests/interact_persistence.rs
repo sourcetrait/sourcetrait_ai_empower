@@ -61,6 +61,33 @@ fn interact_state_does_not_leak_into_run() {
     assert!(has_error(&env), "run() must NOT see interact()'s `leaked` def; got {env}");
 }
 
+/// nushell's `EngineState::merge_env` ends by chdir'ing the process to `$env.PWD`.
+/// In-process that would move the whole grammar host for the rest of its life, so the
+/// interact lane merges env WITHOUT that sync (server/embed.rs merge_env_no_chdir) and
+/// `cd` stays engine state. Linux-only, like the rest of the /proc-based checks.
+#[test]
+fn interact_cd_does_not_move_the_host_process_cwd() {
+    let s = TestServer::new();
+    let before = std::fs::read_link("/proc/self/cwd").expect("read /proc/self/cwd");
+    let env = s.interact(
+        json!({"dir": "string"}),
+        json!({"pwd": "string"}),
+        json!({"dir": "/etc"}),
+        "cd $args.dir\n{ pwd: $env.PWD }",
+    );
+    assert_eq!(
+        env["result"]["pwd"].as_str(),
+        Some("/etc"),
+        "cd should still set $env.PWD; got {env}",
+    );
+    let after = std::fs::read_link("/proc/self/cwd").expect("read /proc/self/cwd");
+    assert_eq!(
+        before, after,
+        "an interact `cd` must not move the host process cwd - in-process there is no \
+         worker subprocess to absorb it",
+    );
+}
+
 #[test]
 fn multi_line_body_with_command_then_record_parses() {
     let s = TestServer::new();

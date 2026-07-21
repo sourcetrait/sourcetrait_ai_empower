@@ -82,6 +82,40 @@ fn seed_lib_dirs(engine_state: &mut nu::EngineState) {
     set_lib_dirs_const(engine_state, &[libraries_dir()]);
 }
 
+/// `EngineState::merge_env` minus the process chdir.
+///
+/// nushell's own `merge_env` ends by calling `std::env::set_current_dir` with the
+/// stack's `$env.PWD` (nu-protocol engine_state.rs, 0.114.1 rev 0df4ca2) - correct
+/// for a REPL that owns its process, wrong here. Eval is IN-PROCESS, so that call
+/// moved the whole host's working directory whenever an interact body ran `cd`, and
+/// it stayed moved for the process lifetime; the worker era confined it to the
+/// interact SUBPROCESS. PWD is engine state instead - nothing of ours reads the
+/// process cwd, and a run() body's externals take their cwd from `$env.PWD`.
+///
+/// The env-overlay drain mirrors nushell's exactly. The config half goes through
+/// the public `set_config`, which carries the same plugin-GC propagation `merge_env`
+/// does inline (and fires it only when the GC config actually changed). Dropping the
+/// chdir also drops merge_env's only error path, so this is infallible.
+fn merge_env_no_chdir(
+    engine_state: &mut nu::EngineState,
+    stack: &mut nu::Stack,
+) {
+    for mut scope in stack.env_vars.drain(..) {
+        for (overlay_name, mut env) in Arc::make_mut(&mut scope).drain() {
+            if let Some(env_vars) =
+                Arc::make_mut(&mut engine_state.env_vars).get_mut(&overlay_name)
+            {
+                env_vars.extend(env.drain());
+            } else {
+                Arc::make_mut(&mut engine_state.env_vars).insert(overlay_name, env);
+            }
+        }
+    }
+    if let Some(config) = stack.config.take() {
+        engine_state.set_config(config);
+    }
+}
+
 /// Evaluate a synthesized source string against `engine_state`, redirecting the
 /// eval's external stdout/stderr into `<log_dir>/{stdout,stderr}` (fd 1 is the
 /// JSON-RPC channel). Returns the body's terminal value as a friendly JSON value.
@@ -142,9 +176,7 @@ pub(crate) fn eval_in_process(
         .map_err(|e| format!("into_value: {e}"))?;
     if persist {
         let _ = stack.remove_env_var(engine_state, "NONCE");
-        engine_state
-            .merge_env(&mut stack)
-            .map_err(|e| format!("merge_env: {e}"))?;
+        merge_env_no_chdir(engine_state, &mut stack);
     }
     let json_value = nu::JsonValue::from_value(value).map_err(|e| format!("Value to JSON: {e}"))?;
     json::to_value(&json_value).map_err(|e| format!("json value: {e}"))
@@ -210,7 +242,7 @@ pub(crate) async fn eval_stateless(
 /// The persistent stateful interact engine: a dedicated long-lived thread owning
 /// one `EngineState` (build_base Stateful, with the plugin-admin family), fed eval
 /// requests over a channel and processing them serially. Replaces the stateful
-/// worker PROCESS - env/cd persist across calls via merge_env; the thread carries
+/// worker PROCESS - env/cd persist across calls via merge_env_no_chdir; the thread carries
 /// the same generous stack as the stateless executor (P0.7). A caught eval panic
 /// is reported and the loop continues (Phase 4 adds engine rebuild-on-panic/poison).
 #[derive(Clone)]

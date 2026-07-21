@@ -133,6 +133,29 @@ impl Host {
         &self.cache_home
     }
 
+    /// Signal the host and wait for it to exit, returning its status.
+    ///
+    /// The distinction this exists to measure: a host whose handler RAN exits on its
+    /// own terms (`code() == Some(128 + signo)`), while one that merely took the
+    /// signal's default action is reported as killed BY the signal (`code() == None`,
+    /// `signal() == Some(signo)`). Only the former proves the shutdown sweep ran.
+    pub fn signal_and_wait(
+        &mut self,
+        signal: nix::sys::signal::Signal,
+        timeout: Duration,
+    ) -> Option<std::process::ExitStatus> {
+        let pid = nix::unistd::Pid::from_raw(self.child.id() as i32);
+        nix::sys::signal::kill(pid, Some(signal)).expect("signal the host");
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.child.try_wait().expect("try_wait") {
+                Some(status) => return Some(status),
+                None if Instant::now() >= deadline => return None,
+                None => std::thread::sleep(Duration::from_millis(25)),
+            }
+        }
+    }
+
     fn next_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;

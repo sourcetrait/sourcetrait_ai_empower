@@ -18,5 +18,6 @@ keywords = ["sourcetrait", "grammar", "testing"]
 test-hooks = []
 
 [dependencies]
+nix.workspace = true
 serde_json.workspace = true
 sourcetrait_testing.workspace = true

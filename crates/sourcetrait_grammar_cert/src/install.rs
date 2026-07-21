@@ -2,13 +2,32 @@ use crate::*;
 
 use crate::store::{TrustTarget, kind_of_target};
 
+/// Where the secret data home came from, which decides whether we may create it.
+///
+/// The env default is OUR namespace - a sourcetrait extension nothing else ships - so
+/// nobody else will ever make it and creating it correctly is our job. An explicitly
+/// passed path is the CALLER asserting a location, and a typo there must fail loudly
+/// rather than conjure a deep tree, exactly as for the trust dir.
+pub(crate) enum SecretData<'a> {
+    FromEnv(&'a Path),
+    Explicit(&'a Path),
+}
+
+impl<'a> SecretData<'a> {
+    pub(crate) fn path(&self) -> &'a Path {
+        match self {
+            Self::FromEnv(p) | Self::Explicit(p) => p,
+        }
+    }
+}
+
 pub(crate) struct InstallPlan<'a> {
     /// The dir `generate` was given; its artifacts are in `<dir>/certs`.
     pub cert_dir: &'a Path,
     pub name: &'a str,
     pub target: &'a TrustTarget,
     /// The secret DATA home; key material lands in `<it>/sourcetrait/grammar/certs`.
-    pub secret_data: &'a Path,
+    pub secret_data: SecretData<'a>,
     /// User to hand the key material to. Defaults to `$SUDO_USER`.
     pub owner: Option<&'a str>,
 }
@@ -41,9 +60,19 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
     if let TrustTarget::Dir { dir, .. } = plan.target {
         require_existing_dir(dir, "trust dir")?;
     }
-    require_existing_dir(plan.secret_data, "secret data dir")?;
 
-    let secret_dir = crate::generate::secret_certs_dir(plan.secret_data);
+    // For an EXPLICIT secret data home the caller is asserting a location, so its
+    // PARENT must already exist - that is what makes a typo fail instead of conjuring a
+    // tree. We then create the dir itself and our subdirs beneath it. The env default
+    // is ours outright (see SecretData).
+    if let SecretData::Explicit(path) = &plan.secret_data {
+        let parent = path
+            .parent()
+            .ok_or_else(|| CertError::msg("--secret-data has no parent directory"))?;
+        require_existing_dir(parent, "secret data parent")?;
+    }
+
+    let secret_dir = crate::generate::secret_certs_dir(plan.secret_data.path());
     if secret_dir.exists() {
         return Err(CertError::CertsDirExists {
             path: secret_dir.display().to_string(),
@@ -52,7 +81,7 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
     let owner = resolve_owner(plan.owner)?;
 
     // ACT. Key material first - it is the half we can roll back.
-    let created = create_private_chain(plan.secret_data, &secret_dir, &owner)?;
+    let created = create_private_chain(&secret_dir, &owner)?;
     let mut secrets = Vec::new();
     // The CA PUBLIC cert rides along so `verify` has the body to look for, whichever
     // model took the trust.
@@ -66,7 +95,10 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
             .file_name()
             .ok_or_else(|| CertError::msg("a cert artifact has no file name"))?;
         let dest = secret_dir.join(name);
-        if let Err(e) = copy(source, &dest) {
+        // Everything inside the secret tree goes go-rwx, public certs included. They
+        // are not secret in themselves, but a 0644 file sitting beside a CA key is an
+        // inconsistency waiting to be copied by the next person who adds a file here.
+        if let Err(e) = copy(source, &dest).and_then(|()| restrict_file(&dest)) {
             rollback(&created);
             return Err(e);
         }
@@ -96,31 +128,35 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
     })
 }
 
-/// Create each level of `<secret_data>/sourcetrait/grammar/certs` explicitly at 0700
-/// and hand each to the owner.
+/// Create every missing level down to `target` at 0700, owned by `owner`.
 ///
-/// `create_dir_all` takes its mode from the umask, so under root's usual 022 every
-/// level came out 0755 - a world-traversable directory holding a CA key - and only the
-/// leaf was ever chowned, leaving root-owned dirs in someone else's secret tree.
-/// Returns the levels we created, newest last, for rollback.
+/// Walks up to the first ancestor that exists, so this covers the secret data home
+/// ITSELF as well as our subdirs under it - it is our own non-standard path, so nothing
+/// else will have made it.
+///
+/// Each level is created and chmod'd explicitly rather than via `create_dir_all`, which
+/// takes its mode from the umask: under root's usual 022 every level came out 0755, a
+/// world-traversable directory around a CA key. Returns what we created, newest last,
+/// for rollback.
 fn create_private_chain(
-    secret_data: &Path,
-    secret_dir: &Path,
+    target: &Path,
     owner: &Option<(String, u32, u32)>,
 ) -> Result<Vec<PathBuf>> {
     use std::os::unix::fs::PermissionsExt;
 
-    let relative = secret_dir
-        .strip_prefix(secret_data)
-        .map_err(|_| CertError::msg("secret dir is not under the secret data home"))?;
+    let mut missing = Vec::new();
+    let mut cursor = Some(target);
+    while let Some(path) = cursor {
+        if path.exists() {
+            break;
+        }
+        missing.push(path.to_path_buf());
+        cursor = path.parent();
+    }
+    missing.reverse();
 
     let mut created = Vec::new();
-    let mut path = secret_data.to_path_buf();
-    for component in relative.components() {
-        path = path.join(component);
-        if path.exists() {
-            continue;
-        }
+    for path in missing {
         if let Err(e) = fs::create_dir(&path) {
             rollback(&created);
             return Err(CertError::io(format!("creating {}", path.display()), e));
@@ -147,6 +183,17 @@ fn create_private_chain(
         }
     }
     Ok(created)
+}
+
+/// go-rwx on a file we placed in the secret tree.
+fn restrict_file(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(path)
+        .map_err(|e| CertError::io(format!("stat {}", path.display()), e))?
+        .permissions();
+    perms.set_mode(0o600);
+    fs::set_permissions(path, perms)
+        .map_err(|e| CertError::io(format!("chmod 600 {}", path.display()), e))
 }
 
 /// Remove what we created, deepest first. Best-effort: a rollback failure must not mask

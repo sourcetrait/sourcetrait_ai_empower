@@ -75,35 +75,39 @@ pub fn run() -> Result<()> {
             trust_dir,
             owner,
             update_command,
-        } => cmd_install(
-            &dir,
-            &resolve_secret_data(secret_data)?,
-            &name,
-            trust_dir.as_deref(),
-            owner.as_deref(),
-            update_command.as_deref(),
-        ),
+        } => {
+            let (secret_path, from_env) = resolve_secret_data(secret_data)?;
+            cmd_install(
+                &dir,
+                &secret_path,
+                from_env,
+                &name,
+                trust_dir.as_deref(),
+                owner.as_deref(),
+                update_command.as_deref(),
+            )
+        }
         Command::Verify {
             secret_data,
             name,
             ca_cert,
             bundle,
-        } => cmd_verify(
-            &resolve_secret_data(secret_data)?,
-            &name,
-            ca_cert.as_deref(),
-            bundle.as_deref(),
-        ),
+        } => {
+            let (secret_path, _) = resolve_secret_data(secret_data)?;
+            cmd_verify(&secret_path, &name, ca_cert.as_deref(), bundle.as_deref())
+        }
         Command::Store => cmd_store(),
     }
 }
 
-fn resolve_secret_data(explicit: Option<PathBuf>) -> Result<PathBuf> {
+/// The path plus where it came from: an explicit flag must already exist, the env
+/// default is ours to create.
+fn resolve_secret_data(explicit: Option<PathBuf>) -> Result<(PathBuf, bool)> {
     if let Some(path) = explicit {
-        return Ok(path);
+        return Ok((path, false));
     }
     match std::env::var(SECRET_DATA_ENV) {
-        Ok(v) if !v.is_empty() => Ok(PathBuf::from(v)),
+        Ok(v) if !v.is_empty() => Ok((PathBuf::from(v), true)),
         _ => Err(CertError::msg(format!(
             "pass --secret-data or set ${SECRET_DATA_ENV}"
         ))),
@@ -132,6 +136,7 @@ fn cmd_generate(
 fn cmd_install(
     dir: &Path,
     secret_data: &Path,
+    secret_data_from_env: bool,
     name: &str,
     trust_dir: Option<&Path>,
     owner: Option<&str>,
@@ -142,11 +147,16 @@ fn cmd_install(
         Some(id) => eprintln!("grammar_cert: trust store {id}"),
         None => eprintln!("grammar_cert: trust store from arguments"),
     }
+    let secret = if secret_data_from_env {
+        crate::install::SecretData::FromEnv(secret_data)
+    } else {
+        crate::install::SecretData::Explicit(secret_data)
+    };
     let installed = install(&crate::install::InstallPlan {
         cert_dir: dir,
         name,
         target: &target,
-        secret_data,
+        secret_data: secret,
         owner,
     })?;
     println!("{}", installed.trusted_at.display());

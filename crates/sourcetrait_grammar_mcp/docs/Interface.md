@@ -771,8 +771,9 @@ Packets are NUON, one per frame, newline-escaped. The usable frame maximum is
 
 Starts the hub if none is running, otherwise reports the running one. `status` is
 `new` or `existing`; on `existing` with a live peer the host re-sends
-`mcp/channel/Open`, so a peer that has gone away surfaces here as an error. The
-verify window is armed on both paths.
+`mcp/channel/Open`, so a peer that has gone away surfaces here as
+`channel::peer_gone`. A successful `existing` therefore means the channel is still
+claimed by a live peer. The verify window is armed on both paths.
 
 ### arguments
 

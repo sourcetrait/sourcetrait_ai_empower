@@ -269,13 +269,25 @@ file, or use `grimm dbg` when it is only a trace.
 THE HANDSHAKE, in order - it does not work out of order:
 
 1. `channel_open()` -> `{status, wss, inbox}`.
-2. Start a Monitor on that `wss` URL. The FIRST connection claims the channel.
+2. Start a Monitor on that `wss` URL, with `persistent: true`. The FIRST connection
+   claims the channel. A non-persistent Monitor eventually TIMES OUT and leaves the
+   channel claimed by nobody, which only surfaces on the next open.
 3. WAIT to see the `mcp/channel/Open` packet arrive on the Monitor. Seeing it IS the
    proof; there is no separate ack.
 4. `channel_verified()`. It REQUIRES a live claim, so calling it before the Monitor
    connects fails `channel::not_claimed`. Emitting before this point is refused AND
    tears the channel down.
 5. `channel_close()` when done.
+
+`status: existing` IS THE NORMAL CASE, NOT A FAULT. The host outlives your context - it
+keeps running across a `/clear` or a fresh conversation, and so does a `persistent`
+Monitor - so a channel you have no memory of opening is usually still open and still
+claimed. On `existing` the host re-sends `mcp/channel/Open` to that peer, and THE CALL
+RETURNING IS THE LIVENESS TEST: a peer that has actually gone fails that send and
+surfaces `channel::peer_gone` instead. So a successful `existing` means you are already
+connected - go to step 3 and watch for the re-sent packet. Do NOT close and re-open on
+`existing`; that destroys a working channel and the Monitor feeding you. Only
+`channel::peer_gone` calls for `channel_close()` followed by a fresh open.
 
 The packet:
 

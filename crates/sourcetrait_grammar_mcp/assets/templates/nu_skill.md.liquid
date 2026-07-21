@@ -119,7 +119,10 @@ not a Grammar MCP failure, and it does not behave like one:
 - It is NOT an error envelope. There is no `kind`, no `errors[]`, no `nonce` -
   so the "fetch the per-nonce log" recovery does NOT apply here, and there is no
   diagnostic to read. Your nonce is inside the spilled payload, not the message.
-- The COMPLETE result is already on disk, at the path the message names.
+- The COMPLETE result is already on disk, at the path the message names. That path
+  is the CLIENT's OWN tool-results cache, NOT `$env.XDGX_SHM_DIR` - shm below is a
+  mechanism you drive, this spill is one the client chose. Take the path verbatim
+  from the message; never construct it, and do not expect it under the shm root.
 
 So the zero-write recovery is to READ that spill file - the client already wrote
 it for you. Two things the message does not tell you, and you need both:

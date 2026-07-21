@@ -1,10 +1,12 @@
 # The embedded base every load merges onto. A user file overrides field by field;
 # anything absent from both falls through to the code defaults.
 #
+# This file carries only what is NOT an argument. The store coordinate (--id,
+# --namespace), the work dir (--workdir) and the deny list (--deny) stay arguments;
+# setting one here is an unknown-field error.
+#
 # Paths are STRINGS so this file stays portable: a leading `~` or `$VAR` expands at
 # load, with the XDG family honoring the basedir spec fallbacks.
-
-namespace = "default"
 
 [channel]
 # Where grammar_cert installs what the hub serves. Kept in step with that tool's own

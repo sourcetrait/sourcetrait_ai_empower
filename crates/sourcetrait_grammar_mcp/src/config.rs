@@ -2,27 +2,29 @@
 //!
 //! `*Toml` types are the FILE shape - every field optional, paths as portable strings,
 //! unknown keys rejected. `Config` and its sub-items are the format-free runtime shape
-//! with concrete types. `TryFrom` bridges them, merging the user's file over the
-//! embedded base and then the code defaults, so a future format adds a shell without
-//! touching the model.
+//! with concrete types. Sub-items get the same pair, so a future format adds a shell
+//! without touching the model.
 //!
-//! Precedence is CLI > file > embedded base > code default. The CLI arrives AS a
-//! `ConfigToml` overlay rather than through a second merge path, which is why the clap
-//! options carry no `default_value`: a clap default is indistinguishable from an
-//! explicit flag and would silently outrank the file.
+//! THE FILE CARRIES ONLY WHAT IS NOT ALREADY AN ARGUMENT. The store coordinate (`id`,
+//! `namespace`), the agent work dir and the deny list stay ARGUMENTS: they were
+//! arguments before this file existed, and they identify or gate the invocation itself.
+//! A file-settable coordinate would let the store silently diverge from the `.mcp.json`
+//! entry the agent believes it is talking to, and would reintroduce the sticky default
+//! coordinate already ruled out. So the two surfaces are DISJOINT - there is no
+//! precedence question between them - and `deny_unknown_fields` turns an attempt to set
+//! one from the file into a loud error rather than a silent no-op.
 use crate::*;
 
 /// The embedded base every load merges onto.
 const DEFAULTS_CONFIG: &str = include_str!("../defaults/grammar_mcp.toml");
 
+/// The store namespace when `--namespace` is not given.
+pub(crate) const DEFAULT_NAMESPACE: &str = "default";
+
 /// The file shape.
 #[derive(Debug, Clone, Default, ser::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigToml {
-    pub id: Option<String>,
-    pub namespace: Option<String>,
-    pub work_dir: Option<String>,
-    pub deny: Option<Vec<String>>,
     pub channel: Option<ChannelConfigToml>,
 }
 
@@ -74,7 +76,7 @@ impl ChannelConfig {
     }
 }
 
-/// Merge one `[channel]` table over another, then the code defaults.
+/// Merge one `[channel]` table over the embedded base, then the code defaults.
 fn merged_channel(
     user: Option<ChannelConfigToml>,
     base: Option<ChannelConfigToml>,
@@ -90,10 +92,9 @@ fn merged_channel(
     let Some(bind) = user.bind.or(base.bind) else {
         return Err("the embedded defaults carry no channel.bind".to_string());
     };
-    let verify_timeout_secs = user
-        .verify_timeout_secs
-        .or(base.verify_timeout_secs)
-        .unwrap_or(300);
+    let Some(verify_timeout_secs) = user.verify_timeout_secs.or(base.verify_timeout_secs) else {
+        return Err("the embedded defaults carry no channel.verify_timeout_secs".to_string());
+    };
     if verify_timeout_secs == 0 {
         return Err("channel.verify_timeout_secs must be positive".to_string());
     }
@@ -105,33 +106,22 @@ fn merged_channel(
     })
 }
 
-impl TryFrom<ConfigToml> for Config {
-    type Error = String;
-
-    fn try_from(user: ConfigToml) -> Result<Self, String> {
+impl Config {
+    /// Build the runtime config: the argument-owned values arrive already resolved, the
+    /// file contributes only what it owns.
+    ///
+    /// Deliberately not `TryFrom`: the model carries fields the format layer does not,
+    /// and a constructor that names them keeps that asymmetry visible rather than
+    /// hiding it behind a conversion.
+    pub(crate) fn from_toml(
+        user: ConfigToml,
+        id: String,
+        namespace: String,
+        work_dir: PathBuf,
+        deny: DenySet,
+    ) -> Result<Self, String> {
         let base: ConfigToml = toml::from_str(DEFAULTS_CONFIG)
             .map_err(|e| format!("the embedded defaults do not parse: {e}"))?;
-        let id = user.id.or(base.id).unwrap_or_else(default_id);
-        let Some(namespace) = user.namespace.or(base.namespace) else {
-            return Err("the embedded defaults carry no namespace".to_string());
-        };
-        let work_dir = match user.work_dir.or(base.work_dir) {
-            Some(raw) => expand_path(&raw)?,
-            None => default_work_dir(&id),
-        };
-        let deny = match user.deny.or(base.deny) {
-            Some(names) => {
-                let mut tools = Vec::with_capacity(names.len());
-                for name in &names {
-                    match DeniableTool::from_name(name) {
-                        Some(tool) => tools.push(tool),
-                        None => return Err(format!("unknown tool `{name}` in deny")),
-                    }
-                }
-                DenySet::new(tools)
-            }
-            None => DenySet::default(),
-        };
         Ok(Self {
             id,
             namespace,
@@ -140,17 +130,7 @@ impl TryFrom<ConfigToml> for Config {
             channel: merged_channel(user.channel, base.channel)?,
         })
     }
-}
 
-impl Default for Config {
-    fn default() -> Self {
-        ConfigToml::default()
-            .try_into()
-            .expect("embedded defaults parse")
-    }
-}
-
-impl Config {
     /// Read a user file. An explicit `--config` that is absent or malformed is an
     /// error - a typo'd path must fail rather than silently serve the defaults.
     pub(crate) fn read_toml(path: &std::path::Path) -> Result<ConfigToml, String> {
@@ -160,38 +140,28 @@ impl Config {
     }
 }
 
-/// Overlay one file shape over another, field by field; `over` wins.
-///
-/// This is how the CLI outranks the file without a second merge mechanism - the CLI is
-/// converted to a `ConfigToml` and laid over the file's.
-pub(crate) fn overlay_toml(
-    over: ConfigToml,
-    under: ConfigToml,
-) -> ConfigToml {
-    ConfigToml {
-        id: over.id.or(under.id),
-        namespace: over.namespace.or(under.namespace),
-        work_dir: over.work_dir.or(under.work_dir),
-        deny: over.deny.or(under.deny),
-        channel: match (over.channel, under.channel) {
-            (Some(a), Some(b)) => Some(ChannelConfigToml {
-                cert_dir: a.cert_dir.or(b.cert_dir),
-                cert_name: a.cert_name.or(b.cert_name),
-                bind: a.bind.or(b.bind),
-                verify_timeout_secs: a.verify_timeout_secs.or(b.verify_timeout_secs),
-            }),
-            (a, b) => a.or(b),
-        },
+impl Default for Config {
+    fn default() -> Self {
+        let id = default_id();
+        let work_dir = default_work_dir(&id);
+        Self::from_toml(
+            ConfigToml::default(),
+            id,
+            DEFAULT_NAMESPACE.to_string(),
+            work_dir,
+            DenySet::default(),
+        )
+        .expect("embedded defaults parse")
     }
 }
 
 /// The invoking user's name, for the zero-config human case. Harness `.mcp.json`
 /// entries always pass `--id` explicitly.
-fn default_id() -> String {
+pub(crate) fn default_id() -> String {
     std::env::var("USER").unwrap_or_else(|_| "default".to_string())
 }
 
-fn default_work_dir(id: &str) -> PathBuf {
+pub(crate) fn default_work_dir(id: &str) -> PathBuf {
     BASE_DIRS.home_dir().join("proj").join("equip").join(id)
 }
 

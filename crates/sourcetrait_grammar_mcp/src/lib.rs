@@ -70,7 +70,7 @@ pub(crate) use crate::{
     cli::CliTool,
     config::{
         CONFIG, ChannelConfig, ChannelConfigToml, Config, ConfigToml, DeniableTool, DenySet,
-        config, expand_path, overlay_toml,
+        config, default_id, default_work_dir, expand_path,
     },
     engine::base_context,
     mcp::ServiceExt,

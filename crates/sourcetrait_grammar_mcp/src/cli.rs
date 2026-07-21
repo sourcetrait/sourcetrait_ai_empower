@@ -17,18 +17,18 @@ use crate::*;
 #[derive(clap::Parser)]
 #[command(version, about = "Nushell engine MCP server")]
 pub(crate) struct HostCli {
-    /// Path to a grammar_mcp.toml. Every option below can be set there
-    /// instead; a flag outranks the file, the file outranks the built-in
-    /// defaults. An absent or malformed path is a hard error.
+    /// Path to a grammar_mcp.toml, carrying the settings that are NOT
+    /// arguments (currently the [channel] table). An absent or malformed
+    /// path is a hard error.
     #[arg(long)]
     pub config: Option<String>,
     /// Agent identity owning the state store (trusted operator config).
     /// Defaults to the invoking user's name.
-    #[arg(long)]
-    pub id: Option<String>,
-    /// State namespace within the id's store. Defaults to "default".
-    #[arg(long)]
-    pub namespace: Option<String>,
+    #[arg(long, default_value_t = default_id())]
+    pub id: String,
+    /// State namespace within the id's store.
+    #[arg(long, default_value = "default")]
+    pub namespace: String,
     /// Agent working directory, exported to every eval body as
     /// $env.EQUIP_WORK_DIR. Defaults to <home>/proj/equip/<id>.
     #[arg(long)]
@@ -36,7 +36,7 @@ pub(crate) struct HostCli {
     /// Comma-separated tools to deny: run,rerun,interact,call,learn,new,
     /// commit,library,channel_open,channel_verified,channel_close.
     #[arg(long, value_delimiter = ',', value_parser = parse_deniable)]
-    pub deny: Vec<String>,
+    pub deny: Vec<DeniableTool>,
     #[command(subcommand)]
     pub command: Option<HostCommand>,
 }
@@ -175,50 +175,51 @@ impl LibraryCliAction {
     }
 }
 
-/// Validate a deny token at parse time so a typo fails fast rather than silently
-/// denying nothing. The value stays a String: the CLI is merged as a `ConfigToml`
-/// overlay, and the single conversion in `TryFrom<ConfigToml>` owns the mapping.
-fn parse_deniable(s: &str) -> Result<String, String> {
-    if DeniableTool::from_name(s).is_some() {
-        return Ok(s.to_string());
-    }
-    Err(format!(
-        "unknown tool `{s}`; deniable tools: run, rerun, interact, call, learn, new, \
-         commit, library, channel_open, channel_verified, channel_close",
-    ))
-}
-
-impl HostCli {
-    /// The CLI expressed as a config overlay, so flags and file share ONE merge.
-    fn overlay(&self) -> ConfigToml {
-        ConfigToml {
-            id: self.id.clone(),
-            namespace: self.namespace.clone(),
-            work_dir: self.workdir.clone(),
-            // An empty vec means "no --deny given"; it must not clobber the file's.
-            deny: if self.deny.is_empty() {
-                None
-            } else {
-                Some(self.deny.clone())
-            },
-            channel: None,
-        }
+fn resolve_work_dir(
+    raw: Option<&str>,
+    id: &str,
+) -> PathBuf {
+    match raw {
+        Some("~") => BASE_DIRS.home_dir().to_path_buf(),
+        Some(s) => match s.strip_prefix("~/") {
+            Some(rest) => BASE_DIRS.home_dir().join(rest),
+            None => PathBuf::from(s),
+        },
+        None => default_work_dir(id),
     }
 }
 
-/// CLI over file over the embedded base.
-fn resolve_config(cli: &HostCli) -> Result<Config, String> {
+fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
+    DeniableTool::from_name(s).ok_or_else(|| {
+        format!(
+            "unknown tool `{s}`; deniable tools: run, rerun, interact, call, learn, new, \
+             commit, library, channel_open, channel_verified, channel_close",
+        )
+    })
+}
+
+/// The argument-owned values plus whatever the file contributes. The two surfaces are
+/// disjoint, so there is no precedence to resolve between them.
+fn resolve_config(cli: HostCli) -> Result<(Config, Option<HostCommand>), String> {
     let file = match &cli.config {
         Some(raw) => Config::read_toml(&expand_path(raw)?)?,
         None => ConfigToml::default(),
     };
-    overlay_toml(cli.overlay(), file).try_into()
+    let work_dir = resolve_work_dir(cli.workdir.as_deref(), &cli.id);
+    let config = Config::from_toml(
+        file,
+        cli.id,
+        cli.namespace,
+        work_dir,
+        DenySet::new(cli.deny),
+    )?;
+    Ok((config, cli.command))
 }
 
 pub async fn host_main() -> process::ExitCode {
     let cli = HostCli::parse();
-    let config = match resolve_config(&cli) {
-        Ok(config) => config,
+    let (config, command) = match resolve_config(cli) {
+        Ok(resolved) => resolved,
         Err(reason) => {
             eprintln!("{reason}");
             // 2 is the operator-input exit code the one-shot CLI already uses.
@@ -226,7 +227,7 @@ pub async fn host_main() -> process::ExitCode {
         }
     };
     CONFIG.set(config).expect("CONFIG set once at startup");
-    match cli.command {
+    match command {
         None => {
             run_server().await;
             process::ExitCode::SUCCESS

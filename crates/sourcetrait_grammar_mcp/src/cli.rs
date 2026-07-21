@@ -79,7 +79,7 @@ pub(crate) enum CliTool {
         #[arg(long)]
         timeout_ms: Option<u64>,
     },
-    /// Evaluate a source-code body on a stateless worker.
+    /// Evaluate a source-code body on a stateless thread.
     Run {
         /// The nushell source-code body.
         body: String,
@@ -96,7 +96,7 @@ pub(crate) enum CliTool {
         #[arg(long)]
         timeout_ms: Option<u64>,
     },
-    /// Evaluate a body on a stateful worker. Single-shot: the session
+    /// Evaluate a body on a stateful thread. Single-shot: the session
     /// state dies with this process.
     Interact {
         /// The nushell source-code body.

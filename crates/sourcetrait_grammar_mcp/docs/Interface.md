@@ -37,9 +37,9 @@ $XDG_DATA_HOME/sourcetrait/grammar/<id>/<namespace>/{keypair,libraries}
 $XDG_CACHE_HOME/sourcetrait/grammar/<id>/<namespace>/{runs,interacts,calls,closures}
 ```
 
-Workers receive the coordinate + work dir as spawn env, so bodies and
-committed call-targets read `$env.EQUIP_ID` / `$env.EQUIP_NAMESPACE` /
-`$env.EQUIP_WORK_DIR` ambiently; `info()` reports the same values.
+Eval bodies and committed call-targets read `$env.EQUIP_ID` /
+`$env.EQUIP_NAMESPACE` / `$env.EQUIP_WORK_DIR` ambiently (the host seeds them
+from its config); `info()` reports the same values.
 
 Example `.mcp.json` entries (one binary, two channels):
 
@@ -89,8 +89,8 @@ keeps the library repo itself safe, but an in-flight call can
 transiently fail.
 
 ## Overview
-- [`run()`](#run) Evaluate a typed nushell source-code body on a stateless worker.
-- [`interact()`](#interact) Evaluate a typed nushell source-code body on a persistent stateful worker.
+- [`run()`](#run) Evaluate a typed nushell source-code body on a stateless thread.
+- [`interact()`](#interact) Evaluate a typed nushell source-code body on a persistent stateful thread.
 - [`call()`](#call) Invoke a committed library function with typed args.
 - [`rerun()`](#rerun) Re-evaluate a cached `run()` body with fresh args.
 - [`processes()`](#processes) List in-flight MCP tool usage.
@@ -104,7 +104,7 @@ transiently fail.
 
 
 ## `run()`
-*Evaluate a typed nushell source-code body on a stateless worker.*
+*Evaluate a typed nushell source-code body on a stateless thread.*
 
 ### arguments
 
@@ -180,7 +180,7 @@ Output (partial):
 ```
 
 ## `interact()`
-*Evaluate a typed nushell source-code body on a persistent stateful worker.*
+*Evaluate a typed nushell source-code body on a persistent stateful thread.*
 
 ### arguments
 
@@ -371,8 +371,10 @@ Output (partial):
 ## `kill()`
 *Cancel an in-flight usage by its nonce.*
 
-SIGKILLs the worker holding the call. No payload; silently succeeds if
-the nonce is unknown or already completed (race-safe).
+Triggers a cooperative cancel of the in-flight call (nushell bails at its next
+check point) and reaps its external process tree - there is no worker to
+SIGKILL. No payload; silently succeeds if the nonce is unknown or already
+completed (race-safe).
 
 ### arguments
 

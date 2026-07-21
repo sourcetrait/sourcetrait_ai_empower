@@ -69,8 +69,14 @@ fn namespaces_are_disjoint_stores() {
 
     let mut ns2 = Host::spawn_args(t.temp_dir(), &["--id", "aid", "--namespace", "ns2"]);
     let info = ns2.call("info", json!({}));
-    let libs = structured(&info)["libraries"].as_array().expect("libraries array");
-    assert!(libs.is_empty(), "ns2 must not see ns1's libraries; got {libs:?}");
+    let block = structured(&info)["signatures"]
+        .as_str()
+        .expect("info carries a signatures block");
+    assert!(
+        block.is_empty(),
+        "ns2 must not see ns1's libraries, so its block is empty rather than \
+         absent; got {block:?}",
+    );
     let called = ns2.call_np("sourcetrait/nslib:m:double", json!({"x": 4}));
     assert!(has_error_path(&called), "ns2 call into ns1's library must fail; got {called}");
 

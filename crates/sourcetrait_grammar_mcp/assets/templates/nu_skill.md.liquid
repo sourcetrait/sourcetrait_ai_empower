@@ -1003,7 +1003,7 @@ before you return thousands of paths.
 - [`rerun()`](#rerun) Re-evaluate a cached `run()` body with fresh args.
 - [`processes()`](#processes) List in-flight MCP tool usage.
 - [`kill()`](#kill) Cancel an in-flight usage by its nonce.
-- [`info()`](#info) Versions, plugins, and libraries summary.
+- [`info()`](#info) Versions, plugins, and every library's callable signatures.
 - [`inspect()`](#inspect) Detailed documentation of a specific callable library, module, function.
 - [`new()`](#new) Scaffold modules / functions (by namepath) into existing libraries.
 - [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
@@ -1332,7 +1332,7 @@ Output (partial):
 ```
 
 ### `info()`
-*Versions, plugins, and libraries summary.*
+*Versions, plugins, and every library's callable signatures.*
 
 #### arguments
 
@@ -1364,58 +1364,78 @@ Output (partial):
       "id": "emptwo",
       "namespace": "default",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
-      "libraries": [
-        {
-          "name": "geo",
-          "path": "/abs/path/to/source/geo",
-          "summary": "planar geometry helpers",
-          "modules": [
-            {
-              "name": "shape",
-              "summary": "",
-              "submodules": [],
-              "functions": [
-                {
-                  "name": "area",
-                  "summary": "result is in the inputs' unit, squared",
-                  "args_schema": { "width": "float", "height": "float" },
-                  "result_schema": { "area": "float" }
-                }
-              ]
-            }
-          ],
-          "functions": []
-        }
-      ]
+      "signatures": "acme/\n geo: # planar geometry helpers\n  shape\n   area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n"
     },
     "content": []
   }
 }
 ```
 
-The `libraries` hierarchy is the live, version-matched `call()` surface:
-each library carries `path` (the editable source dir) + a one-line
-`summary` + `modules` + root-level `functions`; each module carries
-`summary` + `submodules` + `functions`; each function carries its
-one-line `summary` + structured `args_schema` + `result_schema` (a
-void-args function reads `{}`). A library HAS modules; a module MAY HAVE
-submodules. `plugins` are positional `[name, version]` pairs (version is
-`null` when the plugin reports none). `id` + `namespace` are the state
-store this server serves, and `work_dir` its configured agent work dir (its
-operator config); a body reads all three ambiently as `$env.EQUIP_ID` /
-`$env.EQUIP_NAMESPACE` / `$env.EQUIP_WORK_DIR` - the who-am-I and
-where-is-my-work answers, no pid matching needed. This is ground truth -
-prefer it over any static index. For a node's full details, call `inspect()`.
+`signatures` is the live, version-matched `call()` surface as ONE indented
+text block. Rendered, that value reads:
+
+```txt
+acme/
+ geo: # planar geometry helpers
+  shape
+   area <width:float,height:float> <area:float> # result is in the inputs' unit, squared
+```
+
+STRUCTURE IS THE INDENTATION - one space per level - and the TRAILING
+CHARACTER IS THE KIND:
+
+| line | kind |
+|---|---|
+| `<author>/` | an author, heading its group; carries no summary |
+| `<name>:` | a library |
+| `<name>` | a module, at any depth |
+| `<name> <args> <result>` | a call |
+
+Read a call line straight into a `call()`: the namepath is the enclosing
+`<author>/<name>` plus the module path plus the leaf, so the `area` line above
+is `call("acme/geo:shape:area", {width: 3.0, height: 4.0})`.
+
+A node's one-line summary follows as ` # ...`, omitted ENTIRELY when the node
+is undocumented. Within a level, calls come before submodules and each group
+sorts by name; libraries sort by author, then name.
+
+A signature group is the type grammar above with two changes, both only at the
+top level: the `record<...>` wrapper is written `<...>`, and there is no space
+after a comma. A VOID renders `<>`, so a call taking nothing and returning
+nothing reads `ping <> <>`. Nested types keep their full spelling -
+`table<name:string,where:directory>`, `oneof<int,nothing>`, `list<string>`.
+
+`plugins` are positional `[name, version]` pairs (version is `null` when the
+plugin reports none). `id` + `namespace` are the state store this server
+serves, and `work_dir` its configured agent work dir (its operator config); a
+body reads all three ambiently as `$env.EQUIP_ID` / `$env.EQUIP_NAMESPACE` /
+`$env.EQUIP_WORK_DIR` - the who-am-I and where-is-my-work answers, no pid
+matching needed. This is ground truth - prefer it over any static index. For a
+node's details and its source location, call `inspect()`.
 
 ### `inspect()`
 *Detailed documentation of a specific callable library, module, function.*
 
-Returns the single-node descriptor `{library, module_path, name?,
-summary, args_schema?, result_schema?, details}` - `name` and the
-schemas are present only for a function; `details` is last. Empty strings
-when undocumented. `namepath` is `<author>/<library>` (the root),
-`<author>/<library>:module/path` (a module), or
-`<author>/<library>:module/path:function`.
+Returns EXACTLY one field, `doc`, carrying one of three shapes - the namepath
+is not reprinted, because you supplied it. Which shape arrives follows from the
+arity you asked for:
+
+| namepath | `doc` |
+|---|---|
+| `<author>/<library>` | `{srcdir, summary, details}` |
+| `<author>/<library>:module/path` | `{src, summary, details}` |
+| `<author>/<library>:module/path:function` | `{src, signature, details}` |
+
+`srcdir` and `src` point into the COMMITTED CANONICAL tree - a library's
+directory, and a module's or a call's `mod.nu` - not the authored source. Read
+`src` when you want the code behind a call; it is the file that actually ran.
+
+A CALL CARRIES NO `summary`: the summary is part of the signature, exactly as
+in the `info()` block. The signature here is the STANDALONE form, printing the
+FULL NAMEPATH where the block prints only the leaf name, because nothing around
+it supplies the hierarchy. Everything after that first token is identical
+between the two, so a signature read in either place means the same thing.
+Strings are empty when undocumented.
 
 #### arguments
 
@@ -1443,13 +1463,11 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "library": "geo",
-      "module_path": "shape",
-      "name": "area",
-      "summary": "result is in the inputs' unit, squared",
-      "args_schema": { "width": "float", "height": "float" },
-      "result_schema": { "area": "float" },
-      "details": "Planar rectangle only; negative inputs are a type-clean error."
+      "doc": {
+        "src": "/abs/path/to/store/libraries/rig/acme/geo/shape/area/mod.nu",
+        "signature": "acme/geo:shape:area <width:float,height:float> <area:float> # result is in the inputs' unit, squared",
+        "details": "Planar rectangle only; negative inputs are a type-clean error."
+      }
     },
     "content": []
   }
@@ -1707,12 +1725,11 @@ Schema (partial):
 ## Bootstrap: run info() first
 
 `info()` returns the full, version-matched toolset for the current
-session - server + nu versions, loaded plugins, and the entire
-library hierarchy with each node's summary + call schemas. The libraries
-change between sessions; reading them live is how a fresh bootstrap (or a
-subagent) learns exactly which `call()` targets exist now - then
-`inspect()` for a node's full details - rather than trusting a static
-index that drifts.
+session - server + nu versions, loaded plugins, and every library's callable
+surface as one compact signature block. The libraries change between sessions;
+reading them live is how a fresh bootstrap (or a subagent) learns exactly which
+`call()` targets exist now - then `inspect()` for a node's details and its
+source location - rather than trusting a static index that drifts.
 
 The `mcp__<key>__*` tool-name prefix comes from the CLIENT's server-entry
 key (e.g. `.mcp.json`), not from the server: the same binary surfaces as

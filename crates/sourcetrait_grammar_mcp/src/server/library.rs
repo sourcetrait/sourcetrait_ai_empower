@@ -498,34 +498,6 @@ pub(crate) fn load_index(library: &str) -> io::Result<LibraryIndex> {
 
 
 
-/// One callable function in the `info()` hierarchy.
-#[derive(Debug, ser::Serialize, schema::JsonSchema)]
-pub struct FunctionInfo {
-    pub name: String,
-    pub summary: String,
-    pub args_schema: mcp::JsonObject,
-    pub result_schema: mcp::JsonObject,
-}
-
-/// One module node in the `info()` hierarchy.
-#[derive(Debug, ser::Serialize, schema::JsonSchema)]
-pub struct ModuleInfo {
-    pub name: String,
-    pub summary: String,
-    pub submodules: Vec<ModuleInfo>,
-    pub functions: Vec<FunctionInfo>,
-}
-
-/// One registered library in the `info()` hierarchy.
-#[derive(Debug, ser::Serialize, schema::JsonSchema)]
-pub struct LibraryInfo {
-    pub name: String,
-    pub path: String,
-    pub summary: String,
-    pub modules: Vec<ModuleInfo>,
-    pub functions: Vec<FunctionInfo>,
-}
-
 fn read_doc(docs_dir: &std::path::Path, coord: &str, file: &str) -> String {
     let dir = if coord.is_empty() {
         docs_dir.to_path_buf()
@@ -535,51 +507,9 @@ fn read_doc(docs_dir: &std::path::Path, coord: &str, file: &str) -> String {
     fs::read_to_string(dir.join(file)).unwrap_or_default()
 }
 
-fn index_function_to_info(
-    f: &IndexFunction,
-    docs_dir: &std::path::Path,
-    parent: &str,
-) -> FunctionInfo {
-    let coord = if parent.is_empty() {
-        f.name.clone()
-    } else {
-        format!("{parent}/{}", f.name)
-    };
-    FunctionInfo {
-        name: f.name.clone(),
-        summary: read_doc(docs_dir, &coord, "summary.md"),
-        args_schema: f.args_schema.clone(),
-        result_schema: f.result_schema.clone(),
-    }
-}
-
-fn index_module_to_info(
-    m: &IndexModule,
-    docs_dir: &std::path::Path,
-    parent: &str,
-) -> ModuleInfo {
-    let coord = if parent.is_empty() {
-        m.name.clone()
-    } else {
-        format!("{parent}/{}", m.name)
-    };
-    ModuleInfo {
-        name: m.name.clone(),
-        summary: read_doc(docs_dir, &coord, "summary.md"),
-        submodules: m
-            .modules
-            .iter()
-            .map(|s| index_module_to_info(s, docs_dir, &coord))
-            .collect(),
-        functions: m
-            .functions
-            .iter()
-            .map(|f| index_function_to_info(f, docs_dir, &coord))
-            .collect(),
-    }
-}
-
-pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo> {
+/// Every registered library's compound `<author>/<name>`, sorted - which sorts by
+/// author then name, since the author is the leading segment.
+pub(crate) fn registered_library_names() -> Vec<String> {
     let dir = libraries_dir().join(RIG_TYPE_DIR);
     let mut names: Vec<String> = Vec::new();
     if let Ok(read) = fs::read_dir(&dir) {
@@ -607,8 +537,123 @@ pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo
         }
     }
     names.sort();
-    let mut out = Vec::new();
-    for name in names {
+    names
+}
+
+/// One space per depth level - the indentation IS the structure.
+const SIGNATURE_INDENT: &str = " ";
+
+/// `<token> # <summary>`, with the ` # ...` omitted ENTIRELY when the node is
+/// undocumented rather than left as an empty comment.
+///
+/// Shared by the block and the standalone form, so a summary is attached the
+/// same way wherever a signature appears.
+pub(crate) fn with_summary(
+    token: &str,
+    summary: &str,
+) -> String {
+    let summary = summary.trim();
+    if summary.is_empty() {
+        token.to_string()
+    } else {
+        format!("{token} # {summary}")
+    }
+}
+
+/// Append one indented signature line to the block.
+fn push_signature_line(
+    out: &mut String,
+    depth: usize,
+    token: &str,
+    summary: &str,
+) {
+    out.push_str(&SIGNATURE_INDENT.repeat(depth));
+    out.push_str(&with_summary(token, summary));
+    out.push('\n');
+}
+
+/// A call's `<name> <args> <result>`, with `name` the caller's choice of leaf or
+/// full namepath.
+///
+/// THE TWO MODES OVER ONE IMPLEMENTATION: the TREE form passes the leaf name,
+/// because the indentation around it supplies the hierarchy; a STANDALONE form
+/// (an exact inspect) passes the full namepath, because nothing around it does.
+/// Everything after that first token is identical between them, which is the
+/// point - the two surfaces cannot drift.
+pub(crate) fn signature_of(
+    name: &str,
+    f: &IndexFunction,
+) -> String {
+    let render = |which: &str, rendered: Result<String, String>| -> String {
+        rendered.unwrap_or_else(|e| {
+            eprintln!("grammar: {which} signature for `{name}` did not render: {e}");
+            "<?>".to_string()
+        })
+    };
+    let args = render("args", args_schema_to_signature(&f.args_schema));
+    let result = render("result", result_schema_to_signature(&f.result_schema));
+    format!("{name} {args} {result}")
+}
+
+/// Render one module's calls then its submodules, recursing.
+///
+/// Calls before submodules: the callables at a level are what a reader scans
+/// for, and a submodule pushes the eye deeper. Each group sorts by name.
+fn push_signature_nodes(
+    out: &mut String,
+    depth: usize,
+    functions: &[IndexFunction],
+    modules: &[IndexModule],
+    docs_dir: &std::path::Path,
+    parent: &str,
+) {
+    let coord_of = |name: &str| -> String {
+        if parent.is_empty() {
+            name.to_string()
+        } else {
+            format!("{parent}/{name}")
+        }
+    };
+    let mut calls: Vec<&IndexFunction> = functions.iter().collect();
+    calls.sort_by(|a, b| a.name.cmp(&b.name));
+    for f in calls {
+        let coord = coord_of(&f.name);
+        push_signature_line(
+            out,
+            depth,
+            &signature_of(&f.name, f),
+            &read_doc(docs_dir, &coord, "summary.md"),
+        );
+    }
+    let mut subs: Vec<&IndexModule> = modules.iter().collect();
+    subs.sort_by(|a, b| a.name.cmp(&b.name));
+    for m in subs {
+        let coord = coord_of(&m.name);
+        push_signature_line(
+            out,
+            depth,
+            &m.name,
+            &read_doc(docs_dir, &coord, "summary.md"),
+        );
+        push_signature_nodes(out, depth + 1, &m.functions, &m.modules, docs_dir, &coord);
+    }
+}
+
+/// The whole store as ONE indented signature block.
+///
+/// Structure is the indentation and the TRAILING CHARACTER is the kind:
+/// `<author>/` heads a group and carries no summary (there is no author-level
+/// doc), `<library>:` opens a library, a module is bare, and a call carries its
+/// two signature groups. Replaces the structured `libraries` tree info() used to
+/// return - roughly 8 KB of nested JSON for two libraries, and the agent's first
+/// read after the skill.
+pub(crate) async fn render_signatures(locks: &LibraryLocks) -> String {
+    let mut out = String::new();
+    let mut current_author: Option<String> = None;
+    for name in registered_library_names() {
+        let Some((author, leaf)) = name.split_once('/') else {
+            continue;
+        };
         let lock = locks.lookup(&name).await;
         let _guard = match &lock {
             Some(l) => Some(l.read().await),
@@ -617,39 +662,74 @@ pub(crate) async fn enumerate_libraries(locks: &LibraryLocks) -> Vec<LibraryInfo
         let index = match load_index(&name) {
             Ok(i) => i,
             Err(e) => {
-                eprintln!("grammar: info enumeration skipped {name}: {e}");
+                eprintln!("grammar: signature block skipped {name}: {e}");
                 continue;
             }
         };
+        if current_author.as_deref() != Some(author) {
+            push_signature_line(&mut out, 0, &format!("{author}/"), "");
+            current_author = Some(author.to_string());
+        }
         let docs_dir = library_docs_dir(&name);
-        out.push(LibraryInfo {
-            name: name.clone(),
-            path: index.source_path.display().to_string(),
-            summary: read_doc(&docs_dir, "", "summary.md"),
-            modules: index
-                .modules
-                .iter()
-                .map(|m| index_module_to_info(m, &docs_dir, ""))
-                .collect(),
-            functions: index
-                .functions
-                .iter()
-                .map(|f| index_function_to_info(f, &docs_dir, ""))
-                .collect(),
-        });
+        push_signature_line(
+            &mut out,
+            1,
+            &format!("{leaf}:"),
+            &read_doc(&docs_dir, "", "summary.md"),
+        );
+        push_signature_nodes(
+            &mut out,
+            2,
+            &index.functions,
+            &index.modules,
+            &docs_dir,
+            "",
+        );
     }
     out
 }
 
-#[derive(Debug, ser::Serialize)]
-pub(crate) struct InspectResult {
-    pub library: String,
-    pub module_path: String,
-    pub name: Option<String>,
+/// A library's documentation. `srcdir` is the COMMITTED CANONICAL directory, not
+/// the authored source - the agent already knows where its own domains are.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub struct LibraryDoc {
+    pub srcdir: String,
     pub summary: String,
-    pub args_schema: Option<mcp::JsonObject>,
-    pub result_schema: Option<mcp::JsonObject>,
     pub details: String,
+}
+
+/// A module's documentation; `src` is its committed `mod.nu`.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub struct ModuleDoc {
+    pub src: String,
+    pub summary: String,
+    pub details: String,
+}
+
+/// A call's documentation; `src` is the committed `mod.nu` holding its `main`.
+///
+/// There is no `summary` field: SUMMARY IS PART OF THE SIGNATURE, which carries
+/// it as the trailing ` # ...` exactly as the info() block does.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub struct CallDoc {
+    pub src: String,
+    pub signature: String,
+    pub details: String,
+}
+
+/// What `inspect()` returns for one exact coordinate.
+///
+/// UNTAGGED, so each member serializes as its own bare shape and schemars renders
+/// the set as a `oneOf`. The caller always knows which member it will get,
+/// because it knows what it asked for. It rides under the envelope's single
+/// `doc` field rather than at the root - a root-level oneOf carries no
+/// `type: "object"` and Claude Code rejects it.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+#[serde(untagged)]
+pub enum InspectDoc {
+    Library(LibraryDoc),
+    Module(ModuleDoc),
+    Call(CallDoc),
 }
 
 pub(crate) fn index_node<'a>(
@@ -673,7 +753,7 @@ pub(crate) fn inspect_impl(
     library: &str,
     module_path: &str,
     name: Option<&str>,
-) -> Result<InspectResult, Error> {
+) -> Result<InspectDoc, Error> {
     if !is_valid_library(library) {
         return Err(Error::LibraryInvalidName {
             library: library.to_string(),
@@ -693,6 +773,9 @@ pub(crate) fn inspect_impl(
     }
     let index = load_index(library)?;
     let docs_dir = library_docs_dir(library);
+    // The COMMITTED canonical tree, never the authored source. All three paths
+    // compose from the coordinate, so nothing here reads `source_path`.
+    let root = library_dir(library);
     match name {
         Some(fn_name) => {
             let (fns, _) = index_node(&index, module_path).ok_or_else(|| {
@@ -708,21 +791,30 @@ pub(crate) fn inspect_impl(
                     name: fn_name.to_string(),
                 }
             })?;
-            let coord = if module_path.is_empty() {
-                fn_name.to_string()
-            } else {
-                format!("{module_path}/{fn_name}")
-            };
-            Ok(InspectResult {
-                library: library.to_string(),
-                module_path: module_path.to_string(),
-                name: Some(fn_name.to_string()),
-                summary: read_doc(&docs_dir, &coord, "summary.md"),
+            let coord = format!("{module_path}/{fn_name}");
+            // The STANDALONE form: the FULL NAMEPATH in place of the leaf name,
+            // because nothing around it supplies the hierarchy the block's
+            // indentation would.
+            let namepath = format!("{library}:{module_path}:{fn_name}");
+            Ok(InspectDoc::Call(CallDoc {
+                src: root
+                    .join(module_path)
+                    .join(fn_name)
+                    .join("mod.nu")
+                    .display()
+                    .to_string(),
+                signature: with_summary(
+                    &signature_of(&namepath, f),
+                    &read_doc(&docs_dir, &coord, "summary.md"),
+                ),
                 details: read_doc(&docs_dir, &coord, "details.md"),
-                args_schema: Some(f.args_schema.clone()),
-                result_schema: Some(f.result_schema.clone()),
-            })
+            }))
         }
+        None if module_path.is_empty() => Ok(InspectDoc::Library(LibraryDoc {
+            srcdir: root.display().to_string(),
+            summary: read_doc(&docs_dir, "", "summary.md"),
+            details: read_doc(&docs_dir, "", "details.md"),
+        })),
         None => {
             if index_node(&index, module_path).is_none() {
                 return Err(Error::LibraryInvalidModulePath {
@@ -730,15 +822,11 @@ pub(crate) fn inspect_impl(
                     reason: "module not found".to_string(),
                 });
             }
-            Ok(InspectResult {
-                library: library.to_string(),
-                module_path: module_path.to_string(),
-                name: None,
+            Ok(InspectDoc::Module(ModuleDoc {
+                src: root.join(module_path).join("mod.nu").display().to_string(),
                 summary: read_doc(&docs_dir, module_path, "summary.md"),
                 details: read_doc(&docs_dir, module_path, "details.md"),
-                args_schema: None,
-                result_schema: None,
-            })
+            }))
         }
     }
 }

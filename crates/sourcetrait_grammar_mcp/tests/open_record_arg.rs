@@ -75,8 +75,12 @@ fn commit_inspect_and_call_open_record_arg_field() {
     assert!(!has_error(&committed), "a call-target with a `record<>` arg field should commit; got {committed}");
 
     let inspected = s.inspect("sourcetrait/openlib:m:soak");
-    assert_eq!(inspected["args_schema"], json!({"x": "int", "fill": {}}), "inspect should show the open-record arg field; got {inspected}");
-    assert_eq!(inspected["result_schema"], json!({"sum": "int", "fillcols": "int"}));
+    assert_eq!(
+        inspected["doc"]["signature"].as_str(),
+        Some("sourcetrait/openlib:m:soak <x:int,fill:record<>> <sum:int,fillcols:int>"),
+        "the OPEN record keeps its `record<>` spelling inside the signature - it is \
+         the author's literal arg syntax, not a bare `record`; got {inspected}",
+    );
 
     let called = s.call("sourcetrait/openlib:m:soak", json!({"x": 5, "fill": {"a": 1, "b": 2, "c": 3}}));
     assert_eq!(called["result"]["sum"].as_i64(), Some(5), "got {called}");

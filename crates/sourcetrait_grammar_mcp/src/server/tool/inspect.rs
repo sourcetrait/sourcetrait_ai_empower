@@ -9,19 +9,15 @@ pub struct InspectParams {
 }
 
 /// Success result of `inspect()` -- the documentation for one node.
+///
+/// EXACTLY one field. The namepath is not reprinted, because the caller supplied
+/// it, and the per-kind shapes carry nothing in common worth hoisting.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct InspectEnvelope {
-    pub library: String,
-    pub module_path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    pub summary: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub args_schema: Option<mcp::JsonObject>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result_schema: Option<mcp::JsonObject>,
-    /// The node's full detail documentation (empty when undocumented).
-    pub details: String,
+    /// The node's documentation: a library (`srcdir`), a module (`src`), or a
+    /// call (`src` + its full `signature`). Each also carries `details`, and a
+    /// library and module their `summary`; a call's summary rides its signature.
+    pub doc: InspectDoc,
 }
 
 #[mcp::tool_router(router = inspect_router, vis = "pub(crate)")]
@@ -60,15 +56,7 @@ impl NuSh {
         };
         let _guard = lock.read().await;
         match inspect_impl(&library, &module_path, name.as_deref()) {
-            Ok(r) => envelope_to_structured(&InspectEnvelope {
-                library: r.library,
-                module_path: r.module_path,
-                name: r.name,
-                summary: r.summary,
-                args_schema: r.args_schema,
-                result_schema: r.result_schema,
-                details: r.details,
-            }),
+            Ok(doc) => envelope_to_structured(&InspectEnvelope { doc }),
             Err(error) => Ok(error_to_call_result(error, None)),
         }
     }

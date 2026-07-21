@@ -732,6 +732,68 @@ fn render_nu_result(r: &NuResultTypedef) -> std::string::String {
 }
 
 
+// The SIGNATURE renderers - the compact form the eyesig block prints. A parallel
+// pair rather than a flag threaded through the pair above, so each stays readable
+// on its own. Two differences from the full spelling, both only at the TOP level:
+// the `record<...>` wrapper collapses to `<...>`, and a void renders `<>` rather
+// than `<nothing>`. Nested types keep their full spelling; the separators lose
+// their spaces throughout.
+
+fn render_signature_typedef(t: &NuTypedef) -> std::string::String {
+    match t {
+        NuTypedef::Scalar(s) => s.name().to_string(),
+        NuTypedef::Nothing => "nothing".to_string(),
+        NuTypedef::Record(r) => format!("record<{}>", render_signature_fields(&r.fields)),
+        NuTypedef::Oneof(o) => {
+            let parts: Vec<std::string::String> =
+                o.members.iter().map(render_signature_typedef).collect();
+            format!("oneof<{}>", parts.join(","))
+        }
+        NuTypedef::Table(tab) => {
+            let cols: Vec<std::string::String> = tab
+                .columns
+                .iter()
+                .map(|c| format!("{}:{}", c.name.0, render_signature_typedef(&c.typedef)))
+                .collect();
+            format!("table<{}>", cols.join(","))
+        }
+        NuTypedef::List(l) => format!("list<{}>", render_signature_typedef(&l.element)),
+    }
+}
+
+fn render_signature_fields(fields: &[NuRecordFieldTypedef]) -> std::string::String {
+    let parts: Vec<std::string::String> = fields
+        .iter()
+        .map(|f| format!("{}:{}", f.name.0, render_signature_typedef(&f.typedef)))
+        .collect();
+    parts.join(",")
+}
+
+/// The `<...>` an args schema contributes to a signature line; `<>` when void.
+pub(crate) fn args_schema_to_signature(
+    schema: &mcp::JsonObject
+) -> Result<std::string::String, std::string::String> {
+    Ok(match parse_json_args(schema)? {
+        JsonArgsTypedef::Void => "<>".to_string(),
+        JsonArgsTypedef::Record(r) => {
+            format!("<{}>", render_signature_fields(&record_j2n(&r).fields))
+        }
+    })
+}
+
+/// The `<...>` a result schema contributes to a signature line; `<>` when void.
+pub(crate) fn result_schema_to_signature(
+    schema: &mcp::JsonObject
+) -> Result<std::string::String, std::string::String> {
+    Ok(match parse_json_result(schema)? {
+        JsonResultTypedef::Void => "<>".to_string(),
+        JsonResultTypedef::Record(r) => {
+            format!("<{}>", render_signature_fields(&record_j2n(&r).fields))
+        }
+    })
+}
+
+
 fn json_to_nu_typedef(t: &JsonTypedef) -> NuTypedef {
     match t {
         JsonTypedef::Scalar(s) => NuTypedef::Scalar(scalar_j2n(*s)),

@@ -95,7 +95,7 @@ transiently fail.
 - [`rerun()`](#rerun) Re-evaluate a cached `run()` body with fresh args.
 - [`processes()`](#processes) List in-flight MCP tool usage.
 - [`kill()`](#kill) Cancel an in-flight usage by its nonce.
-- [`info()`](#info) Versions, plugins, and libraries summary.
+- [`info()`](#info) Versions, plugins, and every library's callable signatures.
 - [`inspect()`](#inspect) Detailed documentation of a specific callable library, module, function.
 - [`new()`](#new) Scaffold modules / functions (by namepath) into existing libraries.
 - [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
@@ -413,7 +413,7 @@ Output (partial):
 ```
 
 ## `info()`
-*Versions, plugins, and libraries summary.*
+*Versions, plugins, and every library's callable signatures.*
 
 ### arguments
 
@@ -446,34 +446,41 @@ Output (partial):
       "namespace": "default",
       "work_dir": "/home/user/ai/emptwo",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
-      "libraries": [
-        {
-          "name": "acme/geo",
-          "path": "/abs/path/to/source/geo",
-          "summary": "planar geometry helpers",
-          "modules": [
-            {
-              "name": "shape",
-              "summary": "",
-              "submodules": [],
-              "functions": [
-                {
-                  "name": "area",
-                  "summary": "result is in the inputs' unit, squared",
-                  "args_schema": { "width": "float", "height": "float" },
-                  "result_schema": { "area": "float" }
-                }
-              ]
-            }
-          ],
-          "functions": []
-        }
-      ]
+      "signatures": "acme/\n geo: # planar geometry helpers\n  shape\n   area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n"
     },
     "content": []
   }
 }
 ```
+
+`signatures` is ONE indented text block. Rendered, that value reads:
+
+```txt
+acme/
+ geo: # planar geometry helpers
+  shape
+   area <width:float,height:float> <area:float> # result is in the inputs' unit, squared
+```
+
+STRUCTURE IS THE INDENTATION - one space per level - and the TRAILING CHARACTER
+IS THE KIND:
+
+| line | kind |
+|---|---|
+| `<author>/` | an author, heading its group; carries no summary |
+| `<name>:` | a library |
+| `<name>` | a module, at any depth |
+| `<name> <args> <result>` | a call |
+
+A node's one-line summary follows as ` # ...`, omitted ENTIRELY when the node is
+undocumented. Within a level, calls come before submodules and each group sorts
+by name; libraries sort by author, then name.
+
+A signature group is the nu type grammar with two changes, both only at the top
+level: the `record<...>` wrapper is written `<...>`, and there is no space after
+a comma. A VOID renders `<>`, so a call taking nothing and returning nothing
+reads `ping <> <>`. Nested types keep their full spelling -
+`table<name:string,where:directory>`, `oneof<int,nothing>`, `list<string>`.
 
 ## `inspect()`
 *Detailed documentation of a specific callable library, module, function.*
@@ -507,18 +514,35 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "library": "acme/geo",
-      "module_path": "shape",
-      "name": "area",
-      "summary": "result is in the inputs' unit, squared",
-      "args_schema": { "width": "float", "height": "float" },
-      "result_schema": { "area": "float" },
-      "details": "Planar rectangle only; negative inputs are a type-clean error."
+      "doc": {
+        "src": "/abs/path/to/store/libraries/rig/acme/geo/shape/area/mod.nu",
+        "signature": "acme/geo:shape:area <width:float,height:float> <area:float> # result is in the inputs' unit, squared",
+        "details": "Planar rectangle only; negative inputs are a type-clean error."
+      }
     },
     "content": []
   }
 }
 ```
+
+The envelope is EXACTLY one field, `doc` - the namepath is not reprinted,
+because you supplied it. Which of three shapes arrives follows from the arity
+you asked for:
+
+| namepath | `doc` |
+|---|---|
+| `<author>/<library>` | `{srcdir, summary, details}` |
+| `<author>/<library>:module/path` | `{src, summary, details}` |
+| `<author>/<library>:module/path:function` | `{src, signature, details}` |
+
+`srcdir` and `src` point into the COMMITTED CANONICAL tree - a library's
+directory, and a module's or a call's `mod.nu` - not the authored source.
+
+A CALL CARRIES NO `summary`: the summary is part of the signature, exactly as in
+the `info()` block. The signature here is the STANDALONE form, printing the FULL
+NAMEPATH where the block prints only the leaf name, because nothing around it
+supplies the hierarchy. Everything after that first token is identical between
+the two.
 
 ## `new()`
 *Scaffold modules / functions (by namepath) into existing libraries.*

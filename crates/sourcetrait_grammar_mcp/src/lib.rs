@@ -114,9 +114,9 @@ pub(crate) use crate::{
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         executor::Executor,
         library::{
-            LibraryInfo, LibraryLocks, ValidationResult, check_library,
-            check_source_dir, commit_impl, ensure_substrate, enumerate_libraries, establish_library,
-            index_node, inspect_impl, install_impl, is_reserved_term, is_valid_ident,
+            LibraryLocks, ValidationResult, check_library,
+            check_source_dir, commit_impl, ensure_substrate, establish_library, render_signatures,
+            InspectDoc, index_node, inspect_impl, install_impl, is_reserved_term, is_valid_ident,
             is_valid_library,
             is_valid_module_path,
             libraries_dir, load_index, scaffold_leaf, scaffold_leaf_exists, uninstall_impl,
@@ -130,7 +130,10 @@ pub(crate) use crate::{
             ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body, wrap_as_module,
         },
         run::{eval_concurrency_cap, run_server},
-        schema::{args_schema_to_nu, nu_to_args_schema, nu_to_result_schema, result_schema_to_nu},
+        schema::{
+            args_schema_to_nu, args_schema_to_signature, nu_to_args_schema, nu_to_result_schema,
+            result_schema_to_nu, result_schema_to_signature,
+        },
         teardown::{
             OrphanReaper, install_child_subreaper, kill_plugin_subprocesses, make_tracker,
             tree_kill,

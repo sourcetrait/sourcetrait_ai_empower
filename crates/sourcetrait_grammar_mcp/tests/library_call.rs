@@ -1,5 +1,7 @@
 use serde_json::json;
-use sourcetrait_grammar_mcp::guts::{TestServer, has_error, valid_function_source, write_source};
+use sourcetrait_grammar_mcp::guts::{
+    TestServer, has_error, library_block, valid_function_source, write_source,
+};
 use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
@@ -110,13 +112,33 @@ fn inspect_returns_function_doc() {
     );
     let _ = s.commit("sourcetrait/inspectlib");
     let env = s.inspect("sourcetrait/inspectlib:math:double");
-    assert_eq!(env["summary"].as_str(), Some("doubles its input"));
-    assert_eq!(env["details"].as_str(), Some("returns the doubled value"));
-    assert_eq!(env["library"].as_str(), Some("sourcetrait/inspectlib"));
-    assert_eq!(env["module_path"].as_str(), Some("math"));
-    assert_eq!(env["name"].as_str(), Some("double"));
-    assert_eq!(env["args_schema"], json!({"x": "int"}));
-    assert_eq!(env["result_schema"], json!({"out": "int"}));
+    assert_eq!(
+        env.as_object().expect("envelope object").len(),
+        1,
+        "the envelope is EXACTLY one field; got {env}",
+    );
+    let doc = &env["doc"];
+    assert_eq!(
+        doc["signature"].as_str(),
+        Some("sourcetrait/inspectlib:math:double <x:int> <out:int> # doubles its input"),
+        "the STANDALONE form carries the full namepath, both signature groups, \
+         and the summary; got {env}",
+    );
+    assert_eq!(doc["details"].as_str(), Some("returns the doubled value"));
+    assert!(
+        doc["src"]
+            .as_str()
+            .is_some_and(|p| p.ends_with("/rig/sourcetrait/inspectlib/math/double/mod.nu")),
+        "src is the COMMITTED canonical mod.nu holding main; got {env}",
+    );
+    assert!(
+        doc.get("summary").is_none(),
+        "a call has no separate summary - it rides the signature; got {env}",
+    );
+    assert!(
+        doc.get("args_schema").is_none() && doc.get("result_schema").is_none(),
+        "the structured schemas are replaced by the signature; got {env}",
+    );
 }
 
 #[test]
@@ -135,9 +157,21 @@ fn inspect_library_root_and_module() {
     );
     let _ = s.commit("sourcetrait/inspectlib2");
     let lib = s.inspect("sourcetrait/inspectlib2");
-    assert_eq!(lib["summary"].as_str(), Some("the inspectlib2 library"));
+    assert_eq!(lib["doc"]["summary"].as_str(), Some("the inspectlib2 library"));
+    assert!(
+        lib["doc"]["srcdir"]
+            .as_str()
+            .is_some_and(|p| p.ends_with("/rig/sourcetrait/inspectlib2")),
+        "a library carries srcdir - the committed directory it lives in; got {lib}",
+    );
     let m = s.inspect("sourcetrait/inspectlib2:math");
-    assert_eq!(m["summary"].as_str(), Some("math helpers"));
+    assert_eq!(m["doc"]["summary"].as_str(), Some("math helpers"));
+    assert!(
+        m["doc"]["src"]
+            .as_str()
+            .is_some_and(|p| p.ends_with("/rig/sourcetrait/inspectlib2/math/mod.nu")),
+        "a module carries src - its committed mod.nu; got {m}",
+    );
 }
 
 #[test]
@@ -155,8 +189,12 @@ fn inspect_undocumented_is_empty() {
     );
     let _ = s.commit("sourcetrait/inspectlib3");
     let env = s.inspect("sourcetrait/inspectlib3:m:f");
-    assert_eq!(env["summary"].as_str(), Some(""));
-    assert_eq!(env["details"].as_str(), Some(""));
+    assert_eq!(
+        env["doc"]["signature"].as_str(),
+        Some("sourcetrait/inspectlib3:m:f <x:int> <out:int>"),
+        "an undocumented call's signature carries no trailing ` # ` at all; got {env}",
+    );
+    assert_eq!(env["doc"]["details"].as_str(), Some(""));
 }
 
 #[test]
@@ -183,12 +221,13 @@ fn result_record_field_shapes_preserved() {
     assert!(!has_error(&committed), "commit should succeed; got {committed}");
     let env = s.inspect("sourcetrait/fidelitylib:m:shapes");
     assert_eq!(
-        env["result_schema"],
-        json!({"p": "path", "d": "directory", "c": "cell-path", "g": "glob"}),
-        "result fields must keep path/directory/cell-path/glob verbatim; got {}",
-        env["result_schema"],
+        env["doc"]["signature"].as_str(),
+        Some(
+            "sourcetrait/fidelitylib:m:shapes <n:int> \
+             <p:path,d:directory,c:cell-path,g:glob>"
+        ),
+        "path/directory/cell-path/glob survive verbatim into the signature; got {env}",
     );
-    assert_eq!(env["args_schema"], json!({"n": "int"}));
 }
 
 #[test]
@@ -210,27 +249,12 @@ fn helper_file_pruned_from_info_and_not_callable() {
     assert!(!has_error(&committed), "commit should succeed; got {committed}");
 
     let info = s.info();
-    let libs = info["libraries"].as_array().expect("libraries array");
-    let lib = libs
-        .iter()
-        .find(|l| l["name"].as_str() == Some("sourcetrait/helperlib"))
-        .expect("helperlib present in info() (not dropped by the helper file)");
-    let module = lib["modules"]
-        .as_array()
-        .expect("modules")
-        .iter()
-        .find(|m| m["name"].as_str() == Some("m"))
-        .expect("module m present");
-    let fn_names: Vec<&str> = module["functions"]
-        .as_array()
-        .expect("functions")
-        .iter()
-        .map(|f| f["name"].as_str().expect("fn name"))
-        .collect();
+    let signatures = info["signatures"].as_str().expect("signatures block");
     assert_eq!(
-        fn_names,
-        vec!["real"],
-        "only the call-target should be listed; got {fn_names:?}",
+        library_block(signatures, "helperlib"),
+        " helperlib:\n  m\n   real <x:int> <out:int>\n",
+        "only the call-target is listed - the organizational helper file is \
+         pruned from the index, so it never reaches the block",
     );
 
     let ok = s.call("sourcetrait/helperlib:m:real", json!({"x": 41}));

@@ -1,34 +1,39 @@
 use std::path::Path;
 
-use serde_json::{Value, json};
-use sourcetrait_grammar_mcp::guts::{TestServer, has_error, valid_function_source, write_source};
+use sourcetrait_grammar_mcp::guts::{
+    TestServer, has_error, library_block, valid_function_source, write_source,
+};
 use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-/// Read a committed golden JSON under `<crate>/testing/goldens/`, comparing it to
-/// `actual`. `BLESS=1 cargo test` (re)writes it from the actual value; without the
-/// golden present (and no BLESS) the read fails loudly. Goldens capture stable
-/// serialize-shaped output so a shape change is a reviewable file diff.
-fn golden(name: &str, actual: &Value) -> Value {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("testing/goldens").join(name);
+/// Read a committed golden under `<crate>/testing/goldens/`, comparing it to
+/// `actual`. `BLESS=1 cargo test` (re)writes it from the actual value; without
+/// the golden present (and no BLESS) the read fails loudly.
+///
+/// The signature block is WHITESPACE-SIGNIFICANT, which is what makes it a good
+/// golden: an indentation bug shows up as a plain file diff rather than as a
+/// structural assertion nobody reads.
+fn golden_text(
+    name: &str,
+    actual: &str,
+) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testing/goldens")
+        .join(name);
     if std::env::var("BLESS").is_ok() {
         std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir goldens");
-        std::fs::write(&path, serde_json::to_string_pretty(actual).expect("serialize golden"))
-            .expect("write golden");
+        std::fs::write(&path, actual).expect("write golden");
     }
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read golden {name}: {e} (run with BLESS=1 to (re)generate)"));
-    serde_json::from_str(&text).expect("parse golden")
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read golden {name}: {e} (run with BLESS=1 to (re)generate)"))
 }
 
-fn find_node<'a>(nodes: &'a Value, name: &str) -> &'a Value {
-    nodes
-        .as_array()
-        .expect("node array")
-        .iter()
-        .find(|n| n["name"].as_str() == Some(name))
-        .unwrap_or_else(|| panic!("node `{name}` not found in {nodes}"))
+fn signatures(s: &TestServer) -> String {
+    s.info()["signatures"]
+        .as_str()
+        .expect("info carries a signatures block")
+        .to_string()
 }
 
 #[test]
@@ -64,15 +69,17 @@ fn info_returns_static_server_state() {
             entry[1],
         );
     }
-    // The "fresh store -> 0 libraries" property belongs to the SYSTEM tier (a per-store
-    // fact: id_namespace::namespaces_are_disjoint_stores checks a fresh namespace is empty).
-    // This binary's in-process store is shared across its tests, so no empty-libraries
-    // assertion is made here.
+
+    assert!(
+        env.get("libraries").is_none(),
+        "the structured hierarchy is gone; `signatures` replaces it. got {env}",
+    );
+    assert!(env["signatures"].is_string(), "signatures is a text block; got {env}");
 }
 
 #[test]
 #[named]
-fn info_lists_committed_library_hierarchy() {
+fn info_renders_a_committed_library_as_a_signature_block() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("treelib");
@@ -104,25 +111,22 @@ fn info_lists_committed_library_hierarchy() {
     let committed = s.commit("sourcetrait/treelib");
     assert!(!has_error(&committed), "commit failed: {committed}");
 
-    let info = s.info();
-    let libs = info["libraries"].as_array().expect("libraries array");
-    let mut lib = libs
-        .iter()
-        .find(|l| l["name"].as_str() == Some("sourcetrait/treelib"))
-        .expect("treelib present in info()")
-        .clone();
-    // `path` is the volatile per-run temp source dir: assert it inline, then drop it
-    // from the golden comparison (the golden captures the stable hierarchy shape).
-    assert_eq!(lib["path"].as_str(), src.to_str(), "path should be the meta source_path");
-    lib.as_object_mut().unwrap().remove("path");
-
-    let expected = golden("info_treelib.json", &lib);
-    assert_eq!(lib, expected, "info() treelib hierarchy drifted from the golden");
+    let block = signatures(&s);
+    let actual = library_block(&block, "treelib");
+    assert_eq!(
+        actual,
+        golden_text("info_treelib.txt", &actual),
+        "the treelib signature block drifted from the golden",
+    );
+    assert!(
+        block.contains("sourcetrait/\n"),
+        "the author heads its own group and carries no summary; got:\n{block}",
+    );
 }
 
 #[test]
 #[named]
-fn info_lists_hand_authored_library_hierarchy() {
+fn the_indentation_is_the_hierarchy() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("implib");
@@ -135,37 +139,19 @@ fn info_lists_hand_authored_library_hierarchy() {
         "math/double/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: ($args.x * 2) }"),
     );
-
     let committed = s.commit("sourcetrait/implib");
     assert!(!has_error(&committed), "commit failed: {committed}");
 
-    let info = s.info();
-    let libs = info["libraries"].as_array().expect("libraries array");
-    let lib = libs
-        .iter()
-        .find(|l| l["name"].as_str() == Some("sourcetrait/implib"))
-        .expect("implib present in info()");
-    assert_eq!(lib["path"].as_str(), src.to_str(), "path should be the source directory");
-    assert!(lib["functions"].as_array().expect("root fns").is_empty());
-    let modules = lib["modules"].as_array().expect("modules");
-    assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0]["name"].as_str(), Some("math"));
-    assert!(
-        modules[0]["submodules"]
-            .as_array()
-            .expect("math submodules")
-            .is_empty(),
+    assert_eq!(
+        library_block(&signatures(&s), "implib"),
+        " implib:\n  math\n   double <x:int> <out:int>\n",
+        "one space per level, and an undocumented node carries no ` # `",
     );
-    let math_fns = modules[0]["functions"].as_array().expect("math fns");
-    assert_eq!(math_fns.len(), 1);
-    assert_eq!(math_fns[0]["name"].as_str(), Some("double"));
-    assert_eq!(math_fns[0]["args_schema"], json!({"x": "int"}));
-    assert_eq!(math_fns[0]["result_schema"], json!({"out": "int"}));
 }
 
 #[test]
 #[named]
-fn info_includes_node_summaries() {
+fn summaries_ride_the_line_and_are_omitted_when_absent() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("doctreelib");
@@ -180,16 +166,60 @@ fn info_includes_node_summaries() {
     let committed = s.commit("sourcetrait/doctreelib");
     assert!(!has_error(&committed), "commit failed: {committed}");
 
-    let info = s.info();
-    let libs = info["libraries"].as_array().expect("libraries array");
-    let lib = libs
-        .iter()
-        .find(|l| l["name"].as_str() == Some("sourcetrait/doctreelib"))
-        .expect("doctreelib present in info()");
-    assert_eq!(lib["summary"].as_str(), Some("the doctree library"));
-    let module = find_node(&lib["modules"], "m");
-    assert_eq!(module["summary"].as_str(), Some("the m module"));
-    let fns = module["functions"].as_array().expect("functions");
-    assert_eq!(fns[0]["name"].as_str(), Some("fn"));
-    assert_eq!(fns[0]["summary"].as_str(), Some("the fn summary"));
+    assert_eq!(
+        library_block(&signatures(&s), "doctreelib"),
+        " doctreelib: # the doctree library\n  m # the m module\n   fn <x:int> <out:int> # the fn summary\n",
+        "summary is part of the line, on every kind that has one",
+    );
+}
+
+#[test]
+#[named]
+fn a_void_renders_as_empty_angles() {
+    let t = testing::test!({ .using_temp_dir() });
+    let s = TestServer::new();
+    let src = t.temp_dir().join("voidlib");
+    let _ = s.library("new", "sourcetrait/voidlib", src.to_str().unwrap());
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use ping\n");
+    write_source(
+        &src,
+        "m/ping/mod.nu",
+        "export def main [args: nothing]: nothing -> nothing { }\n",
+    );
+    let committed = s.commit("sourcetrait/voidlib");
+    assert!(!has_error(&committed), "commit failed: {committed}");
+
+    assert_eq!(
+        library_block(&signatures(&s), "voidlib"),
+        " voidlib:\n  m\n   ping <> <>\n",
+        "a void arg list and a void result each render `<>`, never `<nothing>`",
+    );
+}
+
+#[test]
+#[named]
+fn an_author_heads_its_group_exactly_once() {
+    let t = testing::test!({ .using_temp_dir() });
+    let s = TestServer::new();
+    for leaf in ["onelib", "twolib"] {
+        let src = t.temp_dir().join(leaf);
+        let name = format!("sourcetrait/{leaf}");
+        let _ = s.library("new", &name, src.to_str().unwrap());
+        write_source(&src, "mod.nu", "export module m\n");
+        write_source(&src, "m/mod.nu", "export use go\n");
+        write_source(
+            &src,
+            "m/go/mod.nu",
+            &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
+        );
+        let committed = s.commit(&name);
+        assert!(!has_error(&committed), "commit {name} failed: {committed}");
+    }
+    let block = signatures(&s);
+    let heads = block.lines().filter(|l| *l == "sourcetrait/").count();
+    assert_eq!(
+        heads, 1,
+        "the author line is emitted once per GROUP, not once per library; got:\n{block}",
+    );
 }

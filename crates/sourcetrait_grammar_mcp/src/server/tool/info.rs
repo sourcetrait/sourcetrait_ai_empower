@@ -22,13 +22,16 @@ pub(crate) struct InfoEnvelope {
     /// (`--workdir`), exported to eval bodies as $env.EQUIP_WORK_DIR.
     pub work_dir: String,
     pub plugins: Vec<crate::plugins::PluginInfo>,
-    pub libraries: Vec<LibraryInfo>,
+    /// Every registered library's callable surface as one indented block, where
+    /// the indentation is the hierarchy and the trailing character is the kind:
+    /// `author/`, `library:`, a bare module, then `call <args> <result>`.
+    pub signatures: String,
 }
 
 #[mcp::tool_router(router = info_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Versions, plugins, and libraries summary.",
+        description = "Versions, plugins, and every library's callable signatures.",
         output_schema = mcp::schema_for_type::<InfoEnvelope>()
     )]
     pub(crate) async fn info(
@@ -44,7 +47,7 @@ impl NuSh {
             mcp_nom: self.mcp_nom.to_string(),
             work_dir: config().work_dir.display().to_string(),
             plugins: list_registered_plugins(),
-            libraries: enumerate_libraries(&self.library_locks).await,
+            signatures: render_signatures(&self.library_locks).await,
         })
     }
 }

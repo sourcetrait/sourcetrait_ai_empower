@@ -385,6 +385,41 @@ pub fn error_text(env: &json::Value) -> String {
     env.get("error").map(|e| e.to_string()).unwrap_or_default()
 }
 
+/// One library's slice of an `info()` signature block - its `<leaf>:` line plus
+/// everything indented beneath it.
+///
+/// The in-process store is shared across a test BINARY, so the block carries
+/// every library that binary has created. A test asserting on its own library
+/// must slice first: a bare `contains` check against the whole block can be
+/// satisfied - or falsified - by an unrelated library another test committed.
+pub fn library_block(
+    signatures: &str,
+    leaf: &str,
+) -> String {
+    let head = format!(" {leaf}:");
+    let mut out: Vec<&str> = Vec::new();
+    for line in signatures.lines() {
+        if out.is_empty() {
+            if line == head || line.starts_with(&format!("{head} ")) {
+                out.push(line);
+            }
+            continue;
+        }
+        // Depth 0 is an author and depth 1 the next library; either ends this
+        // library's own subtree.
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        if indent <= 1 {
+            break;
+        }
+        out.push(line);
+    }
+    assert!(
+        !out.is_empty(),
+        "library `{leaf}` is absent from the block:\n{signatures}",
+    );
+    format!("{}\n", out.join("\n"))
+}
+
 // ---- source-tree helpers (small inline trees; larger inputs use fixtures) ----
 
 pub fn write_source(dir: &std::path::Path, rel: &str, contents: &str) {

@@ -6,15 +6,14 @@ pub(crate) struct InstallPlan<'a> {
     pub cert_base: &'a Path,
     /// Filename stem, matching the `name` used at generate time.
     pub name: &'a str,
-    /// System trust anchor dir. The ONLY destination that needs elevation, and the one
-    /// path used verbatim - `update-ca-trust` owns its layout, so no `certs` leaf.
-    pub anchor_dir: &'a Path,
+    /// The resolved trust-store layout: anchor dir, anchor extension, refresh command.
+    /// The anchor dir is the one path used verbatim - the store owns its layout, so no
+    /// `certs` leaf goes there.
+    pub store: &'a crate::store::Resolved,
     /// Base for the runtime key material; the keys land in `<base>/certs`.
     pub secret_base: &'a Path,
     /// User to hand the non-anchor artifacts to. Defaults to `$SUDO_USER`.
     pub owner: Option<&'a str>,
-    /// The command that rebuilds the extracted trust bundle.
-    pub update_command: &'a str,
 }
 
 pub(crate) struct Installed {
@@ -45,7 +44,9 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
     // evidence that this platform's trust store is where we think it is, and creating
     // it would turn a typo into a silent success - a cert dropped in a directory
     // nothing reads, with the trust never taking and no error to show for it.
-    require_existing_dir(plan.anchor_dir, "trust anchor dir")?;
+    if let crate::store::Placement::AnchorDir { dir, .. } = &plan.store.placement {
+        require_existing_dir(dir, "trust anchor dir")?;
+    }
     require_existing_dir(plan.secret_base, "secret base")?;
 
     let secret_dir = crate::generate::certs_dir(plan.secret_base);
@@ -62,8 +63,12 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
     fs::create_dir_all(&secret_dir)
         .map_err(|e| CertError::io(format!("creating {}", secret_dir.display()), e))?;
     let mut secrets = Vec::new();
+    // The authority PUBLIC cert rides along too. It is not a secret, but `verify` needs
+    // the CA body to look for in the trust store, and carrying it here keeps verify
+    // working identically whether the anchor became a file or a keychain entry.
     for source in [
         &files.authority_private,
+        &files.authority_public,
         &files.entity_private,
         &files.entity_public,
     ] {
@@ -81,9 +86,7 @@ pub(crate) fn install(plan: &InstallPlan<'_>) -> Result<Installed> {
         }
     }
 
-    let anchor = plan.anchor_dir.join(format!("{}.pem", plan.name));
-    copy(&files.authority_public, &anchor)?;
-    run_update(plan.update_command)?;
+    let anchor = place_anchor(&plan.store.placement, &files.authority_public, plan.name)?;
 
     Ok(Installed {
         anchor,
@@ -165,15 +168,44 @@ fn copy(
     Ok(())
 }
 
-/// Run the trust-store refresh with NO arguments of our own.
-///
-/// An earlier cut passed `extract`, which is a Fedora-ism: it couples the command to
-/// one distribution's subcommand vocabulary even though the command itself is a flag.
-/// Bare `update-ca-trust` already extracts, and the bare form is equally correct for
-/// Debian's `update-ca-certificates` - so parameterizing the command while hardcoding
-/// its argument was the worst of both.
-fn run_update(command: &str) -> Result<()> {
+/// Hand the CA certificate to whichever trust model this platform uses, returning where
+/// it landed (a file path, or the keychain it was ingested into).
+fn place_anchor(
+    placement: &crate::store::Placement,
+    authority_public: &Path,
+    name: &str,
+) -> Result<PathBuf> {
+    match placement {
+        crate::store::Placement::AnchorDir {
+            dir,
+            extension,
+            update_command,
+            ..
+        } => {
+            let anchor = dir.join(format!("{name}.{extension}"));
+            copy(authority_public, &anchor)?;
+            // NO arguments of our own. An earlier cut passed `extract`, which couples
+            // us to one distribution's subcommand vocabulary even while the command
+            // itself is a flag; bare `update-ca-trust` already extracts, and the bare
+            // form is equally correct for `update-ca-certificates`.
+            run(update_command, &[])?;
+            Ok(anchor)
+        }
+        crate::store::Placement::Keychain { program, keychain } => {
+            let cert = authority_public.to_string_lossy().into_owned();
+            let key = keychain.to_string_lossy().into_owned();
+            run(program, &["add-trusted-cert", "-d", "-r", "trustRoot", "-k", &key, &cert])?;
+            Ok(keychain.clone())
+        }
+    }
+}
+
+fn run(
+    command: &str,
+    args: &[&str],
+) -> Result<()> {
     let output = process::Command::new(command)
+        .args(args)
         .output()
         .map_err(|e| CertError::io(format!("running {command}"), e))?;
     if !output.status.success() {

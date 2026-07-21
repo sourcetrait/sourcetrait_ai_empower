@@ -3,12 +3,14 @@ mod error;
 mod generate;
 mod install;
 mod run;
+mod store;
 mod verify;
 
 #[cfg(test)]
 mod tests {
     mod config;
     mod generate;
+    mod store;
     mod verify;
 }
 

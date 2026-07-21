@@ -1,9 +1,6 @@
 use crate::*;
 
 const DEFAULT_NAME: &str = "grammar";
-const DEFAULT_ANCHOR_DIR: &str = "/etc/pki/ca-trust/source/anchors";
-const DEFAULT_BUNDLE: &str = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem";
-const DEFAULT_UPDATE_COMMAND: &str = "update-ca-trust";
 
 #[derive(clap::Parser)]
 #[command(
@@ -22,26 +19,27 @@ enum Command {
     Generate {
         /// Parameters: subjects, SANs, validity. Carries no paths.
         config: PathBuf,
-        /// Base directory; the artifacts are written to its `certs` subdir, which
-        /// must not already exist.
+        /// Base directory; the artifacts are written to its `certs` subdir, which must
+        /// not already exist.
         base: PathBuf,
     },
-    /// Place every artifact. Needs root ONLY for the trust anchor.
+    /// Place every artifact. Needs elevation ONLY for the trust anchor.
     Install {
         /// The base passed to `generate`.
         base: PathBuf,
-        /// Base for the runtime key material; the keys land in its `certs` subdir.
+        /// Base for the runtime key material; it lands in this dir's `certs` subdir.
         #[arg(long)]
         secret_base: PathBuf,
         #[arg(long, default_value = DEFAULT_NAME)]
         name: String,
-        #[arg(long, default_value = DEFAULT_ANCHOR_DIR)]
-        anchor_dir: PathBuf,
+        /// Override the detected trust store with a directory-model anchor dir.
+        #[arg(long)]
+        anchor_dir: Option<PathBuf>,
         /// User to hand the non-anchor artifacts to. Defaults to `$SUDO_USER`.
         #[arg(long)]
         owner: Option<String>,
-        #[arg(long, default_value = DEFAULT_UPDATE_COMMAND)]
-        update_command: String,
+        #[arg(long)]
+        update_command: Option<String>,
     },
     /// Confirm the anchor took and the key is readable. Run UNPRIVILEGED.
     Verify {
@@ -49,11 +47,13 @@ enum Command {
         secret_base: PathBuf,
         #[arg(long, default_value = DEFAULT_NAME)]
         name: String,
-        #[arg(long, default_value = DEFAULT_ANCHOR_DIR)]
-        anchor_dir: PathBuf,
-        #[arg(long, default_value = DEFAULT_BUNDLE)]
-        bundle: PathBuf,
+        #[arg(long)]
+        anchor_dir: Option<PathBuf>,
+        #[arg(long)]
+        bundle: Option<PathBuf>,
     },
+    /// Report which trust-store layout this system presents.
+    Store,
 }
 
 pub fn run() -> Result<()> {
@@ -70,16 +70,17 @@ pub fn run() -> Result<()> {
             &base,
             &secret_base,
             &name,
-            &anchor_dir,
+            anchor_dir.as_deref(),
             owner.as_deref(),
-            &update_command,
+            update_command.as_deref(),
         ),
         Command::Verify {
             secret_base,
             name,
             anchor_dir,
             bundle,
-        } => cmd_verify(&secret_base, &name, &anchor_dir, &bundle),
+        } => cmd_verify(&secret_base, &name, anchor_dir.as_deref(), bundle.as_deref()),
+        Command::Store => cmd_store(),
     }
 }
 
@@ -99,17 +100,21 @@ fn cmd_install(
     base: &Path,
     secret_base: &Path,
     name: &str,
-    anchor_dir: &Path,
+    anchor_dir: Option<&Path>,
     owner: Option<&str>,
-    update_command: &str,
+    update_command: Option<&str>,
 ) -> Result<()> {
+    let store = crate::store::resolve(anchor_dir, update_command, None)?;
+    match store.detected {
+        Some(id) => eprintln!("grammar_cert: trust store {id} ({:?})", store.kind()),
+        None => eprintln!("grammar_cert: trust store from arguments ({:?})", store.kind()),
+    }
     let installed = install(&crate::install::InstallPlan {
         cert_base: base,
         name,
-        anchor_dir,
+        store: &store,
         secret_base,
         owner,
-        update_command,
     })?;
     println!("{}", installed.anchor.display());
     for path in &installed.secrets {
@@ -125,23 +130,35 @@ fn cmd_install(
 fn cmd_verify(
     secret_base: &Path,
     name: &str,
-    anchor_dir: &Path,
-    bundle: &Path,
+    anchor_dir: Option<&Path>,
+    bundle: Option<&Path>,
 ) -> Result<()> {
+    let store = crate::store::resolve(anchor_dir, None, bundle)?;
     let verified = verify(&crate::verify::VerifyPlan {
         secret_base,
         name,
-        anchor_dir,
-        bundle,
+        store: &store,
     })?;
     println!("key readable: {}", verified.key_path.display());
-    println!("anchor present: {}", verified.anchor_path.display());
-    if !verified.anchor_in_bundle {
+    if !verified.anchor_trusted {
         return Err(CertError::msg(format!(
-            "anchor is not in {}; run `sudo grammar_cert install` first",
-            bundle.display(),
+            "anchor is not trusted in {}",
+            verified.trust_source,
         )));
     }
-    println!("anchor trusted: {}", bundle.display());
+    println!("anchor trusted: {}", verified.trust_source);
     Ok(())
+}
+
+/// Report what we detect, so a platform we do not know is a legible answer rather than
+/// a confusing failure inside `install`.
+fn cmd_store() -> Result<()> {
+    match crate::store::detect() {
+        Some(store) => {
+            println!("{}", store.id());
+            println!("{:?}", store.kind());
+            Ok(())
+        }
+        None => Err(CertError::msg("no known trust store found")),
+    }
 }

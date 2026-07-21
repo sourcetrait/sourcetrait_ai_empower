@@ -11,6 +11,7 @@ pub(crate) mod server {
     pub(crate) mod executor;
     pub(crate) mod library;
     pub(crate) mod lint;
+    pub(crate) mod liveness;
     pub(crate) mod namepath;
     pub(crate) mod nonce;
     pub(crate) mod oneshot;
@@ -119,6 +120,7 @@ pub(crate) use crate::{
             libraries_dir, load_index, scaffold_leaf, scaffold_leaf_exists, uninstall_impl,
         },
         lint::{LINT_VIOLATION_CAP, lint_body},
+        liveness::acquire as acquire_host_lock,
         namepath::{Namepath, NamepathRef},
         nonce::{McpNom, Nonce, NonceGen},
         oneshot::run_oneshot,
@@ -141,7 +143,7 @@ pub(crate) use crate::{
             commit::CommitParams,
             config_channel::ConfigChannelParams,
             common::{
-                CachedRunBody, InFlightKind, NuSh, RunParams, convert_schemas,
+                CachedRunBody, InFlightEntry, InFlightKind, NuSh, RunParams, convert_schemas,
                 dispatch_interact, dispatch_pooled, envelope_to_structured, lint_run_params,
                 now_millis, teardown_all_in_flight,
             },
@@ -164,6 +166,7 @@ pub(crate) use std::{
     fs,
     io::{self, Write},
     hash::{Hash, Hasher},
+    os::unix::fs::OpenOptionsExt,
     ops::ControlFlow,
     panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
@@ -211,7 +214,7 @@ pub(crate) mod nu {
             Operator, Pattern, RecordItem,
         },
         debugger::WithoutDebug,
-        engine::{Command, EngineState, Jobs, Mail, Stack, StateWorkingSet, ThreadJob},
+        engine::{Command, EngineState, Job, Jobs, Mail, Stack, StateWorkingSet, ThreadJob},
     };
     pub(crate) use nu_protocol::shell_error::generic::GenericError;
     pub(crate) use nuon::{ToNuonConfig, from_nuon, to_nuon};
@@ -257,6 +260,7 @@ pub(crate) mod tk {
     pub(crate) use tokio::{
         spawn,
         net::{TcpListener, TcpStream},
+        signal::unix::{SignalKind, signal},
         task::spawn_blocking,
         sync::{
             Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore, oneshot,

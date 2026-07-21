@@ -454,11 +454,13 @@ pub(crate) fn now_millis() -> u64 {
 }
 
 /// Clean-shutdown teardown: cancel every still-in-flight eval and reap its
-/// external process tree + the plugin subprocesses. Called after the MCP service
-/// stops (the client closed stdin), so a disconnect mid-eval never leaks a
-/// process tree.
+/// external process tree + the background jobs + the plugin subprocesses. Called
+/// after the MCP service stops (the client closed stdin) and from the signal
+/// handlers, so a disconnect or a signalled death mid-eval never leaks a process
+/// tree.
 pub(crate) async fn teardown_all_in_flight(
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
+    env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>,
 ) {
     let pids: Vec<u32> = {
         let map = in_flight.lock().await;
@@ -470,7 +472,38 @@ pub(crate) async fn teardown_all_in_flight(
         all
     };
     tree_kill(&pids);
+    sweep_env_jobs(env_jobs);
     kill_plugin_subprocesses();
+}
+
+/// Kill every background job in the host-owned table and reap the process trees
+/// they spawned.
+///
+/// `in_flight` CANNOT cover these, which is the whole reason this exists: a
+/// `job spawn` that outlives its eval has had its registry entry removed by
+/// `InFlightCleanup` the moment that dispatch returned, while `env_jobs` still
+/// holds it - and its external child is precisely the one that would otherwise be
+/// orphaned onto the box, still running as the box user with its supervising
+/// thread already gone.
+pub(crate) fn sweep_env_jobs(env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>) {
+    let tracked: Vec<u32> = {
+        let mut jobs = env_jobs.lock().unwrap_or_else(|e| e.into_inner());
+        // Collected BEFORE the kill: `kill_all` clears the table and takes the
+        // tracked pid sets with it, and nushell's own `kill` reaches only the
+        // DIRECT child anyway - the /proc descendant walk below is what gets a
+        // grandchild.
+        let tracked = jobs
+            .iter()
+            .filter_map(|(_, job)| match job {
+                nu::Job::Thread(thread_job) => Some(thread_job.collect_pids()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let _ = jobs.kill_all();
+        tracked
+    };
+    tree_kill(&tracked);
 }
 
 

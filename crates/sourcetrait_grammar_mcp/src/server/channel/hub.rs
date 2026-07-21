@@ -178,6 +178,26 @@ async fn serve_peer(
     let mut close_rx = close_rx;
     loop {
         tokio::select! {
+            // BIASED, close arm FIRST. `close_locked` signals the close and DROPS the
+            // packet sender in the same breath, so this arm and the `None` arm below go
+            // ready together - and an unbiased select picks a ready arm at RANDOM. That
+            // made a planned close reach the peer as our 1000 only about half the time,
+            // otherwise breaking the loop with no frame at all and leaving a bare 1006
+            // the agent cannot tell from a crashed host. Polling the close first is also
+            // the design stated directly: it must never wait behind queued traffic.
+            biased;
+
+            closing = &mut close_rx => {
+                if let Ok((code, reason)) = closing {
+                    let frame = ws::CloseFrame {
+                        code: ws::CloseCode::from(code),
+                        reason: reason.into(),
+                    };
+                    let _ = socket.send(ws::Message::Close(Some(frame))).await;
+                    let _ = socket.flush().await;
+                }
+                break;
+            }
             line = packets.recv() => match line {
                 Some(line) => {
                     // The last point before the wire, so the guard lives here: an
@@ -195,21 +215,9 @@ async fn serve_peer(
                         break;
                     }
                 }
+                // The handle went away with no close to announce.
                 None => break,
             },
-            // A planned close rides its OWN signal, so it can never wait behind queued
-            // packets - without the explicit frame the agent sees a bare 1006.
-            closing = &mut close_rx => {
-                if let Ok((code, reason)) = closing {
-                    let frame = ws::CloseFrame {
-                        code: ws::CloseCode::from(code),
-                        reason: reason.into(),
-                    };
-                    let _ = socket.send(ws::Message::Close(Some(frame))).await;
-                    let _ = socket.flush().await;
-                }
-                break;
-            }
             incoming = socket.next() => match incoming {
                 // Polling the read half is not optional: it is what lets tungstenite
                 // answer pings and observe the peer's own close.

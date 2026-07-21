@@ -26,12 +26,67 @@ pub(crate) async fn run_server() {
         env_jobs: server.env_jobs.clone(),
         tx: emergency_tx,
     });
+    // The store's liveness signal, held for the process lifetime. Non-fatal: two hosts
+    // may share one store coordinate, and "locked" still answers the watcher's question.
+    let _host_lock = match acquire_host_lock(&server.mcp_nom.to_string()) {
+        Ok(lock) => Some(lock),
+        Err(e) => {
+            eprintln!("grammar: host lock not held: {e}");
+            None
+        }
+    };
     let in_flight = server.in_flight.clone();
+    let env_jobs = server.env_jobs.clone();
+    // TERM / INT / HUP: without these a signalled host drops its eval children and its
+    // background jobs onto the box unreaped, because the stdio path only ever learns
+    // about a CLEAN client disconnect. None of it reaches SIGKILL - that is what the
+    // host lock is for.
+    spawn_signal_sweep(in_flight.clone(), env_jobs.clone());
     let service = server.serve(mcp::stdio()).await.expect("serve stdio");
     service.waiting().await.expect("service waiting");
     // Clean-shutdown teardown: the client closed stdin; cancel + reap any eval
     // still in flight so a disconnect mid-eval leaks no process tree.
-    teardown_all_in_flight(&in_flight).await;
+    teardown_all_in_flight(&in_flight, &env_jobs).await;
+}
+
+/// Sweep on TERM / INT / HUP, then exit with the conventional `128 + signo`.
+///
+/// Exiting is part of the contract: handling a termination signal without terminating
+/// would make the host ignore the very thing it was told to do.
+fn spawn_signal_sweep(
+    in_flight: Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
+    env_jobs: Arc<std::sync::Mutex<nu::Jobs>>,
+) {
+    tk::spawn(async move {
+        let mut term = match tk::signal(tk::SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("grammar: SIGTERM handler not installed: {e}");
+                return;
+            }
+        };
+        let mut interrupt = match tk::signal(tk::SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("grammar: SIGINT handler not installed: {e}");
+                return;
+            }
+        };
+        let mut hangup = match tk::signal(tk::SignalKind::hangup()) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("grammar: SIGHUP handler not installed: {e}");
+                return;
+            }
+        };
+        let signo = tokio::select! {
+            _ = term.recv() => nix::sys::signal::Signal::SIGTERM as i32,
+            _ = interrupt.recv() => nix::sys::signal::Signal::SIGINT as i32,
+            _ = hangup.recv() => nix::sys::signal::Signal::SIGHUP as i32,
+        };
+        teardown_all_in_flight(&in_flight, &env_jobs).await;
+        process::exit(128 + signo);
+    });
 }
 
 /// Max concurrent in-process evals. `available_parallelism / 2` (min 1): eval

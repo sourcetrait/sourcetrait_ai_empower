@@ -193,16 +193,32 @@ fn shell_error(
     .into()
 }
 
+/// The root job: a foreground eval. It owns no entry in the jobs table, so `Signals` is
+/// the only lever that reaches it.
+const ROOT_JOB_ID: usize = 0;
+
 /// Stop the origin that just crossed the hard threshold.
 ///
-/// `Signals::trigger` is the lever that reaches BOTH shapes: a spam loop is nu-level by
-/// construction - it invokes a decl over and over - so it polls at every one of those
-/// boundaries and bails. Targeting a detached job through the jobs table by its own
-/// JobId is the refinement, and it belongs with the destruction phase where the kill
-/// lever is the explicit subject rather than a side effect here.
+/// TWO LEVERS, because the offender has two shapes. `Signals::trigger` reaches a spam
+/// loop whatever it runs under - such a loop invokes a decl over and over, so it polls at
+/// every one of those boundaries and bails. But a job that OUTLIVED the eval that spawned
+/// it has no `in_flight` entry left - `InFlightCleanup` removed that the moment the
+/// dispatch returned - and the jobs table is the only place it is still reachable. A
+/// spawned closure reads its OWN JobId here, so `current_job` names the actual offender
+/// rather than its parent.
 fn stop_offender(engine_state: &nu::EngineState) -> String {
     engine_state.signals().trigger();
-    "signals triggered".to_string()
+    let job_id = engine_state.current_job.id;
+    if job_id.get() == ROOT_JOB_ID {
+        return "signals triggered".to_string();
+    }
+    let mut jobs = engine_state.jobs.lock().unwrap_or_else(|e| e.into_inner());
+    match jobs.kill_and_remove(job_id) {
+        Ok(()) => format!("signals triggered; job {job_id} killed"),
+        // The table entry is dropped either way; only killing its processes can fail, and
+        // an external the job left behind is the tree-kill machinery's to reap.
+        Err(e) => format!("signals triggered; job {job_id} removed, kill incomplete: {e}"),
+    }
 }
 
 /// Tell the agent about the abuse ON the channel, as well as through the emergency lane.

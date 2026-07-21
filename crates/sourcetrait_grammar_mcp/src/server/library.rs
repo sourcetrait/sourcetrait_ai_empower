@@ -595,6 +595,21 @@ pub(crate) fn signature_of(
     format!("{name} {args} {result}")
 }
 
+/// The hierarchy character a module line ends in.
+///
+/// IT IS THE PATTERN THAT ZOOMS INTO THAT NODE, which is what makes every line
+/// of the block directly actionable rather than merely descriptive: `/`
+/// DESCENDS the module tree, `:` selects the CALL level, exactly as the two
+/// separators already mean in a namepath. A module carrying submodules is
+/// therefore `/` - that pattern covers its whole subtree, calls included - and
+/// a leaf module holding only calls is `:`.
+///
+/// An indexed module always has something below it: the validator prunes any
+/// module with no call-target beneath it, so there is no empty third case.
+fn module_trailing(m: &IndexModule) -> &'static str {
+    if m.modules.is_empty() { ":" } else { "/" }
+}
+
 /// Render one module's calls then its submodules, recursing.
 ///
 /// Calls before submodules: the callables at a level are what a reader scans
@@ -632,7 +647,7 @@ fn push_signature_nodes(
         push_signature_line(
             out,
             depth,
-            &m.name,
+            &format!("{}{}", m.name, module_trailing(m)),
             &read_doc(docs_dir, &coord, "summary.md"),
         );
         push_signature_nodes(out, depth + 1, &m.functions, &m.modules, docs_dir, &coord);

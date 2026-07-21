@@ -144,7 +144,7 @@ fn the_indentation_is_the_hierarchy() {
 
     assert_eq!(
         library_block(&signatures(&s), "implib"),
-        " implib:\n  math\n   double <x:int> <out:int>\n",
+        " implib:\n  math:\n   double <x:int> <out:int>\n",
         "one space per level, and an undocumented node carries no ` # `",
     );
 }
@@ -168,7 +168,7 @@ fn summaries_ride_the_line_and_are_omitted_when_absent() {
 
     assert_eq!(
         library_block(&signatures(&s), "doctreelib"),
-        " doctreelib: # the doctree library\n  m # the m module\n   fn <x:int> <out:int> # the fn summary\n",
+        " doctreelib: # the doctree library\n  m: # the m module\n   fn <x:int> <out:int> # the fn summary\n",
         "summary is part of the line, on every kind that has one",
     );
 }
@@ -192,7 +192,7 @@ fn a_void_renders_as_empty_angles() {
 
     assert_eq!(
         library_block(&signatures(&s), "voidlib"),
-        " voidlib:\n  m\n   ping <> <>\n",
+        " voidlib:\n  m:\n   ping <> <>\n",
         "a void arg list and a void result each render `<>`, never `<nothing>`",
     );
 }

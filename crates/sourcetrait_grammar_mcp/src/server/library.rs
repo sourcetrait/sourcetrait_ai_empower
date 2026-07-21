@@ -498,6 +498,27 @@ pub(crate) fn load_index(library: &str) -> io::Result<LibraryIndex> {
 
 
 
+/// A node's one-line summary from `.meta/docs/<coord>/summary.md`, FLATTENED.
+///
+/// A summary is single-line in EFFECT, but it is hard-wrapped in source like any
+/// other comment (the_user), so the stored text carries the author's line breaks
+/// and the wrap has to come back out. Every consumer wants one line, and the
+/// signature block structurally REQUIRES it: an unflattened continuation lands
+/// at column 0, where the block's own grammar reads it as an AUTHOR line.
+///
+/// Normalizing HERE rather than at each consumer is what keeps the block, the
+/// standalone signature, and inspect's library/module `summary` fields agreeing.
+/// `details` is prose and keeps its newlines, so it stays on `read_doc`.
+fn read_summary(
+    docs_dir: &std::path::Path,
+    coord: &str,
+) -> String {
+    read_doc(docs_dir, coord, "summary.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn read_doc(docs_dir: &std::path::Path, coord: &str, file: &str) -> String {
     let dir = if coord.is_empty() {
         docs_dir.to_path_buf()
@@ -653,7 +674,7 @@ fn push_signature_nodes(
             out,
             depth,
             &signature_of(&format!("{call_prefix}{}", f.name), f),
-            &read_doc(docs_dir, &coord, "summary.md"),
+            &read_summary(docs_dir, &coord),
         );
     }
     let mut subs: Vec<&IndexModule> = modules.iter().collect();
@@ -664,7 +685,7 @@ fn push_signature_nodes(
             out,
             depth,
             &format!("{}{}", m.name, module_trailing(m)),
-            &read_doc(docs_dir, &coord, "summary.md"),
+            &read_summary(docs_dir, &coord),
         );
         push_signature_nodes(
             out,
@@ -714,7 +735,7 @@ pub(crate) async fn render_signatures(locks: &LibraryLocks) -> String {
             &mut out,
             1,
             &format!("{leaf}:"),
-            &read_doc(&docs_dir, "", "summary.md"),
+            &read_summary(&docs_dir, ""),
         );
         // A library ends in `:`, so anything directly beneath it needs no
         // separator of its own.
@@ -847,14 +868,14 @@ pub(crate) fn inspect_impl(
                     .to_string(),
                 signature: with_summary(
                     &signature_of(&namepath, f),
-                    &read_doc(&docs_dir, &coord, "summary.md"),
+                    &read_summary(&docs_dir, &coord),
                 ),
                 details: read_doc(&docs_dir, &coord, "details.md"),
             }))
         }
         None if module_path.is_empty() => Ok(InspectDoc::Library(LibraryDoc {
             srcdir: root.display().to_string(),
-            summary: read_doc(&docs_dir, "", "summary.md"),
+            summary: read_summary(&docs_dir, ""),
             details: read_doc(&docs_dir, "", "details.md"),
         })),
         None => {
@@ -866,7 +887,7 @@ pub(crate) fn inspect_impl(
             }
             Ok(InspectDoc::Module(ModuleDoc {
                 src: root.join(module_path).join("mod.nu").display().to_string(),
-                summary: read_doc(&docs_dir, module_path, "summary.md"),
+                summary: read_summary(&docs_dir, module_path),
                 details: read_doc(&docs_dir, module_path, "details.md"),
             }))
         }

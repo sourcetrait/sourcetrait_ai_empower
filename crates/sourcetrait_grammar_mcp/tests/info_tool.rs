@@ -199,6 +199,40 @@ fn a_void_renders_as_empty_angles() {
 
 #[test]
 #[named]
+fn a_multi_line_summary_is_flattened_onto_its_line() {
+    let t = testing::test!({ .using_temp_dir() });
+    let s = TestServer::new();
+    let src = t.temp_dir().join("wraplib");
+    let _ = s.library("new", "sourcetrait/wraplib", src.to_str().unwrap());
+    write_source(&src, "mod.nu", "export module m\n");
+    write_source(&src, "m/mod.nu", "export use go\n");
+    // A doc comment whose SUMMARY - everything before the first blank line -
+    // spans two source lines. The parser joins those with a newline, and real
+    // libraries in the store are written this way.
+    write_source(
+        &src,
+        "m/go/mod.nu",
+        "# Runs the thing against the other thing,\n# gating each step as it goes.\nexport def main [args: record<x: int>]: nothing -> record<out: int> { { out: $args.x } }\n",
+    );
+    let committed = s.commit("sourcetrait/wraplib");
+    assert!(!has_error(&committed), "commit failed: {committed}");
+
+    let block = library_block(&signatures(&s), "wraplib");
+    assert_eq!(
+        block,
+        " wraplib:\n  m:\n   go <x:int> <out:int> # Runs the thing against the other thing, gating each step as it goes.\n",
+        "a two-line summary must be FLATTENED onto its own line",
+    );
+    assert_eq!(
+        block.lines().count(),
+        3,
+        "three nodes means three lines - an unflattened summary would add a \
+         fourth at column 0, which the grammar reads as an AUTHOR; got:\n{block}",
+    );
+}
+
+#[test]
+#[named]
 fn a_mixed_module_states_its_own_call_separator() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

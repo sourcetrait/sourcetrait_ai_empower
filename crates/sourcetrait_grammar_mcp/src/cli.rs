@@ -175,17 +175,15 @@ impl LibraryCliAction {
     }
 }
 
+/// Every path out of an argument is expanded here, the same way config paths are, so a
+/// `~` or `$VAR` means the same thing whichever surface it arrived on.
 fn resolve_work_dir(
     raw: Option<&str>,
     id: &str,
-) -> PathBuf {
+) -> Result<PathBuf, String> {
     match raw {
-        Some("~") => BASE_DIRS.home_dir().to_path_buf(),
-        Some(s) => match s.strip_prefix("~/") {
-            Some(rest) => BASE_DIRS.home_dir().join(rest),
-            None => PathBuf::from(s),
-        },
-        None => default_work_dir(id),
+        Some(s) => expand_path(s),
+        None => Ok(default_work_dir(id)),
     }
 }
 
@@ -205,7 +203,7 @@ fn resolve_config(cli: HostCli) -> Result<(Config, Option<HostCommand>), String>
         Some(raw) => Config::read_toml(&expand_path(raw)?)?,
         None => ConfigToml::default(),
     };
-    let work_dir = resolve_work_dir(cli.workdir.as_deref(), &cli.id);
+    let work_dir = resolve_work_dir(cli.workdir.as_deref(), &cli.id)?;
     let config = Config::from_toml(
         file,
         cli.id,

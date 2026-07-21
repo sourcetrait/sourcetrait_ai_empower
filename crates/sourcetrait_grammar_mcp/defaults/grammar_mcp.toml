@@ -9,10 +9,15 @@
 # load, with the XDG family honoring the basedir spec fallbacks.
 
 [channel]
-# 0 lets the kernel pick any available port, which is the default: the agent learns the
-# real endpoint from channel_open's return, so nothing needs a fixed one. Pin it only if
-# something outside that flow has to predict the address.
-port = 0
+# port is OMITTED here on purpose: absent means the kernel assigns one, which is the
+# default. The agent learns the real endpoint from channel_open's return, so nothing
+# needs a fixed port. Set it only if something outside that flow has to predict the
+# address - and then it must be unprivileged (1024-65535); the host does not run as
+# root, so a lower port could only ever fail to bind, and 0 is rejected rather than
+# meaning "any".
+#
+#   port = 47800
+#
 # Where grammar_cert installs the leaf the hub presents. Kept in step with that tool's
 # own layout and its $XDGX_SECRET_DATA_HOME fallback.
 cert_dir = "$XDGX_SECRET_DATA_HOME/sourcetrait/grammar/certs"

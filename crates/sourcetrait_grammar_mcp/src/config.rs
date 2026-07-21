@@ -21,6 +21,10 @@ const DEFAULTS_CONFIG: &str = include_str!("../defaults/grammar_mcp.toml");
 /// The store namespace when `--namespace` is not given.
 pub(crate) const DEFAULT_NAMESPACE: &str = "default";
 
+/// Lowest port the channel hub may be pinned to. Anything below is privileged and the
+/// host is unprivileged by design.
+const MIN_CHANNEL_PORT: u16 = 1024;
+
 /// The file shape.
 #[derive(Debug, Clone, Default, ser::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,7 +41,8 @@ pub(crate) struct ConfigToml {
 #[derive(Debug, Clone, Default, ser::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ChannelConfigToml {
-    /// 0 (the default) means the kernel picks any available port.
+    /// Omit for a kernel-assigned port, which is the default. When present it must be
+    /// an unprivileged port (1024-65535); 0 is rejected rather than treated as "any".
     pub port: Option<u16>,
     pub cert_dir: Option<String>,
 }
@@ -55,29 +60,23 @@ pub(crate) struct Config {
 /// environment directly, so the cert location is configurable without a rebuild.
 #[derive(Debug, Clone)]
 pub(crate) struct ChannelConfig {
-    /// 0 = kernel-assigned. The agent learns the real endpoint from `channel_open`'s
-    /// return, so a random port is the sane default and a pinned one is the exception.
-    pub port: u16,
-    /// UNEXPANDED on purpose - see `cert_paths`.
-    pub cert_dir: String,
+    /// None = kernel-assigned, which is the default. The agent learns the real endpoint
+    /// from `channel_open`'s return, so an unpinned port is the sane default and a
+    /// pinned one is the exception. Modelled as an Option rather than a 0 sentinel
+    /// because 0 is not a port.
+    pub port: Option<u16>,
+    /// Fully expanded at load, like every other path out of config or arguments.
+    pub cert_dir: PathBuf,
 }
 
 impl ChannelConfig {
     /// The leaf the hub presents, and its key.
-    ///
-    /// Expansion is LAZY rather than done at merge time because channels are OPTIONAL:
-    /// the default `cert_dir` names `$XDGX_SECRET_DATA_HOME`, and a box that never
-    /// opens a channel need not have it set. Expanding eagerly would make the whole
-    /// host fail to start there - and would panic `Config::default()`, which the
-    /// in-process test harness builds. A missing variable is a `channel_open` failure,
-    /// which is the moment it actually matters.
-    pub(crate) fn cert_paths(&self) -> Result<(PathBuf, PathBuf), String> {
-        let dir = expand_path(&self.cert_dir)?;
+    pub(crate) fn cert_paths(&self) -> (PathBuf, PathBuf) {
         let name = lib_grammar::consts::GRAMMAR;
-        Ok((
-            dir.join(format!("entity_{name}.pem")),
-            dir.join(format!("entity_{name}.key.pem")),
-        ))
+        (
+            self.cert_dir.join(format!("entity_{name}.pem")),
+            self.cert_dir.join(format!("entity_{name}.key.pem")),
+        )
     }
 }
 
@@ -91,9 +90,21 @@ fn merged_channel(
     let Some(cert_dir) = user.cert_dir.or(base.cert_dir) else {
         return Err("the embedded defaults carry no channel.cert_dir".to_string());
     };
+    // Below 1024 is privileged: the host runs unprivileged, so such a bind could only
+    // ever fail. Rejecting it at load turns a confusing permission error at
+    // channel_open into a legible config error at startup.
+    let port = user.port.or(base.port);
+    if let Some(port) = port
+        && port < MIN_CHANNEL_PORT
+    {
+        return Err(format!(
+            "channel.port must be {MIN_CHANNEL_PORT}-65535 (below that is privileged); \
+             omit it for a kernel-assigned port",
+        ));
+    }
     Ok(ChannelConfig {
-        port: user.port.or(base.port).unwrap_or(0),
-        cert_dir,
+        port,
+        cert_dir: expand_path(&cert_dir)?,
     })
 }
 

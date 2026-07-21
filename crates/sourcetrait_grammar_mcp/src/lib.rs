@@ -53,6 +53,10 @@ pub(crate) mod nuapi {
         pub(crate) mod dbg;
     }
 }
+#[cfg(test)]
+mod tests {
+    mod config;
+}
 pub(crate) mod cli;
 pub(crate) mod config;
 pub(crate) mod engine;

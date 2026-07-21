@@ -17,10 +17,7 @@ const CLOSE_CLAIMED: u16 = 1013;
 const CLAIM_REASON: &str = "channel already claimed";
 
 fn server_config() -> Result<Arc<tls::ServerConfig>, Error> {
-    let (leaf_path, key_path) = config()
-        .channel
-        .cert_paths()
-        .map_err(|reason| Error::ChannelStart { reason })?;
+    let (leaf_path, key_path) = config().channel.cert_paths();
     let leaf = tls::CertificateDer::from_pem_file(&leaf_path).map_err(|e| Error::ChannelStart {
         reason: format!("read {}: {e}", leaf_path.display()),
     })?;
@@ -51,8 +48,9 @@ pub(crate) async fn start(
     mcp_nom: McpNom,
 ) -> Result<String, Error> {
     let tls_config = server_config()?;
-    // Port 0 (the default) means kernel-assigned; a pinned one is honored as given.
-    let listener = tk::TcpListener::bind((BIND, config().channel.port))
+    // 0 is the SYSCALL's "assign me one" convention, not a configurable value - the
+    // config models an unpinned port as None, and this is the one place it becomes 0.
+    let listener = tk::TcpListener::bind((BIND, config().channel.port.unwrap_or(0)))
         .await
         .map_err(|e| Error::ChannelStart {
             reason: format!("bind {BIND}: {e}"),

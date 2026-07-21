@@ -106,8 +106,9 @@ struct ChannelInner {
     /// cancel. Verification, a close, and a re-open all drop it, so a timer can only
     /// ever fire against the open it was armed for.
     verify_cancel: Option<tk::oneshot::Sender<()>>,
-    /// The inbox directory, set at open. Survives a close deliberately: an attachment
-    /// already written stays readable by nonce after the channel goes.
+    /// The inbox directory, set at open. A DELIBERATE `channel_close()` takes it and
+    /// prunes it; every other teardown leaves it, so an attachment stays readable by
+    /// nonce when the channel went away without the caller asking for it.
     inbox: Option<PathBuf>,
 }
 
@@ -198,6 +199,21 @@ impl ChannelHandle {
 
     pub(crate) fn inbox(&self) -> Option<PathBuf> {
         self.lock().inbox.clone()
+    }
+
+    /// Take the inbox path, clearing it - the prune handoff for a DELIBERATE close.
+    ///
+    /// A caller that closes the channel is declaring it is done with it, which is what
+    /// makes dropping that channel's attachments intentional rather than a guess; the
+    /// system pruner then has less to do (the_user). Only the `channel_close()` tool
+    /// path calls this. A shutdown close, a verify-timer expiry and the
+    /// unverified-emit teardown are all HOST-initiated, so they leave the inbox where
+    /// it is and an attachment stays readable by nonce.
+    ///
+    /// Clearing is what makes it safe twice over: a second close cannot prune a
+    /// directory a later open recreated.
+    pub(crate) fn take_inbox(&self) -> Option<PathBuf> {
+        self.lock().inbox.take()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ChannelInner> {

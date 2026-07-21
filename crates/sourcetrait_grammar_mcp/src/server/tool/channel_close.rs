@@ -19,6 +19,21 @@ impl NuSh {
         // Idempotent, like library(uninstall): closing what is already closed is the
         // requested state, not a failure.
         self.channel.close(CLOSE_PLANNED, PLANNED_REASON);
+        // A DELIBERATE close prunes what the channel wrote. The caller is declaring it
+        // is done, so dropping the attachments is intentional rather than inferred, and
+        // it leaves less for the system pruner (the_user). Scoped to THIS path on
+        // purpose - the shutdown close, the verify-timer expiry and the
+        // unverified-emit teardown are host-initiated, and none of them is the caller
+        // saying it is finished.
+        //
+        // Best-effort: the close already happened and this tool cannot fail. The path
+        // is host-derived (set by `channel_open` under $XDGX_SHM_DIR), never
+        // caller-supplied, which is what makes a recursive remove bounded here.
+        if let Some(inbox) = self.channel.take_inbox()
+            && let Err(e) = fs::remove_dir_all(&inbox)
+        {
+            eprintln!("grammar: inbox prune failed at {}: {e}", inbox.display());
+        }
         Ok(mcp::CallToolResult::default())
     }
 }

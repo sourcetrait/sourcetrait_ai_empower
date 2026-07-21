@@ -243,6 +243,27 @@ fn verification_and_close_both_cancel_the_timer() {
 }
 
 #[test]
+fn a_deliberate_close_takes_the_inbox_to_prune_it() {
+    let handle = ChannelHandle::new(test_policy());
+    assert!(
+        handle.take_inbox().is_none(),
+        "a channel that never opened wrote nothing, so there is nothing to prune",
+    );
+    let dir = PathBuf::from("/dev/shm/box/mcp/nom/inbox");
+    handle.set_inbox(dir.clone());
+    assert_eq!(handle.inbox(), Some(dir.clone()), "open records where attachments go");
+    assert_eq!(
+        handle.take_inbox(),
+        Some(dir),
+        "the deliberate-close path takes the path so it can prune it",
+    );
+    assert!(
+        handle.take_inbox().is_none(),
+        "taking CLEARS it, so a second close cannot prune a dir a later open recreated",
+    );
+}
+
+#[test]
 fn escape_line_folds_a_multi_line_render_back_onto_one_line() {
     // Frames BATCH into one client event joined by newlines, so a literal newline in a
     // packet is indistinguishable from a batch boundary.

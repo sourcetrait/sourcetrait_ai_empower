@@ -113,9 +113,12 @@ pub(crate) struct DiskWarningEmergency {
 /// the report about spam never becomes spam itself. It names WHO and how fast, and
 /// deliberately carries NO payload example - the agent is already being spammed by that,
 /// and can investigate the cause itself.
+/// `origin`, NOT `from`. The packet envelope already carries a `from` - the sender,
+/// which for this is the HOST - so an event field of the same name would put two
+/// different meanings under one word in a single record. The offender is the ORIGIN.
 #[derive(Clone, Debug)]
 pub(crate) struct ChannelSpamWarningEmergency {
-    pub from: String,
+    pub origin: String,
     pub hits: u32,
     pub window_secs: u64,
     pub rate: u32,
@@ -126,7 +129,7 @@ pub(crate) struct ChannelSpamWarningEmergency {
 /// that outlived its own.
 #[derive(Clone, Debug)]
 pub(crate) struct ChannelSpamErrorEmergency {
-    pub from: String,
+    pub origin: String,
     pub hits: u32,
     pub window_secs: u64,
     pub rate: u32,
@@ -234,13 +237,13 @@ impl Emergency {
                 r.insert("threshold_pct", nu::Value::int(d.threshold_pct as i64, span));
             }
             Self::ChannelSpamWarning(w) => {
-                r.insert("from", nu::Value::string(w.from.clone(), span));
+                r.insert("origin", nu::Value::string(w.origin.clone(), span));
                 r.insert("hits", nu::Value::int(w.hits as i64, span));
                 r.insert("window_secs", nu::Value::int(w.window_secs as i64, span));
                 r.insert("rate", nu::Value::int(w.rate as i64, span));
             }
             Self::ChannelSpamError(e) => {
-                r.insert("from", nu::Value::string(e.from.clone(), span));
+                r.insert("origin", nu::Value::string(e.origin.clone(), span));
                 r.insert("hits", nu::Value::int(e.hits as i64, span));
                 r.insert("window_secs", nu::Value::int(e.window_secs as i64, span));
                 r.insert("rate", nu::Value::int(e.rate as i64, span));

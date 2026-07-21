@@ -27,6 +27,32 @@ fn to_nuon_line_is_single_line_and_parses() {
 }
 
 #[test]
+fn no_event_field_collides_with_the_packet_envelope() {
+    // The packet envelope carries `from` - the SENDER, which for anything here is the
+    // host - so an event field of the same name puts two different meanings under one
+    // word in a single record. The spam pair names the offender `origin` for exactly
+    // that reason. Locked here because the collision is invisible in the log, where
+    // there is no envelope, and only shows up on the wire.
+    for em in all_kinds() {
+        let line = em.to_nuon_line(1, "nom").unwrap();
+        let v = nu::from_nuon(&line, None).expect("valid NUON record");
+        let rec = v.as_record().expect("record");
+        assert!(
+            rec.get("from").is_none(),
+            "{} carries a `from` event field, which collides with the envelope's own",
+            em.kind().name(),
+        );
+        if em.kind().name().starts_with("channel_spam") {
+            assert!(
+                rec.get("origin").is_some(),
+                "{} must name the offending origin",
+                em.kind().name(),
+            );
+        }
+    }
+}
+
+#[test]
 fn every_model_lives_under_the_mcp_reservation_and_is_distinct() {
     // The reservation is only worth anything if it holds for EVERY host-originated
     // model - one variant escaping it turns a mechanical provenance check back into a
@@ -68,13 +94,13 @@ fn all_kinds() -> Vec<Emergency> {
         }),
         Emergency::BackgroundJobsWarning(BackgroundJobsWarningEmergency { job_count: 40 }),
         Emergency::ChannelSpamWarning(ChannelSpamWarningEmergency {
-            from: "thread/abc".into(),
+            origin: "thread/abc".into(),
             hits: 10,
             window_secs: 10,
             rate: 10,
         }),
         Emergency::ChannelSpamError(ChannelSpamErrorEmergency {
-            from: "thread/abc".into(),
+            origin: "thread/abc".into(),
             hits: 15,
             window_secs: 10,
             rate: 15,

@@ -101,7 +101,7 @@ impl nu::Command for GrimmChannelSend {
                 let rate = channel.thresholds().warn_rate;
                 channel.fire_emergency(Emergency::ChannelSpamWarning(
                     ChannelSpamWarningEmergency {
-                        from: from.clone(),
+                        origin: from.clone(),
                         hits,
                         window_secs,
                         rate,
@@ -123,7 +123,7 @@ impl nu::Command for GrimmChannelSend {
                 if notify {
                     channel.fire_emergency(Emergency::ChannelSpamError(
                         ChannelSpamErrorEmergency {
-                            from: from.clone(),
+                            origin: from.clone(),
                             hits,
                             window_secs,
                             rate,

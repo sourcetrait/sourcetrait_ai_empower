@@ -1,5 +1,18 @@
 use serde_json::json;
-use sourcetrait_grammar_mcp::guts::TestServer;
+use sourcetrait_grammar_mcp::guts::{TestServer, lint_engine_reuses_until_the_registry_moves};
+
+/// The validator engine is rebuilt on a plugin-registry change, not on every
+/// call. Integration rather than unit: constructing one builds a whole shell
+/// command context and reads the registry off disk.
+#[test]
+fn lint_engine_does_not_rebuild_when_the_registry_is_unchanged() {
+    assert!(
+        lint_engine_reuses_until_the_registry_moves(),
+        "current() must hand back the SAME engine while the plugin registry is \
+         unchanged; rebuilding per call would pay a full command-context build \
+         on every lint and every commit",
+    );
+}
 
 /// run() carries nu-cmd-extra (bits / str-case) but NOT the `plugin *` admin
 /// family; interact() carries both.

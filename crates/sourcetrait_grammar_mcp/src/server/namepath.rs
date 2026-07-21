@@ -33,7 +33,6 @@ pub(crate) const PATTERN_CURRENT: &str = ".";
 /// addressable coordinate, so it classifies as `Namepath` here and then fails
 /// `validate` exactly as it does today - the exact parser's strictness is
 /// unchanged by the pattern arm existing.
-#[allow(dead_code)] // the tool surface starts consuming this next phase
 pub(crate) enum NamepathStr {
     Namepath(Namepath),
     Pattern(NamepathPattern),
@@ -45,7 +44,6 @@ pub(crate) enum NamepathStr {
 /// separator already means in an exact namepath, so the two module forms differ:
 /// `lib:mod/` is that module's whole subtree, `lib:mod:` is only its calls.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum NamepathPattern {
     /// `<author>/` - everything that author published.
     Author { author: String },
@@ -70,7 +68,6 @@ pub(crate) enum NamepathPattern {
 }
 
 impl NamepathStr {
-    #[allow(dead_code)]
     pub(crate) fn parse(raw: &str) -> Result<Self, Error> {
         if is_pattern_shaped(raw) {
             Ok(Self::Pattern(NamepathPattern::parse(raw)?))
@@ -171,7 +168,6 @@ fn check_module_path(module_path: &str) -> Result<(), &'static str> {
 }
 
 impl NamepathPattern {
-    #[allow(dead_code)]
     pub(crate) fn parse(raw: &str) -> Result<Self, Error> {
         fn bad(
             raw: &str,
@@ -245,10 +241,16 @@ impl NamepathPattern {
 
     /// Does `node` fall within this pattern?
     ///
-    /// The PRIMITIVE both consumers need: the signature renderer asks it per
-    /// node while walking the index, and purview filtering asks it per pattern
-    /// for one node. Tree-walking itself belongs with the index, not here.
-    #[allow(dead_code)]
+    /// The per-NODE primitive, for a caller holding ONE coordinate and asking
+    /// whether a pattern covers it. That is purview filtering's shape, and its
+    /// remaining consumer.
+    ///
+    /// The signature renderer deliberately does NOT use it. Rendering a subtree
+    /// wants the pattern's ROOT rather than a per-node predicate, because the
+    /// ancestor lines above that root must still be emitted for structure even
+    /// though the pattern does not match them (server/library.rs
+    /// `pattern_root`). Tree-walking belongs with the index either way.
+    #[allow(dead_code)] // purview is the consumer; the renderer roots instead
     pub(crate) fn matches(
         &self,
         node: &NamepathRef,

@@ -107,7 +107,8 @@ impl NuSh {
                     }
                 };
                 let _guard = lock.write().await;
-                match install_impl(&p.library, source_dir, &self.lint_engine) {
+                let engine = self.lint_engine.current();
+                match install_impl(&p.library, source_dir, &engine) {
                     Ok(result) => envelope_to_structured(&LibraryEnvelope {
                         summary: Some(LibrarySummary::Install(InstallSummary {
                             added: result.added,
@@ -137,7 +138,8 @@ impl NuSh {
                 if let Err(e) = check_source_dir(&p.library, &p.source_dir) {
                     return Ok(error_to_call_result(e, None));
                 }
-                match check_library(&p.library, &self.lint_engine) {
+                let engine = self.lint_engine.current();
+                match check_library(&p.library, &engine) {
                     Ok(result) => envelope_to_structured(&LibraryEnvelope {
                         summary: Some(LibrarySummary::Check(check_summary_from(&result))),
                     }),

@@ -92,7 +92,11 @@ pub struct NuSh {
     /// per-process emergency log and is reported by `info()`.
     pub(crate) mcp_nom: McpNom,
     pub(crate) library_locks: Arc<LibraryLocks>,
-    pub(crate) lint_engine: Arc<ParseEngine>,
+    /// The lint + library-validator engine. A HOLDER rather than the engine
+    /// itself, because a `ParseEngine` snapshots the plugin decls at
+    /// construction: take it through `current()`, which rebuilds it when the
+    /// plugin registry has moved, exactly as the Executor refreshes its base.
+    pub(crate) lint_engine: Arc<LintEngine>,
     /// The resource registry, keyed by nonce string: each eval's cancel handle
     /// plus the self-matching {tool, started_at, args, kind}. processes()
     /// snapshots it; kill(nonce) triggers the cancel handle.
@@ -147,7 +151,7 @@ impl NuSh {
     pub(crate) fn new(
         nonce_gen: Arc<NonceGen>,
         library_locks: Arc<LibraryLocks>,
-        lint_engine: Arc<ParseEngine>,
+        lint_engine: Arc<LintEngine>,
     ) -> Self {
         // Install nushell's TLS crypto provider once for the in-process engine
         // (the http family reads nushell's own OnceLock; formerly per-worker).

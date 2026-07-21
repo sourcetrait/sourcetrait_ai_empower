@@ -37,7 +37,8 @@ impl NuSh {
             }
         };
         let _guard = lock.write().await;
-        match commit_impl(&p.library, &self.lint_engine) {
+        let engine = self.lint_engine.current();
+        match commit_impl(&p.library, &engine) {
             Ok(result) => envelope_to_structured(&CommitEnvelope {
                 added: result.added,
                 modified: result.modified,

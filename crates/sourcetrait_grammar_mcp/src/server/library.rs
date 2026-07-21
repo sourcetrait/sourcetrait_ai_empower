@@ -673,10 +673,37 @@ fn push_signature_nodes(
 /// Replaces the structured `libraries` tree info() used to return - roughly 8 KB
 /// of nested JSON for two libraries, and the agent's first read after the skill.
 pub(crate) async fn render_signatures(locks: &LibraryLocks) -> String {
+    render_signatures_matching(locks, &NamepathPattern::All).await
+}
+
+/// The same block, ROOTED at a pattern instead of at the whole store.
+///
+/// ONE implementation behind both surfaces, so `info()` and a pattern
+/// `inspect()` can never disagree about what a block looks like: the pattern
+/// only decides WHICH libraries take part and WHERE inside each one the walk
+/// begins. The format itself is `render_signatures` above.
+///
+/// THE ANCESTOR LINES ABOVE THE ROOT ARE STILL EMITTED, because the block's
+/// grammar IS the indentation - depth 0 an author, depth 1 a library, deeper a
+/// module unless it carries the two signature groups. A bare subtree would be
+/// one a reader cannot turn back into a namepath, which is the one thing the
+/// format guarantees.
+///
+/// A pattern matching NOTHING renders EMPTY rather than erroring. A pattern is a
+/// filter, and the unresolved `.` purview stub matches nothing BY DESIGN, so an
+/// empty block is already this format's answer for "no nodes here" - a fresh
+/// namespace renders empty for the same reason.
+pub(crate) async fn render_signatures_matching(
+    locks: &LibraryLocks,
+    pattern: &NamepathPattern,
+) -> String {
     let mut out = String::new();
     let mut current_author: Option<String> = None;
     for name in registered_library_names() {
         let Some((author, leaf)) = name.split_once('/') else {
+            continue;
+        };
+        let Some(root) = pattern_root(pattern, &name) else {
             continue;
         };
         let lock = locks.lookup(&name).await;
@@ -691,6 +718,12 @@ pub(crate) async fn render_signatures(locks: &LibraryLocks) -> String {
                 continue;
             }
         };
+        // A pattern naming a module this library does not have contributes
+        // nothing - and contributes it BEFORE the author/library lines, so a
+        // miss leaves no orphan heading behind.
+        let Some((functions, modules)) = index_node(&index, &root.module_path) else {
+            continue;
+        };
         if current_author.as_deref() != Some(author) {
             // No summary: there is no author-level doc to read.
             push_signature_line(&mut out, 0, author, "");
@@ -698,9 +731,69 @@ pub(crate) async fn render_signatures(locks: &LibraryLocks) -> String {
         }
         let docs_dir = library_docs_dir(&name);
         push_signature_line(&mut out, 1, leaf, &read_summary(&docs_dir, ""));
-        push_signature_nodes(&mut out, 2, &index.functions, &index.modules, &docs_dir, "");
+        // The modules between the library root and the pattern's root, each at
+        // its own depth, so the indentation still spells the whole namepath.
+        let mut depth = 2;
+        let mut coord = String::new();
+        for seg in root.module_path.split('/').filter(|s| !s.is_empty()) {
+            coord = if coord.is_empty() {
+                seg.to_string()
+            } else {
+                format!("{coord}/{seg}")
+            };
+            push_signature_line(&mut out, depth, seg, &read_summary(&docs_dir, &coord));
+            depth += 1;
+        }
+        // `:` selects the CALL level and does not descend, which here is just
+        // an empty submodule slice through the one shared walk.
+        let subs: &[IndexModule] = if root.calls_only { &[] } else { modules };
+        push_signature_nodes(&mut out, depth, functions, subs, &docs_dir, &coord);
     }
     out
+}
+
+/// Where a pattern starts inside ONE library, or None when that library takes
+/// no part at all.
+struct PatternRoot {
+    module_path: String,
+    /// `lib:mod:` selects that module's calls without descending.
+    calls_only: bool,
+}
+
+fn pattern_root(
+    pattern: &NamepathPattern,
+    library: &str,
+) -> Option<PatternRoot> {
+    fn root(
+        module_path: &str,
+        calls_only: bool,
+    ) -> PatternRoot {
+        PatternRoot {
+            module_path: module_path.to_string(),
+            calls_only,
+        }
+    }
+    match pattern {
+        NamepathPattern::All => Some(root("", false)),
+        // The purview stub: unresolved, so it names nothing rather than
+        // everything (server/namepath.rs).
+        NamepathPattern::Current => None,
+        NamepathPattern::Author { author } => {
+            let (node_author, _) = library.split_once('/')?;
+            (node_author == author).then(|| root("", false))
+        }
+        NamepathPattern::Library { library: want } => {
+            (library == want).then(|| root("", false))
+        }
+        NamepathPattern::ModuleTree {
+            library: want,
+            module_path,
+        } => (library == want).then(|| root(module_path, false)),
+        NamepathPattern::ModuleCalls {
+            library: want,
+            module_path,
+        } => (library == want).then(|| root(module_path, true)),
+    }
 }
 
 /// A library's documentation. `srcdir` is the COMMITTED CANONICAL directory, not
@@ -731,19 +824,35 @@ pub struct CallDoc {
     pub details: String,
 }
 
-/// What `inspect()` returns for one exact coordinate.
+/// What a PATTERN inspect returns: the `info()` block rooted at the pattern.
+///
+/// The field keeps the name `signatures` that `info()` uses, because it IS that
+/// block - a reader who knows one surface knows the other, and the format has
+/// exactly one description.
+#[derive(Debug, ser::Serialize, schema::JsonSchema)]
+pub struct SignaturesDoc {
+    pub signatures: String,
+}
+
+/// What `inspect()` returns - one exact coordinate, or a pattern's block.
 ///
 /// UNTAGGED, so each member serializes as its own bare shape and schemars renders
 /// the set as a `oneOf`. The caller always knows which member it will get,
-/// because it knows what it asked for. It rides under the envelope's single
+/// because it knows whether it passed a pattern or an exact namepath and it
+/// knows what it asked for. It rides under the envelope's single
 /// `doc` field rather than at the root - a root-level oneOf carries no
 /// `type: "object"` and Claude Code rejects it.
+///
+/// The four shapes stay distinguishable by FIELD SET alone, which is what an
+/// untagged oneOf needs: `srcdir` marks a library, `src` + `summary` a module,
+/// `src` + `signature` a call, and a lone `signatures` a pattern.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 #[serde(untagged)]
 pub enum InspectDoc {
     Library(LibraryDoc),
     Module(ModuleDoc),
     Call(CallDoc),
+    Signatures(SignaturesDoc),
 }
 
 pub(crate) fn index_node<'a>(

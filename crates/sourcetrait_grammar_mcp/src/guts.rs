@@ -107,7 +107,7 @@ impl TestServer {
         let nush = NuSh::new(
             Arc::new(NonceGen::new()),
             locks,
-            Arc::new(ParseEngine::new_full()),
+            Arc::new(LintEngine::new()),
         );
         Self { rt, nush }
     }
@@ -463,6 +463,24 @@ pub fn lint_body(args_type: &str, body: &str) -> Vec<json::Value> {
         .iter()
         .map(|d| json::to_value(d).expect("diagnostic serializes"))
         .collect()
+}
+
+/// Whether two `current()` handles off ONE `LintEngine` are the same instance.
+///
+/// The property that keeps the validator refresh cheap: rebuild only when the
+/// plugin registry has actually moved, never per call. A regression that rebuilt
+/// every time would still behave correctly and would still pass every
+/// behavioural test, while quietly paying a full command-context build on each
+/// lint and each commit - so identity is the only thing that catches it.
+///
+/// The other direction - that a CHANGED registry does rebuild - is proven on the
+/// live channel rather than here, because faking it means writing to the
+/// user-global `plugin.msgpackz` that every process on the box shares.
+pub fn lint_engine_reuses_until_the_registry_moves() -> bool {
+    let engine = LintEngine::new();
+    let first = engine.current();
+    let second = engine.current();
+    Arc::ptr_eq(&first, &second)
 }
 
 /// True if `src` parses clean (no parse errors) on a full-shell ParseEngine - the

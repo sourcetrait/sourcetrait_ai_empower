@@ -24,7 +24,8 @@ impl NuSh {
             Ok(t) => t,
             Err(reason) => return Ok(error_to_call_result(Error::SchemaInvalid { reason }, None)),
         };
-        let diagnostics = lint_run_params(&self.lint_engine, &args_type, &p.body);
+        let lint_engine = self.lint_engine.current();
+        let diagnostics = lint_run_params(&lint_engine, &args_type, &p.body);
         if !diagnostics.is_empty() {
             return Ok(error_to_call_result(
                 Error::LintViolations { diagnostics },

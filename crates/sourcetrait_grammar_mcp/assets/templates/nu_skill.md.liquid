@@ -1004,7 +1004,7 @@ before you return thousands of paths.
 - [`processes()`](#processes) List in-flight MCP tool usage.
 - [`kill()`](#kill) Cancel an in-flight usage by its nonce.
 - [`info()`](#info) Versions, plugins, and every library's callable signatures.
-- [`inspect()`](#inspect) Detailed documentation of a specific callable library, module, function.
+- [`inspect()`](#inspect) Detailed documentation for libraries, modules, and calls.
 - [`new()`](#new) Scaffold modules / functions (by namepath) into existing libraries.
 - [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
 - [`library()`](#library) Library administration: new, install, check, uninstall.
@@ -1438,17 +1438,36 @@ matching needed. This is ground truth - prefer it over any static index. For a
 node's details and its source location, call `inspect()`.
 
 ### `inspect()`
-*Detailed documentation of a specific callable library, module, function.*
+*Detailed documentation for libraries, modules, and calls.*
 
-Returns EXACTLY one field, `doc`, carrying one of three shapes - the namepath
-is not reprinted, because you supplied it. Which shape arrives follows from the
-arity you asked for:
+`namepath` is either an EXACT coordinate or a PATTERN, and a trailing hierarchy
+character is what makes it a pattern:
+
+| pattern | selects |
+|---|---|
+| `<author>/` | everything that author published |
+| `<author>/<library>:` | everything in that library |
+| `<author>/<library>:module/path/` | that module and everything below it |
+| `<author>/<library>:module/path:` | the calls in that module, no deeper |
+| `*` | the whole store |
+| `.` | the current purview - a STUB matching nothing for now |
+
+`/` DESCENDS and `:` selects the level BELOW, exactly as each separator already
+reads in an exact namepath. USE A PATTERN TO ZOOM: `info()` hands you the whole
+store, `inspect("<author>/<library>:")` narrows to one library's block, and an
+exact namepath then gives you one node's details - so you never have to read
+the whole surface to reach one corner of it.
+
+Returns EXACTLY one field, `doc`, carrying one of four shapes - the namepath is
+not reprinted, because you supplied it. Which shape arrives follows from what
+you asked for:
 
 | namepath | `doc` |
 |---|---|
 | `<author>/<library>` | `{srcdir, summary, details}` |
 | `<author>/<library>:module/path` | `{src, summary, details}` |
 | `<author>/<library>:module/path:function` | `{src, signature, details}` |
+| any PATTERN | `{signatures}` |
 
 `srcdir` and `src` point into the COMMITTED CANONICAL tree - a library's
 directory, and a module's or a call's `mod.nu` - not the authored source. Read
@@ -1460,6 +1479,12 @@ FULL NAMEPATH where the block prints only the leaf name, because nothing around
 it supplies the hierarchy. Everything after that first token is identical
 between the two, so a signature read in either place means the same thing.
 Strings are empty when undocumented.
+
+A PATTERN returns `{signatures}` - the same block `info()` renders, rooted at
+the pattern rather than at the whole store, from the same renderer. The ANCESTOR
+lines above that root are still printed, so the indentation still spells a full
+namepath and the block stays readable on its own. A pattern matching nothing
+returns an EMPTY block, not an error.
 
 #### arguments
 
@@ -1491,6 +1516,29 @@ Output (partial):
         "src": "/abs/path/to/store/libraries/rig/acme/geo/shape/area/mod.nu",
         "signature": "acme/geo:shape:area <width:float,height:float> <area:float> # result is in the inputs' unit, squared",
         "details": "Planar rectangle only; negative inputs are a type-clean error."
+      }
+    },
+    "content": []
+  }
+}
+```
+
+The same tool with a PATTERN, zooming into one module's subtree:
+
+MCP (partial):
+```json
+{
+  "arguments": { "namepath": "acme/geo:shape/" }
+}
+```
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "doc": {
+        "signatures": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n"
       }
     },
     "content": []

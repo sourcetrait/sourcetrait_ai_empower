@@ -116,6 +116,7 @@ pub(crate) use crate::{
         library::{
             LibraryLocks, ValidationResult, check_library,
             check_source_dir, commit_impl, ensure_substrate, establish_library, render_signatures,
+            render_signatures_matching, SignaturesDoc,
             InspectDoc, index_node, inspect_impl, install_impl, is_reserved_term, is_valid_ident,
             is_valid_library,
             is_valid_module_path,
@@ -123,11 +124,12 @@ pub(crate) use crate::{
         },
         lint::{LINT_VIOLATION_CAP, lint_body},
         liveness::acquire as acquire_host_lock,
-        namepath::{Namepath, NamepathRef},
+        namepath::{Namepath, NamepathPattern, NamepathRef, NamepathStr},
         nonce::{McpNom, Nonce, NonceGen},
         oneshot::run_oneshot,
         parse_engine::{
-            ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body, wrap_as_module,
+            LintEngine, ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body,
+            wrap_as_module,
         },
         run::{eval_concurrency_cap, run_server},
         schema::{

@@ -1,8 +1,5 @@
 
 use crate::*;
-// Not in the lib.rs re-export hub: nothing outside this module consumes them
-// until the tool surface does, and a test-only item is reached by path.
-use crate::server::namepath::{NamepathPattern, NamepathStr};
 
 fn validate(s: &str) -> Result<NamepathRef, Error> {
     Namepath(s.to_string()).validate()

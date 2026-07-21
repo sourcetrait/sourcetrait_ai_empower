@@ -96,7 +96,7 @@ transiently fail.
 - [`processes()`](#processes) List in-flight MCP tool usage.
 - [`kill()`](#kill) Cancel an in-flight usage by its nonce.
 - [`info()`](#info) Versions, plugins, and every library's callable signatures.
-- [`inspect()`](#inspect) Detailed documentation of a specific callable library, module, function.
+- [`inspect()`](#inspect) Detailed documentation for libraries, modules, and calls.
 - [`new()`](#new) Scaffold modules / functions (by namepath) into existing libraries.
 - [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
 - [`library()`](#library) Library administration: new, install, check, uninstall.
@@ -507,10 +507,25 @@ reads `ping <> <>`. Nested types keep their full spelling -
 `table<name:string,where:directory>`, `oneof<int,nothing>`, `list<string>`.
 
 ## `inspect()`
-*Detailed documentation of a specific callable library, module, function.*
+*Detailed documentation for libraries, modules, and calls.*
 
-`namepath` is `<author>/<library>`, `<author>/<library>:module/path`, or
-`<author>/<library>:module/path:function` - inspect any of the three arities.
+`namepath` is either an EXACT coordinate - `<author>/<library>`,
+`<author>/<library>:module/path`, or `<author>/<library>:module/path:function`,
+any of the three arities - or a PATTERN, which is what a trailing hierarchy
+character makes it:
+
+| pattern | selects |
+|---|---|
+| `<author>/` | everything that author published |
+| `<author>/<library>:` | everything in that library |
+| `<author>/<library>:module/path/` | that module and everything below it |
+| `<author>/<library>:module/path:` | the calls in that module, no deeper |
+| `*` | the whole store |
+| `.` | the current purview - a STUB matching nothing until purview lands |
+
+`/` DESCENDS and `:` selects the level BELOW, which is what each separator
+already means in an exact namepath, so the two module forms differ deliberately.
+A pattern matching nothing renders an EMPTY block rather than erroring.
 
 ### arguments
 
@@ -558,6 +573,7 @@ you asked for:
 | `<author>/<library>` | `{srcdir, summary, details}` |
 | `<author>/<library>:module/path` | `{src, summary, details}` |
 | `<author>/<library>:module/path:function` | `{src, signature, details}` |
+| any PATTERN | `{signatures}` |
 
 `srcdir` and `src` point into the COMMITTED CANONICAL tree - a library's
 directory, and a module's or a call's `mod.nu` - not the authored source.
@@ -567,6 +583,33 @@ the `info()` block. The signature here is the STANDALONE form, printing the FULL
 NAMEPATH where the block prints only the leaf name, because nothing around it
 supplies the hierarchy. Everything after that first token is identical between
 the two.
+
+A PATTERN returns `{signatures}` - the same indented block `info()` renders,
+rooted at the pattern instead of at the whole store and produced by the same
+renderer, so the two cannot drift. The ANCESTOR lines above the root are still
+printed, because the block's grammar IS its indentation: without them a subtree
+is one you cannot turn back into a namepath.
+
+MCP (partial):
+```json
+{
+  "arguments": { "namepath": "acme/geo:shape/" }
+}
+```
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "doc": {
+        "signatures": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n"
+      }
+    },
+    "content": []
+  }
+}
+```
 
 ## `new()`
 *Scaffold modules / functions (by namepath) into existing libraries.*

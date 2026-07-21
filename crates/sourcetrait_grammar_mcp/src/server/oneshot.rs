@@ -5,7 +5,7 @@ pub(crate) async fn run_oneshot(tool: CliTool) -> process::ExitCode {
         install_child_subreaper();
         let library_locks = ensure_substrate().await.expect("ensure_substrate");
         let nonce_gen = Arc::new(NonceGen::new());
-        let lint_engine = Arc::new(ParseEngine::new_full());
+        let lint_engine = Arc::new(LintEngine::new());
         let server = NuSh::new(nonce_gen, library_locks, lint_engine);
         let result = match tool {
             CliTool::Info => server.info(mcp::Parameters(InfoParams {})).await,

@@ -1,3 +1,4 @@
+# Platform rig: live AI sessions, file inspection, relayed git, liquid soak.
 export module ai
 export module eye
 export module fs

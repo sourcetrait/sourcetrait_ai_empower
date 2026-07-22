@@ -29,8 +29,7 @@ fn watcher_sees_host_gone(namespace: &Path) -> bool {
     Flock::lock(file, FlockArg::LockExclusiveNonblock).is_ok()
 }
 
-#[test]
-#[named]
+#[tested]
 fn the_host_lock_is_held_while_alive_and_dropped_on_sigkill() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--id", "locktest", "--namespace", "default"]);
@@ -64,8 +63,7 @@ fn the_host_lock_is_held_while_alive_and_dropped_on_sigkill() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn sigterm_runs_the_sweep_and_exits_on_its_own_terms() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--id", "sigtest", "--namespace", "default"]);
@@ -88,8 +86,7 @@ fn sigterm_runs_the_sweep_and_exits_on_its_own_terms() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn sighup_is_handled_too() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--id", "huptest", "--namespace", "default"]);

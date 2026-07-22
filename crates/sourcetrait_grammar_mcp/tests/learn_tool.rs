@@ -3,8 +3,7 @@ use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-#[test]
-#[named]
+#[tested]
 fn learn_writes_versioned_skill() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

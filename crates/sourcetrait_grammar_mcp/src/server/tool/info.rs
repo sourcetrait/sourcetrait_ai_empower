@@ -56,12 +56,22 @@ impl NuSh {
         };
         // EMPTY means CURRENT. Ids given explicitly are the subagent blinders:
         // they render as if those were in view without changing what is.
-        let ids = if p.purviews.is_empty() {
+        // `@fae` and `fae` name the same purview here, so a caller can paste a
+        // reference straight out of a purview's configuration.
+        let ids: Vec<String> = if p.purviews.is_empty() {
             self.current_purview.ids()
         } else {
-            p.purviews.clone()
+            p.purviews
+                .iter()
+                .map(|id| purview_ref(id).unwrap_or(id).to_string())
+                .collect()
         };
-        let patterns = parse_patterns(&resolve_patterns(&ids, rows.as_ref()));
+        // FILTERING expands `@` references; the `purview` field below reports the
+        // raw configuration.
+        let patterns = parse_patterns(&expand_values(
+            &resolve_patterns(&ids, rows.as_ref()),
+            rows.as_ref(),
+        ));
         envelope_to_structured(&InfoEnvelope {
             name: lib_grammar::consts::GRAMMAR.to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),

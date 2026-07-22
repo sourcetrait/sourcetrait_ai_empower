@@ -8,8 +8,7 @@ static TESTING: testing::Module = testing::module!(Integration, { .using_temp_di
 /// A committed rig is usable OUTSIDE the MCP via the standalone `nu` driver
 /// (`NU_LIB_DIRS=<namespace>/rigs nu -c "use rig/<author>/<lib>/<mod>; ..."`).
 /// Spawns a real `nu` process, so it is a SYSTEM test.
-#[test]
-#[named]
+#[tested]
 fn committed_rig_invokable_via_standalone_driver() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--id", "drvid"]);

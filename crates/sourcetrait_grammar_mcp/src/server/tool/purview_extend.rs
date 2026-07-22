@@ -15,12 +15,11 @@ pub struct PurviewExtendParams {
 /// did not touch rather than an empty list that reads like a result.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct PurviewDeltaEnvelope {
-    /// `info()`'s `signatures` for the namepath patterns newly added, or null.
-    pub added: Option<String>,
-    /// The namepath patterns that left view, or null when none did.
-    pub removed: Option<Vec<String>>,
-    /// What is in view now.
-    pub current: Vec<PurviewView>,
+    /// `info()`'s `signatures` for what this call brought INTO view, or null.
+    pub revealed: Option<String>,
+    /// The purview ids in view now - the KEYS alone; `purviews()` says what
+    /// each one resolves to.
+    pub current: Vec<String>,
 }
 
 impl NuSh {
@@ -37,16 +36,23 @@ impl NuSh {
         ids: Vec<String>,
         rows: Option<Vec<PurviewRow>>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let (added, removed) = pattern_delta(&before, &after);
-        let added_block = if added.is_empty() {
+        // The DELTA is computed on the raw values, so `removed` reports what was
+        // configured; only the block RENDER expands `@` references.
+        // Both sides are EXPANDED before the delta. Comparing raw values would
+        // count `@ants` as new against a `sourcetrait/ant:` already in view,
+        // and reveal a block the caller could already see.
+        let (revealed, _left) = pattern_delta(
+            &expand_values(&before, rows.as_ref()),
+            &expand_values(&after, rows.as_ref()),
+        );
+        let revealed_block = if revealed.is_empty() {
             None
         } else {
-            Some(render_signatures_within(&self.rig_locks, &parse_patterns(&added)).await)
+            Some(render_signatures_within(&self.rig_locks, &parse_patterns(&revealed)).await)
         };
         envelope_to_structured(&PurviewDeltaEnvelope {
-            added: added_block,
-            removed: (!removed.is_empty()).then_some(removed),
-            current: purview_views(&ids, rows.as_ref()),
+            revealed: revealed_block,
+            current: ids,
         })
     }
 }

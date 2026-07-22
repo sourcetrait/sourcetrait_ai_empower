@@ -241,10 +241,10 @@ impl TestServer {
         Self::envelope(self.rt.block_on(self.nush.info(mcp::Parameters(p))))
     }
 
-    pub fn purview_list(&self) -> json::Value {
+    pub fn purviews(&self) -> json::Value {
         Self::envelope(
             self.rt
-                .block_on(self.nush.purview_list(mcp::Parameters(PurviewListParams {}))),
+                .block_on(self.nush.purviews(mcp::Parameters(PurviewsParams {}))),
         )
     }
 
@@ -274,11 +274,14 @@ impl TestServer {
         Self::envelope(self.rt.block_on(self.nush.purview_extend(mcp::Parameters(p))))
     }
 
-    pub fn purview_reset(&self) -> json::Value {
-        Self::envelope(
-            self.rt
-                .block_on(self.nush.purview_reset(mcp::Parameters(PurviewResetParams {}))),
-        )
+    pub fn purview(
+        &self,
+        purviews: &[&str],
+    ) -> json::Value {
+        let p = PurviewParams {
+            purviews: purviews.iter().map(|s| (*s).to_string()).collect(),
+        };
+        Self::envelope(self.rt.block_on(self.nush.purview(mcp::Parameters(p))))
     }
 
     /// Where this namespace's purview table lands, for tests asserting the namespace

@@ -6,8 +6,7 @@ static TESTING: testing::Module = testing::module!(Integration, { .using_temp_di
 
 /// initialize -> tools/list (exactly 20) -> a run() round-trip. The rmcp stdio
 /// transport + handshake are the system surface here.
-#[test]
-#[named]
+#[tested]
 fn tools_list_and_run_round_trip() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn(t.temp_dir());
@@ -31,10 +30,10 @@ fn tools_list_and_run_round_trip() {
         "channel_verified",
         "channel_close",
         "config_channel",
-        "purview_list",
+        "purviews",
         "purview_configure",
         "purview_extend",
-        "purview_reset",
+        "purview",
     ] {
         assert!(
             names.contains(&expected.to_string()),

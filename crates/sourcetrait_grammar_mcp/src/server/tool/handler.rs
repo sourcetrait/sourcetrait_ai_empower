@@ -43,8 +43,8 @@ impl NuSh {
         if !deny.denies(DeniableTool::ConfigChannel) {
             router = router + Self::config_channel_router();
         }
-        if !deny.denies(DeniableTool::PurviewList) {
-            router = router + Self::purview_list_router();
+        if !deny.denies(DeniableTool::Purviews) {
+            router = router + Self::purviews_router();
         }
         if !deny.denies(DeniableTool::PurviewConfigure) {
             router = router + Self::purview_configure_router();
@@ -52,8 +52,8 @@ impl NuSh {
         if !deny.denies(DeniableTool::PurviewExtend) {
             router = router + Self::purview_extend_router();
         }
-        if !deny.denies(DeniableTool::PurviewReset) {
-            router = router + Self::purview_reset_router();
+        if !deny.denies(DeniableTool::Purview) {
+            router = router + Self::purview_router();
         }
         router
     }

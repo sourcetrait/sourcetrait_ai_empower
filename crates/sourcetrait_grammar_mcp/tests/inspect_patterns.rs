@@ -79,8 +79,7 @@ fn signatures(
 
 const WHOLE: &str = "sourcetrait\n patlib # the patlib rig\n  m # the m module\n   here <x:int> <out:int>\n   deep\n    down <y:int> <out:int>\n  other\n   solo <n:int> <out:int>\n";
 
-#[test]
-#[named]
+#[tested]
 fn the_namespace_wide_patterns_render_the_whole_block() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -97,8 +96,7 @@ fn the_namespace_wide_patterns_render_the_whole_block() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn a_rig_pattern_renders_that_rig() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -106,8 +104,7 @@ fn a_rig_pattern_renders_that_rig() {
     assert_eq!(signatures(&s, "sourcetrait/patlib:"), WHOLE);
 }
 
-#[test]
-#[named]
+#[tested]
 fn a_module_tree_pattern_descends_and_excludes_its_siblings() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -126,8 +123,7 @@ fn a_module_tree_pattern_descends_and_excludes_its_siblings() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn a_module_calls_pattern_selects_calls_without_descending() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -140,8 +136,7 @@ fn a_module_calls_pattern_selects_calls_without_descending() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn patterns_that_match_nothing_render_empty() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -159,8 +154,7 @@ fn patterns_that_match_nothing_render_empty() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn the_dot_pattern_resolves_rather_than_matching_nothing() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -176,8 +170,7 @@ fn the_dot_pattern_resolves_rather_than_matching_nothing() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn exact_namepaths_are_unchanged_by_the_pattern_arm() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -204,8 +197,7 @@ fn exact_namepaths_are_unchanged_by_the_pattern_arm() {
     assert!(has_error(&s.inspect("sourcetrait")), "a bare author is not a namepath");
 }
 
-#[test]
-#[named]
+#[tested]
 fn a_pattern_is_never_callable() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

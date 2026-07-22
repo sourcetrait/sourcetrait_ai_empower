@@ -64,8 +64,7 @@ fn wait_until(secs: u64, mut f: impl FnMut() -> bool) -> bool {
 /// the rig lifecycle commits on `rig new` and on `commit`, so a couple of
 /// operations reliably orphans something. The reaper harvests on the watchdog tick once a
 /// zombie is past its grace window, so the bound below is grace + a tick + slack.
-#[test]
-#[named]
+#[tested]
 fn adopted_orphans_are_reaped() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn(t.temp_dir());
@@ -110,8 +109,7 @@ fn adopted_orphans_are_reaped() {
 /// `Command::output()` and nushell's own external handling both `wait()` their children,
 /// and a blanket `waitpid(-1)` would steal those exit statuses (ECHILD). Rig work and
 /// an external-running eval keep succeeding across several reaper ticks.
-#[test]
-#[named]
+#[tested]
 fn reaping_does_not_steal_exit_statuses() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn(t.temp_dir());

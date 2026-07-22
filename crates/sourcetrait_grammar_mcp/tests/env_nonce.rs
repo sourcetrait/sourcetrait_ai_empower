@@ -31,8 +31,7 @@ fn run_nested_helper_inherits_nonce() {
     assert_eq!(env["result"]["seen"].as_str(), Some(nonce), "a nested helper should inherit $env.NONCE; got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn call_target_sees_nonce() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

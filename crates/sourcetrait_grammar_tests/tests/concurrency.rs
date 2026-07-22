@@ -22,8 +22,7 @@ fn expected_cap() -> usize {
     .max(1)
 }
 
-#[test]
-#[named]
+#[tested]
 fn concurrent_runs_complete_and_hold_the_semaphore_bound() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn(t.temp_dir());

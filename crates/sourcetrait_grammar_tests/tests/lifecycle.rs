@@ -40,8 +40,7 @@ fn wait_for_hung_emergency(host: &Host, id: &str, ns: &str, secs: u64) -> String
     }
 }
 
-#[test]
-#[named]
+#[tested]
 fn panic_in_run_is_caught_host_survives() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn(t.temp_dir());
@@ -71,8 +70,7 @@ fn panic_in_run_is_caught_host_survives() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn interact_reset_on_panic_drops_session_keeps_host() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn(t.temp_dir());
@@ -117,8 +115,7 @@ fn interact_reset_on_panic_drops_session_keeps_host() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn hung_thread_is_confirmed_in_emergency_log() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--id", "hid"]);

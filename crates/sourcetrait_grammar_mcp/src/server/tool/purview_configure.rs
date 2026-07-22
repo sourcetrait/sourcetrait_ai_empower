@@ -16,10 +16,14 @@ pub struct PurviewConfigureParams {
 /// Success result of `purview_configure()` - the state after the write.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct PurviewConfigureEnvelope {
-    pub purviews: Vec<PurviewView>,
-    pub current: Vec<PurviewView>,
-    /// Namepath patterns dropped because no registered rig can satisfy them.
-    pub pruned: Vec<String>,
+    /// `info()`'s `signatures` for EVERYTHING this purview reveals - the WHOLE
+    /// set, never a delta - or null when the purview no longer exists.
+    ///
+    /// Full rather than incremental because the caller needs to CHECK what it
+    /// just wrote. A delta cannot answer "what does this configuration actually
+    /// do now", and against a purview the session is not looking through it
+    /// answers nothing at all.
+    pub signatures: Option<String>,
 }
 
 #[mcp::tool_router(router = purview_configure_router, vis = "pub(crate)")]
@@ -53,6 +57,23 @@ impl NuSh {
                 None,
             ));
         }
+        // A `@id` value must name a purview that COULD exist. Whether it does
+        // yet is the prune's business, not the parser's.
+        for value in &p.namepaths {
+            if let Some(id) = purview_ref(value)
+                && !is_valid_purview_ref(id)
+            {
+                return Ok(error_to_call_result(
+                    Error::PurviewInvalidId {
+                        id: value.clone(),
+                        reason: "`@` must reference a configurable purview; `@.` and `@*` \
+                                 are derived and are never rows"
+                            .to_string(),
+                    },
+                    None,
+                ));
+            }
+        }
         let mut rows = match load_purviews() {
             Ok(rows) => rows.unwrap_or_default(),
             Err(error) => return Ok(error_to_call_result(error, None)),
@@ -71,17 +92,23 @@ impl NuSh {
                 namepath_patterns: namepaths,
             });
         }
-        let pruned = prune_dangling(&mut rows);
+        prune_dangling(&mut rows);
         if let Err(error) = save_purviews(&rows) {
             return Ok(error_to_call_result(error, None));
         }
         // A deletion must not leave the session pointing at something gone.
         self.current_purview.retain_known(Some(&rows));
-        let configured: Vec<String> = rows.iter().map(|row| row.id.clone()).collect();
-        envelope_to_structured(&PurviewConfigureEnvelope {
-            purviews: purview_views(&configured, Some(&rows)),
-            current: purview_views(&self.current_purview.ids(), Some(&rows)),
-            pruned,
-        })
+        let values = rows
+            .iter()
+            .find(|row| row.id == p.purview)
+            .map(|row| row.namepath_patterns.clone());
+        let signatures = match values {
+            None => None,
+            Some(values) => {
+                let patterns = parse_patterns(&expand_values(&values, Some(&rows)));
+                Some(render_signatures_within(&self.rig_locks, &patterns).await)
+            }
+        };
+        envelope_to_structured(&PurviewConfigureEnvelope { signatures })
     }
 }

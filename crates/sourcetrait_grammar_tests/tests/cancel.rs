@@ -49,8 +49,7 @@ fn poll_until_drained(host: &mut Host, secs: u64) -> bool {
     }
 }
 
-#[test]
-#[named]
+#[tested]
 fn kill_stops_an_in_flight_run() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn(t.temp_dir());

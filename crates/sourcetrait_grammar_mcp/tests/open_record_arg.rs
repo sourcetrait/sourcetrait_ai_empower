@@ -53,8 +53,7 @@ fn run_result_open_record_still_denied() {
     assert!(error_text(&env).contains("nested empty record"), "expected the nested-empty-record denial; got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_inspect_and_call_open_record_arg_field() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

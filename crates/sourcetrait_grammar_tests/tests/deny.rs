@@ -4,8 +4,7 @@ use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-#[test]
-#[named]
+#[tested]
 fn deny_removes_tools_from_list() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--deny", "run,interact,learn"]);
@@ -27,10 +26,10 @@ fn deny_removes_tools_from_list() {
         "channel_verified",
         "channel_close",
         "config_channel",
-        "purview_list",
+        "purviews",
         "purview_configure",
         "purview_extend",
-        "purview_reset",
+        "purview",
         "info",
         "inspect",
         "processes",
@@ -43,8 +42,7 @@ fn deny_removes_tools_from_list() {
     }
 }
 
-#[test]
-#[named]
+#[tested]
 fn denied_tool_call_fails_at_protocol_layer() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--deny", "run"]);
@@ -65,15 +63,14 @@ fn denied_tool_call_fails_at_protocol_layer() {
     assert!(!success, "a denied tool must not execute; got {resp}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn deny_full_set_leaves_core_four() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(
         t.temp_dir(),
         &[
             "--deny",
-            "run,rerun,interact,call,learn,new,commit,rig,channel_open,channel_verified,channel_close,config_channel,purview_list,purview_configure,purview_extend,purview_reset",
+            "run,rerun,interact,call,learn,new,commit,rig,channel_open,channel_verified,channel_close,config_channel,purviews,purview_configure,purview_extend,purview",
         ],
     );
     let mut names = host.tool_names();
@@ -85,8 +82,7 @@ fn deny_full_set_leaves_core_four() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn unknown_deny_token_fails_startup() {
     let t = testing::test!({ .using_temp_dir() });
     let out = run_output(t.temp_dir(), &["--deny", "bogus"]);

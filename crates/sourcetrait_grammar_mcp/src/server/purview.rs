@@ -110,6 +110,69 @@ pub(crate) fn is_derived_purview(id: &str) -> bool {
     id == PURVIEW_CURRENT || id == PURVIEW_ALL
 }
 
+/// The sigil marking a value as a REFERENCE to another purview rather than a
+/// namepath pattern. Unambiguous: `is_valid_ident` never admits `@`, so no
+/// author, rig, module or call can begin with one.
+pub(crate) const PURVIEW_REF: char = '@';
+
+/// The purview id a value references, or None when it is an ordinary pattern.
+pub(crate) fn purview_ref(value: &str) -> Option<&str> {
+    value.strip_prefix(PURVIEW_REF)
+}
+
+/// May `id` be referenced as `@id`?
+///
+/// The DERIVED built-ins may not: `@*` and `@.` name nothing that is ever a row,
+/// so they are rejected rather than left to resolve to everything or to nothing.
+pub(crate) fn is_valid_purview_ref(id: &str) -> bool {
+    !is_derived_purview(id) && is_valid_purview_id(id)
+}
+
+/// Expand purview REFERENCES into the concrete namepath patterns they stand for,
+/// passing everything else through untouched.
+///
+/// Reports stay RAW (the_user) - only the FILTER path expands - which is why
+/// this is separate from `resolve_patterns` rather than folded into it. A
+/// caller that displays configuration shows what was written; a caller that
+/// matches against it expands first.
+///
+/// CYCLES FLATTEN rather than lock up. A purview already visited on this walk
+/// contributes nothing the second time, so `a -> @b -> @a` terminates with the
+/// union of both and `a -> @a` terminates with a's own patterns. Writing a cycle
+/// is legal; it simply cannot buy anything on the revisit.
+pub(crate) fn expand_values(
+    values: &[String],
+    rows: Option<&Vec<PurviewRow>>,
+) -> Vec<String> {
+    fn walk(
+        values: &[String],
+        rows: Option<&Vec<PurviewRow>>,
+        seen: &mut Vec<String>,
+        out: &mut Vec<String>,
+    ) {
+        for value in values {
+            let Some(id) = purview_ref(value) else {
+                if !out.contains(value) {
+                    out.push(value.clone());
+                }
+                continue;
+            };
+            if seen.iter().any(|s| s == id) {
+                continue;
+            }
+            seen.push(id.to_string());
+            if let Some(row) = rows.and_then(|r| r.iter().find(|row| row.id == id)) {
+                let nested = row.namepath_patterns.clone();
+                walk(&nested, rows, seen, out);
+            }
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    walk(values, rows, &mut seen, &mut out);
+    out
+}
+
 /// Write `default` as `['*']` when it has no row. Runs at startup.
 ///
 /// THERE IS NO SUCH THING AS AN UNCONFIGURED DEFAULT (the_user). Materializing
@@ -172,11 +235,15 @@ pub(crate) fn parse_patterns(patterns: &[String]) -> Vec<NamepathStr> {
         .collect()
 }
 
-/// Which registered rig, if any, a namepath pattern needs in order to mean
-/// anything.
+/// What a stored value needs in order to mean anything.
 ///
-/// None means it needs no particular rig (`*`), so it can never dangle.
+/// None means it needs nothing in particular (`*`), so it can never dangle.
 fn pattern_requires(pattern: &str) -> Option<PatternNeed> {
+    // Checked BEFORE parsing: `@id` is not a namepath and must never reach the
+    // namepath grammar.
+    if let Some(id) = purview_ref(pattern) {
+        return Some(PatternNeed::Purview(id.to_string()));
+    }
     match NamepathStr::parse(pattern).ok()? {
         NamepathStr::Pattern(NamepathPattern::All) => None,
         NamepathStr::Pattern(NamepathPattern::Current) => Some(PatternNeed::Nothing),
@@ -198,7 +265,9 @@ fn pattern_requires(pattern: &str) -> Option<PatternNeed> {
 enum PatternNeed {
     Author(String),
     Rig(String),
-    /// Names no rig at all - a stored `.` is meaningless in a row.
+    /// A `@id` reference, satisfied by a PURVIEW rather than by a rig.
+    Purview(String),
+    /// Names nothing at all - a stored `.` is meaningless in a row.
     Nothing,
 }
 
@@ -216,6 +285,10 @@ enum PatternNeed {
 /// looking configured.
 pub(crate) fn prune_dangling(rows: &mut Vec<PurviewRow>) -> Vec<String> {
     let names = registered_rig_names();
+    // Taken BEFORE the mutable walk, so a reference is judged against the whole
+    // table: a purview referencing one defined beside it survives, and so does a
+    // cycle, since both ends have rows.
+    let ids: Vec<String> = rows.iter().map(|row| row.id.clone()).collect();
     let mut pruned: Vec<String> = Vec::new();
     for row in rows.iter_mut() {
         row.namepath_patterns.retain(|pattern| {
@@ -226,6 +299,7 @@ pub(crate) fn prune_dangling(rows: &mut Vec<PurviewRow>) -> Vec<String> {
                     .iter()
                     .any(|n| n.split_once('/').is_some_and(|(a, _)| a == author)),
                 Some(PatternNeed::Rig(rig)) => names.iter().any(|n| n == &rig),
+                Some(PatternNeed::Purview(id)) => ids.iter().any(|k| k == &id),
             };
             if !live && !pruned.contains(pattern) {
                 pruned.push(pattern.clone());
@@ -315,10 +389,22 @@ impl CurrentPurview {
         ids.clone()
     }
 
-    /// Back to `default` - the startup state.
-    pub(crate) fn reset(&self) -> Vec<String> {
+    /// Replace what is in view.
+    ///
+    /// An EMPTY list means `default`, so the view always names at least one
+    /// purview and there is no looking-at-nothing state to reason about. That
+    /// is also what subsumes the retired `purview_reset`: resetting is just
+    /// setting the view to nothing in particular.
+    pub(crate) fn set(
+        &self,
+        want: &[String],
+    ) -> Vec<String> {
         let mut ids = self.lock();
-        *ids = vec![PURVIEW_DEFAULT.to_string()];
+        *ids = if want.is_empty() {
+            vec![PURVIEW_DEFAULT.to_string()]
+        } else {
+            want.to_vec()
+        };
         ids.clone()
     }
 
@@ -338,7 +424,7 @@ impl CurrentPurview {
     }
 }
 
-/// One `[id, namepath_patterns]` pair as `info()` and `purview_list()` report it.
+/// One `[id, namepath_patterns]` pair as `info()` and `purviews()` report it.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct PurviewView(pub String, pub Vec<String>);
 

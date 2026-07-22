@@ -4,8 +4,7 @@ use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-#[test]
-#[named]
+#[tested]
 fn default_id_is_user_env() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("mylib");
@@ -24,8 +23,7 @@ fn default_id_is_user_env() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn explicit_id_and_namespace_select_their_own_dirs() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("mylib");
@@ -45,8 +43,7 @@ fn explicit_id_and_namespace_select_their_own_dirs() {
     assert_eq!(env["namespace"].as_str(), Some("ns1"), "got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn namespaces_are_disjoint() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("nslib");
@@ -84,8 +81,7 @@ fn namespaces_are_disjoint() {
     assert!(namespace_dir(&t.temp_dir().join("data"), "aid", "ns2").exists());
 }
 
-#[test]
-#[named]
+#[tested]
 fn env_carries_id_namespace_and_work_dir() {
     let t = testing::test!({ .using_temp_dir() });
     let wd = t.temp_dir().join("wd");
@@ -109,8 +105,7 @@ fn env_carries_id_namespace_and_work_dir() {
     assert_eq!(structured(&info)["work_dir"].as_str(), Some(wd_str), "info work_dir; got {info}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn workdir_tilde_expands_against_home() {
     let t = testing::test!({ .using_temp_dir() });
     let home = t.temp_dir().join("home");
@@ -135,8 +130,7 @@ fn workdir_tilde_expands_against_home() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn workdir_defaults_under_home_proj_equip_id() {
     let t = testing::test!({ .using_temp_dir() });
     let home = t.temp_dir().join("home");

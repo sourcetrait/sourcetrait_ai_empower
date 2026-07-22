@@ -25,8 +25,7 @@ fn git_log_subjects(repo: &Path) -> Vec<String> {
         .collect()
 }
 
-#[test]
-#[named]
+#[tested]
 fn rig_new_writes_repo_and_records_meta() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -53,8 +52,7 @@ fn rig_new_writes_repo_and_records_meta() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn uninstall_removes_subtree_keeps_source() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

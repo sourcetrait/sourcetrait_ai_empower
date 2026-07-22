@@ -6,8 +6,7 @@ use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-#[test]
-#[named]
+#[tested]
 fn call_after_commit_returns_result() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -26,8 +25,7 @@ fn call_after_commit_returns_result() {
     assert!(env.get("version_id").is_none(), "call envelope shouldn't echo version_id");
 }
 
-#[test]
-#[named]
+#[tested]
 fn call_after_module_commit_returns_result() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -51,8 +49,7 @@ fn call_unknown_rig_errors() {
     assert!(has_error(&env), "got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn call_missing_function_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -62,8 +59,7 @@ fn call_missing_function_errors() {
     assert!(has_error(&env), "got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn call_bad_module_path_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -79,8 +75,7 @@ fn call_bad_module_path_errors() {
     }
 }
 
-#[test]
-#[named]
+#[tested]
 fn call_args_typecheck_failure_surfaces() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -97,8 +92,7 @@ fn call_args_typecheck_failure_surfaces() {
     assert!(has_error(&env), "type mismatch should surface as error; got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn inspect_returns_function_doc() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -141,8 +135,7 @@ fn inspect_returns_function_doc() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn inspect_rig_root_and_module() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -174,8 +167,7 @@ fn inspect_rig_root_and_module() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn inspect_undocumented_is_empty() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -204,8 +196,7 @@ fn inspect_unknown_rig_errors() {
     assert!(has_error(&env), "got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn result_record_field_shapes_preserved() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -230,8 +221,7 @@ fn result_record_field_shapes_preserved() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn helper_file_pruned_from_info_and_not_callable() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

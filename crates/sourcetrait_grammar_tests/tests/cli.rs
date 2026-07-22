@@ -3,8 +3,7 @@ use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-#[test]
-#[named]
+#[tested]
 fn cli_info_prints_json() {
     let t = testing::test!({ .using_temp_dir() });
     let out = run_output(t.temp_dir(), &["--id", "cid", "cli", "info"]);
@@ -19,8 +18,7 @@ fn cli_info_prints_json() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn cli_rig_lifecycle_and_call() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("clilib");
@@ -65,8 +63,7 @@ fn cli_rig_lifecycle_and_call() {
     assert_eq!(v["result"]["out"].as_i64(), Some(42), "got {v}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn cli_run_evaluates_nuon_schemas_and_args() {
     let t = testing::test!({ .using_temp_dir() });
     let out = run_output(
@@ -87,8 +84,7 @@ fn cli_run_evaluates_nuon_schemas_and_args() {
     assert!(v["nonce"].as_str().is_some(), "run envelope should carry a nonce; got {v}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn cli_error_envelope_exits_one() {
     let t = testing::test!({ .using_temp_dir() });
     let out = run_output(
@@ -100,8 +96,7 @@ fn cli_error_envelope_exits_one() {
     assert!(v.get("error").is_some(), "the error envelope should print as JSON; got {v}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn cli_output_is_bare_compact_json() {
     let t = testing::test!({ .using_temp_dir() });
     let out = run_output(t.temp_dir(), &["--id", "cid", "cli", "info"]);
@@ -116,8 +111,7 @@ fn cli_output_is_bare_compact_json() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn cli_kill_prints_nothing_and_exits_zero() {
     let t = testing::test!({ .using_temp_dir() });
     let out = run_output(t.temp_dir(), &["--id", "cid", "cli", "kill", "doesnotexist"]);

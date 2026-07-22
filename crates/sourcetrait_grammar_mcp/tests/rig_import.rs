@@ -7,8 +7,7 @@ use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_path_self_call_target() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -28,8 +27,7 @@ fn commit_accepts_path_self_call_target() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_path_self_in_mod_nu_const() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -53,8 +51,7 @@ fn commit_accepts_path_self_in_mod_nu_const() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_happy_path_writes_repo_and_meta() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -88,8 +85,7 @@ fn commit_happy_path_writes_repo_and_meta() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_mod_nu_with_syntax_error() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -106,8 +102,7 @@ fn commit_rejects_mod_nu_with_syntax_error() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_mod_nu_referencing_missing_file() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -123,8 +118,7 @@ fn commit_rejects_mod_nu_referencing_missing_file() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_multiline_def_signature() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -141,8 +135,7 @@ fn commit_accepts_multiline_def_signature() {
     assert!(!has_error(&env), "multi-line signature should pass; got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_function_with_syntax_error() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -164,8 +157,7 @@ fn commit_rejects_function_with_syntax_error() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_main_without_output_type() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -188,8 +180,7 @@ fn commit_rejects_main_without_output_type() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_call_target_with_helper_export() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -216,8 +207,7 @@ fn commit_accepts_call_target_with_helper_export() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_main_empty_record_output() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -240,8 +230,7 @@ fn commit_rejects_main_empty_record_output() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_mod_nu_with_inline_const() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -256,8 +245,7 @@ fn commit_accepts_mod_nu_with_inline_const() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_mod_nu_with_inline_alias() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -272,8 +260,7 @@ fn commit_accepts_mod_nu_with_inline_alias() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_mod_nu_with_let() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -289,8 +276,7 @@ fn commit_rejects_mod_nu_with_let() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_mod_nu_with_only_comments() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -304,8 +290,7 @@ fn commit_accepts_mod_nu_with_only_comments() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_mod_nu_with_inline_def() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -321,8 +306,7 @@ fn commit_accepts_mod_nu_with_inline_def() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_aggregates_multiple_violations() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -357,8 +341,7 @@ fn commit_aggregates_multiple_violations() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_caps_structural_violations() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -375,8 +358,7 @@ fn commit_caps_structural_violations() {
     assert_eq!(errors.len(), 3, "errors should cap at 3; got {errors:?}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_root_call_target() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -401,8 +383,7 @@ fn commit_rejects_root_call_target() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_succeeds_then_check_warns_long_summary() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -441,8 +422,7 @@ fn commit_succeeds_then_check_warns_long_summary() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_short_summary() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -466,8 +446,7 @@ fn commit_accepts_short_summary() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn rig_new_reestablish_duplicate_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -483,8 +462,7 @@ fn rig_new_reestablish_duplicate_errors() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_picks_up_mutated_source() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -522,8 +500,7 @@ fn commit_unknown_rig_errors() {
     assert!(has_error(&env), "got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_validates_by_name_cross_rig_use() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -566,8 +543,7 @@ fn commit_validates_by_name_cross_rig_use() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_and_call_resolves_authored_self_ref() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -594,8 +570,7 @@ fn commit_and_call_resolves_authored_self_ref() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_organizational_file() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -614,8 +589,7 @@ fn commit_accepts_organizational_file() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_mod_nu_with_export_const_and_def() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -639,8 +613,7 @@ fn commit_accepts_mod_nu_with_export_const_and_def() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_empty_record_skeleton() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -662,8 +635,7 @@ fn commit_rejects_empty_record_skeleton() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_private_def_named_reserved() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -680,8 +652,7 @@ fn commit_rejects_private_def_named_reserved() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_module_named_reserved() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -699,8 +670,7 @@ fn commit_rejects_module_named_reserved() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_const_named_reserved() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -722,8 +692,7 @@ fn commit_rejects_const_named_reserved() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_record_key_reserved() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -745,8 +714,7 @@ fn commit_rejects_record_key_reserved() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_cellpath_member_reserved() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -768,8 +736,7 @@ fn commit_rejects_cellpath_member_reserved() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_reserved_as_quoted_string_value() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -789,8 +756,7 @@ fn commit_accepts_reserved_as_quoted_string_value() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn rig_new_and_scaffold_function() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -841,8 +807,7 @@ fn rig_new_and_scaffold_function() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn scaffolded_call_commits_as_wired() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -867,8 +832,7 @@ fn scaffolded_call_commits_as_wired() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn new_leaf_guard_refuses_existing_function() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -897,8 +861,7 @@ fn scaffold_into_unregistered_rig_errors() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_validates_and_upserts_source() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -930,8 +893,7 @@ fn commit_validates_and_upserts_source() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_unfleshed_skeleton() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -945,8 +907,7 @@ fn commit_rejects_unfleshed_skeleton() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_main_in_flat_file() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -967,8 +928,7 @@ fn commit_rejects_main_in_flat_file() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_call_wired_via_export_module() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -989,8 +949,7 @@ fn commit_rejects_call_wired_via_export_module() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_call_with_submodule() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -1012,8 +971,7 @@ fn commit_rejects_call_with_submodule() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_rejects_orphan_module() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -1035,8 +993,7 @@ fn commit_rejects_orphan_module() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_nu_cmd_extra_command() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -1062,8 +1019,7 @@ fn commit_accepts_nu_cmd_extra_command() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn commit_accepts_call_with_flat_helper() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

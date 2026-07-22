@@ -14,8 +14,7 @@ fn author_double_tree(src: &std::path::Path) {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn install_brings_shipped_source_into_mcp() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -39,8 +38,7 @@ fn install_brings_shipped_source_into_mcp() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn install_rolls_back_on_validation_failure() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -65,8 +63,7 @@ fn install_rolls_back_on_validation_failure() {
     assert!(!has_error(&re), "name should be free after rollback; got {re}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn check_reports_ok_for_clean_source() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -87,8 +84,7 @@ fn check_reports_ok_for_clean_source() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn check_reports_structural_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -128,8 +124,7 @@ fn check_unregistered_rig_errors() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn check_source_dir_mismatch_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -143,8 +138,7 @@ fn check_source_dir_mismatch_errors() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn uninstall_source_dir_mismatch_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -173,8 +167,7 @@ fn invalid_action_errors() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn run_body_can_use_a_committed_rig() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

@@ -105,10 +105,10 @@ transiently fail.
 - [`channel_verified()`](#channel_verified) Confirm the channel/Open packet was seen; ends the verify window.
 - [`channel_close()`](#channel_close) Close the host's packet channel.
 - [`config_channel()`](#config_channel) Read or adjust the channel's send-rate thresholds at runtime.
-- [`purview_list()`](#purview_list) List every configured purview, and what is currently in view.
+- [`purviews()`](#purviews) List every configured purview, and what is currently in view.
+- [`purview()`](#purview) Set the current view to these purviews.
 - [`purview_configure()`](#purview_configure) Set a purview's namepath patterns; an empty list deletes it.
 - [`purview_extend()`](#purview_extend) Bring more purviews into the current view.
-- [`purview_reset()`](#purview_reset) Reset the current view back to the default purview.
 
 
 ## `run()`
@@ -420,7 +420,7 @@ Output (partial):
 *Versions, plugins, and every rig's callable signatures.*
 
 `signatures` shows what the CURRENT purview puts in view, not necessarily the
-whole namespace (see [Purviews](#purviews)).
+whole namespace (see [Purview scoping](#purview-scoping)).
 
 ### arguments
 
@@ -972,24 +972,25 @@ Output (partial):
 }
 ```
 
-## Purviews
+## Purview scoping
 
 A PURVIEW is a named, scoped view of the callable namespace. Its values are
-namepath PATTERNS (the same grammar `inspect()` takes) or exact namepaths, so
-`sourcetrait/`, `acme/geo:`, `acme/geo:shape/` and `acme/geo:shape:area` are all
-legal purview values.
+namepath PATTERNS (the same grammar `inspect()` takes), exact namepaths, or
+REFERENCES to other purviews - so `sourcetrait/`, `acme/geo:`,
+`acme/geo:shape/`, `acme/geo:shape:area` and `@other` are all legal values.
 
-It exists to keep `info()` SMALL. On a box carrying many rigs the block is
-the agent's startup read, and most of it is irrelevant to the task at hand.
+It exists to keep `info()` SMALL. On a namespace carrying many rigs the
+signature block is the agent's startup read, and most of it is irrelevant to the
+task at hand.
 
 IT IS NOT ACCESS CONTROL. A purview filters what an agent KNOWS, never what it
-may call: `call()` reaches any registered call regardless of what is in
-view. Do not build permissions on it.
+may call: `call()` reaches any registered call regardless of what is in view. Do
+not build permissions on it.
 
 IDs are arbitrary path-like labels - slash-separated snake components, always
 bare relative (`default`, `iter/almost`, `john/cindy/mary`), never a leading `/`
-or `./`. They are unrelated to rig namepaths and to filesystem paths;
-`iter/almost` may or may not refer to anything called almost.
+or `./`. They are unrelated to namepaths and to filesystem paths; `iter/almost`
+may or may not refer to anything called almost.
 
 Three built-ins:
 
@@ -999,28 +1000,49 @@ Three built-ins:
 | `.` | what is in view right now; DERIVED, never stored |
 | `*` | everything |
 
-THERE IS NO UNCONFIGURED DEFAULT: startup writes `default` as `['*']` when it
-has no row, so a fresh namespace sees everything and every reader may assume the
-row exists. Absent is not empty: no purview file
-means nothing has been configured, while a configured purview that resolves to
-nothing shows nothing.
+THERE IS NO UNCONFIGURED DEFAULT. Startup writes `default` as `['*']` whenever
+it has no row, so a fresh namespace sees everything and every reader may assume
+the row exists. `purview_configure("default", [])` therefore RESETS it to `['*']`
+rather than deleting it - `default` has no not-existing state.
 
-Configuration persists per namespace at `<namespace>/.meta/purviews.nuon`;
-the current view is SESSION-RESIDENT, held by the host process and gone when it
-exits. It starts at `default`.
+Configuration persists per NAMESPACE, in the namespace's meta directory
+(`.meta/purviews.nuon`). The CURRENT view is SESSION-resident: it belongs to the
+host process, starts at `default`, and does not survive a restart. Configuration
+does.
 
-Two automatic behaviors:
+### References
 
-- `rig(install)` ADDS the new rig's `<author>/<name>:` pattern to `default`.
-  It never REPLACES: an unconfigured `default` materializes its implicit `*`
-  first, so the first install writes `['*', 'my/newlib:']` and nothing leaves
-  view.
-- `rig(uninstall)` removes that pattern everywhere, and DANGLING namepath patterns -
-  ones no registered rig can satisfy - are pruned whenever the table is
-  written. A purview pruned down to nothing is deleted, since an empty namepath pattern
-  list is already the delete operation.
+`@<purview_id>` includes whatever that purview puts in view. That is composition
+at the CONFIGURATION level - persisted and shared - as distinct from
+`purview_extend()`, which composes at the SESSION level and dies with the host.
 
-## `purview_list()`
+`@` is unambiguous: no author, rig, module or call may begin with one.
+
+- `@.` and `@*` are REFUSED. Both are derived rather than stored, so they name
+  no row and can reference nothing.
+- REFERENCES EXPAND ONLY WHEN FILTERING. Every report - `purviews()`,
+  `info()`'s `purview` - shows the values as written. Expansion happens where the
+  signature block is actually built, so what you read back is the configuration
+  rather than a derived view of it.
+- CYCLES FLATTEN rather than lock up. A purview already visited on a walk
+  contributes nothing the second time, so `a -> @b -> @a` yields the union of
+  both and `a -> @a` yields a's own patterns. Writing a cycle is legal; it just
+  cannot buy anything on the revisit.
+- A reference to a purview with no row DANGLES and is pruned like any other
+  dangling namepath pattern.
+
+### Lifecycle
+
+- `rig(install)` ADDS the new rig's `<author>/<name>:` pattern to `default`,
+  appending beside its existing `['*']` so nothing leaves view. Narrowing
+  everything down to one rig as the price of installing it would be a surprising
+  trade.
+- `rig(uninstall)` removes that pattern everywhere, and DANGLING values - ones no
+  registered rig or purview can satisfy - are pruned whenever the table is
+  written. A purview pruned down to nothing is DELETED, since an empty value list
+  is already the delete operation.
+
+## `purviews()`
 *List every configured purview, and what is currently in view.*
 
 ### arguments
@@ -1034,20 +1056,63 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "purviews": [ ["default", ["*"]], ["iter/geo", ["acme/geo:"]] ],
-      "current": [ ["default", ["*"]] ]
+      "purviews": [ ["default", ["*"]], ["iter/geo", ["acme/geo:", "@shared"]] ],
+      "current": [ "default" ]
     },
     "content": []
   }
 }
 ```
 
+`purviews` is the persisted table, verbatim - `@shared` is NOT expanded. `current`
+is the purview ids in view, the keys alone, since `purviews` already says what
+each resolves to.
+
+## `purview()`
+*Set the current view to these purviews.*
+
+REPLACES what is in view. An EMPTY list means `default`, which is what makes a
+separate reset tool unnecessary. Each id may carry the `@` alias form, so a
+reference copied out of a configuration works here unchanged. An unknown id is
+REFUSED rather than silently narrowing the view to something you did not ask for.
+
+### arguments
+
+Schema (partial):
+```json
+{
+  "properties": {
+    "purviews": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["purviews"]
+}
+```
+
+### Example
+
+Output (partial):
+```json
+{
+  "result": {
+    "structuredContent": {
+      "revealed": "acme\n geo # planar geometry helpers\n  shape\n   area <width:float,height:float> <area:float>\n"
+    },
+    "content": []
+  }
+}
+```
+
+`revealed` is `info()`'s `signatures` for what this call brought INTO view, or
+null when it brought nothing. Null does NOT mean nothing changed: narrowing the
+view reveals nothing new, and so does naming a purview whose rigs were already
+visible under another id. Call `info()` for what you are looking at now.
+
 ## `purview_configure()`
 *Set a purview's namepath patterns; an empty list deletes it.*
 
-Creates the purview if absent, REPLACES its namepath patterns if present. The
-derived built-ins `.` and `*` cannot be configured - they are computed, not
-stored.
+Creates the purview if absent, REPLACES its values if present, DELETES it when
+the list is empty - except `default`, which resets to `['*']`. The derived `.`
+and `*` cannot be configured.
 
 ### arguments
 
@@ -1069,7 +1134,7 @@ MCP (partial):
 {
   "arguments": {
     "purview": "iter/geo",
-    "namepaths": ["acme/geo:", "acme/mathrig:shape:area"]
+    "namepaths": ["acme/geo:", "@shared"]
   }
 }
 ```
@@ -1079,17 +1144,17 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "purviews": [ ["default", ["*"]], ["iter/geo", ["acme/geo:", "acme/mathrig:shape:area"]] ],
-      "current": [ ["default", ["*"]] ],
-      "pruned": []
+      "signatures": "acme\n geo # planar geometry helpers\n  shape\n   area <width:float,height:float> <area:float>\n"
     },
     "content": []
   }
 }
 ```
 
-`pruned` reports namepath patterns dropped because no registered rig can
-satisfy them - a typo'd author, or a rig that has since been uninstalled.
+`signatures` is EVERYTHING this purview reveals - the whole set with references
+expanded, never a delta - or null when the call deleted it. Full rather than
+incremental because the caller needs to CHECK what it just wrote, and a delta
+says nothing at all about a purview the session is not looking through.
 
 ## `purview_extend()`
 *Bring more purviews into the current view.*
@@ -1117,30 +1182,18 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "added": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float>\n",
-      "removed": null,
-      "current": [ ["default", ["*"]], ["iter/geo", ["acme/geo:"]] ]
+      "revealed": "acme\n geo # planar geometry helpers\n  shape\n   area <width:float,height:float> <area:float>\n",
+      "current": [ "default", "iter/geo" ]
     },
     "content": []
   }
 }
 ```
 
-`added` is `info()`'s `signatures` for the namepath patterns newly added - not
-the whole new view. When the current view already carries `*`, what it shows was
-visible before as well: the patterns are what changed, and the block says what
-they name. `removed` is the namepath patterns that LEFT. Each is null when that
-half did not happen, which for extend is normally `removed`.
-
-## `purview_reset()`
-*Reset the current view back to the default purview.*
-
-The startup state. Shares `purview_extend()`'s delta envelope, where `removed`
-is the working half.
-
-### arguments
-
-No parameters.
+`revealed` is what CAME INTO view, not the whole new view, and it is measured
+over what is VISIBLE rather than over the value strings - so a purview naming a
+rig already in view under a different id reveals nothing and returns null.
+`current` is the purview ids in view now.
 
 ## The embedded API (`grimm *`)
 

@@ -50,8 +50,8 @@ impl NuSh {
                             Ok(rows) => rows,
                             Err(error) => return Ok(error_to_call_result(error, None)),
                         };
-                        parse_patterns(&resolve_patterns(
-                            &self.current_purview.ids(),
+                        parse_patterns(&expand_values(
+                            &resolve_patterns(&self.current_purview.ids(), rows.as_ref()),
                             rows.as_ref(),
                         ))
                     }

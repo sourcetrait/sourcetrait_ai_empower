@@ -17,8 +17,7 @@ fn seed(dir: &std::path::Path, name: &str) {
     }
 }
 
-#[test]
-#[named]
+#[tested]
 fn removes_a_staging_dir_holding_only_our_artifacts() {
     let t = testing::test!({ .using_temp_dir() });
     let dir = t.temp_dir().join("certs");
@@ -29,8 +28,7 @@ fn removes_a_staging_dir_holding_only_our_artifacts() {
 }
 
 /// The case that matters: something else lives there, so we must not delete it.
-#[test]
-#[named]
+#[tested]
 fn keeps_a_staging_dir_holding_anything_else() {
     let t = testing::test!({ .using_temp_dir() });
     let dir = t.temp_dir().join("certs");
@@ -49,8 +47,7 @@ fn keeps_a_staging_dir_holding_anything_else() {
 
 /// A subdirectory counts as unexpected: `remove_dir` after removing the known files is
 /// the second net, so nothing recurses.
-#[test]
-#[named]
+#[tested]
 fn keeps_a_staging_dir_holding_a_subdirectory() {
     let t = testing::test!({ .using_temp_dir() });
     let dir = t.temp_dir().join("certs");
@@ -62,8 +59,7 @@ fn keeps_a_staging_dir_holding_a_subdirectory() {
     assert!(dir.join("nested").exists());
 }
 
-#[test]
-#[named]
+#[tested]
 fn reports_a_missing_staging_dir_rather_than_panicking() {
     let t = testing::test!({ .using_temp_dir() });
     let dir = t.temp_dir().join("absent");

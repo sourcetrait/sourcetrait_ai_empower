@@ -77,8 +77,7 @@ fn info_returns_static_server_state() {
     assert!(env["signatures"].is_string(), "signatures is a text block; got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn info_renders_a_committed_rig_as_a_signature_block() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -124,8 +123,7 @@ fn info_renders_a_committed_rig_as_a_signature_block() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn the_indentation_is_the_hierarchy() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -149,8 +147,7 @@ fn the_indentation_is_the_hierarchy() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn summaries_ride_the_line_and_are_omitted_when_absent() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -173,8 +170,7 @@ fn summaries_ride_the_line_and_are_omitted_when_absent() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn a_void_renders_as_empty_angles() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -197,8 +193,7 @@ fn a_void_renders_as_empty_angles() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn a_multi_line_summary_is_flattened_onto_its_line() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -231,8 +226,7 @@ fn a_multi_line_summary_is_flattened_onto_its_line() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn a_mixed_module_states_its_own_call_separator() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -267,8 +261,7 @@ fn a_mixed_module_states_its_own_call_separator() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn an_author_heads_its_group_exactly_once() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

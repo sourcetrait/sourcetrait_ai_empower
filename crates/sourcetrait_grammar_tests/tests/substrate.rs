@@ -6,8 +6,7 @@ static TESTING: testing::Module = testing::module!(Integration, { .using_temp_di
 /// A fresh host process creates its namespace substrate at startup: the signing
 /// keypair + the rigs git repo (HEAD on `main`). This is a first-startup /
 /// separate-process concern, hence a SYSTEM test.
-#[test]
-#[named]
+#[tested]
 fn substrate_initializes_on_first_startup() {
     let t = testing::test!({ .using_temp_dir() });
     let host = Host::spawn_args(t.temp_dir(), &["--id", "sid"]);

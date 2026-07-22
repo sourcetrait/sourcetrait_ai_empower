@@ -42,8 +42,7 @@ fn git_ls_files(repo: &Path, name: &str) -> Vec<String> {
         .collect()
 }
 
-#[test]
-#[named]
+#[tested]
 fn assets_data_files_carried_recursively() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -64,8 +63,7 @@ fn assets_data_files_carried_recursively() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn assets_denies_script_extension() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -81,8 +79,7 @@ fn assets_denies_script_extension() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn assets_dotfiles_judged_by_extension() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -106,8 +103,7 @@ fn assets_dotfiles_judged_by_extension() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn assets_denies_executable_bit() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -124,8 +120,7 @@ fn assets_denies_executable_bit() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn docs_md_txt_carried() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -141,8 +136,7 @@ fn docs_md_txt_carried() {
     assert!(canon.join(".docs/notes.txt").exists());
 }
 
-#[test]
-#[named]
+#[tested]
 fn docs_denies_other_extensions_and_plain_dotfile() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -167,8 +161,7 @@ fn docs_denies_other_extensions_and_plain_dotfile() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn docs_allows_gitignore() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -181,8 +174,7 @@ fn docs_allows_gitignore() {
     assert!(!has_error(&env), ".docs/.gitignore is allowlisted; got {env}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn docs_denies_executable_bit() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -199,8 +191,7 @@ fn docs_denies_executable_bit() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn root_sanctioned_files_carried() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -220,8 +211,7 @@ fn root_sanctioned_files_carried() {
     }
 }
 
-#[test]
-#[named]
+#[tested]
 fn root_denies_unexpected_non_nu_file() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -237,8 +227,7 @@ fn root_denies_unexpected_non_nu_file() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn sanctioned_file_in_module_dir_denied_root_only() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -254,8 +243,7 @@ fn sanctioned_file_in_module_dir_denied_root_only() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn executable_nu_file_denied() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -271,8 +259,7 @@ fn executable_nu_file_denied() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn gitignore_allowed_at_root_and_module() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -288,8 +275,7 @@ fn gitignore_allowed_at_root_and_module() {
     assert!(canon.join("m/.gitignore").exists(), "module .gitignore carried");
 }
 
-#[test]
-#[named]
+#[tested]
 fn gitignore_honored_at_commit_staging_only() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -322,8 +308,7 @@ fn gitignore_honored_at_commit_staging_only() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn nested_assets_dir_is_skipped_not_carried() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -342,8 +327,7 @@ fn nested_assets_dir_is_skipped_not_carried() {
     );
 }
 
-#[test]
-#[named]
+#[tested]
 fn rig_name_denylist() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
@@ -361,8 +345,7 @@ fn rig_name_denylist() {
     assert!(!has_error(&ok), "a normal name should succeed; got {ok}");
 }
 
-#[test]
-#[named]
+#[tested]
 fn install_carries_assets_and_is_callable() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();

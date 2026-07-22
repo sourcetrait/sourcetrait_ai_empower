@@ -42,8 +42,8 @@ pub(crate) mod server {
         pub(crate) mod processes;
         pub(crate) mod purview_configure;
         pub(crate) mod purview_extend;
-        pub(crate) mod purview_list;
-        pub(crate) mod purview_reset;
+        pub(crate) mod purviews;
+        pub(crate) mod purview;
         pub(crate) mod rerun;
         pub(crate) mod run;
     }
@@ -140,8 +140,9 @@ pub(crate) use crate::{
         purview::{
             CurrentPurview, PURVIEW_ALL, PURVIEW_DEFAULT, PurviewRow,
             PurviewView, is_derived_purview, is_valid_purview_id, load_purviews,
-            ensure_default_purview, is_nameable_purview, parse_patterns, pattern_delta,
-            prune_dangling, purview_views, purviews_path, resolve_patterns, save_purviews,
+            ensure_default_purview, expand_values, is_nameable_purview, is_valid_purview_ref,
+            parse_patterns, pattern_delta, prune_dangling, purview_ref, purview_views,
+            purviews_path, resolve_patterns, save_purviews,
         },
         run::{eval_concurrency_cap, run_server},
         schema::{
@@ -174,9 +175,9 @@ pub(crate) use crate::{
             new::NewParams,
             processes::ProcessesParams,
             purview_configure::PurviewConfigureParams,
-            purview_extend::{PurviewDeltaEnvelope, PurviewExtendParams},
-            purview_list::PurviewListParams,
-            purview_reset::PurviewResetParams,
+            purview_extend::PurviewExtendParams,
+            purviews::PurviewsParams,
+            purview::PurviewParams,
             rerun::RerunParams,
         },
     },

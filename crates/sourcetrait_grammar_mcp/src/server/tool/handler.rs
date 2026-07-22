@@ -28,8 +28,8 @@ impl NuSh {
         if !deny.denies(DeniableTool::Commit) {
             router = router + Self::commit_router();
         }
-        if !deny.denies(DeniableTool::Library) {
-            router = router + Self::library_router();
+        if !deny.denies(DeniableTool::Rig) {
+            router = router + Self::rig_router();
         }
         if !deny.denies(DeniableTool::ChannelOpen) {
             router = router + Self::channel_open_router();
@@ -82,10 +82,10 @@ impl mcp::ServerHandler for NuSh {
              a run's cached body co-locates at \
              $XDG_CACHE_HOME/sourcetrait/grammar/{id}/{namespace}/runs/<nonce>/body.nuon \
              (the rerun(nonce) handle). \
-             Registered libraries live in a signed git repo at \
-             $XDG_DATA_HOME/sourcetrait/grammar/{id}/{namespace}/libraries/; signing keypair at \
+             Registered rigs live in a signed git repo at \
+             $XDG_DATA_HOME/sourcetrait/grammar/{id}/{namespace}/rigs/; signing keypair at \
              $XDG_DATA_HOME/sourcetrait/grammar/{id}/{namespace}/keypair/. \
-             This server's state coordinate: id `{id}`, namespace `{namespace}`.",
+             This server's namespace: id `{id}`, namespace `{namespace}`.",
         ));
         info
     }

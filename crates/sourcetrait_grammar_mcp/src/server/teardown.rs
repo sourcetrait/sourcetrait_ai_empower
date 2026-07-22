@@ -60,7 +60,7 @@ pub(crate) fn parse_state_ppid(stat: &str) -> Option<(String, u32)> {
 /// slot and polluting every `ps` / /proc sweep we do.
 ///
 /// The recurring source is `git commit`, which detaches its own auto-maintenance
-/// (`gc --auto`): one leaked zombie per commit, and the library lifecycle commits on
+/// (`gc --auto`): one leaked zombie per commit, and the rig lifecycle commits on
 /// every new / commit / uninstall. Nothing about it is git-specific though - any
 /// external that daemonizes a child lands here the same way.
 ///

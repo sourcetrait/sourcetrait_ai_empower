@@ -6,19 +6,19 @@ pub enum Severity {
     Warning,
 }
 
-/// What: a diagnostic's location. `path` is the file RELATIVE TO THE LIBRARIES
-/// DIR (`<library>/<file>`, e.g. `geo/shape/area.nu`, `geo/mod.nu`) for a
-/// library-validation diagnostic, and `null` for a run/interact body
+/// What: a diagnostic's location. `path` is the file RELATIVE TO THE RIGS
+/// DIR (`<rig>/<file>`, e.g. `geo/shape/area.nu`, `geo/mod.nu`) for a
+/// rig-validation diagnostic, and `null` for a run/interact body
 /// diagnostic (located in the body, no file). `position` is `[line, col]`,
 /// 1-based; `[0, 0]` is file-level (no specific line).
 ///
 /// Why: replaces the prior `Where` + `WhereSource` carrier with the flat wire
 /// shape the agent consumes. The whole `Source` is `null` (on the
 /// `Diagnostic`) for a non-located diagnostic (an eval timeout, an
-/// unregistered-library error).
+/// unregistered-rig error).
 ///
 /// Where: built by the body lint (`server::lint`, `path: None`) and the
-/// library validator (`server::library`, `path: Some("<library>/<rel>")`);
+/// rig validator (`server::rig`, `path: Some("<rig>/<rel>")`);
 /// serialized as part of a `Diagnostic`.
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
 pub struct Source {
@@ -27,12 +27,12 @@ pub struct Source {
 }
 
 /// What: one agent-facing diagnostic row. `kind` is the namespaced taxonomy
-/// string (`library::*`, `lint::*`, `thread::*`, ...); `source` is the
+/// string (`rig::*`, `lint::*`, `thread::*`, ...); `source` is the
 /// location (`null` when non-located); `message` carries the human detail.
 /// `severity` selects the envelope bucket and is NOT serialized.
 ///
 /// Why: the single unified diagnostic type collapses the former
-/// `library::Violation` (structural validator) and `lint::LintViolation`
+/// `rig::Violation` (structural validator) and `lint::LintViolation`
 /// (body lint) into one shape. The former typed per-variant `data`
 /// (timeout_ms, passed/registered, reason, ...) folds into `message` -- no
 /// loss, it is text either way -- so there is no separate `data` field, and
@@ -40,9 +40,9 @@ pub struct Source {
 /// field.
 ///
 /// Where: produced by `server::lint` (body lint, severity Error) and
-/// `server::library::validate_library_source` (structural Error +
-/// `lint::summary_length` Warning); carried by `Error::LibraryViolations` /
-/// `Error::LintViolations` and `tool::library::CheckSummary`; rendered to the
+/// `server::rig::validate_rig_source` (structural Error +
+/// `lint::summary_length` Warning); carried by `Error::RigViolations` /
+/// `Error::LintViolations` and `tool::rig::CheckSummary`; rendered to the
 /// wire by `error_to_call_result`.
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
 pub struct Diagnostic {
@@ -95,39 +95,39 @@ impl Diagnostic {
 
 #[derive(Debug, Clone)]
 pub enum Error {
-    LibraryNotRegistered {
-        library: String,
+    RigNotRegistered {
+        rig: String,
     },
-    LibraryAlreadyRegistered {
-        library: String,
+    RigAlreadyRegistered {
+        rig: String,
     },
-    LibraryInvalidName {
-        library: String,
+    RigInvalidName {
+        rig: String,
         reason: String,
     },
-    LibraryNameDenied {
-        library: String,
+    RigNameDenied {
+        rig: String,
     },
-    LibraryInvalidModulePath {
+    RigInvalidModulePath {
         module_path: String,
         reason: String,
     },
-    LibrarySourceMissing {
+    RigSourceMissing {
         path: String,
     },
-    LibrarySourcePathMismatch {
-        library: String,
+    RigSourcePathMismatch {
+        rig: String,
         passed: String,
         registered: String,
     },
-    LibraryViolations {
+    RigViolations {
         diagnostics: Vec<Diagnostic>,
     },
-    LibraryInvalidAction {
+    RigInvalidAction {
         action: String,
     },
     FunctionNotDefined {
-        library: String,
+        rig: String,
         module_path: String,
         name: String,
     },
@@ -180,14 +180,14 @@ pub enum Error {
 impl Error {
     fn kind_str(&self) -> &'static str {
         match self {
-            Self::LibraryNotRegistered { .. } => "library::not_registered",
-            Self::LibraryAlreadyRegistered { .. } => "library::already_registered",
-            Self::LibraryInvalidName { .. } => "library::invalid_name",
-            Self::LibraryNameDenied { .. } => "library::name_denied",
-            Self::LibraryInvalidModulePath { .. } => "library::invalid_module_path",
-            Self::LibrarySourceMissing { .. } => "library::source_missing",
-            Self::LibrarySourcePathMismatch { .. } => "library::source_path_mismatch",
-            Self::LibraryInvalidAction { .. } => "library::invalid_action",
+            Self::RigNotRegistered { .. } => "rig::not_registered",
+            Self::RigAlreadyRegistered { .. } => "rig::already_registered",
+            Self::RigInvalidName { .. } => "rig::invalid_name",
+            Self::RigNameDenied { .. } => "rig::name_denied",
+            Self::RigInvalidModulePath { .. } => "rig::invalid_module_path",
+            Self::RigSourceMissing { .. } => "rig::source_missing",
+            Self::RigSourcePathMismatch { .. } => "rig::source_path_mismatch",
+            Self::RigInvalidAction { .. } => "rig::invalid_action",
             Self::FunctionNotDefined { .. } => "function::not_defined",
             Self::SchemaInvalid { .. } => "schema::invalid",
             Self::NamepathInvalid { .. } => "namepath::invalid",
@@ -203,7 +203,7 @@ impl Error {
             Self::ThreadTimeout { .. } => "thread::timeout",
             Self::ThreadReturnedError { .. } => "thread::returned_error",
             Self::Internal { .. } => "internal",
-            Self::LibraryViolations { .. } | Self::LintViolations { .. } => {
+            Self::RigViolations { .. } | Self::LintViolations { .. } => {
                 unreachable!("violation variants render via bucket, not kind_str")
             }
         }
@@ -211,38 +211,38 @@ impl Error {
 
     fn message(&self) -> String {
         match self {
-            Self::LibraryNotRegistered { library } => {
-                format!("library `{library}` is not registered")
+            Self::RigNotRegistered { rig } => {
+                format!("rig `{rig}` is not registered")
             }
-            Self::LibraryAlreadyRegistered { library } => {
-                format!("library `{library}` is already registered")
+            Self::RigAlreadyRegistered { rig } => {
+                format!("rig `{rig}` is already registered")
             }
-            Self::LibraryInvalidName { library, reason } => {
-                format!("invalid library name `{library}`: {reason}")
+            Self::RigInvalidName { rig, reason } => {
+                format!("invalid rig name `{rig}`: {reason}")
             }
-            Self::LibraryNameDenied { library } => {
-                format!("library name `{library}` is reserved and cannot be used")
+            Self::RigNameDenied { rig } => {
+                format!("rig name `{rig}` is reserved and cannot be used")
             }
-            Self::LibraryInvalidModulePath {
+            Self::RigInvalidModulePath {
                 module_path,
                 reason,
             } => format!("invalid module path `{module_path}`: {reason}"),
-            Self::LibrarySourceMissing { path } => {
-                format!("library source path is missing or not a directory: {path}")
+            Self::RigSourceMissing { path } => {
+                format!("rig source path is missing or not a directory: {path}")
             }
-            Self::LibrarySourcePathMismatch {
-                library,
+            Self::RigSourcePathMismatch {
+                rig,
                 passed,
                 registered,
             } => format!(
-                "source_dir mismatch for `{library}`: passed `{passed}`, registered `{registered}`"
+                "source_dir mismatch for `{rig}`: passed `{passed}`, registered `{registered}`"
             ),
-            Self::LibraryInvalidAction { action } => format!("unknown library action `{action}`"),
+            Self::RigInvalidAction { action } => format!("unknown rig action `{action}`"),
             Self::FunctionNotDefined {
-                library,
+                rig,
                 module_path,
                 name,
-            } => format!("function `{name}` is not defined in `{library}:{module_path}`"),
+            } => format!("function `{name}` is not defined in `{rig}:{module_path}`"),
             Self::SchemaInvalid { reason } => format!("invalid schema: {reason}"),
             Self::NamepathInvalid { namepath, reason } => {
                 format!("invalid namepath `{namepath}`: {reason}")
@@ -274,7 +274,7 @@ impl Error {
             Self::ThreadTimeout { timeout_ms } => format!("eval timed out after {timeout_ms} ms"),
             Self::ThreadReturnedError { reason } => reason.clone(),
             Self::Internal { phase, reason } => format!("internal error [{phase}]: {reason}"),
-            Self::LibraryViolations { .. } | Self::LintViolations { .. } => {
+            Self::RigViolations { .. } | Self::LintViolations { .. } => {
                 unreachable!("violation variants render via bucket, not message")
             }
         }
@@ -326,7 +326,7 @@ pub(crate) fn error_to_call_result(
     nonce: Option<Nonce>,
 ) -> mcp::CallToolResult {
     let (errors, warnings) = match error {
-        Error::LibraryViolations { diagnostics } | Error::LintViolations { diagnostics } => {
+        Error::RigViolations { diagnostics } | Error::LintViolations { diagnostics } => {
             Diagnostic::bucket(diagnostics)
         }
         single => {

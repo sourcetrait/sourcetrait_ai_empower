@@ -8,8 +8,8 @@ pub struct PurviewConfigureParams {
     /// never a leading `/` or `./`, and arbitrary rather than derived from any
     /// namepath or filesystem path.
     pub purview: String,
-    /// The selectors it puts in view: namepath patterns, or an exact namepath
-    /// for a single call. An EMPTY list DELETES the purview entirely.
+    /// The namepath patterns it puts in view, or an exact namepath for a single
+    /// call. An EMPTY list DELETES the purview entirely.
     pub namepaths: Vec<String>,
 }
 
@@ -18,14 +18,14 @@ pub struct PurviewConfigureParams {
 pub(crate) struct PurviewConfigureEnvelope {
     pub purviews: Vec<PurviewView>,
     pub current: Vec<PurviewView>,
-    /// Selectors dropped because no registered library can satisfy them.
+    /// Namepath patterns dropped because no registered rig can satisfy them.
     pub pruned: Vec<String>,
 }
 
 #[mcp::tool_router(router = purview_configure_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Set a purview's selectors; an empty list deletes it.",
+        description = "Set a purview's namepath patterns; an empty list deletes it.",
         output_schema = mcp::schema_for_type::<PurviewConfigureEnvelope>()
     )]
     pub(crate) async fn purview_configure(
@@ -53,18 +53,22 @@ impl NuSh {
                 None,
             ));
         }
-        // Configuring MATERIALIZES the file: from here on this namespace is
-        // configured, and an absent `default` stays absent (and therefore
-        // total) unless something explicitly writes it.
         let mut rows = match load_purviews() {
             Ok(rows) => rows.unwrap_or_default(),
             Err(error) => return Ok(error_to_call_result(error, None)),
         };
         rows.retain(|row| row.id != p.purview);
-        if !p.namepaths.is_empty() {
+        // `default` CANNOT not exist, so an empty list RESETS it to `*` rather
+        // than deleting it - the same state startup would put it back in.
+        let namepaths = if p.namepaths.is_empty() && p.purview == PURVIEW_DEFAULT {
+            vec![PURVIEW_ALL.to_string()]
+        } else {
+            p.namepaths.clone()
+        };
+        if !namepaths.is_empty() {
             rows.push(PurviewRow {
                 id: p.purview.clone(),
-                namepath_patterns: p.namepaths.clone(),
+                namepath_patterns: namepaths,
             });
         }
         let pruned = prune_dangling(&mut rows);

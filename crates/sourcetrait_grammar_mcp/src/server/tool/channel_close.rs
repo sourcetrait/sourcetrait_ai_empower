@@ -16,7 +16,7 @@ impl NuSh {
         &self,
         mcp::Parameters(_p): mcp::Parameters<ChannelCloseParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // Idempotent, like library(uninstall): closing what is already closed is the
+        // Idempotent, like rig(uninstall): closing what is already closed is the
         // requested state, not a failure.
         self.channel.close(CLOSE_PLANNED, PLANNED_REASON);
         // A DELIBERATE close prunes what the channel wrote. The caller is declaring it

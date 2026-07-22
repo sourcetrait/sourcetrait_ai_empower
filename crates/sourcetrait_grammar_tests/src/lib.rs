@@ -123,7 +123,7 @@ impl Host {
         self.child.id()
     }
 
-    /// The XDG_DATA_HOME the child was spawned with (root of its store subtree).
+    /// The XDG_DATA_HOME the child was spawned with (root of its namespace subtree).
     pub fn data_home(&self) -> &Path {
         &self.data_home
     }
@@ -224,7 +224,7 @@ impl Host {
 
     /// Send a `tools/call` WITHOUT reading its response, returning the request id -
     /// for pipelined / concurrent requests (e.g. kill mid-run). Read the response
-    /// later with `read_id(id)`. Author-prefixes bare library names (idempotent).
+    /// later with `read_id(id)`. Author-prefixes bare rig names (idempotent).
     pub fn request(&mut self, tool: &str, args: Value) -> u64 {
         let id = self.next_id();
         self.send(&json!({
@@ -236,7 +236,7 @@ impl Host {
         id
     }
 
-    /// A `tools/call`, author-prefixing bare library names (idempotent for
+    /// A `tools/call`, author-prefixing bare rig names (idempotent for
     /// values already carrying an `author/name`).
     pub fn call(&mut self, tool: &str, args: Value) -> Value {
         let id = self.request(tool, args);
@@ -251,19 +251,19 @@ impl Host {
         self.call("call", json!({"namepath": namepath, "args": args}))
     }
 
-    pub fn library(&mut self, action: &str, name: &str, source_dir: &str) -> Value {
+    pub fn rig(&mut self, action: &str, name: &str, source_dir: &str) -> Value {
         self.call(
-            "library",
-            json!({"action": action, "library": name, "source_dir": source_dir}),
+            "rig",
+            json!({"action": action, "rig": name, "source_dir": source_dir}),
         )
     }
 
-    pub fn library_new(&mut self, name: &str, src: &Path) -> Value {
-        self.library("new", name, src.to_str().unwrap())
+    pub fn rig_new(&mut self, name: &str, src: &Path) -> Value {
+        self.rig("new", name, src.to_str().unwrap())
     }
 
     pub fn commit(&mut self, name: &str) -> Value {
-        self.call("commit", json!({"library": name}))
+        self.call("commit", json!({"rig": name}))
     }
 
     /// The tool names advertised by `tools/list`.
@@ -280,8 +280,8 @@ impl Host {
     }
 }
 
-/// Prepend `sourcetrait/` to a bare library name in the args of the
-/// library-addressing tools. Idempotent: a value already carrying `/` (an
+/// Prepend `sourcetrait/` to a bare rig name in the args of the
+/// rig-addressing tools. Idempotent: a value already carrying `/` (an
 /// `author/name`) passes through unchanged.
 pub fn author_prefixed(tool: &str, mut args: Value) -> Value {
     fn pfx_lib(s: &str) -> String {
@@ -314,9 +314,9 @@ pub fn author_prefixed(tool: &str, mut args: Value) -> Value {
                 }
             }
         }
-        "library" | "commit" => {
-            if let Some(l) = args.get("library").and_then(|v| v.as_str()) {
-                args["library"] = Value::String(pfx_lib(l));
+        "rig" | "commit" => {
+            if let Some(l) = args.get("rig").and_then(|v| v.as_str()) {
+                args["rig"] = Value::String(pfx_lib(l));
             }
         }
         _ => {}
@@ -394,8 +394,8 @@ pub fn valid_function_source(args_schema: &str, result_schema: &str, body: &str)
     )
 }
 
-/// The on-disk store subtree for `(id, namespace)` under a data home.
-pub fn store_dir(data_home: &Path, id: &str, namespace: &str) -> PathBuf {
+/// The on-disk namespace subtree for `(id, namespace)` under a data home.
+pub fn namespace_dir(data_home: &Path, id: &str, namespace: &str) -> PathBuf {
     data_home
         .join("sourcetrait")
         .join("grammar")

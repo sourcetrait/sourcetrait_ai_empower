@@ -21,18 +21,18 @@ fn cli_info_prints_json() {
 
 #[test]
 #[named]
-fn cli_library_lifecycle_and_call() {
+fn cli_rig_lifecycle_and_call() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("clilib");
     let src_str = src.to_str().unwrap();
 
     let established = run_output(
         t.temp_dir(),
-        &["--id", "cid", "cli", "library", "new", "sourcetrait/clilib", src_str],
+        &["--id", "cid", "cli", "rig", "new", "sourcetrait/clilib", src_str],
     );
     assert!(
         established.status.success(),
-        "cli library new should exit 0; got {established:?}",
+        "cli rig new should exit 0; got {established:?}",
     );
 
     write_source(&src, "mod.nu", "export module m\n");

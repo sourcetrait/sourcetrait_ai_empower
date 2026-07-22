@@ -1,7 +1,7 @@
 use crate::*;
 
-/// The namespace-level meta directory. NEW with purviews - the store carried
-/// only `keypair/`, `libraries/` and `host.lock` before it.
+/// The namespace-level meta directory. NEW with purviews - the namespace carried
+/// only `keypair/`, `rigs/` and `host.lock` before it.
 pub(crate) const META_DIR: &str = ".meta";
 
 const PURVIEWS_FILE: &str = "purviews.nuon";
@@ -22,18 +22,15 @@ pub(crate) fn purviews_path() -> PathBuf {
     data_base_dir().join(META_DIR).join(PURVIEWS_FILE)
 }
 
-/// One configured purview: an arbitrary path-like label bound to the selectors
-/// it puts in view.
-///
-/// `namepath_patterns` keeps the design's column name verbatim, so the persisted
-/// table reads as it was specified rather than as it was implemented.
+/// One configured purview: an arbitrary path-like label bound to the namepath
+/// patterns it puts in view.
 #[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
 pub(crate) struct PurviewRow {
     pub id: String,
     pub namepath_patterns: Vec<String>,
 }
 
-/// Render the purview table as NUON, through the serde Value bridge the library
+/// Render the purview table as NUON, through the serde Value bridge the rig
 /// index already uses - one bridge for the whole shape, and it cannot drift from
 /// the struct.
 pub(crate) fn purviews_to_nuon(rows: &[PurviewRow]) -> Result<String, String> {
@@ -50,14 +47,12 @@ pub(crate) fn purviews_from_nuon(text: &str) -> Result<Vec<PurviewRow>, String> 
     json::from_value(json).map_err(|e| e.to_string())
 }
 
-/// Every configured purview, or None when the namespace is UNCONFIGURED.
+/// Every configured purview. None only BEFORE `ensure_default_purview` has run,
+/// since that writes the file if it is missing.
 ///
-/// ABSENT IS NOT EMPTY, and the distinction is the whole contract: a missing
-/// file means nothing has been configured, which resolves to EVERYTHING, while a
-/// present-but-empty table means someone deliberately configured nothing. The
-/// library index made the opposite mistake once - a missing meta file reads as
-/// "no libraries" rather than as an error - and this file must not repeat the
-/// shape.
+/// A decode failure is a LOUD error rather than a silent empty. The rig
+/// index made the opposite mistake once - a missing meta file reads as "no
+/// rigs" rather than as an error - and this file must not repeat the shape.
 pub(crate) fn load_purviews() -> Result<Option<Vec<PurviewRow>>, Error> {
     let path = purviews_path();
     let text = match fs::read_to_string(&path) {
@@ -115,102 +110,125 @@ pub(crate) fn is_derived_purview(id: &str) -> bool {
     id == PURVIEW_CURRENT || id == PURVIEW_ALL
 }
 
-/// The selectors a set of purview ids puts in view, in order and de-duplicated.
+/// Write `default` as `['*']` when it has no row. Runs at startup.
 ///
-/// `*` is everything, and so is an UNCONFIGURED `default` - the design's "a new
-/// namespace sees the whole library", and the reason absent and empty stay
-/// distinguishable above. An id with no row contributes NOTHING rather than
-/// everything, because a typo must narrow the view rather than silently open it.
-pub(crate) fn resolve_selectors(
+/// THERE IS NO SUCH THING AS AN UNCONFIGURED DEFAULT (the_user). Materializing
+/// it once here is what makes that an INVARIANT rather than a fallback every
+/// reader would otherwise have to remember - so nothing downstream resolves,
+/// propagates to, or reports an absent `default`, and the "is this namespace
+/// configured yet" question simply does not arise.
+pub(crate) fn ensure_default_purview() -> Result<(), Error> {
+    let mut rows = load_purviews()?.unwrap_or_default();
+    if rows.iter().any(|row| row.id == PURVIEW_DEFAULT) {
+        return Ok(());
+    }
+    rows.push(PurviewRow {
+        id: PURVIEW_DEFAULT.to_string(),
+        namepath_patterns: vec![PURVIEW_ALL.to_string()],
+    });
+    save_purviews(&rows)
+}
+
+/// The namepath patterns a set of purview ids puts in view, in order and
+/// de-duplicated.
+///
+/// `*` is everything. EVERY other id must have a row, `default` included -
+/// startup guarantees it has one - so there is no unconfigured default to fall
+/// back for. An id with no row contributes NOTHING rather than everything,
+/// because a typo must narrow the view rather than silently open it.
+pub(crate) fn resolve_patterns(
     ids: &[String],
     rows: Option<&Vec<PurviewRow>>,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for id in ids {
-        let selectors: Vec<String> = if id == PURVIEW_ALL {
+        let patterns: Vec<String> = if id == PURVIEW_ALL {
             vec![PURVIEW_ALL.to_string()]
         } else {
             match rows.and_then(|r| r.iter().find(|row| &row.id == id)) {
                 Some(row) => row.namepath_patterns.clone(),
-                // Unconfigured `default` is everything; any other absent id is
-                // nothing.
-                None if id == PURVIEW_DEFAULT => vec![PURVIEW_ALL.to_string()],
                 None => Vec::new(),
             }
         };
-        for s in selectors {
-            if !out.contains(&s) {
-                out.push(s);
+        for pattern in patterns {
+            if !out.contains(&pattern) {
+                out.push(pattern);
             }
         }
     }
     out
 }
 
-/// Parse selector strings into the matcher form, dropping any that do not parse.
+/// Parse namepath pattern strings into the matcher form, dropping any that do
+/// not parse.
 ///
-/// A stored selector that no longer parses is treated as absent rather than
+/// A stored pattern that no longer parses is treated as absent rather than
 /// fatal: a purview file is agent-authored data, and one bad row must not take
 /// `info()` down with it.
-pub(crate) fn parse_selectors(selectors: &[String]) -> Vec<NamepathStr> {
-    selectors
+pub(crate) fn parse_patterns(patterns: &[String]) -> Vec<NamepathStr> {
+    patterns
         .iter()
-        .filter_map(|s| NamepathStr::parse(s).ok())
+        .filter_map(|p| NamepathStr::parse(p).ok())
         .collect()
 }
 
-/// Which registered library, if any, a selector needs in order to mean anything.
+/// Which registered rig, if any, a namepath pattern needs in order to mean
+/// anything.
 ///
-/// None means it needs no particular library (`*`), so it can never dangle.
-fn selector_requires(selector: &str) -> Option<SelectorNeed> {
-    match NamepathStr::parse(selector).ok()? {
+/// None means it needs no particular rig (`*`), so it can never dangle.
+fn pattern_requires(pattern: &str) -> Option<PatternNeed> {
+    match NamepathStr::parse(pattern).ok()? {
         NamepathStr::Pattern(NamepathPattern::All) => None,
-        NamepathStr::Pattern(NamepathPattern::Current) => Some(SelectorNeed::Nothing),
+        NamepathStr::Pattern(NamepathPattern::Current) => Some(PatternNeed::Nothing),
         NamepathStr::Pattern(NamepathPattern::Author { author }) => {
-            Some(SelectorNeed::Author(author))
+            Some(PatternNeed::Author(author))
         }
         NamepathStr::Pattern(
-            NamepathPattern::Library { library }
-            | NamepathPattern::ModuleTree { library, .. }
-            | NamepathPattern::ModuleCalls { library, .. },
-        ) => Some(SelectorNeed::Library(library)),
-        NamepathStr::Namepath(n) => n.validate().ok().map(|r| SelectorNeed::Library(r.library().to_string())),
+            NamepathPattern::Rig { rig }
+            | NamepathPattern::ModuleTree { rig, .. }
+            | NamepathPattern::ModuleCalls { rig, .. },
+        ) => Some(PatternNeed::Rig(rig)),
+        NamepathStr::Namepath(n) => n
+            .validate()
+            .ok()
+            .map(|r| PatternNeed::Rig(r.rig().to_string())),
     }
 }
 
-enum SelectorNeed {
+enum PatternNeed {
     Author(String),
-    Library(String),
-    /// Names no library at all - a stored `.` is meaningless in a row.
+    Rig(String),
+    /// Names no rig at all - a stored `.` is meaningless in a row.
     Nothing,
 }
 
-/// Drop selectors no registered library can satisfy, returning what was pruned.
+/// Drop namepath patterns no registered rig can satisfy, returning what was
+/// pruned.
 ///
-/// Pruning is by REGISTRATION, not by emptiness: a library with no calls yet
+/// Pruning is by REGISTRATION, not by emptiness: a rig with no calls yet
 /// still satisfies its own pattern, and a purview that pointed at it should
-/// survive until the library actually goes away.
+/// survive until the rig actually goes away.
 ///
 /// A row pruned down to NOTHING is dropped rather than kept as an empty purview,
-/// because an empty selector list is already the DELETE operation on the
+/// because an empty namepath pattern list is already the DELETE operation on the
 /// configure tool - so a surviving empty row would be a state the tool surface
 /// cannot otherwise produce, and it would resolve to "sees nothing" while
 /// looking configured.
 pub(crate) fn prune_dangling(rows: &mut Vec<PurviewRow>) -> Vec<String> {
-    let names = registered_library_names();
+    let names = registered_rig_names();
     let mut pruned: Vec<String> = Vec::new();
     for row in rows.iter_mut() {
-        row.namepath_patterns.retain(|selector| {
-            let live = match selector_requires(selector) {
+        row.namepath_patterns.retain(|pattern| {
+            let live = match pattern_requires(pattern) {
                 None => true,
-                Some(SelectorNeed::Nothing) => false,
-                Some(SelectorNeed::Author(author)) => names
+                Some(PatternNeed::Nothing) => false,
+                Some(PatternNeed::Author(author)) => names
                     .iter()
                     .any(|n| n.split_once('/').is_some_and(|(a, _)| a == author)),
-                Some(SelectorNeed::Library(library)) => names.iter().any(|n| n == &library),
+                Some(PatternNeed::Rig(rig)) => names.iter().any(|n| n == &rig),
             };
-            if !live && !pruned.contains(selector) {
-                pruned.push(selector.clone());
+            if !live && !pruned.contains(pattern) {
+                pruned.push(pattern.clone());
             }
             live
         });
@@ -219,20 +237,20 @@ pub(crate) fn prune_dangling(rows: &mut Vec<PurviewRow>) -> Vec<String> {
     pruned
 }
 
-/// What changed between two selector sets - the delta the extend and reset
-/// tools report, as `(added, removed)`.
-pub(crate) fn selector_delta(
+/// What changed between two namepath pattern sets - the delta the extend and
+/// reset tools report, as `(added, removed)`.
+pub(crate) fn pattern_delta(
     before: &[String],
     after: &[String],
 ) -> (Vec<String>, Vec<String>) {
     let added: Vec<String> = after
         .iter()
-        .filter(|s| !before.contains(s))
+        .filter(|p| !before.contains(p))
         .cloned()
         .collect();
     let removed: Vec<String> = before
         .iter()
-        .filter(|s| !after.contains(s))
+        .filter(|p| !after.contains(p))
         .cloned()
         .collect();
     (added, removed)
@@ -240,16 +258,15 @@ pub(crate) fn selector_delta(
 
 /// May `id` be named as something to bring into view?
 ///
-/// The built-ins always may; anything else must actually be configured. An
-/// unknown id would otherwise contribute nothing in silence, which turns a typo
-/// into a view that simply does not widen.
+/// `*` always may, being derived rather than stored; everything else must have a
+/// row, `default` included, since startup guarantees it has one. An unknown id
+/// would otherwise contribute nothing in silence, which turns a typo into a view
+/// that simply does not widen.
 pub(crate) fn is_nameable_purview(
     id: &str,
     rows: Option<&Vec<PurviewRow>>,
 ) -> bool {
-    id == PURVIEW_ALL
-        || id == PURVIEW_DEFAULT
-        || rows.is_some_and(|r| r.iter().any(|row| row.id == id))
+    id == PURVIEW_ALL || rows.is_some_and(|r| r.iter().any(|row| row.id == id))
 }
 
 /// The CURRENT purview: which purview ids this HOST PROCESS has in view.
@@ -313,9 +330,7 @@ impl CurrentPurview {
     ) {
         let mut ids = self.lock();
         ids.retain(|id| {
-            id == PURVIEW_DEFAULT
-                || id == PURVIEW_ALL
-                || rows.is_some_and(|r| r.iter().any(|row| &row.id == id))
+            id == PURVIEW_ALL || rows.is_some_and(|r| r.iter().any(|row| &row.id == id))
         });
         if ids.is_empty() {
             *ids = vec![PURVIEW_DEFAULT.to_string()];
@@ -323,17 +338,17 @@ impl CurrentPurview {
     }
 }
 
-/// One `[id, patterns]` pair as `info()` and `purview_list()` report it.
+/// One `[id, namepath_patterns]` pair as `info()` and `purview_list()` report it.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct PurviewView(pub String, pub Vec<String>);
 
-/// The reported form of a set of purview ids: each id beside what it resolves
-/// to, in the order they came into view.
+/// The reported form of a set of purview ids: each id beside the namepath
+/// patterns it resolves to, in the order they came into view.
 pub(crate) fn purview_views(
     ids: &[String],
     rows: Option<&Vec<PurviewRow>>,
 ) -> Vec<PurviewView> {
     ids.iter()
-        .map(|id| PurviewView(id.clone(), resolve_selectors(std::slice::from_ref(id), rows)))
+        .map(|id| PurviewView(id.clone(), resolve_patterns(std::slice::from_ref(id), rows)))
         .collect()
 }

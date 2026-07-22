@@ -44,7 +44,7 @@ fn ensure_inbox(
         .join("inbox");
     fs::create_dir_all(&dir)?;
     // Handing it to the channel is what lets the emit path write an attachment without
-    // knowing the store coordinate.
+    // knowing the namespace.
     channel.set_inbox(dir.clone());
     Ok(dir.display().to_string())
 }

@@ -1,9 +1,9 @@
 //! Pattern-targeted `inspect()` - the `{signatures}` member of the doc oneof.
 //!
-//! Its OWN test binary on purpose: the in-process store is shared per binary, so
+//! Its OWN test binary on purpose: the in-process namespace is shared per binary, so
 //! here it holds only what this file commits, which is what makes the
-//! store-wide patterns (`*`, `author/`) assertable as exact blocks rather than
-//! as `contains` checks that another test's library could satisfy.
+//! namespace-wide patterns (`*`, `author/`) assertable as exact blocks rather than
+//! as `contains` checks that another test's rig could satisfy.
 
 use std::path::Path;
 
@@ -15,11 +15,11 @@ use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-/// A library shaped to exercise every pattern form at once:
+/// A rig shaped to exercise every pattern form at once:
 ///
 /// ```txt
 /// sourcetrait
-///  patlib # the patlib library
+///  patlib # the patlib rig
 ///   m # the m module
 ///    here <x:int> <out:int>
 ///    deep
@@ -36,8 +36,8 @@ fn commit_patlib(
     s: &TestServer,
     src: &Path,
 ) {
-    let _ = s.library("new", "sourcetrait/patlib", src.to_str().unwrap());
-    write_source(src, "mod.nu", "# the patlib library\nexport module m\nexport module other\n");
+    let _ = s.rig("new", "sourcetrait/patlib", src.to_str().unwrap());
+    write_source(src, "mod.nu", "# the patlib rig\nexport module m\nexport module other\n");
     write_source(src, "m/mod.nu", "# the m module\nexport module deep\nexport module here\nexport use here\n");
     write_source(
         src,
@@ -77,17 +77,17 @@ fn signatures(
         .to_string()
 }
 
-const WHOLE: &str = "sourcetrait\n patlib # the patlib library\n  m # the m module\n   here <x:int> <out:int>\n   deep\n    down <y:int> <out:int>\n  other\n   solo <n:int> <out:int>\n";
+const WHOLE: &str = "sourcetrait\n patlib # the patlib rig\n  m # the m module\n   here <x:int> <out:int>\n   deep\n    down <y:int> <out:int>\n  other\n   solo <n:int> <out:int>\n";
 
 #[test]
 #[named]
-fn the_store_wide_patterns_render_the_whole_block() {
+fn the_namespace_wide_patterns_render_the_whole_block() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     commit_patlib(&s, &t.temp_dir().join("patlib"));
 
     // `*` and the only author present must both render exactly what info()
-    // does, since this store holds one library.
+    // does, since this namespace holds one rig.
     assert_eq!(signatures(&s, "*"), WHOLE);
     assert_eq!(signatures(&s, "sourcetrait/"), WHOLE);
     assert_eq!(
@@ -99,7 +99,7 @@ fn the_store_wide_patterns_render_the_whole_block() {
 
 #[test]
 #[named]
-fn a_library_pattern_renders_that_library() {
+fn a_rig_pattern_renders_that_rig() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     commit_patlib(&s, &t.temp_dir().join("patlib"));
@@ -115,12 +115,12 @@ fn a_module_tree_pattern_descends_and_excludes_its_siblings() {
 
     assert_eq!(
         signatures(&s, "sourcetrait/patlib:m/"),
-        "sourcetrait\n patlib # the patlib library\n  m # the m module\n   here <x:int> <out:int>\n   deep\n    down <y:int> <out:int>\n",
+        "sourcetrait\n patlib # the patlib rig\n  m # the m module\n   here <x:int> <out:int>\n   deep\n    down <y:int> <out:int>\n",
         "`/` descends the whole subtree under m, and `other` is not in it",
     );
     assert_eq!(
         signatures(&s, "sourcetrait/patlib:m/deep/"),
-        "sourcetrait\n patlib # the patlib library\n  m # the m module\n   deep\n    down <y:int> <out:int>\n",
+        "sourcetrait\n patlib # the patlib rig\n  m # the m module\n   deep\n    down <y:int> <out:int>\n",
         "a deeper root still emits every ANCESTOR line, so the indentation \
          spells sourcetrait/patlib:m/deep:down and the block stays readable",
     );
@@ -135,7 +135,7 @@ fn a_module_calls_pattern_selects_calls_without_descending() {
 
     assert_eq!(
         signatures(&s, "sourcetrait/patlib:m:"),
-        "sourcetrait\n patlib # the patlib library\n  m # the m module\n   here <x:int> <out:int>\n",
+        "sourcetrait\n patlib # the patlib rig\n  m # the m module\n   here <x:int> <out:int>\n",
         "`:` selects the CALL level: `here` is in, the `deep` submodule is not",
     );
 }
@@ -148,16 +148,31 @@ fn patterns_that_match_nothing_render_empty() {
     commit_patlib(&s, &t.temp_dir().join("patlib"));
 
     // A filter matching nothing yields an empty block rather than an error -
-    // the same answer a fresh namespace gives, and the same one the unresolved
-    // `.` purview stub must give.
-    assert_eq!(signatures(&s, "."), "", "the unresolved purview stub names nothing");
-    assert_eq!(signatures(&s, "bob/"), "", "an author with no libraries here");
-    assert_eq!(signatures(&s, "sourcetrait/ghostlib:"), "", "an absent library");
+    // the same answer a fresh namespace gives.
+    assert_eq!(signatures(&s, "bob/"), "", "an author with no rigs here");
+    assert_eq!(signatures(&s, "sourcetrait/ghostlib:"), "", "an absent rig");
     assert_eq!(
         signatures(&s, "sourcetrait/patlib:nosuch/"),
         "",
-        "a module the library does not have leaves NO orphan author or library \
+        "a module the rig does not have leaves NO orphan author or rig \
          heading behind",
+    );
+}
+
+#[test]
+#[named]
+fn the_dot_pattern_resolves_rather_than_matching_nothing() {
+    let t = testing::test!({ .using_temp_dir() });
+    let s = TestServer::new();
+    commit_patlib(&s, &t.temp_dir().join("patlib"));
+
+    // `.` was a STUB through eyesig: parsed, deliberately left unresolved, and
+    // therefore matching nothing. Purview is what resolves it, and with none
+    // configured the current purview is `default` - which is everything.
+    assert_eq!(
+        signatures(&s, "."),
+        signatures(&s, "*"),
+        "an UNCONFIGURED default is everything, so `.` and `*` agree here",
     );
 }
 
@@ -176,17 +191,17 @@ fn exact_namepaths_are_unchanged_by_the_pattern_arm() {
     );
     assert!(
         call["doc"].get("signatures").is_none(),
-        "an exact coordinate must not pick up the pattern member; got {call}",
+        "an exact namepath must not pick up the pattern member; got {call}",
     );
 
     let module = s.inspect("sourcetrait/patlib:m");
     assert_eq!(module["doc"]["summary"].as_str(), Some("the m module"));
-    let library = s.inspect("sourcetrait/patlib");
-    assert_eq!(library["doc"]["summary"].as_str(), Some("the patlib library"));
+    let rig = s.inspect("sourcetrait/patlib");
+    assert_eq!(rig["doc"]["summary"].as_str(), Some("the patlib rig"));
 
     // Shape classification did not loosen the EXACT parser: a bare author names
-    // no addressable coordinate and still errors.
-    assert!(has_error(&s.inspect("sourcetrait")), "a bare author is not a coordinate");
+    // nothing addressable and still errors.
+    assert!(has_error(&s.inspect("sourcetrait")), "a bare author is not a namepath");
 }
 
 #[test]

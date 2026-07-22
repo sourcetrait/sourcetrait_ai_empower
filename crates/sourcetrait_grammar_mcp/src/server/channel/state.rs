@@ -189,7 +189,7 @@ impl ChannelHandle {
     }
 
     /// Where attachments land. Set by `channel_open`, which owns the path and creates
-    /// the directory, so the emit path needs no knowledge of the store coordinate.
+    /// the directory, so the emit path needs no knowledge of the namespace.
     pub(crate) fn set_inbox(
         &self,
         dir: PathBuf,

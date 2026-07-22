@@ -127,7 +127,7 @@ async fn accept_loop(
             _ = &mut shutdown_rx => break,
             accepted = listener.accept() => {
                 let Ok((tcp, _peer)) = accepted else { continue };
-                // compare_exchange, not load-then-store: two simultaneous connections
+                // compare_exchange, not load-then-namespace: two simultaneous connections
                 // must not both read "unclaimed" and both win.
                 let won = claimed
                     .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)

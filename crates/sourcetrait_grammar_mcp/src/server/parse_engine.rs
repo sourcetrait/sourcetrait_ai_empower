@@ -57,7 +57,7 @@ impl ParseEngine {
         if let Some(extra) = &self.extra_lib_dir {
             dirs.push(extra.clone());
         }
-        dirs.push(libraries_dir());
+        dirs.push(rigs_dir());
         set_lib_dirs_const(&mut clone, &dirs);
         clone
     }
@@ -69,7 +69,7 @@ impl ParseEngine {
 /// stateless eval base does. A long-lived one therefore DRIFTS the moment a
 /// `plugin add` lands: the eval side picks that change up through
 /// `Executor::refresh_base_if_stale`, so a validator that never refreshed would
-/// reject library source that RUNS - and reject it as an opaque
+/// reject rig source that RUNS - and reject it as an opaque
 /// `ExtraPositional` mis-bind naming nothing about plugins.
 ///
 /// This holder removes that asymmetry with the SAME registry-mtime signal the

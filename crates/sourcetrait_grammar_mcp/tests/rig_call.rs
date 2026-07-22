@@ -1,6 +1,6 @@
 use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{
-    TestServer, has_error, library_block, valid_function_source, write_source,
+    TestServer, has_error, rig_block, valid_function_source, write_source,
 };
 use sourcetrait_testing::prelude::*;
 
@@ -12,7 +12,7 @@ fn call_after_commit_returns_result() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("calc");
-    let _ = s.library("new", "sourcetrait/calc", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/calc", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/calc:math:double"]);
     write_source(
         &src,
@@ -32,7 +32,7 @@ fn call_after_module_commit_returns_result() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("importable");
-    let _ = s.library("new", "sourcetrait/importable", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/importable", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/importable:util:triple"]);
     write_source(
         &src,
@@ -45,7 +45,7 @@ fn call_after_module_commit_returns_result() {
 }
 
 #[test]
-fn call_unknown_library_errors() {
+fn call_unknown_rig_errors() {
     let s = TestServer::new();
     let env = s.call("sourcetrait/ghost:m:noop", json!({"noop": 0}));
     assert!(has_error(&env), "got {env}");
@@ -57,7 +57,7 @@ fn call_missing_function_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("partlib");
-    let _ = s.library("new", "sourcetrait/partlib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/partlib", src.to_str().unwrap());
     let env = s.call("sourcetrait/partlib:m:ghost", json!({"noop": 0}));
     assert!(has_error(&env), "got {env}");
 }
@@ -68,7 +68,7 @@ fn call_bad_module_path_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("safelib");
-    let _ = s.library("new", "sourcetrait/safelib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/safelib", src.to_str().unwrap());
     for bad in [
         "sourcetrait/safelib:../etc:x",
         "sourcetrait/safelib:a/../b:x",
@@ -85,7 +85,7 @@ fn call_args_typecheck_failure_surfaces() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("strictlib");
-    let _ = s.library("new", "sourcetrait/strictlib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/strictlib", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/strictlib:m:needs_int"]);
     write_source(
         &src,
@@ -103,7 +103,7 @@ fn inspect_returns_function_doc() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("inspectlib");
-    let _ = s.library("new", "sourcetrait/inspectlib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/inspectlib", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/inspectlib:math:double"]);
     write_source(
         &src,
@@ -143,12 +143,12 @@ fn inspect_returns_function_doc() {
 
 #[test]
 #[named]
-fn inspect_library_root_and_module() {
+fn inspect_rig_root_and_module() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("inspectlib2");
-    let _ = s.library("new", "sourcetrait/inspectlib2", src.to_str().unwrap());
-    write_source(&src, "mod.nu", "# the inspectlib2 library\nexport module math\n");
+    let _ = s.rig("new", "sourcetrait/inspectlib2", src.to_str().unwrap());
+    write_source(&src, "mod.nu", "# the inspectlib2 rig\nexport module math\n");
     write_source(&src, "math/mod.nu", "# math helpers\nexport use double\n");
     write_source(
         &src,
@@ -157,12 +157,12 @@ fn inspect_library_root_and_module() {
     );
     let _ = s.commit("sourcetrait/inspectlib2");
     let lib = s.inspect("sourcetrait/inspectlib2");
-    assert_eq!(lib["doc"]["summary"].as_str(), Some("the inspectlib2 library"));
+    assert_eq!(lib["doc"]["summary"].as_str(), Some("the inspectlib2 rig"));
     assert!(
         lib["doc"]["srcdir"]
             .as_str()
             .is_some_and(|p| p.ends_with("/rig/sourcetrait/inspectlib2")),
-        "a library carries srcdir - the committed directory it lives in; got {lib}",
+        "a rig carries srcdir - the committed directory it lives in; got {lib}",
     );
     let m = s.inspect("sourcetrait/inspectlib2:math");
     assert_eq!(m["doc"]["summary"].as_str(), Some("math helpers"));
@@ -180,7 +180,7 @@ fn inspect_undocumented_is_empty() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("inspectlib3");
-    let _ = s.library("new", "sourcetrait/inspectlib3", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/inspectlib3", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/inspectlib3:m:f"]);
     write_source(
         &src,
@@ -198,7 +198,7 @@ fn inspect_undocumented_is_empty() {
 }
 
 #[test]
-fn inspect_unknown_library_errors() {
+fn inspect_unknown_rig_errors() {
     let s = TestServer::new();
     let env = s.inspect("sourcetrait/ghost");
     assert!(has_error(&env), "got {env}");
@@ -210,7 +210,7 @@ fn result_record_field_shapes_preserved() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("fidelitylib");
-    let _ = s.library("new", "sourcetrait/fidelitylib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/fidelitylib", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/fidelitylib:m:shapes"]);
     write_source(
         &src,
@@ -236,7 +236,7 @@ fn helper_file_pruned_from_info_and_not_callable() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("helperlib");
-    let _ = s.library("new", "sourcetrait/helperlib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/helperlib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export module m\n");
     write_source(&src, "m/mod.nu", "export use ./util.nu\nexport use real\n");
     write_source(&src, "m/util.nu", "export def helper [n: int] { $n * 2 }\n");
@@ -251,7 +251,7 @@ fn helper_file_pruned_from_info_and_not_callable() {
     let info = s.info();
     let signatures = info["signatures"].as_str().expect("signatures block");
     assert_eq!(
-        library_block(signatures, "helperlib"),
+        rig_block(signatures, "helperlib"),
         " helperlib\n  m\n   real <x:int> <out:int>\n",
         "only the call-target is listed - the organizational helper file is \
          pruned from the index, so it never reaches the block",

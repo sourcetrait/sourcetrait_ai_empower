@@ -4,21 +4,21 @@ pub(crate) struct Namepath(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NamepathRef {
-    Library {
-        library: String,
+    Rig {
+        rig: String,
     },
     Module {
-        library: String,
+        rig: String,
         module_path: String,
     },
     Function {
-        library: String,
+        rig: String,
         module_path: String,
         name: String,
     },
 }
 
-/// The whole-store pattern.
+/// The whole-namespace pattern.
 pub(crate) const PATTERN_ALL: &str = "*";
 
 /// The current-purview pattern. Parsed here so the grammar is complete;
@@ -29,8 +29,8 @@ pub(crate) const PATTERN_CURRENT: &str = ".";
 /// bare `*` / `.`, is a PATTERN; anything else is an exact namepath.
 ///
 /// Classification is NOT validation, and the distinction is the whole point of
-/// the split. A bare author (`sourcetrait`) is exact in shape but names no
-/// addressable coordinate, so it classifies as `Namepath` here and then fails
+/// the split. A bare author (`sourcetrait`) is exact in shape but names nothing
+/// addressable, so it classifies as `Namepath` here and then fails
 /// `validate` exactly as it does today - the exact parser's strictness is
 /// unchanged by the pattern arm existing.
 pub(crate) enum NamepathStr {
@@ -38,7 +38,7 @@ pub(crate) enum NamepathStr {
     Pattern(NamepathPattern),
 }
 
-/// A set of coordinates, addressed by the trailing hierarchy character.
+/// A set of namepaths, addressed by the trailing hierarchy character.
 ///
 /// `/` DESCENDS the tree and `:` selects the level BELOW - which is what each
 /// separator already means in an exact namepath, so the two module forms differ:
@@ -47,22 +47,22 @@ pub(crate) enum NamepathStr {
 pub(crate) enum NamepathPattern {
     /// `<author>/` - everything that author published.
     Author { author: String },
-    /// `<author>/<name>:` - everything in that library.
-    Library { library: String },
+    /// `<author>/<name>:` - everything in that rig.
+    Rig { rig: String },
     /// `<author>/<name>:<module_path>/` - that module and everything below it.
     ModuleTree {
-        library: String,
+        rig: String,
         module_path: String,
     },
     /// `<author>/<name>:<module_path>:` - the calls in that module, no deeper.
     ModuleCalls {
-        library: String,
+        rig: String,
         module_path: String,
     },
-    /// `*` - the whole store.
+    /// `*` - the whole namespace.
     All,
-    /// `.` - the current purview, a STUB until purview lands. It must be
-    /// RESOLVED to that purview's own patterns before matching; an unresolved
+    /// `.` - the current purview. It must be RESOLVED to that purview's own
+    /// namepath patterns before matching (`inspect()` does this); an unresolved
     /// `.` therefore matches NOTHING rather than silently matching everything.
     Current,
 }
@@ -78,7 +78,7 @@ impl NamepathStr {
 }
 
 impl NamepathStr {
-    /// Does this selector put `node` in view?
+    /// Does this put `namepath` in view?
     ///
     /// A PATTERN covers a SET; an EXACT namepath covers only itself. Purview
     /// values are allowed to be either - a whole author, or one specific call -
@@ -86,13 +86,11 @@ impl NamepathStr {
     /// mixed list without ever branching on which kind it got.
     pub(crate) fn covers(
         &self,
-        node: &NamepathRef,
+        namepath: &NamepathRef,
     ) -> bool {
         match self {
-            Self::Pattern(pattern) => pattern.matches(node),
-            Self::Namepath(namepath) => {
-                namepath.validate().is_ok_and(|exact| &exact == node)
-            }
+            Self::Pattern(pattern) => pattern.matches(namepath),
+            Self::Namepath(exact) => exact.validate().is_ok_and(|v| &v == namepath),
         }
     }
 }
@@ -102,12 +100,12 @@ fn is_pattern_shaped(raw: &str) -> bool {
 }
 
 impl NamepathRef {
-    /// The compound `<author>/<name>` every coordinate carries.
-    pub(crate) fn library(&self) -> &str {
+    /// The compound `<author>/<name>` every namepath carries.
+    pub(crate) fn rig(&self) -> &str {
         match self {
-            Self::Library { library }
-            | Self::Module { library, .. }
-            | Self::Function { library, .. } => library,
+            Self::Rig { rig }
+            | Self::Module { rig, .. }
+            | Self::Function { rig, .. } => rig,
         }
     }
 }
@@ -126,26 +124,26 @@ impl Namepath {
         }
         let parts: Vec<&str> = raw.split(':').collect();
         match parts.as_slice() {
-            [library] => {
-                check_library(library).map_err(|e| bad(raw, e))?;
-                Ok(NamepathRef::Library {
-                    library: (*library).to_string(),
+            [rig] => {
+                check_rig(rig).map_err(|e| bad(raw, e))?;
+                Ok(NamepathRef::Rig {
+                    rig: (*rig).to_string(),
                 })
             }
-            [library, module_path] => {
-                check_library(library).map_err(|e| bad(raw, e))?;
+            [rig, module_path] => {
+                check_rig(rig).map_err(|e| bad(raw, e))?;
                 check_module_path(module_path).map_err(|e| bad(raw, e))?;
                 Ok(NamepathRef::Module {
-                    library: (*library).to_string(),
+                    rig: (*rig).to_string(),
                     module_path: (*module_path).to_string(),
                 })
             }
-            [library, module_path, name] => {
-                check_library(library).map_err(|e| bad(raw, e))?;
+            [rig, module_path, name] => {
+                check_rig(rig).map_err(|e| bad(raw, e))?;
                 if module_path.is_empty() {
                     return Err(bad(
                         raw,
-                        "a function needs a parent module; `library::function` (a root function) is not allowed",
+                        "a function needs a parent module; `rig::function` (a root function) is not allowed",
                     ));
                 }
                 check_module_path(module_path).map_err(|e| bad(raw, e))?;
@@ -156,24 +154,24 @@ impl Namepath {
                     return Err(bad(raw, "`main` is reserved and cannot be a function name"));
                 }
                 Ok(NamepathRef::Function {
-                    library: (*library).to_string(),
+                    rig: (*rig).to_string(),
                     module_path: (*module_path).to_string(),
                     name: (*name).to_string(),
                 })
             }
             _ => Err(bad(
                 raw,
-                "too many `:` segments; the most specific form is library:module/path:function",
+                "too many `:` segments; the most specific form is rig:module/path:function",
             )),
         }
     }
 }
 
-fn check_library(library: &str) -> Result<(), &'static str> {
-    if is_valid_library(library) {
+fn check_rig(rig: &str) -> Result<(), &'static str> {
+    if is_valid_rig(rig) {
         Ok(())
     } else {
-        Err("library must be the compound `<author>/<name>` (e.g. `sourcetrait/grammar`)")
+        Err("rig must be the compound `<author>/<name>` (e.g. `sourcetrait/grammar`)")
     }
 }
 
@@ -213,11 +211,11 @@ impl NamepathPattern {
         };
         let parts: Vec<&str> = body.split(':').collect();
         match parts.as_slice() {
-            // `<author>/`. A `/` after the LIBRARY is the wrong separator -
-            // everything past a library is reached with `:`.
+            // `<author>/`. A `/` after the RIG is the wrong separator -
+            // everything past a rig is reached with `:`.
             [single] if descends => {
                 if single.contains('/') {
-                    return Err(bad(raw, "after a library the separator is `:`, not `/`"));
+                    return Err(bad(raw, "after a rig the separator is `:`, not `/`"));
                 }
                 if !is_valid_ident(single) || is_reserved_term(single) {
                     return Err(bad(
@@ -229,67 +227,62 @@ impl NamepathPattern {
                     author: (*single).to_string(),
                 })
             }
-            [library] => {
-                check_library(library).map_err(|e| bad(raw, e))?;
-                Ok(Self::Library {
-                    library: (*library).to_string(),
+            [rig] => {
+                check_rig(rig).map_err(|e| bad(raw, e))?;
+                Ok(Self::Rig {
+                    rig: (*rig).to_string(),
                 })
             }
-            [library, module_path] => {
-                check_library(library).map_err(|e| bad(raw, e))?;
+            [rig, module_path] => {
+                check_rig(rig).map_err(|e| bad(raw, e))?;
                 check_module_path(module_path).map_err(|e| bad(raw, e))?;
-                let library = (*library).to_string();
+                let rig = (*rig).to_string();
                 let module_path = (*module_path).to_string();
                 Ok(if descends {
                     Self::ModuleTree {
-                        library,
+                        rig,
                         module_path,
                     }
                 } else {
                     Self::ModuleCalls {
-                        library,
+                        rig,
                         module_path,
                     }
                 })
             }
             _ => Err(bad(
                 raw,
-                "too many `:` segments; the deepest pattern is library:module/path:",
+                "too many `:` segments; the deepest pattern is rig:module/path:",
             )),
         }
     }
 
-    /// Does `node` fall within this pattern?
+    /// Does `namepath` fall within this pattern?
     ///
-    /// The per-NODE primitive, for a caller holding ONE coordinate and asking
-    /// whether a pattern covers it. That is purview filtering's shape, and its
-    /// remaining consumer.
-    ///
-    /// The signature renderer deliberately does NOT use it. Rendering a subtree
-    /// wants the pattern's ROOT rather than a per-node predicate, because the
-    /// ancestor lines above that root must still be emitted for structure even
-    /// though the pattern does not match them (server/library.rs
-    /// `pattern_root`). Tree-walking belongs with the index either way.
-    #[allow(dead_code)] // purview is the consumer; the renderer roots instead
+    /// The per-SIGNATURE primitive: one namepath, asked whether this pattern
+    /// covers it. The renderer walks the index putting exactly that question to
+    /// every signature, and purview filtering is the same question over a SET of
+    /// namepath patterns - `NamepathStr::covers` wraps it for both, so there is
+    /// one answer and not two.
     pub(crate) fn matches(
         &self,
-        node: &NamepathRef,
+        namepath: &NamepathRef,
     ) -> bool {
         match self {
             Self::All => true,
             Self::Current => false,
-            Self::Author { author } => node
-                .library()
+            Self::Author { author } => namepath
+                .rig()
                 .split_once('/')
-                .is_some_and(|(node_author, _)| node_author == author),
-            Self::Library { library } => node.library() == library,
+                .is_some_and(|(their_author, _)| their_author == author),
+            Self::Rig { rig } => namepath.rig() == rig,
             Self::ModuleTree {
-                library,
+                rig,
                 module_path,
             } => {
-                node.library() == library
-                    && match node {
-                        NamepathRef::Library { .. } => false,
+                namepath.rig() == rig
+                    && match namepath {
+                        NamepathRef::Rig { .. } => false,
                         NamepathRef::Module {
                             module_path: path, ..
                         }
@@ -299,15 +292,15 @@ impl NamepathPattern {
                     }
             }
             Self::ModuleCalls {
-                library,
+                rig,
                 module_path,
             } => matches!(
-                node,
+                namepath,
                 NamepathRef::Function {
-                    library: node_library,
+                    rig: their_rig,
                     module_path: path,
                     ..
-                } if node_library == library && path == module_path
+                } if their_rig == rig && path == module_path
             ),
         }
     }

@@ -15,9 +15,9 @@ pub struct PurviewExtendParams {
 /// did not touch rather than an empty list that reads like a result.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct PurviewDeltaEnvelope {
-    /// The signature block for what came INTO view, or null when nothing did.
+    /// `info()`'s `signatures` for the namepath patterns newly added, or null.
     pub added: Option<String>,
-    /// The selectors that LEFT view, or null when none did.
+    /// The namepath patterns that left view, or null when none did.
     pub removed: Option<Vec<String>>,
     /// What is in view now.
     pub current: Vec<PurviewView>,
@@ -26,9 +26,10 @@ pub(crate) struct PurviewDeltaEnvelope {
 impl NuSh {
     /// The shared delta report for a change to the current view.
     ///
-    /// `added` is rendered from the NEW selectors alone rather than by diffing
-    /// two whole blocks: the question an agent has is "what can I now see that I
-    /// could not", and the selectors answer it directly.
+    /// `added` is `info()`'s `signatures` rendered for the namepath patterns
+    /// that were newly added - NOT a diff of two whole blocks. So when the view
+    /// already carries `*`, what it shows was visible before as well: the
+    /// patterns are what changed, and the block says what they name.
     pub(crate) async fn purview_delta(
         &self,
         before: Vec<String>,
@@ -36,11 +37,11 @@ impl NuSh {
         ids: Vec<String>,
         rows: Option<Vec<PurviewRow>>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let (added, removed) = selector_delta(&before, &after);
+        let (added, removed) = pattern_delta(&before, &after);
         let added_block = if added.is_empty() {
             None
         } else {
-            Some(render_signatures_within(&self.library_locks, &parse_selectors(&added)).await)
+            Some(render_signatures_within(&self.rig_locks, &parse_patterns(&added)).await)
         };
         envelope_to_structured(&PurviewDeltaEnvelope {
             added: added_block,
@@ -78,9 +79,9 @@ impl NuSh {
                 ));
             }
         }
-        let before = resolve_selectors(&self.current_purview.ids(), rows.as_ref());
+        let before = resolve_patterns(&self.current_purview.ids(), rows.as_ref());
         let ids = self.current_purview.extend(&p.purviews);
-        let after = resolve_selectors(&ids, rows.as_ref());
+        let after = resolve_patterns(&ids, rows.as_ref());
         self.purview_delta(before, after, ids, rows).await
     }
 }

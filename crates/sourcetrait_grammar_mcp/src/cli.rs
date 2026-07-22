@@ -1,7 +1,7 @@
 use crate::*;
 
-/// What: the host binary's CLI surface -- the runtime store coordinate
-/// (`--id` / `--namespace`), the agent work dir (`--workdir`), the
+/// What: the host binary's CLI surface -- the `--id` / `--namespace`,
+/// the agent work dir (`--workdir`), the
 /// operator tool-deny list (`--deny`), and an optional `cli` subcommand
 /// (the one-shot tool surface). A bare invocation serves MCP over stdio,
 /// so `.mcp.json` entries stay plain commands plus args.
@@ -22,11 +22,11 @@ pub(crate) struct HostCli {
     /// path is a hard error.
     #[arg(long)]
     pub config: Option<String>,
-    /// Agent identity owning the state store (trusted operator config).
+    /// Agent identity owning the state namespace (trusted operator config).
     /// Defaults to the invoking user's name.
     #[arg(long, default_value_t = default_id())]
     pub id: String,
-    /// State namespace within the id's store.
+    /// State namespace within the id's identity.
     #[arg(long, default_value = "default")]
     pub namespace: String,
     /// Agent working directory, exported to every eval body as
@@ -34,7 +34,7 @@ pub(crate) struct HostCli {
     #[arg(long)]
     pub workdir: Option<String>,
     /// Comma-separated tools to deny: run,rerun,interact,call,learn,new,
-    /// commit,library,channel_open,channel_verified,channel_close,config_channel,
+    /// commit,rig,channel_open,channel_verified,channel_close,config_channel,
     /// purview_list,purview_configure,purview_extend,purview_reset.
     #[arg(long, value_delimiter = ',', value_parser = parse_deniable)]
     pub deny: Vec<DeniableTool>,
@@ -62,7 +62,7 @@ pub(crate) enum HostCommand {
 /// eye.
 ///
 /// Why: gives the operator the identical tool surface with no agent and
-/// no MCP client -- library authoring (new/commit/library), consumption
+/// no MCP client -- rig authoring (new/commit/rig), consumption
 /// (call/inspect/info), and eval (run) -- through whatever front wraps
 /// this binary. Deny does not apply here (it gates agent registration,
 /// not the operator).
@@ -70,14 +70,14 @@ pub(crate) enum HostCommand {
 /// Where: dispatched by `server::oneshot::run_oneshot`.
 #[derive(clap::Subcommand)]
 pub(crate) enum CliTool {
-    /// Versions, plugins, and libraries summary.
+    /// Versions, plugins, and rigs summary.
     Info,
-    /// Documentation of one node by namepath (library,
-    /// library:module/path, or library:module/path:function).
+    /// Documentation of one namepath (rig,
+    /// rig:module/path, or rig:module/path:function).
     Inspect { namepath: String },
-    /// Invoke a committed library function.
+    /// Invoke a committed rig function.
     Call {
-        /// The function's namepath: library:module/path:function.
+        /// The function's namepath: rig:module/path:function.
         namepath: String,
         /// Args as a NUON record (default {}).
         args: Option<String>,
@@ -138,34 +138,34 @@ pub(crate) enum CliTool {
     /// Generate the /nu skill at <harness_dir>/skills/nu/SKILL.md.
     Learn { harness_dir: String },
     /// Scaffold module / function skeletons by namepath into
-    /// established libraries.
+    /// established rigs.
     New { namepaths: Vec<String> },
-    /// Validate + promote a library's source tree into the store.
-    Commit { library: String },
-    /// Library administration.
-    Library {
+    /// Validate + promote a rig's source tree into the namespace.
+    Commit { rig: String },
+    /// Rig administration.
+    Rig {
         #[arg(value_enum)]
-        action: LibraryCliAction,
-        /// The compound library coordinate: <author>/<name>.
-        library: String,
-        /// The library's source directory (the "are you sure"
+        action: RigCliAction,
+        /// The compound rig name: <author>/<name>.
+        rig: String,
+        /// The rig's source directory (the "are you sure"
         /// cross-check).
         source_dir: String,
     },
 }
 
-/// What: the `cli library` action, as a clap ValueEnum so an unknown
+/// What: the `cli rig` action, as a clap ValueEnum so an unknown
 /// action fails at parse instead of round-tripping to the tool's
 /// invalid-action error.
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
-pub(crate) enum LibraryCliAction {
+pub(crate) enum RigCliAction {
     New,
     Install,
     Check,
     Uninstall,
 }
 
-impl LibraryCliAction {
+impl RigCliAction {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::New => "new",
@@ -192,7 +192,7 @@ fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
     DeniableTool::from_name(s).ok_or_else(|| {
         format!(
             "unknown tool `{s}`; deniable tools: run, rerun, interact, call, learn, new, \
-             commit, library, channel_open, channel_verified, channel_close, config_channel, \
+             commit, rig, channel_open, channel_verified, channel_close, config_channel, \
              purview_list, purview_configure, purview_extend, purview_reset",
         )
     })

@@ -5,12 +5,12 @@
 //! with concrete types. Sub-items get the same pair, so a future format adds a shell
 //! without touching the model.
 //!
-//! THE FILE CARRIES ONLY WHAT IS NOT ALREADY AN ARGUMENT. The store coordinate (`id`,
-//! `namespace`), the agent work dir and the deny list stay ARGUMENTS: they were
+//! THE FILE CARRIES ONLY WHAT IS NOT ALREADY AN ARGUMENT. The `id` and `namespace`,
+//! the agent work dir and the deny list stay ARGUMENTS: they were
 //! arguments before this file existed, and they identify or gate the invocation itself.
-//! A file-settable coordinate would let the store silently diverge from the `.mcp.json`
-//! entry the agent believes it is talking to, and would reintroduce the sticky default
-//! coordinate already ruled out. So the two surfaces are DISJOINT - there is no
+//! A file-settable `id` / `namespace` would let the namespace silently diverge from the
+//! `.mcp.json` entry the agent believes it is talking to, and would reintroduce the
+//! sticky default already ruled out. So the two surfaces are DISJOINT - there is no
 //! precedence question between them - and `deny_unknown_fields` turns an attempt to set
 //! one from the file into a loud error rather than a silent no-op.
 use crate::*;
@@ -18,7 +18,7 @@ use crate::*;
 /// The embedded base every load merges onto.
 const DEFAULTS_CONFIG: &str = include_str!("../defaults/grammar_mcp.toml");
 
-/// The store namespace when `--namespace` is not given.
+/// The namespace namespace when `--namespace` is not given.
 pub(crate) const DEFAULT_NAMESPACE: &str = "default";
 
 /// Lowest port the channel hub may be pinned to. Anything below is privileged and the
@@ -350,7 +350,7 @@ pub(crate) enum DeniableTool {
     Learn,
     New,
     Commit,
-    Library,
+    Rig,
     ChannelOpen,
     ChannelVerified,
     ChannelClose,
@@ -371,7 +371,7 @@ impl DeniableTool {
             "learn" => Self::Learn,
             "new" => Self::New,
             "commit" => Self::Commit,
-            "library" => Self::Library,
+            "rig" => Self::Rig,
             "channel_open" => Self::ChannelOpen,
             "channel_verified" => Self::ChannelVerified,
             "channel_close" => Self::ChannelClose,

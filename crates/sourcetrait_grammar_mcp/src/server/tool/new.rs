@@ -3,9 +3,9 @@ use crate::*;
 /// Parameters for `new()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct NewParams {
-    /// Namepaths to scaffold into existing libraries: `library:module/path`
-    /// (a utility module) or `library:module/path:function` (a single-`main`
-    /// function skeleton). Multiple may target multiple libraries.
+    /// Namepaths to scaffold into existing rigs: `rig:module/path`
+    /// (a utility module) or `rig:module/path:function` (a single-`main`
+    /// function skeleton). Multiple may target multiple rigs.
     pub namepaths: Vec<String>,
 }
 
@@ -19,7 +19,7 @@ pub(crate) struct NewEnvelope {
 impl NuSh {
     #[mcp::tool(
         name = "new",
-        description = "Scaffold modules / functions (by namepath) into existing libraries.",
+        description = "Scaffold modules / functions (by namepath) into existing rigs.",
         output_schema = mcp::schema_for_type::<NewEnvelope>()
     )]
     pub(crate) async fn scaffold(
@@ -30,19 +30,19 @@ impl NuSh {
         for np in &p.namepaths {
             match Namepath(np.clone()).validate() {
                 Ok(NamepathRef::Module {
-                    library,
+                    rig,
                     module_path,
-                }) => targets.push((library, module_path, None)),
+                }) => targets.push((rig, module_path, None)),
                 Ok(NamepathRef::Function {
-                    library,
+                    rig,
                     module_path,
                     name,
-                }) => targets.push((library, module_path, Some(name))),
-                Ok(NamepathRef::Library { .. }) => {
+                }) => targets.push((rig, module_path, Some(name))),
+                Ok(NamepathRef::Rig { .. }) => {
                     return Ok(error_to_call_result(
                         Error::NamepathInvalid {
                             namepath: np.clone(),
-                            reason: "new() needs a module or function namepath; use library(new) to create a library"
+                            reason: "new() needs a module or function namepath; use rig(new) to create a rig"
                                 .to_string(),
                         },
                         None,
@@ -57,12 +57,12 @@ impl NuSh {
         libs.dedup();
         let mut locks = Vec::new();
         for lib in &libs {
-            match self.library_locks.lookup(lib).await {
+            match self.rig_locks.lookup(lib).await {
                 Some(l) => locks.push(l),
                 None => {
                     return Ok(error_to_call_result(
-                        Error::LibraryNotRegistered {
-                            library: lib.clone(),
+                        Error::RigNotRegistered {
+                            rig: lib.clone(),
                         },
                         None,
                     ));
@@ -74,12 +74,12 @@ impl NuSh {
             guards.push(l.write().await);
         }
 
-        for (library, module_path, name) in &targets {
-            match scaffold_leaf_exists(library, module_path, name.as_deref()) {
+        for (rig, module_path, name) in &targets {
+            match scaffold_leaf_exists(rig, module_path, name.as_deref()) {
                 Ok(true) => {
                     return Ok(error_to_call_result(
-                        Error::LibraryInvalidName {
-                            library: module_path.clone(),
+                        Error::RigInvalidName {
+                            rig: module_path.clone(),
                             reason: format!(
                                 "`{}` already exists; edit it instead of scaffolding over it",
                                 name.clone().unwrap_or_else(|| module_path.clone()),
@@ -94,8 +94,8 @@ impl NuSh {
         }
 
         let mut created = Vec::new();
-        for (library, module_path, name) in &targets {
-            match scaffold_leaf(library, module_path, name.as_deref()) {
+        for (rig, module_path, name) in &targets {
+            match scaffold_leaf(rig, module_path, name.as_deref()) {
                 Ok(mut c) => created.append(&mut c),
                 Err(e) => return Ok(error_to_call_result(e, None)),
             }

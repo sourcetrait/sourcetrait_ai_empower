@@ -1,6 +1,6 @@
 use crate::*;
 
-/// The store's host-lock filename, under `data_base_dir()`.
+/// The namespace's host-lock filename, under `data_base_dir()`.
 ///
 /// The DATA tier rather than the cache: a wiped cache would delete a live host's lock
 /// file, and a watcher would then create a fresh one, lock a DIFFERENT inode, and read a
@@ -11,7 +11,7 @@ pub(crate) fn host_lock_path() -> PathBuf {
     data_base_dir().join(HOST_LOCK_FILE)
 }
 
-/// The per-store host lock: a liveness signal any watcher can read, with no MCP call, no
+/// The per-namespace host lock: a liveness signal any watcher can read, with no MCP call, no
 /// nushell, and no cooperation from the host.
 ///
 /// A watcher tries a NON-BLOCKING exclusive lock on this file. Acquiring it means the
@@ -30,12 +30,12 @@ pub(crate) struct HostLock {
     _flock: nix::fcntl::Flock<fs::File>,
 }
 
-/// Take the store's host lock, or report why not.
+/// Take the namespace's host lock, or report why not.
 ///
-/// NOT a singleton guard. Two hosts may legitimately share one store coordinate - their
+/// NOT a singleton guard. Two hosts may legitimately share one namespace - their
 /// per-process artifacts already namespace by `mcp_nom` - so the caller logs a failure
 /// and carries on. The signal stays correct in aggregate, because "locked" answers the
-/// question a watcher actually asks: is a host alive on this store.
+/// question a watcher actually asks: is a host alive on this namespace.
 pub(crate) fn acquire(mcp_nom: &str) -> io::Result<HostLock> {
     let path = host_lock_path();
     if let Some(parent) = path.parent() {

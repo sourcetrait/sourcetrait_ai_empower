@@ -1,29 +1,29 @@
 //! Purviews: the namespace-level scoped view of the callable surface.
 //!
-//! Its OWN test binary, because a purview table is per STORE and the in-process
-//! store is shared per binary - these tests mutate it, so they must not share it
-//! with tests that assume a whole-store view.
+//! Its OWN test binary, because a purview table is per NAMESPACE and the in-process
+//! namespace is shared per binary - these tests mutate it, so they must not share it
+//! with tests that assume a whole-namespace view.
 //!
-//! Each test resets the table first and uses unique library and purview names,
+//! Each test resets the table first and uses unique rig and purview names,
 //! so nothing here depends on the order cargo happens to run them in.
 
 use std::path::Path;
 
 use sourcetrait_grammar_mcp::guts::{
-    TestServer, error_kind, has_error, library_block, valid_function_source, write_source,
+    TestServer, error_kind, has_error, rig_block, valid_function_source, write_source,
 };
 use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-/// Commit a one-call library, so a purview has something concrete to include or
+/// Commit a one-call rig, so a purview has something concrete to include or
 /// exclude.
 fn commit_lib(
     s: &TestServer,
     src: &Path,
     name: &str,
 ) {
-    let _ = s.library("new", name, src.to_str().unwrap());
+    let _ = s.rig("new", name, src.to_str().unwrap());
     write_source(src, "mod.nu", "export module m\n");
     write_source(src, "m/mod.nu", "export module go\nexport use go\n");
     write_source(
@@ -54,7 +54,7 @@ fn signatures(env: &serde_json::Value) -> &str {
 
 #[test]
 #[named]
-fn an_unconfigured_namespace_sees_everything() {
+fn a_fresh_namespace_starts_at_default_seeing_everything() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     reset_purviews(&s);
@@ -69,12 +69,45 @@ fn an_unconfigured_namespace_sees_everything() {
     assert_eq!(
         info["purview"][0][1][0].as_str(),
         Some("*"),
-        "an UNCONFIGURED default resolves to everything, which is what makes a \
-         fresh namespace usable before anyone configures anything; got {info}",
+        "startup MATERIALIZES `default` as `*` - there is no such thing as an \
+         unconfigured default, so this is a row rather than a fallback; got {info}",
     );
     assert!(
         signatures(&info).contains("pvone"),
-        "and everything means the library is in view; got {info}",
+        "and everything means the rig is in view; got {info}",
+    );
+
+    let listed = s.purview_list();
+    assert!(
+        listed["purviews"]
+            .as_array()
+            .expect("purviews")
+            .iter()
+            .any(|r| r[0].as_str() == Some("default")),
+        "and it is really PERSISTED, not synthesized on read; got {listed}",
+    );
+}
+
+#[test]
+#[named]
+fn deleting_default_resets_it_rather_than_removing_it() {
+    let _t = testing::test!({ .using_temp_dir() });
+    let s = TestServer::new();
+    reset_purviews(&s);
+
+    let env = s.purview_configure("default", &[]);
+    assert!(!has_error(&env), "configure failed: {env}");
+    let row = env["purviews"]
+        .as_array()
+        .expect("purviews")
+        .iter()
+        .find(|r| r[0].as_str() == Some("default"))
+        .unwrap_or_else(|| panic!("`default` cannot not exist: {env}"));
+    assert_eq!(
+        row[1][0].as_str(),
+        Some("*"),
+        "an empty list DELETES any other purview, but `default` has no \
+         not-existing state - so it resets to what startup would write; got {env}",
     );
 }
 
@@ -111,7 +144,7 @@ fn configuring_writes_the_namespace_meta_file_and_reads_back() {
 
 #[test]
 #[named]
-fn an_empty_selector_list_deletes_the_purview() {
+fn an_empty_pattern_list_deletes_the_purview() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     reset_purviews(&s);
@@ -164,10 +197,10 @@ fn the_current_view_filters_what_info_reports() {
     let _ = s.purview_configure("default", &["sourcetrait/pvseen:"]);
     let info = s.info();
     let block = signatures(&info);
-    assert!(block.contains("pvseen"), "the configured library is in view; got {info}");
+    assert!(block.contains("pvseen"), "the configured rig is in view; got {info}");
     assert!(
         !block.contains("pvhidden"),
-        "and a library outside the purview is NOT - that is the whole point of \
+        "and a rig outside the purview is NOT - that is the whole point of \
          the feature, and it is what keeps info() small; got {info}",
     );
     assert_eq!(info["purview"][0][1][0].as_str(), Some("sourcetrait/pvseen:"));
@@ -190,8 +223,8 @@ fn extend_reports_what_arrived_and_reset_reports_what_left() {
     let added = extended["added"].as_str().unwrap_or_default();
     assert!(
         added.contains("pvextra") && !added.contains("pvbase"),
-        "`added` is the block for what CAME INTO view, not the whole new view; \
-         got {extended}",
+        "`added` is info()'s signatures for the namepath patterns newly added - \
+         so only the extending purview's, not the whole new view; got {extended}",
     );
     assert!(
         extended["removed"].is_null(),
@@ -204,7 +237,7 @@ fn extend_reports_what_arrived_and_reset_reports_what_left() {
     assert_eq!(
         reset["removed"].as_array().map(|a| a.len()),
         Some(1),
-        "reset drops back to default, so the extra selector left; got {reset}",
+        "reset drops back to default, so the extra namepath pattern left; got {reset}",
     );
     assert_eq!(reset["removed"][0].as_str(), Some("sourcetrait/pvextra:"));
     assert!(
@@ -254,7 +287,7 @@ fn installing_adds_the_rig_to_default_without_narrowing_the_view() {
         "m/go/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
-    let installed = s.library("install", "sourcetrait/pvfresh", src.to_str().unwrap());
+    let installed = s.rig("install", "sourcetrait/pvfresh", src.to_str().unwrap());
     assert!(!has_error(&installed), "install failed: {installed}");
 
     let listed = s.purview_list();
@@ -264,19 +297,19 @@ fn installing_adds_the_rig_to_default_without_narrowing_the_view() {
         .iter()
         .find(|r| r[0].as_str() == Some("default"))
         .unwrap_or_else(|| panic!("install should have materialized default: {listed}"));
-    let selectors: Vec<&str> = default_row[1]
+    let patterns: Vec<&str> = default_row[1]
         .as_array()
-        .expect("selectors")
+        .expect("namepath patterns")
         .iter()
         .filter_map(|v| v.as_str())
         .collect();
     assert!(
-        selectors.contains(&"*"),
+        patterns.contains(&"*"),
         "an UNCONFIGURED default is implicitly everything, so the install must \
-         materialize that `*` FIRST - otherwise installing one library would \
-         narrow the whole store down to it; got {selectors:?}",
+         materialize that `*` FIRST - otherwise installing one rig would \
+         narrow the whole namespace down to it; got {patterns:?}",
     );
-    assert!(selectors.contains(&"sourcetrait/pvfresh:"), "got {selectors:?}");
+    assert!(patterns.contains(&"sourcetrait/pvfresh:"), "got {patterns:?}");
 
     let info = s.info();
     let block = signatures(&info);
@@ -293,7 +326,7 @@ fn uninstalling_drops_its_pattern_from_every_purview() {
     commit_lib(&s, &src, "sourcetrait/pvtemp");
     let _ = s.purview_configure("holds/it", &["sourcetrait/pvtemp:", "*"]);
 
-    let removed = s.library("uninstall", "sourcetrait/pvtemp", src.to_str().unwrap());
+    let removed = s.rig("uninstall", "sourcetrait/pvtemp", src.to_str().unwrap());
     assert!(!has_error(&removed), "uninstall failed: {removed}");
 
     let listed = s.purview_list();
@@ -303,23 +336,23 @@ fn uninstalling_drops_its_pattern_from_every_purview() {
         .iter()
         .find(|r| r[0].as_str() == Some("holds/it"))
         .unwrap_or_else(|| panic!("holds/it absent: {listed}"));
-    let selectors: Vec<&str> = row[1]
+    let patterns: Vec<&str> = row[1]
         .as_array()
-        .expect("selectors")
+        .expect("namepath patterns")
         .iter()
         .filter_map(|v| v.as_str())
         .collect();
     assert_eq!(
-        selectors,
+        patterns,
         vec!["*"],
         "the uninstalled rig's pattern is gone and `*` - which needs no \
-         particular library - survives; got {selectors:?}",
+         particular rig - survives; got {patterns:?}",
     );
 }
 
 #[test]
 #[named]
-fn a_dangling_selector_is_pruned_when_the_table_is_next_written() {
+fn a_dangling_pattern_is_pruned_when_the_table_is_next_written() {
     let _t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     reset_purviews(&s);
@@ -329,7 +362,7 @@ fn a_dangling_selector_is_pruned_when_the_table_is_next_written() {
     assert_eq!(
         env["pruned"].as_array().map(|a| a.len()),
         Some(1),
-        "an author with no installed rig is DANGLING and is dropped on detection; \
+        "an author with no installed rig DANGLES and is dropped on detection; \
          got {env}",
     );
     assert_eq!(env["pruned"][0].as_str(), Some("humbletodd/"));
@@ -358,9 +391,9 @@ fn a_purview_pruned_down_to_nothing_is_dropped_rather_than_left_empty() {
             .expect("purviews")
             .iter()
             .any(|r| r[0].as_str() == Some("all/ghosts")),
-        "every selector dangled, so nothing is left to configure - and an empty \
-         list is ALREADY the delete operation, so keeping the row would be a \
-         state the tool surface cannot otherwise produce; got {env}",
+        "every namepath pattern dangled, so nothing is left to configure - and an \
+         empty list is ALREADY the delete operation, so keeping the row would be \
+         a state the tool surface cannot otherwise produce; got {env}",
     );
 }
 
@@ -371,7 +404,7 @@ fn extending_with_an_unknown_purview_is_refused() {
     assert_eq!(
         error_kind(&env),
         Some("purview::invalid_id"),
-        "an unknown id must be REFUSED rather than silently contribute nothing - \
+        "an unknown id must be REFUSED rather than silently contributing nothing - \
          a typo would otherwise look exactly like an empty purview; got {env}",
     );
 }
@@ -388,9 +421,37 @@ fn a_purview_may_hold_an_exact_call_as_well_as_patterns() {
     let info = s.info();
     let block = signatures(&info);
     assert_eq!(
-        library_block(block, "pvexact"),
+        rig_block(block, "pvexact"),
         " pvexact\n  m\n   go <x:int> <out:int>\n",
         "an EXACT namepath is a legal purview value, and it brings its ancestors \
          with it so the block still spells a namepath; got {block:?}",
+    );
+}
+
+#[test]
+#[named]
+fn the_dot_pattern_inspects_the_current_purview() {
+    let t = testing::test!({ .using_temp_dir() });
+    let s = TestServer::new();
+    reset_purviews(&s);
+    commit_lib(&s, &t.temp_dir().join("pvdot"), "sourcetrait/pvdot");
+    commit_lib(&s, &t.temp_dir().join("pvnotdot"), "sourcetrait/pvnotdot");
+    let _ = s.purview_configure("default", &["sourcetrait/pvdot:"]);
+
+    let dot = s.inspect(".");
+    let block = dot["doc"]["signatures"]
+        .as_str()
+        .unwrap_or_else(|| panic!("`.` should render a signatures block: {dot}"));
+    assert!(
+        block.contains("pvdot") && !block.contains("pvnotdot"),
+        "`.` is the CURRENT PURVIEW. The parser classifies it and deliberately \
+         leaves it unresolved, so purview is the only thing that can fill it in - \
+         an empty block here means that stub was never filled; got {dot}",
+    );
+    let info = s.info();
+    assert_eq!(
+        block,
+        signatures(&info),
+        "and `.` is the SAME view info() reports, not a second walk that could drift",
     );
 }

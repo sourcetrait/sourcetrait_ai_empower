@@ -6,11 +6,11 @@ fn validate(s: &str) -> Result<NamepathRef, Error> {
 }
 
 #[test]
-fn library_only() {
+fn rig_only() {
     assert_eq!(
         validate("sourcetrait/calc").unwrap(),
-        NamepathRef::Library {
-            library: "sourcetrait/calc".into()
+        NamepathRef::Rig {
+            rig: "sourcetrait/calc".into()
         }
     );
 }
@@ -20,14 +20,14 @@ fn module_one_and_nested() {
     assert_eq!(
         validate("sourcetrait/calc:math").unwrap(),
         NamepathRef::Module {
-            library: "sourcetrait/calc".into(),
+            rig: "sourcetrait/calc".into(),
             module_path: "math".into()
         }
     );
     assert_eq!(
         validate("sourcetrait/calc:math/trig").unwrap(),
         NamepathRef::Module {
-            library: "sourcetrait/calc".into(),
+            rig: "sourcetrait/calc".into(),
             module_path: "math/trig".into()
         }
     );
@@ -38,7 +38,7 @@ fn function_one_and_nested() {
     assert_eq!(
         validate("sourcetrait/calc:math:double").unwrap(),
         NamepathRef::Function {
-            library: "sourcetrait/calc".into(),
+            rig: "sourcetrait/calc".into(),
             module_path: "math".into(),
             name: "double".into()
         }
@@ -46,7 +46,7 @@ fn function_one_and_nested() {
     assert_eq!(
         validate("sourcetrait/calc:math/trig:sin").unwrap(),
         NamepathRef::Function {
-            library: "sourcetrait/calc".into(),
+            rig: "sourcetrait/calc".into(),
             module_path: "math/trig".into(),
             name: "sin".into()
         }
@@ -54,7 +54,7 @@ fn function_one_and_nested() {
 }
 
 #[test]
-fn deny_bare_library() {
+fn deny_bare_rig() {
     assert!(validate("calc").is_err());
     assert!(validate("calc:math").is_err());
     assert!(validate("calc:math:double").is_err());
@@ -120,29 +120,29 @@ fn pat(s: &str) -> NamepathPattern {
     }
 }
 
-fn lib_ref(library: &str) -> NamepathRef {
-    NamepathRef::Library {
-        library: library.into(),
+fn lib_ref(rig: &str) -> NamepathRef {
+    NamepathRef::Rig {
+        rig: rig.into(),
     }
 }
 
 fn mod_ref(
-    library: &str,
+    rig: &str,
     module_path: &str,
 ) -> NamepathRef {
     NamepathRef::Module {
-        library: library.into(),
+        rig: rig.into(),
         module_path: module_path.into(),
     }
 }
 
 fn call_ref(
-    library: &str,
+    rig: &str,
     module_path: &str,
     name: &str,
 ) -> NamepathRef {
     NamepathRef::Function {
-        library: library.into(),
+        rig: rig.into(),
         module_path: module_path.into(),
         name: name.into(),
     }
@@ -167,14 +167,14 @@ fn exact_shapes_classify_as_namepaths() {
 #[test]
 fn a_bare_author_is_exact_in_shape_and_still_invalid() {
     // Classification is by SHAPE; validity is a separate, unchanged question. An
-    // author names no addressable coordinate, so it classifies exact and errors -
+    // author names nothing addressable, so it classifies exact and errors -
     // it does NOT become a pattern and does not gain a descriptor.
     let NamepathStr::Namepath(np) = classify("sourcetrait") else {
         panic!("a bare author must classify as exact, not as a pattern");
     };
     assert!(
         np.validate().is_err(),
-        "an author is exact in shape but is not a valid exact coordinate",
+        "an author is exact in shape but is not a valid exact namepath",
     );
 }
 
@@ -205,21 +205,21 @@ fn each_pattern_form_parses_to_its_variant() {
     );
     assert_eq!(
         pat("sourcetrait/calc:"),
-        NamepathPattern::Library {
-            library: "sourcetrait/calc".into(),
+        NamepathPattern::Rig {
+            rig: "sourcetrait/calc".into(),
         },
     );
     assert_eq!(
         pat("sourcetrait/calc:math/"),
         NamepathPattern::ModuleTree {
-            library: "sourcetrait/calc".into(),
+            rig: "sourcetrait/calc".into(),
             module_path: "math".into(),
         },
     );
     assert_eq!(
         pat("sourcetrait/calc:math:"),
         NamepathPattern::ModuleCalls {
-            library: "sourcetrait/calc".into(),
+            rig: "sourcetrait/calc".into(),
             module_path: "math".into(),
         },
     );
@@ -230,12 +230,12 @@ fn each_pattern_form_parses_to_its_variant() {
 #[test]
 fn deny_invalid_pattern_bodies() {
     for s in [
-        "sourcetrait/calc/",              // past a library the separator is `:`
+        "sourcetrait/calc/",              // past a rig the separator is `:`
         "1author/",                       // bad ident
         "main/",                          // reserved
         "/",                              // empty author
-        ":",                              // empty library
-        "calc:",                          // bare library, no author
+        ":",                              // empty rig
+        "calc:",                          // bare rig, no author
         "sourcetrait/calc:a//b:",         // bad module path
         "sourcetrait/calc:math:double:",  // there is no level below a call
     ] {
@@ -257,7 +257,7 @@ fn author_matches_on_the_whole_segment() {
 }
 
 #[test]
-fn library_covers_everything_in_it_and_nothing_outside() {
+fn rig_covers_everything_in_it_and_nothing_outside() {
     let p = pat("sourcetrait/calc:");
     assert!(p.matches(&lib_ref("sourcetrait/calc")));
     assert!(p.matches(&mod_ref("sourcetrait/calc", "math")));
@@ -281,7 +281,7 @@ fn module_tree_compares_on_segment_boundaries() {
     );
     assert!(
         !p.matches(&lib_ref("sourcetrait/calc")),
-        "the library sits ABOVE the module, so it is not below the pattern",
+        "the rig sits ABOVE the module, so it is not below the pattern",
     );
 }
 
@@ -323,7 +323,7 @@ fn all_matches_every_kind() {
 fn an_unresolved_current_matches_nothing() {
     // `.` is a STUB until purview resolves it to that purview's own patterns.
     // Matching NOTHING is the safe unresolved reading - matching everything
-    // would silently expose the whole store wherever a `.` was left unresolved.
+    // would silently expose the whole namespace wherever a `.` was left unresolved.
     let p = pat(".");
     assert!(!p.matches(&lib_ref("bob/burgers")));
     assert!(!p.matches(&mod_ref("bob/burgers", "fries")));

@@ -4,10 +4,10 @@ pub(crate) async fn run_server() {
     // Become the subreaper so an eval's orphaned grandchildren stay on our /proc
     // ppid chain for the tree-kill (server/teardown.rs).
     install_child_subreaper();
-    let library_locks = ensure_substrate().await.expect("ensure_substrate");
+    let rig_locks = ensure_substrate().await.expect("ensure_substrate");
     let nonce_gen = Arc::new(NonceGen::new());
     let lint_engine = Arc::new(LintEngine::new());
-    let server = NuSh::new(nonce_gen, library_locks, lint_engine);
+    let server = NuSh::new(nonce_gen, rig_locks, lint_engine);
     // The per-process id now belongs to NuSh (info() reports it); the emergency log
     // still namespaces by it (<cache>/log/<mcp_nom>/).
     let mcp_nom = server.mcp_nom.to_string();
@@ -26,8 +26,8 @@ pub(crate) async fn run_server() {
         env_jobs: server.env_jobs.clone(),
         tx: emergency_tx,
     });
-    // The store's liveness signal, held for the process lifetime. Non-fatal: two hosts
-    // may share one store coordinate, and "locked" still answers the watcher's question.
+    // The namespace's liveness signal, held for the process lifetime. Non-fatal: two hosts
+    // may share one namespace, and "locked" still answers the watcher's question.
     let _host_lock = match acquire_host_lock(&server.mcp_nom.to_string()) {
         Ok(lock) => Some(lock),
         Err(e) => {

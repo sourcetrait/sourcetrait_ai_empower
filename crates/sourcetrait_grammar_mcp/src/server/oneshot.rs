@@ -3,10 +3,10 @@ use crate::*;
 pub(crate) async fn run_oneshot(tool: CliTool) -> process::ExitCode {
     let exit_code = async move {
         install_child_subreaper();
-        let library_locks = ensure_substrate().await.expect("ensure_substrate");
+        let rig_locks = ensure_substrate().await.expect("ensure_substrate");
         let nonce_gen = Arc::new(NonceGen::new());
         let lint_engine = Arc::new(LintEngine::new());
-        let server = NuSh::new(nonce_gen, library_locks, lint_engine);
+        let server = NuSh::new(nonce_gen, rig_locks, lint_engine);
         let result = match tool {
             CliTool::Info => {
                 server
@@ -96,20 +96,20 @@ pub(crate) async fn run_oneshot(tool: CliTool) -> process::ExitCode {
                     .scaffold(mcp::Parameters(NewParams { namepaths }))
                     .await
             }
-            CliTool::Commit { library } => {
+            CliTool::Commit { rig } => {
                 server
-                    .commit(mcp::Parameters(CommitParams { library }))
+                    .commit(mcp::Parameters(CommitParams { rig }))
                     .await
             }
-            CliTool::Library {
+            CliTool::Rig {
                 action,
-                library,
+                rig,
                 source_dir,
             } => {
                 server
-                    .library(mcp::Parameters(LibraryParams {
+                    .rig(mcp::Parameters(RigParams {
                         action: action.as_str().to_string(),
-                        library,
+                        rig,
                         source_dir,
                     }))
                     .await

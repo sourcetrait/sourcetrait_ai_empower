@@ -9,7 +9,7 @@ pub(crate) mod server {
     pub(crate) mod emergency;
     pub(crate) mod error;
     pub(crate) mod executor;
-    pub(crate) mod library;
+    pub(crate) mod rig;
     pub(crate) mod lint;
     pub(crate) mod liveness;
     pub(crate) mod namepath;
@@ -37,7 +37,7 @@ pub(crate) mod server {
         pub(crate) mod interact;
         pub(crate) mod kill;
         pub(crate) mod learn;
-        pub(crate) mod library;
+        pub(crate) mod rig;
         pub(crate) mod new;
         pub(crate) mod processes;
         pub(crate) mod purview_configure;
@@ -51,7 +51,7 @@ pub(crate) mod server {
     mod tests {
         mod channel;
         mod emergency;
-        mod library;
+        mod rig;
         mod namepath;
         mod schema;
         mod teardown;
@@ -118,14 +118,14 @@ pub(crate) use crate::{
         },
         error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         executor::Executor,
-        library::{
-            LibraryLocks, ValidationResult, check_library,
-            check_source_dir, commit_impl, ensure_substrate, establish_library,
-            render_signatures_matching, render_signatures_within, SignaturesDoc,
+        rig::{
+            RigLocks, ValidationResult, check_rig,
+            check_source_dir, commit_impl, ensure_substrate, establish_rig,
+            render_signatures_within, SignaturesDoc,
             InspectDoc, index_node, inspect_impl, install_impl, is_reserved_term, is_valid_ident,
-            is_valid_library,
+            is_valid_rig,
             is_valid_module_path,
-            libraries_dir, load_index, registered_library_names, scaffold_leaf,
+            rigs_dir, load_index, registered_rig_names, scaffold_leaf,
             scaffold_leaf_exists, uninstall_impl,
         },
         lint::{LINT_VIOLATION_CAP, lint_body},
@@ -140,8 +140,8 @@ pub(crate) use crate::{
         purview::{
             CurrentPurview, PURVIEW_ALL, PURVIEW_DEFAULT, PurviewRow,
             PurviewView, is_derived_purview, is_valid_purview_id, load_purviews,
-            is_nameable_purview, parse_selectors, prune_dangling, purview_views, purviews_path,
-            resolve_selectors, save_purviews, selector_delta,
+            ensure_default_purview, is_nameable_purview, parse_patterns, pattern_delta,
+            prune_dangling, purview_views, purviews_path, resolve_patterns, save_purviews,
         },
         run::{eval_concurrency_cap, run_server},
         schema::{
@@ -170,7 +170,7 @@ pub(crate) use crate::{
             inspect::InspectParams,
             kill::KillParams,
             learn::LearnParams,
-            library::LibraryParams,
+            rig::RigParams,
             new::NewParams,
             processes::ProcessesParams,
             purview_configure::PurviewConfigureParams,

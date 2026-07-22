@@ -20,7 +20,7 @@ fn json_object_to_nu_value(map: &mcp::JsonObject) -> nu::Value {
 }
 
 /// serde_json -> nu, the one JSON-to-Value bridge in the crate. Also the write half
-/// of the library index's NUON round-trip (server/library.rs), which is why it is
+/// of the rig index's NUON round-trip (server/rig.rs), which is why it is
 /// pub(crate) rather than private to the templates.
 pub(crate) fn json_value_to_nu_value(v: &serde_json::Value) -> nu::Value {
     let span = nu::Span::unknown();
@@ -86,7 +86,7 @@ pub(crate) fn build_run_source(
 }
 
 pub(crate) fn build_call_source(
-    library: &str,
+    rig: &str,
     module_path: &str,
     name: &str,
     args: &mcp::JsonObject,
@@ -98,9 +98,9 @@ pub(crate) fn build_call_source(
         args_to_nuon(args)
     };
     let target = if module_path.is_empty() {
-        format!("{library}/{name}")
+        format!("{rig}/{name}")
     } else {
-        format!("{library}/{module_path}/{name}")
+        format!("{rig}/{module_path}/{name}")
     };
     formatdoc!(
         r#"

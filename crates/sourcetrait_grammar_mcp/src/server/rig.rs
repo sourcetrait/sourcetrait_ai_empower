@@ -2,7 +2,7 @@ use crate::*;
 
 
 #[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
-pub(crate) struct LibraryIndex {
+pub(crate) struct RigIndex {
     pub source_path: PathBuf,
     #[serde(default)]
     pub functions: Vec<IndexFunction>,
@@ -26,10 +26,10 @@ pub(crate) struct IndexModule {
     pub modules: Vec<IndexModule>,
 }
 
-pub(crate) const META_FILE: &str = ".meta/library.nuon";
+pub(crate) const META_FILE: &str = ".meta/rig.nuon";
 
 /// The pre-NUON index filename. Nothing writes it any more; it exists so
-/// `migrate_meta_to_nuon` can find a store written by an older host and retire it.
+/// `migrate_meta_to_nuon` can find a namespace written by an older host and retire it.
 const LEGACY_META_FILE: &str = ".meta/library.json";
 
 
@@ -49,22 +49,22 @@ pub(crate) fn allowed_signers_path() -> PathBuf {
     keypair_dir().join("allowed_signers")
 }
 
-pub(crate) fn libraries_dir() -> PathBuf {
-    data_base_dir().join("libraries")
+pub(crate) fn rigs_dir() -> PathBuf {
+    data_base_dir().join("rigs")
 }
 
 pub(crate) const RIG_TYPE_DIR: &str = "rig";
 
-pub(crate) fn library_dir(library: &str) -> PathBuf {
-    libraries_dir().join(RIG_TYPE_DIR).join(library)
+pub(crate) fn rig_dir(rig: &str) -> PathBuf {
+    rigs_dir().join(RIG_TYPE_DIR).join(rig)
 }
 
-pub(crate) fn library_store_rel(library: &str) -> String {
-    format!("{RIG_TYPE_DIR}/{library}")
+pub(crate) fn rig_repo_rel(rig: &str) -> String {
+    format!("{RIG_TYPE_DIR}/{rig}")
 }
 
-pub(crate) fn is_valid_library(library: &str) -> bool {
-    match library.split_once('/') {
+pub(crate) fn is_valid_rig(rig: &str) -> bool {
+    match rig.split_once('/') {
         Some((author, name)) => {
             !name.contains('/')
                 && is_valid_ident(author)
@@ -76,24 +76,24 @@ pub(crate) fn is_valid_library(library: &str) -> bool {
     }
 }
 
-pub(crate) fn library_meta_path(library: &str) -> PathBuf {
-    library_dir(library).join(META_FILE)
+pub(crate) fn rig_meta_path(rig: &str) -> PathBuf {
+    rig_dir(rig).join(META_FILE)
 }
 
-pub(crate) fn library_meta_dir(library: &str) -> PathBuf {
-    library_dir(library).join(".meta")
+pub(crate) fn rig_meta_dir(rig: &str) -> PathBuf {
+    rig_dir(rig).join(".meta")
 }
 
-pub(crate) fn library_docs_dir(library: &str) -> PathBuf {
-    library_meta_dir(library).join("docs")
+pub(crate) fn rig_docs_dir(rig: &str) -> PathBuf {
+    rig_meta_dir(rig).join("docs")
 }
 
 
-pub(crate) struct LibraryLocks {
+pub(crate) struct RigLocks {
     map: tk::AsyncMutex<HashMap<String, Arc<tk::AsyncRwLock<()>>>>,
 }
 
-impl LibraryLocks {
+impl RigLocks {
     pub(crate) fn new() -> Self {
         Self {
             map: tk::AsyncMutex::new(HashMap::new()),
@@ -101,7 +101,7 @@ impl LibraryLocks {
     }
 
     pub(crate) async fn hydrate_from_disk(&self) -> io::Result<()> {
-        let dir = libraries_dir().join(RIG_TYPE_DIR);
+        let dir = rigs_dir().join(RIG_TYPE_DIR);
         if !dir.exists() {
             return Ok(());
         }
@@ -194,8 +194,8 @@ pub(crate) fn ensure_keypair() -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn ensure_libraries_repo() -> io::Result<()> {
-    let dir = libraries_dir();
+pub(crate) fn ensure_rigs_repo() -> io::Result<()> {
+    let dir = rigs_dir();
     fs::create_dir_all(&dir)?;
     let git_dir = dir.join(".git");
     if !git_dir.exists() {
@@ -203,7 +203,7 @@ pub(crate) fn ensure_libraries_repo() -> io::Result<()> {
         configure_repo(&dir)?;
         run_git(
             &dir,
-            &["commit", "--allow-empty", "-m", "init libraries repo"],
+            &["commit", "--allow-empty", "-m", "init rigs repo"],
         )?;
     } else {
         configure_repo(&dir)?;
@@ -273,52 +273,52 @@ fn additively_wire_modnu(modnu: &std::path::Path, entry: &str) -> io::Result<()>
     fs::write(modnu, out)
 }
 
-fn validate_new_coordinate(
-    library: &str,
+fn validate_new_names(
+    rig: &str,
     module_path: &str,
     name: Option<&str>,
 ) -> Result<(), Error> {
-    let (author, lib_name) = match library.split_once('/') {
+    let (author, lib_name) = match rig.split_once('/') {
         Some((a, n)) if !n.contains('/') => (a, n),
         _ => {
-            return Err(Error::LibraryInvalidName {
-                library: library.to_string(),
-                reason: "library must be the compound `<author>/<name>`".to_string(),
+            return Err(Error::RigInvalidName {
+                rig: rig.to_string(),
+                reason: "rig must be the compound `<author>/<name>`".to_string(),
             });
         }
     };
     for seg in [author, lib_name] {
         if !is_valid_ident(seg) || is_reserved_term(seg) {
-            return Err(Error::LibraryInvalidName {
-                library: seg.to_string(),
+            return Err(Error::RigInvalidName {
+                rig: seg.to_string(),
                 reason: "author/name must match [a-zA-Z_][a-zA-Z0-9_-]* and not be the reserved `main`"
                     .to_string(),
             });
         }
     }
     if NAME_DENYLIST.contains(&lib_name) {
-        return Err(Error::LibraryNameDenied {
-            library: library.to_string(),
+        return Err(Error::RigNameDenied {
+            rig: rig.to_string(),
         });
     }
     if !is_valid_module_path(module_path) {
-        return Err(Error::LibraryInvalidName {
-            library: module_path.to_string(),
+        return Err(Error::RigInvalidName {
+            rig: module_path.to_string(),
             reason: "invalid module path".to_string(),
         });
     }
     for seg in module_path.split('/').filter(|s| !s.is_empty()) {
         if is_reserved_term(seg) {
-            return Err(Error::LibraryInvalidName {
-                library: seg.to_string(),
+            return Err(Error::RigInvalidName {
+                rig: seg.to_string(),
                 reason: "reserved `main` cannot name a module".to_string(),
             });
         }
     }
     if let Some(n) = name {
         if !is_valid_ident(n) || is_reserved_term(n) {
-            return Err(Error::LibraryInvalidName {
-                library: n.to_string(),
+            return Err(Error::RigInvalidName {
+                rig: n.to_string(),
                 reason: "invalid or reserved (`main`) function name".to_string(),
             });
         }
@@ -326,19 +326,19 @@ fn validate_new_coordinate(
     Ok(())
 }
 
-pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) -> Result<(), Error> {
-    validate_new_coordinate(library, "", None)?;
-    let canonical = library_dir(library);
+pub(crate) fn establish_rig(rig: &str, source_path: &std::path::Path) -> Result<(), Error> {
+    validate_new_names(rig, "", None)?;
+    let canonical = rig_dir(rig);
     if canonical.exists() {
-        return Err(Error::LibraryAlreadyRegistered {
-            library: library.to_string(),
+        return Err(Error::RigAlreadyRegistered {
+            rig: rig.to_string(),
         });
     }
     let meta_dir = canonical.join(".meta");
     fs::create_dir_all(&canonical)?;
     fs::write(canonical.join("mod.nu"), b"")?;
     fs::create_dir_all(&meta_dir)?;
-    let index = LibraryIndex {
+    let index = RigIndex {
         source_path: source_path.to_path_buf(),
         functions: Vec::new(),
         modules: Vec::new(),
@@ -348,11 +348,11 @@ pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) ->
         reason,
     })?;
     fs::write(canonical.join(META_FILE), index_nuon.as_bytes())?;
-    let rel = library_store_rel(library);
-    run_git(&libraries_dir(), &["add", "--", &rel])?;
+    let rel = rig_repo_rel(rig);
+    run_git(&rigs_dir(), &["add", "--", &rel])?;
     run_git(
-        &libraries_dir(),
-        &["commit", "-m", &format!("new library {library}")],
+        &rigs_dir(),
+        &["commit", "-m", &format!("new rig {rig}")],
     )?;
     fs::create_dir_all(source_path)?;
     let root_modnu = source_path.join("mod.nu");
@@ -363,11 +363,11 @@ pub(crate) fn establish_library(library: &str, source_path: &std::path::Path) ->
 }
 
 pub(crate) fn scaffold_leaf_exists(
-    library: &str,
+    rig: &str,
     module_path: &str,
     name: Option<&str>,
 ) -> Result<bool, Error> {
-    let index = load_index(library)?;
+    let index = load_index(rig)?;
     let mut dir = index.source_path.clone();
     for seg in module_path.split('/').filter(|s| !s.is_empty()) {
         dir = dir.join(seg);
@@ -380,17 +380,17 @@ pub(crate) fn scaffold_leaf_exists(
 }
 
 pub(crate) fn scaffold_leaf(
-    library: &str,
+    rig: &str,
     module_path: &str,
     name: Option<&str>,
 ) -> Result<Vec<String>, Error> {
-    validate_new_coordinate(library, module_path, name)?;
-    if !library_dir(library).exists() {
-        return Err(Error::LibraryNotRegistered {
-            library: library.to_string(),
+    validate_new_names(rig, module_path, name)?;
+    if !rig_dir(rig).exists() {
+        return Err(Error::RigNotRegistered {
+            rig: rig.to_string(),
         });
     }
-    let index = load_index(library)?;
+    let index = load_index(rig)?;
     let sp = index.source_path.clone();
     let mut created: Vec<String> = Vec::new();
 
@@ -402,8 +402,8 @@ pub(crate) fn scaffold_leaf(
             let child = dir.join(seg);
             let terminal_module = name.is_none() && i == segs.len() - 1;
             if terminal_module && child.exists() {
-                return Err(Error::LibraryInvalidName {
-                    library: module_path.to_string(),
+                return Err(Error::RigInvalidName {
+                    rig: module_path.to_string(),
                     reason: "module already exists; edit it instead of scaffolding over it"
                         .to_string(),
                 });
@@ -422,8 +422,8 @@ pub(crate) fn scaffold_leaf(
     if let Some(fn_name) = name {
         let fn_dir = dir.join(fn_name);
         if fn_dir.exists() {
-            return Err(Error::LibraryInvalidName {
-                library: fn_name.to_string(),
+            return Err(Error::RigInvalidName {
+                rig: fn_name.to_string(),
                 reason: "function already exists; edit it instead of scaffolding over it"
                     .to_string(),
             });
@@ -473,7 +473,7 @@ pub(crate) fn is_valid_module_path(s: &str) -> bool {
 /// already derive Serialize/Deserialize and the schemas they carry are `JsonObject`s,
 /// so ONE bridge at the Value layer covers the whole tree and cannot drift from the
 /// structs as they change.
-pub(crate) fn index_to_nuon(index: &LibraryIndex) -> Result<String, String> {
+pub(crate) fn index_to_nuon(index: &RigIndex) -> Result<String, String> {
     let json = json::to_value(index).map_err(|e| e.to_string())?;
     let value = json_value_to_nu_value(&json);
     nu::to_nuon(&nu::EngineState::new(), &value, nu::ToNuonConfig::default())
@@ -481,7 +481,7 @@ pub(crate) fn index_to_nuon(index: &LibraryIndex) -> Result<String, String> {
 }
 
 /// Parse an index back out of NUON, the mirror of `index_to_nuon`.
-pub(crate) fn index_from_nuon(text: &str) -> Result<LibraryIndex, String> {
+pub(crate) fn index_from_nuon(text: &str) -> Result<RigIndex, String> {
     let value = nu::from_nuon(text, None).map_err(|e| e.to_string())?;
     // `nu_json` is the FRIENDLY converter (what `to json` emits); serde's own
     // Serialize on a nu Value would hand back the internal tagged form with spans.
@@ -490,15 +490,15 @@ pub(crate) fn index_from_nuon(text: &str) -> Result<LibraryIndex, String> {
     json::from_value(json).map_err(|e| e.to_string())
 }
 
-pub(crate) fn load_index(library: &str) -> io::Result<LibraryIndex> {
-    let text = fs::read_to_string(library_meta_path(library))?;
+pub(crate) fn load_index(rig: &str) -> io::Result<RigIndex> {
+    let text = fs::read_to_string(rig_meta_path(rig))?;
     index_from_nuon(&text)
-        .map_err(|e| io::Error::other(format!("decode index for {library}: {e}")))
+        .map_err(|e| io::Error::other(format!("decode index for {rig}: {e}")))
 }
 
 
 
-/// A node's one-line summary from `.meta/docs/<coord>/summary.md`, FLATTENED.
+/// A one-line summary from `.meta/docs/<docs_path>/summary.md`, FLATTENED.
 ///
 /// A summary is single-line in EFFECT, but it is hard-wrapped in source like any
 /// other comment (the_user), so the stored text carries the author's line breaks
@@ -507,31 +507,31 @@ pub(crate) fn load_index(library: &str) -> io::Result<LibraryIndex> {
 /// at column 0, where the block's own grammar reads it as an AUTHOR line.
 ///
 /// Normalizing HERE rather than at each consumer is what keeps the block, the
-/// standalone signature, and inspect's library/module `summary` fields agreeing.
+/// standalone signature, and inspect's rig/module `summary` fields agreeing.
 /// `details` is prose and keeps its newlines, so it stays on `read_doc`.
 fn read_summary(
     docs_dir: &std::path::Path,
-    coord: &str,
+    docs_path: &str,
 ) -> String {
-    read_doc(docs_dir, coord, "summary.md")
+    read_doc(docs_dir, docs_path, "summary.md")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn read_doc(docs_dir: &std::path::Path, coord: &str, file: &str) -> String {
-    let dir = if coord.is_empty() {
+fn read_doc(docs_dir: &std::path::Path, docs_path: &str, file: &str) -> String {
+    let dir = if docs_path.is_empty() {
         docs_dir.to_path_buf()
     } else {
-        docs_dir.join(coord)
+        docs_dir.join(docs_path)
     };
     fs::read_to_string(dir.join(file)).unwrap_or_default()
 }
 
-/// Every registered library's compound `<author>/<name>`, sorted - which sorts by
+/// Every registered rig's compound `<author>/<name>`, sorted - which sorts by
 /// author then name, since the author is the leading segment.
-pub(crate) fn registered_library_names() -> Vec<String> {
-    let dir = libraries_dir().join(RIG_TYPE_DIR);
+pub(crate) fn registered_rig_names() -> Vec<String> {
+    let dir = rigs_dir().join(RIG_TYPE_DIR);
     let mut names: Vec<String> = Vec::new();
     if let Ok(read) = fs::read_dir(&dir) {
         for author_entry in read.flatten() {
@@ -564,7 +564,7 @@ pub(crate) fn registered_library_names() -> Vec<String> {
 /// One space per depth level - the indentation IS the structure.
 const SIGNATURE_INDENT: &str = " ";
 
-/// `<token> # <summary>`, with the ` # ...` omitted ENTIRELY when the node is
+/// `<token> # <summary>`, with the ` # ...` omitted ENTIRELY when the line is
 /// undocumented rather than left as an empty comment.
 ///
 /// Shared by the block and the standalone form, so a summary is attached the
@@ -616,8 +616,11 @@ pub(crate) fn signature_of(
     format!("{name} {args} {result}")
 }
 
-/// A node's docs coordinate: its module path joined with its own name.
-fn coord_of(
+/// Join a parent module path with a leaf name, tolerating an empty parent.
+///
+/// Serves both uses: a submodule's own module path, and the docs path a
+/// signature's summary lives under (`<module_path>/<name>` for a call).
+fn join_path(
     parent: &str,
     name: &str,
 ) -> String {
@@ -628,111 +631,99 @@ fn coord_of(
     }
 }
 
-/// Render the calls and submodules of one module that `selectors` put in view,
+/// Render the calls and submodules of one module that `patterns` put in view,
 /// returning whether anything was emitted.
 ///
 /// Calls before submodules: the callables at a level are what a reader scans
 /// for, and a submodule pushes the eye deeper. Each group sorts by name.
 ///
-/// A module line is emitted when the module's OWN node is covered OR when
+/// A module line is emitted when the module's OWN namepath is covered OR when
 /// anything below it was. That second case is what keeps the ANCESTORS of a
 /// deep match present, so the indentation still spells a whole namepath - a
 /// subtree without its ancestors is one a reader cannot turn back into a
-/// coordinate, and the block's whole grammar is its indentation.
+/// namepath, and the block's whole grammar is its indentation.
 ///
-/// A per-node predicate rather than a rooted walk, because a purview is a SET of
-/// selectors: two of them can root in different libraries at different depths,
-/// which no single root expresses, while "is this node covered by any of them"
-/// composes for free.
-fn push_within_nodes(
+/// A per-signature predicate rather than a rooted walk, because a purview is a
+/// SET of namepath patterns: two of them can root in different rigs at
+/// different depths, which no single root expresses, while "does any of them
+/// cover this signature" composes for free.
+fn push_within_signatures(
     out: &mut String,
     depth: usize,
     functions: &[IndexFunction],
     modules: &[IndexModule],
     docs_dir: &std::path::Path,
     parent: &str,
-    library: &str,
-    selectors: &[NamepathStr],
+    rig: &str,
+    patterns: &[NamepathStr],
 ) -> bool {
     let mut showed = false;
     let mut calls: Vec<&IndexFunction> = functions.iter().collect();
     calls.sort_by(|a, b| a.name.cmp(&b.name));
     for f in calls {
-        let node = NamepathRef::Function {
-            library: library.to_string(),
+        let namepath = NamepathRef::Function {
+            rig: rig.to_string(),
             module_path: parent.to_string(),
             name: f.name.clone(),
         };
-        if !selectors.iter().any(|s| s.covers(&node)) {
+        if !patterns.iter().any(|p| p.covers(&namepath)) {
             continue;
         }
-        let coord = coord_of(parent, &f.name);
+        let docs_path = join_path(parent, &f.name);
         push_signature_line(
             out,
             depth,
             &signature_of(&f.name, f),
-            &read_summary(docs_dir, &coord),
+            &read_summary(docs_dir, &docs_path),
         );
         showed = true;
     }
     let mut subs: Vec<&IndexModule> = modules.iter().collect();
     subs.sort_by(|a, b| a.name.cmp(&b.name));
     for m in subs {
-        let coord = coord_of(parent, &m.name);
+        let module_path = join_path(parent, &m.name);
         // Rendered into a buffer first: whether the module's own line belongs in
         // the block is not knowable until its subtree has been walked.
         let mut body = String::new();
-        let below = push_within_nodes(
+        let below = push_within_signatures(
             &mut body,
             depth + 1,
             &m.functions,
             &m.modules,
             docs_dir,
-            &coord,
-            library,
-            selectors,
+            &module_path,
+            rig,
+            patterns,
         );
-        let node = NamepathRef::Module {
-            library: library.to_string(),
-            module_path: coord.clone(),
+        let namepath = NamepathRef::Module {
+            rig: rig.to_string(),
+            module_path: module_path.clone(),
         };
-        let covered = selectors.iter().any(|s| s.covers(&node));
+        let covered = patterns.iter().any(|p| p.covers(&namepath));
         if !below && !covered {
             continue;
         }
-        push_signature_line(out, depth, &m.name, &read_summary(docs_dir, &coord));
+        push_signature_line(out, depth, &m.name, &read_summary(docs_dir, &module_path));
         out.push_str(&body);
         showed = true;
     }
     showed
 }
 
-/// The block for ONE pattern - what a pattern `inspect()` returns.
-///
-/// A thin call into the selector form below, because a single pattern is just a
-/// one-element selector set. There is deliberately no second walk to keep in
-/// step with the first.
-pub(crate) async fn render_signatures_matching(
-    locks: &LibraryLocks,
-    pattern: &NamepathPattern,
-) -> String {
-    render_signatures_within(locks, &[NamepathStr::Pattern(pattern.clone())]).await
-}
-
-/// The store as ONE indented signature block, filtered to a SET of selectors -
-/// the union of everything they put in view.
+/// The namespace as ONE indented signature block, filtered to a SET of namepath
+/// patterns - the union of everything they put in view.
 ///
 /// THE ONE renderer. `info()` shows the current purview through it, a pattern
-/// `inspect()` shows one selector through it, and the whole store is just the
-/// `*` selector - so none of the three can drift from the others. It replaced
-/// the structured `libraries` tree info() used to return: roughly 8 KB of nested
-/// JSON for two libraries, and the agent's first read after the skill.
+/// `inspect()` shows one namepath pattern through it, and the whole namespace is
+/// just the `*` pattern - so none of the three can drift from the others. It
+/// replaced the structured `rigs` tree info() used to return: roughly 8 KB
+/// of nested JSON for two rigs, and the agent's first read after the skill.
 ///
 /// NOTHING IS STATED THAT CAN BE INFERRED, and the separators are inferable from
-/// shape alone (the_user): depth 0 is an author and depth 1 a library - a library
+/// shape alone (the_user): depth 0 is an author and depth 1 a rig - a rig
 /// is ALWAYS the two levels `<author>/<name>` - everything deeper is a module
 /// UNLESS it carries the two signature groups, which makes it a call. So a reader
-/// joins author to library with `/`, module segments with `/`, and puts `:` before
+/// joins author to rig with `/`, module segments with `/`, and puts `:` before
 /// the first module and before the call.
 ///
 /// Trailing hierarchy characters were tried and REMOVED. They cost bytes and did
@@ -741,22 +732,22 @@ pub(crate) async fn render_signatures_matching(
 /// rule - which is re-inference wearing a costume. Shape settles every case
 /// including that one, because a call is recognizable on its own.
 ///
-/// A library appears when its OWN node is covered or when anything inside it is.
-/// That is what lets a bare `author/` list a library that has no calls yet,
-/// while a pattern naming a module the library does not have contributes
-/// nothing at all - no orphan author or library heading left behind.
+/// A rig appears when its OWN namepath is covered or when anything inside it
+/// is. That is what lets a bare `author/` list a rig that has no calls yet,
+/// while a pattern naming a module the rig does not have contributes
+/// nothing at all - no orphan author or rig heading left behind.
 ///
-/// Selectors matching NOTHING render EMPTY rather than erroring. A selector is a
-/// filter, and the unresolved `.` purview stub matches nothing BY DESIGN, so an
-/// empty block is already this format's answer for "no nodes here" - a fresh
+/// Namepath patterns matching NOTHING render EMPTY rather than erroring. A
+/// pattern is a filter, and an unresolved `.` matches nothing BY DESIGN, so an
+/// empty block is already this format's answer for "nothing here" - a fresh
 /// namespace renders empty for the same reason.
 pub(crate) async fn render_signatures_within(
-    locks: &LibraryLocks,
-    selectors: &[NamepathStr],
+    locks: &RigLocks,
+    patterns: &[NamepathStr],
 ) -> String {
     let mut out = String::new();
     let mut current_author: Option<String> = None;
-    for name in registered_library_names() {
+    for name in registered_rig_names() {
         let Some((author, leaf)) = name.split_once('/') else {
             continue;
         };
@@ -772,11 +763,11 @@ pub(crate) async fn render_signatures_within(
                 continue;
             }
         };
-        let docs_dir = library_docs_dir(&name);
-        // Buffered, because whether this library's heading belongs in the block
+        let docs_dir = rig_docs_dir(&name);
+        // Buffered, because whether this rig's heading belongs in the block
         // is not knowable until its whole tree has been walked.
         let mut body = String::new();
-        let showed = push_within_nodes(
+        let showed = push_within_signatures(
             &mut body,
             2,
             &index.functions,
@@ -784,12 +775,12 @@ pub(crate) async fn render_signatures_within(
             &docs_dir,
             "",
             &name,
-            selectors,
+            patterns,
         );
-        let library_node = NamepathRef::Library {
-            library: name.clone(),
+        let rig_namepath = NamepathRef::Rig {
+            rig: name.clone(),
         };
-        let covered = selectors.iter().any(|s| s.covers(&library_node));
+        let covered = patterns.iter().any(|p| p.covers(&rig_namepath));
         if !showed && !covered {
             continue;
         }
@@ -804,10 +795,10 @@ pub(crate) async fn render_signatures_within(
     out
 }
 
-/// A library's documentation. `srcdir` is the COMMITTED CANONICAL directory, not
+/// A rig's documentation. `srcdir` is the COMMITTED CANONICAL directory, not
 /// the authored source - the agent already knows where its own domains are.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
-pub struct LibraryDoc {
+pub struct RigDoc {
     pub srcdir: String,
     pub summary: String,
     pub details: String,
@@ -842,7 +833,7 @@ pub struct SignaturesDoc {
     pub signatures: String,
 }
 
-/// What `inspect()` returns - one exact coordinate, or a pattern's block.
+/// What `inspect()` returns - one exact namepath, or a pattern's block.
 ///
 /// UNTAGGED, so each member serializes as its own bare shape and schemars renders
 /// the set as a `oneOf`. The caller always knows which member it will get,
@@ -852,19 +843,19 @@ pub struct SignaturesDoc {
 /// `type: "object"` and Claude Code rejects it.
 ///
 /// The four shapes stay distinguishable by FIELD SET alone, which is what an
-/// untagged oneOf needs: `srcdir` marks a library, `src` + `summary` a module,
+/// untagged oneOf needs: `srcdir` marks a rig, `src` + `summary` a module,
 /// `src` + `signature` a call, and a lone `signatures` a pattern.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 #[serde(untagged)]
 pub enum InspectDoc {
-    Library(LibraryDoc),
+    Rig(RigDoc),
     Module(ModuleDoc),
     Call(CallDoc),
     Signatures(SignaturesDoc),
 }
 
 pub(crate) fn index_node<'a>(
-    index: &'a LibraryIndex,
+    index: &'a RigIndex,
     module_path: &str,
 ) -> Option<(&'a Vec<IndexFunction>, &'a Vec<IndexModule>)> {
     if module_path.is_empty() {
@@ -881,52 +872,52 @@ pub(crate) fn index_node<'a>(
 }
 
 pub(crate) fn inspect_impl(
-    library: &str,
+    rig: &str,
     module_path: &str,
     name: Option<&str>,
 ) -> Result<InspectDoc, Error> {
-    if !is_valid_library(library) {
-        return Err(Error::LibraryInvalidName {
-            library: library.to_string(),
-            reason: "library must be the compound `<author>/<name>`".to_string(),
+    if !is_valid_rig(rig) {
+        return Err(Error::RigInvalidName {
+            rig: rig.to_string(),
+            reason: "rig must be the compound `<author>/<name>`".to_string(),
         });
     }
-    if !library_dir(library).exists() {
-        return Err(Error::LibraryNotRegistered {
-            library: library.to_string(),
+    if !rig_dir(rig).exists() {
+        return Err(Error::RigNotRegistered {
+            rig: rig.to_string(),
         });
     }
     if !is_valid_module_path(module_path) {
-        return Err(Error::LibraryInvalidModulePath {
+        return Err(Error::RigInvalidModulePath {
             module_path: module_path.to_string(),
             reason: "invalid module path".to_string(),
         });
     }
-    let index = load_index(library)?;
-    let docs_dir = library_docs_dir(library);
+    let index = load_index(rig)?;
+    let docs_dir = rig_docs_dir(rig);
     // The COMMITTED canonical tree, never the authored source. All three paths
-    // compose from the coordinate, so nothing here reads `source_path`.
-    let root = library_dir(library);
+    // compose from the namepath, so nothing here reads `source_path`.
+    let root = rig_dir(rig);
     match name {
         Some(fn_name) => {
             let (fns, _) = index_node(&index, module_path).ok_or_else(|| {
-                Error::LibraryInvalidModulePath {
+                Error::RigInvalidModulePath {
                     module_path: module_path.to_string(),
                     reason: "module not found".to_string(),
                 }
             })?;
             let f = fns.iter().find(|f| f.name == fn_name).ok_or_else(|| {
                 Error::FunctionNotDefined {
-                    library: library.to_string(),
+                    rig: rig.to_string(),
                     module_path: module_path.to_string(),
                     name: fn_name.to_string(),
                 }
             })?;
-            let coord = format!("{module_path}/{fn_name}");
+            let docs_path = format!("{module_path}/{fn_name}");
             // The STANDALONE form: the FULL NAMEPATH in place of the leaf name,
             // because nothing around it supplies the hierarchy the block's
             // indentation would.
-            let namepath = format!("{library}:{module_path}:{fn_name}");
+            let namepath = format!("{rig}:{module_path}:{fn_name}");
             Ok(InspectDoc::Call(CallDoc {
                 src: root
                     .join(module_path)
@@ -936,19 +927,19 @@ pub(crate) fn inspect_impl(
                     .to_string(),
                 signature: with_summary(
                     &signature_of(&namepath, f),
-                    &read_summary(&docs_dir, &coord),
+                    &read_summary(&docs_dir, &docs_path),
                 ),
-                details: read_doc(&docs_dir, &coord, "details.md"),
+                details: read_doc(&docs_dir, &docs_path, "details.md"),
             }))
         }
-        None if module_path.is_empty() => Ok(InspectDoc::Library(LibraryDoc {
+        None if module_path.is_empty() => Ok(InspectDoc::Rig(RigDoc {
             srcdir: root.display().to_string(),
             summary: read_summary(&docs_dir, ""),
             details: read_doc(&docs_dir, "", "details.md"),
         })),
         None => {
             if index_node(&index, module_path).is_none() {
-                return Err(Error::LibraryInvalidModulePath {
+                return Err(Error::RigInvalidModulePath {
                     module_path: module_path.to_string(),
                     reason: "module not found".to_string(),
                 });
@@ -993,11 +984,11 @@ fn cap_diagnostics(diagnostics: Vec<Diagnostic>, cap: usize) -> Vec<Diagnostic> 
     out
 }
 
-fn prefix_diagnostic_paths(result: &mut ValidationResult, library: &str) {
+fn prefix_diagnostic_paths(result: &mut ValidationResult, rig: &str) {
     for d in &mut result.diagnostics {
         if let Some(src) = &mut d.source {
             if let Some(path) = &src.path {
-                src.path = Some(format!("{library}/{path}"));
+                src.path = Some(format!("{rig}/{path}"));
             }
         }
     }
@@ -1013,7 +1004,7 @@ pub(crate) struct ValidationResult {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DocEntry {
-    pub coord: String,
+    pub docs_path: String,
     pub summary: String,
     pub details: String,
 }
@@ -1114,17 +1105,17 @@ enum Zone {
 impl Zone {
     fn ext_kind(self) -> &'static str {
         match self {
-            Zone::Source => "library::source_extension_denied",
-            Zone::Doc => "library::doc_extension_denied",
-            Zone::Asset => "library::asset_extension_denied",
+            Zone::Source => "rig::source_extension_denied",
+            Zone::Doc => "rig::doc_extension_denied",
+            Zone::Asset => "rig::asset_extension_denied",
         }
     }
 
     fn exec_kind(self) -> &'static str {
         match self {
-            Zone::Source => "library::source_executable_denied",
-            Zone::Doc => "library::doc_executable_denied",
-            Zone::Asset => "library::asset_executable_denied",
+            Zone::Source => "rig::source_executable_denied",
+            Zone::Doc => "rig::doc_executable_denied",
+            Zone::Asset => "rig::asset_executable_denied",
         }
     }
 }
@@ -1144,7 +1135,7 @@ fn ext_lower(path: &std::path::Path) -> Option<String> {
 fn is_sanctioned_root_file(name: &str) -> bool {
     matches!(
         name,
-        "library.rig.toml" | "README.md" | "LEGAL.md" | "LICENSE.txt"
+        "rig.toml" | "README.md" | "LEGAL.md" | "LICENSE.txt"
     ) || (name.starts_with("LICENSE-") && name.ends_with(".txt"))
 }
 
@@ -1190,7 +1181,7 @@ fn check_not_executable(
             path: Some(rel),
             position: [0, 0],
         }),
-        "library files must not be executable (+x); clear the executable bit",
+        "rig files must not be executable (+x); clear the executable bit",
     ));
 }
 
@@ -1266,8 +1257,8 @@ struct SelfView {
 static SELF_VIEW_SEQ: AtomicU64 = AtomicU64::new(0);
 
 impl SelfView {
-    fn new(library: &str, source: &std::path::Path) -> Option<Self> {
-        if !is_valid_library(library) {
+    fn new(rig: &str, source: &std::path::Path) -> Option<Self> {
+        if !is_valid_rig(rig) {
             return None;
         }
         let base = std::env::temp_dir().join(format!(
@@ -1275,7 +1266,7 @@ impl SelfView {
             process::id(),
             SELF_VIEW_SEQ.fetch_add(1, Ordering::Relaxed),
         ));
-        let link = base.join(RIG_TYPE_DIR).join(library);
+        let link = base.join(RIG_TYPE_DIR).join(rig);
         fs::create_dir_all(link.parent()?).ok()?;
         std::os::unix::fs::symlink(source, &link).ok()?;
         Some(Self { base })
@@ -1288,8 +1279,8 @@ impl Drop for SelfView {
     }
 }
 
-pub(crate) fn validate_library_source(
-    library: &str,
+pub(crate) fn validate_rig_source(
+    rig: &str,
     root: &std::path::Path,
     engine: &ParseEngine,
 ) -> io::Result<ValidationResult> {
@@ -1299,7 +1290,7 @@ pub(crate) fn validate_library_source(
         modules: Vec::new(),
         docs: Vec::new(),
     };
-    let self_view = SelfView::new(library, root);
+    let self_view = SelfView::new(rig, root);
     let scoped;
     let walk_engine = match &self_view {
         Some(view) => {
@@ -1332,7 +1323,7 @@ fn validate_walk(
         let (summary, details, _) = extract_doc(&modnu_src, None);
         if !summary.is_empty() || !details.is_empty() {
             result.docs.push(DocEntry {
-                coord: module_path.to_string(),
+                docs_path: module_path.to_string(),
                 summary,
                 details,
             });
@@ -1347,12 +1338,12 @@ fn validate_walk(
             && parse_module_has_main(&modnu, "root", &modnu_src, dir, engine)
         {
             result.diagnostics.push(Diagnostic::error(
-                "library::root_function",
+                "rig::root_function",
                 Some(Source {
                     path: Some(rel.clone()),
                     position: [0, 0],
                 }),
-                "a call-target cannot live at the library root; move it into a module",
+                "a call-target cannot live at the rig root; move it into a module",
             ));
         }
         validate_mod_nu_ast(&rel, &fname, "mod", &modnu_src, dir, engine, &mut result.diagnostics);
@@ -1392,7 +1383,7 @@ fn validate_walk(
                         root,
                         &path,
                         Zone::Source,
-                        "only .nu files are allowed in the library tree (plus root README.md / LEGAL.md / LICENSE.txt / LICENSE-*.txt / library.rig.toml, .gitignore, and the .assets/ + .docs/ dirs)",
+                        "only .nu files are allowed in the rig tree (plus root README.md / LEGAL.md / LICENSE.txt / LICENSE-*.txt / rig.toml, .gitignore, and the .assets/ + .docs/ dirs)",
                         &mut result.diagnostics,
                     );
                 }
@@ -1421,7 +1412,7 @@ fn validate_walk(
                 .to_string_lossy()
                 .into_owned();
             result.diagnostics.push(Diagnostic::error(
-                "library::orphan",
+                "rig::orphan",
                 Some(Source {
                     path: Some(rel),
                     position: [0, 0],
@@ -1458,19 +1449,19 @@ fn validate_walk(
         if child_has_main {
             if module_path.is_empty() {
                 result.diagnostics.push(Diagnostic::error(
-                    "library::root_function",
+                    "rig::root_function",
                     Some(Source {
                         path: Some(rel),
                         position: [0, 0],
                     }),
-                    "a call-target cannot live at the library root; move it into a module",
+                    "a call-target cannot live at the rig root; move it into a module",
                 ));
                 continue;
             }
             check_not_executable(root, &child_modnu, Zone::Source, &mut result.diagnostics);
             if edge_kinds.is_empty() {
                 result.diagnostics.push(Diagnostic::error(
-                    "library::orphan",
+                    "rig::orphan",
                     Some(Source {
                         path: Some(rel.clone()),
                         position: [0, 0],
@@ -1479,7 +1470,7 @@ fn validate_walk(
                 ));
             } else if !edge_kinds.contains(&EdgeKind::ExportUse) {
                 result.diagnostics.push(Diagnostic::error(
-                    "library::call_wiring",
+                    "rig::call_wiring",
                     Some(Source {
                         path: Some(rel.clone()),
                         position: [0, 0],
@@ -1491,7 +1482,7 @@ fn validate_walk(
             }
             if has_child_module_dir(path) {
                 result.diagnostics.push(Diagnostic::error(
-                    "library::call_leaf",
+                    "rig::call_leaf",
                     Some(Source {
                         path: Some(rel.clone()),
                         position: [0, 0],
@@ -1512,10 +1503,10 @@ fn validate_walk(
             );
             scan_reserved_terms(&rel, &fname, name, &child_src, path, engine, &mut result.diagnostics);
             if let Some((idx_fn, summary, details)) = extracted {
-                let coord = format!("{module_path}/{name}");
+                let docs_path = format!("{module_path}/{name}");
                 if !summary.is_empty() || !details.is_empty() {
                     result.docs.push(DocEntry {
-                        coord,
+                        docs_path,
                         summary,
                         details,
                     });
@@ -1525,7 +1516,7 @@ fn validate_walk(
         } else {
             if edge_kinds.is_empty() {
                 result.diagnostics.push(Diagnostic::error(
-                    "library::orphan",
+                    "rig::orphan",
                     Some(Source {
                         path: Some(rel),
                         position: [0, 0],
@@ -1706,7 +1697,7 @@ fn validate_flat_file(
         let span_start = err.span().start.saturating_sub(prefix_len);
         let (line, _col) = span_to_line_col(&source, span_start);
         result.diagnostics.push(Diagnostic::error(
-            "library::parse_error",
+            "rig::parse_error",
             Some(Source {
                 path: Some(rel.clone()),
                 position: [line, 0],
@@ -1719,7 +1710,7 @@ fn validate_flat_file(
         && ws.get_module(id).main.is_some()
     {
         result.diagnostics.push(Diagnostic::error(
-            "library::main_in_flat_file",
+            "rig::main_in_flat_file",
             Some(Source {
                 path: Some(rel.clone()),
                 position: [0, 0],
@@ -1744,7 +1735,7 @@ fn scan_reserved_terms(
         let bare = comp.strip_suffix(".nu").unwrap_or(comp);
         if is_reserved_term(bare) {
             diagnostics.push(Diagnostic::error(
-                "library::reserved",
+                "rig::reserved",
                 Some(Source {
                     path: Some(rel.to_string()),
                     position: [0, 0],
@@ -1779,7 +1770,7 @@ fn scan_reserved_terms(
             let src_off = span.start.saturating_sub(prefix_len);
             let (line, _col) = span_to_line_col(source, src_off);
             diagnostics.push(Diagnostic::error(
-                "library::reserved",
+                "rig::reserved",
                 Some(Source {
                     path: Some(rel.to_string()),
                     position: [line, 0],
@@ -1795,7 +1786,7 @@ fn scan_reserved_terms(
                     let src_off = span.start.saturating_sub(prefix_len);
                     let (line, _col) = span_to_line_col(source, src_off);
                     diagnostics.push(Diagnostic::error(
-                        "library::reserved",
+                        "rig::reserved",
                         Some(Source {
                             path: Some(rel.to_string()),
                             position: [line, 0],
@@ -1897,7 +1888,7 @@ fn validate_mod_nu_ast(
         let span_start = err.span().start.saturating_sub(prefix_len);
         let (line, _col) = span_to_line_col(source, span_start);
         diagnostics.push(Diagnostic::error(
-            "library::parse_error",
+            "rig::parse_error",
             Some(Source {
                 path: Some(rel.to_string()),
                 position: [line, 0],
@@ -1976,7 +1967,7 @@ fn check_mod_nu_pipeline_element(
                 return;
             }
             diagnostics.push(Diagnostic::error(
-                "library::mod_nu",
+                "rig::mod_nu",
                 Some(Source {
                     path: Some(rel.to_string()),
                     position: [line, 0],
@@ -1991,7 +1982,7 @@ fn check_mod_nu_pipeline_element(
         nu::Expr::ImportPattern(_) | nu::Expr::Overlay(_) => {}
         other => {
             diagnostics.push(Diagnostic::error(
-                "library::mod_nu",
+                "rig::mod_nu",
                 Some(Source {
                     path: Some(rel.to_string()),
                     position: [line, 0],
@@ -2043,7 +2034,7 @@ fn validate_function_file_ast(
         let span_start = err.span().start.saturating_sub(prefix_len);
         let (line, _col) = span_to_line_col(source, span_start);
         diagnostics.push(Diagnostic::error(
-            "library::parse_error",
+            "rig::parse_error",
             Some(Source {
                 path: Some(rel.to_string()),
                 position: [line, 0],
@@ -2060,7 +2051,7 @@ fn validate_function_file_ast(
         Some(id) => id,
         None => {
             diagnostics.push(Diagnostic::error(
-                "library::internal",
+                "rig::internal",
                 Some(Source {
                     path: Some(rel.to_string()),
                     position: [0, 0],
@@ -2126,7 +2117,7 @@ fn check_args_record_positional(
     if bad {
         let line = decl_line(working_set, decl_id, source, prefix_len);
         diagnostics.push(Diagnostic::error(
-            "library::args",
+            "rig::args",
             Some(Source {
                 path: Some(rel.to_string()),
                 position: [line, 0],
@@ -2157,7 +2148,7 @@ fn check_main_output_type(
         .map(|(_, out)| out.clone());
     let Some(output) = output else {
         diagnostics.push(Diagnostic::error(
-            "library::output",
+            "rig::output",
             Some(Source {
                 path: Some(rel.to_string()),
                 position: [line, 0],
@@ -2176,7 +2167,7 @@ fn check_main_output_type(
         }
         nu::Type::Record(_) => {
             diagnostics.push(Diagnostic::error(
-                "library::skeleton",
+                "rig::skeleton",
                 Some(Source {
                     path: Some(rel.to_string()),
                     position: [line, 0],
@@ -2187,7 +2178,7 @@ fn check_main_output_type(
         }
         other => {
             diagnostics.push(Diagnostic::error(
-                "library::output",
+                "rig::output",
                 Some(Source {
                     path: Some(rel.to_string()),
                     position: [line, 0],
@@ -2318,10 +2309,10 @@ fn write_meta(
     source_path: &std::path::Path,
     result: &ValidationResult,
 ) -> Result<(), Error> {
-    let canonical = library_dir(name);
+    let canonical = rig_dir(name);
     let meta_dir = canonical.join(".meta");
     fs::create_dir_all(&meta_dir)?;
-    let index = LibraryIndex {
+    let index = RigIndex {
         source_path: source_path.to_path_buf(),
         functions: result.functions.clone(),
         modules: result.modules.clone(),
@@ -2333,10 +2324,10 @@ fn write_meta(
     fs::write(canonical.join(META_FILE), index_nuon.as_bytes())?;
     let docs_dir = meta_dir.join("docs");
     for doc in &result.docs {
-        let dir = if doc.coord.is_empty() {
+        let dir = if doc.docs_path.is_empty() {
             docs_dir.clone()
         } else {
-            docs_dir.join(&doc.coord)
+            docs_dir.join(&doc.docs_path)
         };
         fs::create_dir_all(&dir)?;
         if !doc.summary.is_empty() {
@@ -2350,29 +2341,29 @@ fn write_meta(
 }
 
 pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResult, Error> {
-    if !is_valid_library(name) {
-        return Err(Error::LibraryInvalidName {
-            library: name.to_string(),
-            reason: "library must be the compound `<author>/<name>`".to_string(),
+    if !is_valid_rig(name) {
+        return Err(Error::RigInvalidName {
+            rig: name.to_string(),
+            reason: "rig must be the compound `<author>/<name>`".to_string(),
         });
     }
-    let lib_root = library_dir(name);
+    let lib_root = rig_dir(name);
     if !lib_root.exists() {
-        return Err(Error::LibraryNotRegistered {
-            library: name.to_string(),
+        return Err(Error::RigNotRegistered {
+            rig: name.to_string(),
         });
     }
     let index = load_index(name)?;
     let source_path = index.source_path.clone();
     if !source_path.exists() || !source_path.is_dir() {
-        return Err(Error::LibrarySourceMissing {
+        return Err(Error::RigSourceMissing {
             path: source_path.display().to_string(),
         });
     }
-    let mut result = validate_library_source(name, &source_path, engine)?;
+    let mut result = validate_rig_source(name, &source_path, engine)?;
     prefix_diagnostic_paths(&mut result, name);
     if !result.is_empty() {
-        return Err(Error::LibraryViolations {
+        return Err(Error::RigViolations {
             diagnostics: result.diagnostics,
         });
     }
@@ -2384,27 +2375,27 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
     }
     copy_dir_recursive(&source_path, &lib_root)?;
     write_meta(name, &source_path, &result)?;
-    let rel = library_store_rel(name);
-    run_git(&libraries_dir(), &["add", "--", &rel])?;
-    let porcelain = run_git_output(&libraries_dir(), &["status", "--porcelain", "--", &rel])?;
+    let rel = rig_repo_rel(name);
+    run_git(&rigs_dir(), &["add", "--", &rel])?;
+    let porcelain = run_git_output(&rigs_dir(), &["status", "--porcelain", "--", &rel])?;
     let changed = parse_git_changes(&porcelain);
     if changed.is_empty() {
         return Ok(changed);
     }
     run_git(
-        &libraries_dir(),
-        &["commit", "-m", &format!("commit library {name}")],
+        &rigs_dir(),
+        &["commit", "-m", &format!("commit rig {name}")],
     )?;
     Ok(changed)
 }
 
 
-pub(crate) fn check_source_dir(library: &str, source_dir: &str) -> Result<(), Error> {
-    let index = load_index(library)?;
+pub(crate) fn check_source_dir(rig: &str, source_dir: &str) -> Result<(), Error> {
+    let index = load_index(rig)?;
     let registered = index.source_path.to_string_lossy().into_owned();
     if registered != source_dir {
-        return Err(Error::LibrarySourcePathMismatch {
-            library: library.to_string(),
+        return Err(Error::RigSourcePathMismatch {
+            rig: rig.to_string(),
             passed: source_dir.to_string(),
             registered,
         });
@@ -2413,22 +2404,22 @@ pub(crate) fn check_source_dir(library: &str, source_dir: &str) -> Result<(), Er
 }
 
 pub(crate) fn install_impl(
-    library: &str,
+    rig: &str,
     source_dir: &std::path::Path,
     engine: &ParseEngine,
 ) -> Result<CommitResult, Error> {
-    establish_library(library, source_dir)?;
-    match commit_impl(library, engine) {
+    establish_rig(rig, source_dir)?;
+    match commit_impl(rig, engine) {
         Ok(result) => Ok(result),
         Err(e) => {
-            let lib_root = library_dir(library);
+            let lib_root = rig_dir(rig);
             if lib_root.exists() {
                 let _ = fs::remove_dir_all(&lib_root);
-                let rel = library_store_rel(library);
-                let _ = run_git(&libraries_dir(), &["add", "--", &rel]);
+                let rel = rig_repo_rel(rig);
+                let _ = run_git(&rigs_dir(), &["add", "--", &rel]);
                 let _ = run_git(
-                    &libraries_dir(),
-                    &["commit", "-m", &format!("rollback failed install {library}")],
+                    &rigs_dir(),
+                    &["commit", "-m", &format!("rollback failed install {rig}")],
                 );
             }
             Err(e)
@@ -2436,48 +2427,48 @@ pub(crate) fn install_impl(
     }
 }
 
-pub(crate) fn uninstall_impl(library: &str) -> Result<(), Error> {
-    let lib_root = library_dir(library);
+pub(crate) fn uninstall_impl(rig: &str) -> Result<(), Error> {
+    let lib_root = rig_dir(rig);
     if !lib_root.exists() {
         return Ok(());
     }
     fs::remove_dir_all(&lib_root)?;
-    let rel = library_store_rel(library);
-    run_git(&libraries_dir(), &["add", "--", &rel])?;
+    let rel = rig_repo_rel(rig);
+    run_git(&rigs_dir(), &["add", "--", &rel])?;
     run_git(
-        &libraries_dir(),
-        &["commit", "-m", &format!("uninstall library {library}")],
+        &rigs_dir(),
+        &["commit", "-m", &format!("uninstall rig {rig}")],
     )?;
     Ok(())
 }
 
-pub(crate) fn check_library(
-    library: &str,
+pub(crate) fn check_rig(
+    rig: &str,
     engine: &ParseEngine,
 ) -> Result<ValidationResult, Error> {
-    let lib_root = library_dir(library);
+    let lib_root = rig_dir(rig);
     if !lib_root.exists() {
-        return Err(Error::LibraryNotRegistered {
-            library: library.to_string(),
+        return Err(Error::RigNotRegistered {
+            rig: rig.to_string(),
         });
     }
-    let index = load_index(library)?;
+    let index = load_index(rig)?;
     let source_path = index.source_path.clone();
     if !source_path.exists() || !source_path.is_dir() {
-        return Err(Error::LibrarySourceMissing {
+        return Err(Error::RigSourceMissing {
             path: source_path.display().to_string(),
         });
     }
-    let mut result = validate_library_source(library, &source_path, engine)?;
-    prefix_diagnostic_paths(&mut result, library);
+    let mut result = validate_rig_source(rig, &source_path, engine)?;
+    prefix_diagnostic_paths(&mut result, rig);
     Ok(result)
 }
 
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> io::Result<()> {
-    copy_library_tree(src, dst, true)
+    copy_rig_tree(src, dst, true)
 }
 
-fn copy_library_tree(src: &std::path::Path, dst: &std::path::Path, is_root: bool) -> io::Result<()> {
+fn copy_rig_tree(src: &std::path::Path, dst: &std::path::Path, is_root: bool) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -2491,7 +2482,7 @@ fn copy_library_tree(src: &std::path::Path, dst: &std::path::Path, is_root: bool
             } else if name.starts_with('.') {
                 continue;
             } else {
-                copy_library_tree(&src_path, &dst_path, false)?;
+                copy_rig_tree(&src_path, &dst_path, false)?;
             }
         } else if ft.is_file() && (name == ".gitignore" || !name.starts_with('.')) {
             fs::copy(&src_path, &dst_path)?;
@@ -2517,19 +2508,19 @@ fn copy_tree_all(src: &std::path::Path, dst: &std::path::Path) -> io::Result<()>
 }
 
 
-/// One-time migration: `.meta/library.json` -> `.meta/library.nuon`.
+/// One-time migration: `.meta/library.json` -> `.meta/rig.nuon`.
 ///
 /// The index was the last JSON we persisted, against the house rule that anything we
-/// persist is NUON. Changing the FORMAT without migrating existing STORES would be a
-/// silent break rather than a fix: library DETECTION keys on the meta file, so an
-/// unmigrated library simply stops existing - no error, just an empty `info()` and a
+/// persist is NUON. Changing the FORMAT without migrating existing NAMESPACES would be a
+/// silent break rather than a fix: rig DETECTION keys on the meta file, so an
+/// unmigrated rig simply stops existing - no error, just an empty `info()` and a
 /// `not_registered` on every call.
 ///
-/// Idempotent. A store with no legacy file is a no-op; a library that somehow carries
+/// Idempotent. A namespace with no legacy file is a no-op; a rig that somehow carries
 /// both keeps the `.nuon` it already has and drops the stale `.json`. Returns how many
-/// libraries were touched.
+/// rigs were touched.
 fn migrate_meta_to_nuon() -> io::Result<usize> {
-    let root = libraries_dir().join(RIG_TYPE_DIR);
+    let root = rigs_dir().join(RIG_TYPE_DIR);
     if !root.exists() {
         return Ok(0);
     }
@@ -2551,7 +2542,7 @@ fn migrate_meta_to_nuon() -> io::Result<usize> {
             let target = lib.path().join(META_FILE);
             if !target.exists() {
                 let bytes = fs::read(&legacy)?;
-                let index: LibraryIndex = json::from_slice(&bytes)
+                let index: RigIndex = json::from_slice(&bytes)
                     .map_err(|e| io::Error::other(format!("decode {}: {e}", legacy.display())))?;
                 let nuon = index_to_nuon(&index)
                     .map_err(|e| io::Error::other(format!("render {}: {e}", target.display())))?;
@@ -2564,24 +2555,29 @@ fn migrate_meta_to_nuon() -> io::Result<usize> {
     Ok(migrated)
 }
 
-pub(crate) async fn ensure_substrate() -> io::Result<Arc<LibraryLocks>> {
+pub(crate) async fn ensure_substrate() -> io::Result<Arc<RigLocks>> {
     ensure_keypair()?;
-    ensure_libraries_repo()?;
-    // BEFORE hydration, or an unmigrated store hydrates as empty.
+    ensure_rigs_repo()?;
+    // BEFORE hydration, or an unmigrated namespace hydrates as empty.
     let migrated = migrate_meta_to_nuon()?;
     if migrated > 0 {
-        eprintln!("grammar: migrated {migrated} library index file(s) to NUON");
+        eprintln!("grammar: migrated {migrated} rig index file(s) to NUON");
         // Hygiene rather than correctness - the files on disk are already right. A
         // failure here leaves the signed repo dirty until the next commit sweeps it,
         // which is worth saying out loud but not worth refusing to start over.
-        let dir = libraries_dir();
+        let dir = rigs_dir();
         if let Err(e) = run_git(&dir, &["add", "--", RIG_TYPE_DIR])
-            .and_then(|()| run_git(&dir, &["commit", "-m", "migrate library index to NUON"]))
+            .and_then(|()| run_git(&dir, &["commit", "-m", "migrate rig index to NUON"]))
         {
             eprintln!("grammar: index migration not committed: {e}");
         }
     }
-    let locks = Arc::new(LibraryLocks::new());
+    let locks = Arc::new(RigLocks::new());
     locks.hydrate_from_disk().await?;
+    // AFTER hydration, so the prune inside it judges against the real set.
+    // Non-fatal: purview bookkeeping must not stop the host from serving.
+    if let Err(e) = ensure_default_purview() {
+        eprintln!("grammar: default purview not materialized: {e:?}");
+    }
     Ok(locks)
 }

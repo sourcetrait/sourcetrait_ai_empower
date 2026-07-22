@@ -61,7 +61,7 @@ fn wait_until(secs: u64, mut f: impl FnMut() -> bool) -> bool {
 /// harvested.
 ///
 /// The producer is `git commit`, which detaches its own auto-maintenance (`gc --auto`);
-/// the library lifecycle commits on `library new` and on `commit`, so a couple of
+/// the rig lifecycle commits on `rig new` and on `commit`, so a couple of
 /// operations reliably orphans something. The reaper harvests on the watchdog tick once a
 /// zombie is past its grace window, so the bound below is grace + a tick + slack.
 #[test]
@@ -72,8 +72,8 @@ fn adopted_orphans_are_reaped() {
     let pid = host.pid();
 
     let src = t.temp_dir().join("zlib");
-    let est = host.library_new("zombielib", &src);
-    assert!(!has_error_path(&est), "library new should succeed; got {est}");
+    let est = host.rig_new("zombielib", &src);
+    assert!(!has_error_path(&est), "rig new should succeed; got {est}");
     write_source(&src, "mod.nu", "export module m\n");
     write_source(&src, "m/mod.nu", "export use double\n");
     write_source(
@@ -108,7 +108,7 @@ fn adopted_orphans_are_reaped() {
 
 /// The reaper must not disturb the waiters it shares the process with: `run_git`'s
 /// `Command::output()` and nushell's own external handling both `wait()` their children,
-/// and a blanket `waitpid(-1)` would steal those exit statuses (ECHILD). Library work and
+/// and a blanket `waitpid(-1)` would steal those exit statuses (ECHILD). Rig work and
 /// an external-running eval keep succeeding across several reaper ticks.
 #[test]
 #[named]
@@ -119,8 +119,8 @@ fn reaping_does_not_steal_exit_statuses() {
     for i in 0..3 {
         let name = format!("racelib{i}");
         let src = t.temp_dir().join(&name);
-        let est = host.library_new(&name, &src);
-        assert!(!has_error_path(&est), "library new {i} should succeed; got {est}");
+        let est = host.rig_new(&name, &src);
+        assert!(!has_error_path(&est), "rig new {i} should succeed; got {est}");
 
         // An eval whose external exit status must survive: nushell reports a non-zero
         // exit as an error, so a stolen status would surface here.

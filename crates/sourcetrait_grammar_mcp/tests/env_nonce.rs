@@ -37,7 +37,7 @@ fn call_target_sees_nonce() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("noncelib");
-    let _ = s.library("new", "sourcetrait/noncelib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/noncelib", src.to_str().unwrap());
     write_tree(
         &src,
         &[

@@ -1,4 +1,4 @@
-//! The destruction half: the per-store host lock, and the signal handlers that run
+//! The destruction half: the per-namespace host lock, and the signal handlers that run
 //! the shutdown sweep. Both need a REAL process that can be signalled and killed, so
 //! both are system tests.
 
@@ -9,21 +9,21 @@ use std::time::Duration;
 use nix::fcntl::{Flock, FlockArg};
 use nix::sys::signal::Signal;
 use serde_json::json;
-use sourcetrait_grammar_tests::{Host, store_dir, structured};
+use sourcetrait_grammar_tests::{Host, namespace_dir, structured};
 use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-/// Try to take the store's host lock the way an outside watcher would: any process,
+/// Try to take the namespace's host lock the way an outside watcher would: any process,
 /// any language, one non-blocking exclusive lock.
 ///
 /// TRUE means we ACQUIRED it, which is the reading "the owner is gone". FALSE means it
 /// is held, which is "the owner is alive". The guard drops immediately, so a successful
 /// probe leaves nothing behind.
-fn watcher_sees_host_gone(store: &Path) -> bool {
-    let path = store.join("host.lock");
+fn watcher_sees_host_gone(namespace: &Path) -> bool {
+    let path = namespace.join("host.lock");
     let Ok(file) = std::fs::OpenOptions::new().read(true).write(true).open(&path) else {
-        // No file at all is not "alive" - it is a store no host ever locked.
+        // No file at all is not "alive" - it is a namespace no host ever locked.
         return true;
     };
     Flock::lock(file, FlockArg::LockExclusiveNonblock).is_ok()
@@ -34,7 +34,7 @@ fn watcher_sees_host_gone(store: &Path) -> bool {
 fn the_host_lock_is_held_while_alive_and_dropped_on_sigkill() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--id", "locktest", "--namespace", "default"]);
-    let store = store_dir(host.data_home(), "locktest", "default");
+    let namespace = namespace_dir(host.data_home(), "locktest", "default");
 
     // Identity is in the CONTENTS, for a reader that wants to know which host holds it.
     let info = host.call("info", json!({}));
@@ -43,15 +43,15 @@ fn the_host_lock_is_held_while_alive_and_dropped_on_sigkill() {
         .expect("info carries mcp_nom")
         .to_string();
     let pid = host.pid();
-    let contents = std::fs::read_to_string(store.join("host.lock")).expect("read host.lock");
+    let contents = std::fs::read_to_string(namespace.join("host.lock")).expect("read host.lock");
     assert!(
         contents.contains(&mcp_nom) && contents.contains(&pid.to_string()),
         "the lock file should name its holder; got {contents:?}",
     );
 
     assert!(
-        !watcher_sees_host_gone(&store),
-        "a live host must hold its store lock, or every watcher reads it as dead",
+        !watcher_sees_host_gone(&namespace),
+        "a live host must hold its namespace lock, or every watcher reads it as dead",
     );
 
     // Drop SIGKILLs and reaps. This is the death no exit hook can ever run on - the one
@@ -59,7 +59,7 @@ fn the_host_lock_is_held_while_alive_and_dropped_on_sigkill() {
     // for, and the kernel dropping the lock is what keeps "gone" the default reading.
     drop(host);
     assert!(
-        watcher_sees_host_gone(&store),
+        watcher_sees_host_gone(&namespace),
         "the lock must be released when the host dies, even under SIGKILL",
     );
 }

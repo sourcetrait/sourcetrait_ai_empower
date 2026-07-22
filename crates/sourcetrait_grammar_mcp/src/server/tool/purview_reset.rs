@@ -18,11 +18,11 @@ impl NuSh {
             Ok(rows) => rows,
             Err(error) => return Ok(error_to_call_result(error, None)),
         };
-        let before = resolve_selectors(&self.current_purview.ids(), rows.as_ref());
+        let before = resolve_patterns(&self.current_purview.ids(), rows.as_ref());
         // Back to the startup state - `default`, which is everything when the
         // namespace has never been configured.
         let ids = self.current_purview.reset();
-        let after = resolve_selectors(&ids, rows.as_ref());
+        let after = resolve_patterns(&ids, rows.as_ref());
         self.purview_delta(before, after, ids, rows).await
     }
 }

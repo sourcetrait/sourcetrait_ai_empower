@@ -1,6 +1,6 @@
 use crate::*;
-use crate::server::library::{
-    IndexFunction, IndexModule, LibraryIndex, index_from_nuon, index_to_nuon,
+use crate::server::rig::{
+    IndexFunction, IndexModule, RigIndex, index_from_nuon, index_to_nuon,
 };
 
 fn obj(s: &str) -> mcp::JsonObject {
@@ -19,7 +19,7 @@ fn obj(s: &str) -> mcp::JsonObject {
 fn the_index_round_trips_through_nuon_across_the_schema_grammar() {
     let args = r#"{"n":"int","p":"path","fill":{},"u":{"oneof<>":["int",null]}}"#;
     let result = r#"{"rows":[{"name":"string","tags":["string"]}],"nested":{"a":"bool"}}"#;
-    let index = LibraryIndex {
+    let index = RigIndex {
         source_path: PathBuf::from("/home/box/proj/thing"),
         functions: Vec::new(),
         modules: vec![IndexModule {
@@ -51,7 +51,7 @@ fn the_index_round_trips_through_nuon_across_the_schema_grammar() {
     );
 
     let back = index_from_nuon(&nuon).expect("parse");
-    assert_eq!(back.source_path, index.source_path, "the source path is the store's link to the authored tree");
+    assert_eq!(back.source_path, index.source_path, "the source path is the namespace's link to the authored tree");
     assert!(back.functions.is_empty(), "no root functions, and an empty list must stay empty");
 
     let m = &back.modules[0];
@@ -74,8 +74,8 @@ fn the_index_round_trips_through_nuon_across_the_schema_grammar() {
     );
 }
 
-/// A malformed index is a decode ERROR, never a silently empty library - detection
-/// keys on this file, so "parsed to nothing" and "not a library" must not look alike.
+/// A malformed index is a decode ERROR, never a silently empty rig - detection
+/// keys on this file, so "parsed to nothing" and "not a rig" must not look alike.
 #[test]
 fn a_malformed_index_fails_to_parse() {
     assert!(index_from_nuon("{not: valid").is_err(), "truncated NUON");

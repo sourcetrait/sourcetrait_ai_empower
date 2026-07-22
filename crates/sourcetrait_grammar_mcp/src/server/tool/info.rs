@@ -15,9 +15,8 @@ pub(crate) struct InfoEnvelope {
     pub name: String,
     pub version: String,
     pub nu_version: String,
-    /// The state-store coordinate this server was configured with
-    /// (`--id` / `--namespace`) -- lets an agent self-confirm which
-    /// store it is on.
+    /// The `--id` and `--namespace` this server was configured with -- lets an
+    /// agent self-confirm which one it is talking to.
     pub id: String,
     pub namespace: String,
     /// This host process's id, stable for its lifetime. A change across two calls
@@ -29,19 +28,19 @@ pub(crate) struct InfoEnvelope {
     pub plugins: Vec<crate::plugins::PluginInfo>,
     /// The callable surface WITHIN the reported purview, as one indented block
     /// where the indentation is the hierarchy: depth 0 an author, depth 1 a
-    /// library, deeper a module unless it carries the two signature groups,
+    /// rig, deeper a module unless it carries the two signature groups,
     /// which makes it a call.
     pub signatures: String,
-    /// The purview `signatures` was rendered for: each id beside the selectors
-    /// it resolves to. Last, because it is the frame around the block rather
-    /// than part of it.
+    /// The purview `signatures` was rendered for: each id beside the namepath
+    /// patterns it resolves to. Last, because it is the frame around the block
+    /// rather than part of it.
     pub purview: Vec<PurviewView>,
 }
 
 #[mcp::tool_router(router = info_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Versions, plugins, and every library's callable signatures.",
+        description = "Versions, plugins, and every rig's callable signatures.",
         output_schema = mcp::schema_for_type::<InfoEnvelope>()
     )]
     pub(crate) async fn info(
@@ -50,7 +49,7 @@ impl NuSh {
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         // A purviews file that exists but will not decode is an ERROR, never a
         // silently empty (and therefore silently total) view - the same rule the
-        // library index already holds itself to.
+        // rig index already holds itself to.
         let rows = match load_purviews() {
             Ok(rows) => rows,
             Err(error) => return Ok(error_to_call_result(error, None)),
@@ -62,7 +61,7 @@ impl NuSh {
         } else {
             p.purviews.clone()
         };
-        let selectors = parse_selectors(&resolve_selectors(&ids, rows.as_ref()));
+        let patterns = parse_patterns(&resolve_patterns(&ids, rows.as_ref()));
         envelope_to_structured(&InfoEnvelope {
             name: lib_grammar::consts::GRAMMAR.to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -72,7 +71,7 @@ impl NuSh {
             mcp_nom: self.mcp_nom.to_string(),
             work_dir: config().work_dir.display().to_string(),
             plugins: list_registered_plugins(),
-            signatures: render_signatures_within(&self.library_locks, &selectors).await,
+            signatures: render_signatures_within(&self.rig_locks, &patterns).await,
             purview: purview_views(&ids, rows.as_ref()),
         })
     }

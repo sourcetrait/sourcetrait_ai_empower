@@ -286,7 +286,7 @@ impl Emergency {
 
 /// The per-process emergency log: `<cache>/log/<mcp_nom>/emergency.nuonl`
 /// (nuonl = newline-delimited NUON records). `mcp_nom` is the per-process base62
-/// id minted at startup, so concurrent MCP hosts on one store coordinate never
+/// id minted at startup, so concurrent MCP hosts on one namespace never
 /// clobber each other's log.
 pub(crate) fn emergency_log_path(mcp_nom: &str) -> PathBuf {
     cache_base_dir().join("log").join(mcp_nom).join("emergency.nuonl")

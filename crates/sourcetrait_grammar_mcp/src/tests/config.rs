@@ -82,9 +82,9 @@ fn the_lowest_unprivileged_port_is_accepted() {
 }
 
 #[test]
-fn the_store_coordinate_cannot_be_set_from_a_file() {
+fn the_namespace_cannot_be_set_from_a_file() {
     // The whole point of deny_unknown_fields here: a file must not be able to move the
-    // store out from under the .mcp.json entry that launched the server.
+    // namespace out from under the .mcp.json entry that launched the server.
     for text in [
         "id = \"other\"\n",
         "namespace = \"other\"\n",

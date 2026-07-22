@@ -10,9 +10,9 @@ line):
 grammar_mcp [--id <string>] [--namespace <string>] [--workdir <path>] [--deny <csv>]
 ```
 
-- `--id` (default: `$USER`) - the agent identity owning the state store.
-- `--namespace` (default: `default`) - the state namespace within the
-  id's store.
+- `--id` (default: `$USER`) - the agent identity owning the namespace.
+- `--namespace` (default: `default`) - the namespace within the
+  id's identity.
 - `--workdir` (default: `<home>/proj/equip/<id>`) - the agent's working
   directory, exported to every eval body as `$env.EQUIP_WORK_DIR`. A
   leading `~` / `~/` expands against the home dir; any other value
@@ -20,7 +20,7 @@ grammar_mcp [--id <string>] [--namespace <string>] [--workdir <path>] [--deny <c
   agent harness entries always pass it explicitly.
 - `--deny` - comma-separated tools to withhold from the surface. The
   deniable set: `run, rerun, interact, call, learn, new, commit,
-  library`; the core four (`info`, `inspect`, `processes`, `kill`)
+  rig`; the core four (`info`, `inspect`, `processes`, `kill`)
   always register. A denied tool is ABSENT from tools/list (never
   registered); calling it anyway fails at the protocol layer. There is
   no implication between tokens - denying `run` does not deny `rerun`;
@@ -30,10 +30,10 @@ The values are trusted config, not validated input: a malformed id,
 namespace, or workdir surfaces as the natural downstream error (improper
 configuration); workdir is tilde-expanded but never existence-checked.
 
-Every store is fully private per `(id, namespace)`:
+Every namespace is fully private per `(id, namespace)`:
 
 ```
-$XDG_DATA_HOME/sourcetrait/grammar/<id>/<namespace>/{keypair,libraries}
+$XDG_DATA_HOME/sourcetrait/grammar/<id>/<namespace>/{keypair,rigs}
 $XDG_CACHE_HOME/sourcetrait/grammar/<id>/<namespace>/{runs,interacts,calls}
 ```
 
@@ -63,7 +63,7 @@ Example `.mcp.json` entries (one binary, two channels):
 ## One-shot CLI
 
 `grammar_mcp cli <tool> ...` runs ONE tool in-process against the
-configured store and prints the envelope as bare compact JSON on
+configured namespace and prints the envelope as bare compact JSON on
 stdout - one line, machine format, no color (`| from json` and
 captured output are byte-clean) - no agent, no MCP client. The cli is
 a wrapper's substrate, not a human display surface. Exit codes: 0
@@ -75,38 +75,38 @@ record.
 grammar_mcp cli info
 grammar_mcp --id emptwo cli inspect sourcetrait/grammar:pid:list_ai
 grammar_mcp cli call sourcetrait/geo:shape:area '{width: 3.0, height: 4.0}'
-grammar_mcp cli library new sourcetrait/mylib ~/src/mylib
-grammar_mcp cli commit sourcetrait/mylib
+grammar_mcp cli rig new sourcetrait/myrig ~/src/myrig
+grammar_mcp cli commit sourcetrait/myrig
 grammar_mcp cli run --args-schema '{x: int}' --args '{x: 5}' --result-schema '{out: int}' '{ out: ($args.x + 1) }'
 ```
 
 All 12 tools are mirrored. Caveats: `interact` is single-shot (session
 state dies with the process); `processes` / `kill` are process-scoped
 (a one-shot invocation shows none); `--deny` does not apply (it gates
-agent registration, not the operator surface). Writing into a store a
+agent registration, not the operator surface). Writing into a namespace a
 live agent host is using is the operator's own risk - git's index lock
-keeps the library repo itself safe, but an in-flight call can
+keeps the rig repo itself safe, but an in-flight call can
 transiently fail.
 
 ## Overview
 - [`run()`](#run) Evaluate a typed nushell source-code body on a stateless thread.
 - [`interact()`](#interact) Evaluate a typed nushell source-code body on a persistent stateful thread.
-- [`call()`](#call) Invoke a committed library function with typed args.
+- [`call()`](#call) Invoke a committed rig function with typed args.
 - [`rerun()`](#rerun) Re-evaluate a cached `run()` body with fresh args.
 - [`processes()`](#processes) List in-flight MCP tool usage.
 - [`kill()`](#kill) Cancel an in-flight usage by its nonce.
-- [`info()`](#info) Versions, plugins, and every library's callable signatures.
-- [`inspect()`](#inspect) Detailed documentation for libraries, modules, and calls.
-- [`new()`](#new) Scaffold modules / functions (by namepath) into existing libraries.
-- [`commit()`](#commit) Commit the agent's library source-code to the MCP's repository for live use.
-- [`library()`](#library) Library administration: new, install, check, uninstall.
+- [`info()`](#info) Versions, plugins, and every rig's callable signatures.
+- [`inspect()`](#inspect) Detailed documentation for rigs, modules, and calls.
+- [`new()`](#new) Scaffold modules / functions (by namepath) into existing rigs.
+- [`commit()`](#commit) Commit the agent's rig source-code to the MCP's repository for live use.
+- [`rig()`](#rig) Rig administration: new, install, check, uninstall.
 - [`learn()`](#learn) Generate the latest `/nu` SKILL.md.
 - [`channel_open()`](#channel_open) Open the host's packet channel and return the endpoint to watch.
 - [`channel_verified()`](#channel_verified) Confirm the channel/Open packet was seen; ends the verify window.
 - [`channel_close()`](#channel_close) Close the host's packet channel.
 - [`config_channel()`](#config_channel) Read or adjust the channel's send-rate thresholds at runtime.
 - [`purview_list()`](#purview_list) List every configured purview, and what is currently in view.
-- [`purview_configure()`](#purview_configure) Set a purview's selectors; an empty list deletes it.
+- [`purview_configure()`](#purview_configure) Set a purview's namepath patterns; an empty list deletes it.
 - [`purview_extend()`](#purview_extend) Bring more purviews into the current view.
 - [`purview_reset()`](#purview_reset) Reset the current view back to the default purview.
 
@@ -242,11 +242,11 @@ Output (partial):
 ```
 
 ## `call()`
-*Invoke a committed library function with typed args.*
+*Invoke a committed rig function with typed args.*
 
-`namepath` is the function coordinate
-`<author>/<library>:module/path:function` (a callable always lives in a
-module - there are no root functions; the library is always the compound
+`namepath` is the function namepath
+`<author>/<rig>:module/path:function` (a callable always lives in a
+module - there are no root functions; the rig is always the compound
 `<author>/<name>`). Discover live targets + their schemas with
 [`info()`](#info) / [`inspect()`](#inspect).
 
@@ -417,10 +417,10 @@ Output (partial):
 ```
 
 ## `info()`
-*Versions, plugins, and every library's callable signatures.*
+*Versions, plugins, and every rig's callable signatures.*
 
 `signatures` shows what the CURRENT purview puts in view, not necessarily the
-whole store (see [Purviews](#purviews)).
+whole namespace (see [Purviews](#purviews)).
 
 ### arguments
 
@@ -468,7 +468,7 @@ Output (partial):
 }
 ```
 
-`purview` is what is in view, each id beside the selectors it resolves to, in
+`purview` is what is in view, each id beside the namepath patterns it resolves to, in
 the order they came into view.
 
 `signatures` is ONE indented text block. Rendered, that value reads:
@@ -483,16 +483,16 @@ acme
 
 STRUCTURE IS THE INDENTATION - one space per level - and NOTHING IS STATED THAT
 CAN BE INFERRED. There are no separator characters in the block; a reader
-recovers a node's kind from its POSITION and its SHAPE:
+recovers each line's kind from its POSITION and its SHAPE:
 
 | line | kind |
 |---|---|
 | depth 0 | an author; carries no summary |
-| depth 1 | a library - always the two levels `<author>/<name>` |
+| depth 1 | a rig - always the two levels `<author>/<name>` |
 | deeper, no signature groups | a module |
 | deeper, WITH `<args> <result>` | a call |
 
-To build a namepath: join the author to the library with `/`, then `:`, then the
+To build a namepath: join the author to the rig with `/`, then `:`, then the
 module segments with `/`, then `:` before the call.
 
 ```txt
@@ -505,18 +505,18 @@ where the module path ends, so a module holding both submodules and calls needs
 no marking of any kind:
 
 ```txt
- mylib
+ myrig
   m
    here <x:int> <out:int>
    deep
     down <y:int> <out:int>
 ```
 
-`here` is `mylib:m:here`; `down` is `mylib:m/deep:down`.
+`here` is `myrig:m:here`; `down` is `myrig:m/deep:down`.
 
-A node's one-line summary follows as ` # ...`, omitted ENTIRELY when the node is
+A one-line summary follows as ` # ...`, omitted ENTIRELY when the line is
 undocumented. Within a level, calls come before submodules and each group sorts
-by name; libraries sort by author, then name.
+by name; rigs sort by author, then name.
 
 A signature group is the nu type grammar with two changes, both only at the top
 level: the `record<...>` wrapper is written `<...>`, and there is no space after
@@ -524,27 +524,27 @@ a comma. A VOID renders `<>`, so a call taking nothing and returning nothing
 reads `ping <> <>`. Nested types keep their full spelling -
 `table<name:string,where:directory>`, `oneof<int,nothing>`, `list<string>`.
 
-The block is FILTERED to the current purview. A library appears when its own
-node is in view or when anything inside it is, so a purview naming one module
-still shows the author and library lines above it - the block always spells a
+The block is FILTERED to the current purview. A rig appears when its own
+namepath is in view or when anything inside it is, so a purview naming one module
+still shows the author and rig lines above it - the block always spells a
 namepath.
 
 ## `inspect()`
-*Detailed documentation for libraries, modules, and calls.*
+*Detailed documentation for rigs, modules, and calls.*
 
-`namepath` is either an EXACT coordinate - `<author>/<library>`,
-`<author>/<library>:module/path`, or `<author>/<library>:module/path:function`,
+`namepath` is either an EXACT namepath - `<author>/<rig>`,
+`<author>/<rig>:module/path`, or `<author>/<rig>:module/path:function`,
 any of the three arities - or a PATTERN, which is what a trailing hierarchy
 character makes it:
 
 | pattern | selects |
 |---|---|
 | `<author>/` | everything that author published |
-| `<author>/<library>:` | everything in that library |
-| `<author>/<library>:module/path/` | that module and everything below it |
-| `<author>/<library>:module/path:` | the calls in that module, no deeper |
-| `*` | the whole store |
-| `.` | the current purview - a STUB matching nothing until purview lands |
+| `<author>/<rig>:` | everything in that rig |
+| `<author>/<rig>:module/path/` | that module and everything below it |
+| `<author>/<rig>:module/path:` | the calls in that module, no deeper |
+| `*` | the whole namespace |
+| `.` | the current purview, resolved to its namepath patterns |
 
 `/` DESCENDS and `:` selects the level BELOW, which is what each separator
 already means in an exact namepath, so the two module forms differ deliberately.
@@ -577,7 +577,7 @@ Output (partial):
   "result": {
     "structuredContent": {
       "doc": {
-        "src": "/abs/path/to/store/libraries/rig/acme/geo/shape/area/mod.nu",
+        "src": "/abs/path/to/namespace/rigs/rig/acme/geo/shape/area/mod.nu",
         "signature": "acme/geo:shape:area <width:float,height:float> <area:float> # result is in the inputs' unit, squared",
         "details": "Planar rectangle only; negative inputs are a type-clean error."
       }
@@ -593,12 +593,12 @@ you asked for:
 
 | namepath | `doc` |
 |---|---|
-| `<author>/<library>` | `{srcdir, summary, details}` |
-| `<author>/<library>:module/path` | `{src, summary, details}` |
-| `<author>/<library>:module/path:function` | `{src, signature, details}` |
+| `<author>/<rig>` | `{srcdir, summary, details}` |
+| `<author>/<rig>:module/path` | `{src, summary, details}` |
+| `<author>/<rig>:module/path:function` | `{src, signature, details}` |
 | any PATTERN | `{signatures}` |
 
-`srcdir` and `src` point into the COMMITTED CANONICAL tree - a library's
+`srcdir` and `src` point into the COMMITTED CANONICAL tree - a rig's
 directory, and a module's or a call's `mod.nu` - not the authored source.
 
 A CALL CARRIES NO `summary`: the summary is part of the signature, exactly as in
@@ -608,7 +608,7 @@ supplies the hierarchy. Everything after that first token is identical between
 the two.
 
 A PATTERN returns `{signatures}` - the same indented block `info()` renders,
-rooted at the pattern instead of at the whole store and produced by the same
+rooted at the pattern instead of at the whole namespace and produced by the same
 renderer, so the two cannot drift. The ANCESTOR lines above the root are still
 printed, because the block's grammar IS its indentation: without them a subtree
 is one you cannot turn back into a namepath.
@@ -635,12 +635,12 @@ Output (partial):
 ```
 
 ## `new()`
-*Scaffold modules / functions (by namepath) into existing libraries.*
+*Scaffold modules / functions (by namepath) into existing rigs.*
 
-Batch-scaffolds module (`<author>/<library>:module/path`) or function
-(`<author>/<library>:module/path:function`) skeletons into ALREADY-ESTABLISHED
-libraries (establish one with [`library()`](#library) `new`); the namepaths
-may span multiple libraries. A function scaffolds as a dir-module holding a
+Batch-scaffolds module (`<author>/<rig>:module/path`) or function
+(`<author>/<rig>:module/path:function`) skeletons into ALREADY-ESTABLISHED
+rigs (establish one with [`rig()`](#rig) `new`); the namepaths
+may span multiple rigs. A function scaffolds as a dir-module holding a
 single `main` (`<name>/mod.nu`), wired into its parent by both
 `export module <name>` and `export use <name>`. Additive - refuses to
 scaffold over an existing leaf. Edit the files, then [`commit()`](#commit).
@@ -685,7 +685,7 @@ Output (partial):
 ```
 
 ## `commit()`
-*Commit the agent's library source-code to the MCP's repository for live use.*
+*Commit the agent's rig source-code to the MCP's repository for live use.*
 
 ### arguments
 
@@ -693,9 +693,9 @@ Schema (partial):
 ```json
 {
   "properties": {
-    "library": { "type": "string" }
+    "rig": { "type": "string" }
   },
-  "required": ["library"]
+  "required": ["rig"]
 }
 ```
 
@@ -704,7 +704,7 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "library": "acme/geo" }
+  "arguments": { "rig": "acme/geo" }
 }
 ```
 
@@ -722,22 +722,22 @@ Output (partial):
 }
 ```
 
-## `library()`
-*Library administration: new, install, check, uninstall.*
+## `rig()`
+*Rig administration: new, install, check, uninstall.*
 
-The admin tool over a whole library. `action` is one of:
-`library` is always the compound `<author>/<name>`; a bare name is rejected.
+The admin tool over a whole rig. `action` is one of:
+`rig` is always the compound `<author>/<name>`; a bare name is rejected.
 
-- `new` - establish a fresh, empty library at `source_dir` + register it.
+- `new` - establish a fresh, empty rig at `source_dir` + register it.
 - `install` - bring a complete/shipped source into the MCP (establish +
   first commit, atomic: a validation failure registers nothing).
-- `check` - run the library's validation pass over the in-source tree; no
+- `check` - run the rig's validation pass over the in-source tree; no
   mutation. Errors block a commit; warnings are advisory.
-- `uninstall` - remove the library from the MCP. The agent `source_dir` is
-  never touched. Idempotent: an absent library is success.
+- `uninstall` - remove the rig from the MCP. The agent `source_dir` is
+  never touched. Idempotent: an absent rig is success.
 
 `source_dir` is the universal "are you sure" cross-check on every action:
-for a registered library it must equal the recorded source path; for
+for a registered rig it must equal the recorded source path; for
 `new` / `install` it is the path recorded.
 
 ### arguments
@@ -747,10 +747,10 @@ Schema (partial):
 {
   "properties": {
     "action":     { "type": "string" },
-    "library":    { "type": "string" },
+    "rig":    { "type": "string" },
     "source_dir": { "type": "string" }
   },
-  "required": ["action", "library", "source_dir"]
+  "required": ["action", "rig", "source_dir"]
 }
 ```
 
@@ -759,7 +759,7 @@ Schema (partial):
 MCP (partial):
 ```json
 {
-  "arguments": { "action": "check", "library": "acme/geo", "source_dir": "/abs/path/to/source/geo" }
+  "arguments": { "action": "check", "rig": "acme/geo", "source_dir": "/abs/path/to/source/geo" }
 }
 ```
 
@@ -976,19 +976,19 @@ Output (partial):
 
 A PURVIEW is a named, scoped view of the callable namespace. Its values are
 namepath PATTERNS (the same grammar `inspect()` takes) or exact namepaths, so
-`sourcetrait/` , `acme/geo:` , `acme/geo:shape/` and `acme/geo:shape:area` are
-all legal purview values.
+`sourcetrait/`, `acme/geo:`, `acme/geo:shape/` and `acme/geo:shape:area` are all
+legal purview values.
 
-It exists to keep `info()` SMALL. On a box carrying many libraries the block is
+It exists to keep `info()` SMALL. On a box carrying many rigs the block is
 the agent's startup read, and most of it is irrelevant to the task at hand.
 
 IT IS NOT ACCESS CONTROL. A purview filters what an agent KNOWS, never what it
-may call: `call()` reaches any registered function regardless of what is in
+may call: `call()` reaches any registered call regardless of what is in
 view. Do not build permissions on it.
 
 IDs are arbitrary path-like labels - slash-separated snake components, always
 bare relative (`default`, `iter/almost`, `john/cindy/mary`), never a leading `/`
-or `./`. They are unrelated to library namepaths and to filesystem paths;
+or `./`. They are unrelated to rig namepaths and to filesystem paths;
 `iter/almost` may or may not refer to anything called almost.
 
 Three built-ins:
@@ -999,24 +999,25 @@ Three built-ins:
 | `.` | what is in view right now; DERIVED, never stored |
 | `*` | everything |
 
-An UNCONFIGURED `default` is EVERYTHING, which is what makes a fresh namespace
-usable before anyone configures anything. Absent is not empty: no purview file
+THERE IS NO UNCONFIGURED DEFAULT: startup writes `default` as `['*']` when it
+has no row, so a fresh namespace sees everything and every reader may assume the
+row exists. Absent is not empty: no purview file
 means nothing has been configured, while a configured purview that resolves to
 nothing shows nothing.
 
-Configuration persists per store coordinate at `<store>/.meta/purviews.nuon`;
+Configuration persists per namespace at `<namespace>/.meta/purviews.nuon`;
 the current view is SESSION-RESIDENT, held by the host process and gone when it
 exits. It starts at `default`.
 
 Two automatic behaviors:
 
-- `library(install)` ADDS the new rig's `<author>/<name>:` pattern to `default`.
+- `rig(install)` ADDS the new rig's `<author>/<name>:` pattern to `default`.
   It never REPLACES: an unconfigured `default` materializes its implicit `*`
   first, so the first install writes `['*', 'my/newlib:']` and nothing leaves
   view.
-- `library(uninstall)` removes that pattern everywhere, and DANGLING selectors -
-  ones no registered library can satisfy - are pruned whenever the table is
-  written. A purview pruned down to nothing is deleted, since an empty selector
+- `rig(uninstall)` removes that pattern everywhere, and DANGLING namepath patterns -
+  ones no registered rig can satisfy - are pruned whenever the table is
+  written. A purview pruned down to nothing is deleted, since an empty namepath pattern
   list is already the delete operation.
 
 ## `purview_list()`
@@ -1042,10 +1043,11 @@ Output (partial):
 ```
 
 ## `purview_configure()`
-*Set a purview's selectors; an empty list deletes it.*
+*Set a purview's namepath patterns; an empty list deletes it.*
 
-Creates the purview if absent, REPLACES its selectors if present. The derived
-built-ins `.` and `*` cannot be configured - they are computed, not stored.
+Creates the purview if absent, REPLACES its namepath patterns if present. The
+derived built-ins `.` and `*` cannot be configured - they are computed, not
+stored.
 
 ### arguments
 
@@ -1067,7 +1069,7 @@ MCP (partial):
 {
   "arguments": {
     "purview": "iter/geo",
-    "namepaths": ["acme/geo:", "acme/mathlib:shape:area"]
+    "namepaths": ["acme/geo:", "acme/mathrig:shape:area"]
   }
 }
 ```
@@ -1077,7 +1079,7 @@ Output (partial):
 {
   "result": {
     "structuredContent": {
-      "purviews": [ ["default", ["*"]], ["iter/geo", ["acme/geo:", "acme/mathlib:shape:area"]] ],
+      "purviews": [ ["default", ["*"]], ["iter/geo", ["acme/geo:", "acme/mathrig:shape:area"]] ],
       "current": [ ["default", ["*"]] ],
       "pruned": []
     },
@@ -1086,8 +1088,8 @@ Output (partial):
 }
 ```
 
-`pruned` reports selectors dropped because no registered library can satisfy
-them - a typo'd author, or a rig that has since been uninstalled.
+`pruned` reports namepath patterns dropped because no registered rig can
+satisfy them - a typo'd author, or a rig that has since been uninstalled.
 
 ## `purview_extend()`
 *Bring more purviews into the current view.*
@@ -1124,10 +1126,11 @@ Output (partial):
 }
 ```
 
-`added` is a signature block for what CAME INTO view - not the whole new view -
-so the answer to "what can I now see that I could not" is direct. `removed` is
-the selectors that LEFT. Each is null when that half did not happen, which for
-extend is normally `removed`.
+`added` is `info()`'s `signatures` for the namepath patterns newly added - not
+the whole new view. When the current view already carries `*`, what it shows was
+visible before as well: the patterns are what changed, and the block says what
+they name. `removed` is the namepath patterns that LEFT. Each is null when that
+half did not happen, which for extend is normally `removed`.
 
 ## `purview_reset()`
 *Reset the current view back to the default purview.*

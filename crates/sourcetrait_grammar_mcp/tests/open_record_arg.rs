@@ -59,7 +59,7 @@ fn commit_inspect_and_call_open_record_arg_field() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("openlib");
-    let _ = s.library("new", "sourcetrait/openlib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/openlib", src.to_str().unwrap());
     write_tree(
         &src,
         &[

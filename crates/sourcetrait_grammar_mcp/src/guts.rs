@@ -5,8 +5,8 @@
 //! tests exercise the handlers without spawning the binary.
 //!
 //! `CONFIG` (OnceLock) + `BASE_DIRS` (LazyLock) are process-global, so every
-//! `TestServer` in a test binary shares ONE store under a per-binary temp XDG
-//! root. Tests use unique library names; a test needing a pristine store lives
+//! `TestServer` in a test binary shares ONE namespace under a per-binary temp XDG
+//! root. Tests use unique rig names; a test needing a pristine namespace lives
 //! in its own binary (its own process) or the system-test crate.
 
 use crate::*;
@@ -17,23 +17,23 @@ static TEST_CONFIG: Once = Once::new();
 
 const INPROC_PREFIX: &str = "grammar_inproc_";
 
-/// Remove the temp stores left by test processes that have since exited.
+/// Remove the temp namespaces left by test processes that have since exited.
 ///
 /// Each test BINARY gets its own `grammar_inproc_<pid>` root holding a full
-/// libraries git repo + keypair, and a test harness returns from `main` with no
+/// rigs git repo + keypair, and a test harness returns from `main` with no
 /// hook we can hang teardown on - statics never run `Drop`, and there is no
 /// atexit here. Left alone the roots accumulate one per run, forever (a real
 /// sweep found 128 of them, ~20 MB). So each run sweeps the DEAD ones on the way
 /// IN: a leftover whose pid is gone from /proc cannot be in use by anyone. That
-/// bounds the litter to at most one store per currently-running test binary
+/// bounds the litter to at most one namespace per currently-running test binary
 /// instead of one per run ever.
 ///
 /// Linux-gated like the rest of the /proc work (server/teardown.rs); elsewhere it
 /// is a no-op rather than a guess, since without a liveness check the sweep could
-/// delete a live concurrent binary's store. Best-effort throughout - a failed
+/// delete a live concurrent binary's namespace. Best-effort throughout - a failed
 /// sweep must never fail a test. Pid REUSE only defers a removal by one round.
 #[cfg(target_os = "linux")]
-fn sweep_dead_test_stores(temp: &std::path::Path) {
+fn sweep_dead_test_namespaces(temp: &std::path::Path) {
     let Ok(entries) = fs::read_dir(temp) else {
         return;
     };
@@ -53,14 +53,14 @@ fn sweep_dead_test_stores(temp: &std::path::Path) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn sweep_dead_test_stores(_temp: &std::path::Path) {}
+fn sweep_dead_test_namespaces(_temp: &std::path::Path) {}
 
 /// Point the process-global XDG roots at a per-binary temp dir and seed CONFIG,
 /// once, before any `BASE_DIRS` access.
 fn ensure_test_config() {
     TEST_CONFIG.call_once(|| {
         let temp = std::env::temp_dir();
-        sweep_dead_test_stores(&temp);
+        sweep_dead_test_namespaces(&temp);
         let root = temp.join(format!("{INPROC_PREFIX}{}", process::id()));
         let _ = fs::create_dir_all(root.join("data"));
         let _ = fs::create_dir_all(root.join("cache"));
@@ -72,7 +72,7 @@ fn ensure_test_config() {
             std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
         }
         // Built from the embedded defaults so the harness picks up every field
-        // (including [channel]) without restating them; only the store coordinate and
+        // (including [channel]) without restating them; only the id, namespace and
         // work dir are test-specific.
         let mut config = Config::default();
         config.id = "test".to_string();
@@ -194,20 +194,20 @@ impl TestServer {
         Self::envelope(self.rt.block_on(self.nush.call(mcp::Parameters(p))))
     }
 
-    pub fn commit(&self, library: &str) -> json::Value {
+    pub fn commit(&self, rig: &str) -> json::Value {
         let p = CommitParams {
-            library: library.to_string(),
+            rig: rig.to_string(),
         };
         Self::envelope(self.rt.block_on(self.nush.commit(mcp::Parameters(p))))
     }
 
-    pub fn library(&self, action: &str, library: &str, source_dir: &str) -> json::Value {
-        let p = LibraryParams {
+    pub fn rig(&self, action: &str, rig: &str, source_dir: &str) -> json::Value {
+        let p = RigParams {
             action: action.to_string(),
-            library: library.to_string(),
+            rig: rig.to_string(),
             source_dir: source_dir.to_string(),
         };
-        Self::envelope(self.rt.block_on(self.nush.library(mcp::Parameters(p))))
+        Self::envelope(self.rt.block_on(self.nush.rig(mcp::Parameters(p))))
     }
 
     pub fn scaffold(&self, namepaths: &[&str]) -> json::Value {
@@ -248,7 +248,7 @@ impl TestServer {
         )
     }
 
-    /// Set a purview's selectors; an EMPTY `namepaths` deletes it.
+    /// Set a purview's namepath patterns; an EMPTY `namepaths` deletes it.
     pub fn purview_configure(
         &self,
         purview: &str,
@@ -281,7 +281,7 @@ impl TestServer {
         )
     }
 
-    /// Where this store's purview table lands, for tests asserting the store
+    /// Where this namespace's purview table lands, for tests asserting the namespace
     /// LAYOUT rather than the tool surface - the namespace meta dir is new with
     /// purviews.
     pub fn purviews_path(&self) -> std::path::PathBuf {
@@ -349,11 +349,11 @@ impl TestServer {
         )
     }
 
-    /// The in-process store's libraries git repo dir (the `(test, default)`
-    /// coordinate under the per-binary temp XDG data root), for tests that
-    /// inspect on-disk store artifacts (git-tracked paths, the canonical tree).
-    pub fn libraries_dir(&self) -> std::path::PathBuf {
-        crate::libraries_dir()
+    /// The in-process rigs git repo dir (the `(test, default)`
+    /// namespace under the per-binary temp XDG data root), for tests that
+    /// inspect on-disk namespace artifacts (git-tracked paths, the canonical tree).
+    pub fn rigs_dir(&self) -> std::path::PathBuf {
+        crate::rigs_dir()
     }
 
     /// The per-call log dir for a run-family nonce - where the eval's captured
@@ -366,20 +366,20 @@ impl TestServer {
             .to_path_buf()
     }
 
-    /// The canonical committed dir for a library by its compound `author/name`
-    /// (under `libraries/rig/`), for on-disk carried-file / meta assertions.
-    pub fn library_dir(&self, name: &str) -> std::path::PathBuf {
-        crate::libraries_dir().join("rig").join(name)
+    /// The canonical committed dir for a rig by its compound `author/name`
+    /// (under `rigs/rig/`), for on-disk carried-file / meta assertions.
+    pub fn rig_dir(&self, name: &str) -> std::path::PathBuf {
+        crate::rigs_dir().join("rig").join(name)
     }
 
-    /// A library's committed index, decoded into the JSON shape assertions are
+    /// A rig's committed index, decoded into the JSON shape assertions are
     /// written against. The index is NUON on disk (the house format for anything we
     /// persist); a test checking `source_path` should not have to know that.
-    pub fn library_index(&self, name: &str) -> json::Value {
-        let path = crate::server::library::library_meta_path(name);
+    pub fn rig_index(&self, name: &str) -> json::Value {
+        let path = crate::server::rig::rig_meta_path(name);
         let text = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read index {}: {e}", path.display()));
-        let index = crate::server::library::index_from_nuon(&text)
+        let index = crate::server::rig::index_from_nuon(&text)
             .unwrap_or_else(|e| panic!("decode index {}: {e}", path.display()));
         json::to_value(&index).expect("index serializes")
     }
@@ -445,14 +445,14 @@ pub fn error_text(env: &json::Value) -> String {
     env.get("error").map(|e| e.to_string()).unwrap_or_default()
 }
 
-/// One library's slice of an `info()` signature block - its `<leaf>:` line plus
+/// One rig's slice of an `info()` signature block - its `<leaf>:` line plus
 /// everything indented beneath it.
 ///
-/// The in-process store is shared across a test BINARY, so the block carries
-/// every library that binary has created. A test asserting on its own library
+/// The in-process namespace is shared across a test BINARY, so the block carries
+/// every rig that binary has created. A test asserting on its own rig
 /// must slice first: a bare `contains` check against the whole block can be
-/// satisfied - or falsified - by an unrelated library another test committed.
-pub fn library_block(
+/// satisfied - or falsified - by an unrelated rig another test committed.
+pub fn rig_block(
     signatures: &str,
     leaf: &str,
 ) -> String {
@@ -465,8 +465,8 @@ pub fn library_block(
             }
             continue;
         }
-        // Depth 0 is an author and depth 1 the next library; either ends this
-        // library's own subtree.
+        // Depth 0 is an author and depth 1 the next rig; either ends this
+        // rig's own subtree.
         let indent = line.len() - line.trim_start_matches(' ').len();
         if indent <= 1 {
             break;
@@ -475,7 +475,7 @@ pub fn library_block(
     }
     assert!(
         !out.is_empty(),
-        "library `{leaf}` is absent from the block:\n{signatures}",
+        "rig `{leaf}` is absent from the block:\n{signatures}",
     );
     format!("{}\n", out.join("\n"))
 }
@@ -566,13 +566,13 @@ pub fn build_run_source(
 
 /// The synthesized call() source (the aliased, prefixed overlay of the target).
 pub fn build_call_source(
-    library: &str,
+    rig: &str,
     module_path: &str,
     name: &str,
     args: json::Value,
     nonce: &str,
 ) -> String {
-    crate::build_call_source(library, module_path, name, &to_obj(args), nonce)
+    crate::build_call_source(rig, module_path, name, &to_obj(args), nonce)
 }
 
 /// The synthesized interact() source (the `def --env` subexpression).

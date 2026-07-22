@@ -25,7 +25,7 @@ fn tools_list_and_run_round_trip() {
         "learn",
         "new",
         "commit",
-        "library",
+        "rig",
         "inspect",
         "channel_open",
         "channel_verified",

@@ -15,11 +15,11 @@ use sourcetrait_testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 
-/// Poll the per-process emergency log(s) under the store's `log/` dir until one
+/// Poll the per-process emergency log(s) under the namespace's `log/` dir until one
 /// carries a hung-thread record, or `secs` elapse; returns the matching (or the
 /// last-seen) content. The `<mcp_nom>` subdir is minted at startup, so glob it.
 fn wait_for_hung_emergency(host: &Host, id: &str, ns: &str, secs: u64) -> String {
-    let log_root = store_dir(host.cache_home(), id, ns).join("log");
+    let log_root = namespace_dir(host.cache_home(), id, ns).join("log");
     let deadline = Instant::now() + Duration::from_secs(secs);
     let mut last = String::new();
     loop {

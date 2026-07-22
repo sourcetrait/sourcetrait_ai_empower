@@ -21,21 +21,21 @@ fn install_brings_shipped_source_into_mcp() {
     let s = TestServer::new();
     let src = t.temp_dir().join("shiplib");
     author_double_tree(&src);
-    let env = s.library("install", "sourcetrait/shiplib", src.to_str().unwrap());
+    let env = s.rig("install", "sourcetrait/shiplib", src.to_str().unwrap());
     assert!(!has_error(&env), "install should succeed; got {env}");
     assert!(
         !env["summary"]["added"].as_array().expect("added").is_empty(),
         "install summary should report added paths; got {env}",
     );
     assert!(
-        s.library_dir("sourcetrait/shiplib").exists(),
+        s.rig_dir("sourcetrait/shiplib").exists(),
         "canonical should exist",
     );
     let called = s.call("sourcetrait/shiplib:m:double", json!({"x": 6}));
     assert_eq!(
         called["result"]["out"].as_i64(),
         Some(12),
-        "installed library should be callable; got {called}",
+        "installed rig should be callable; got {called}",
     );
 }
 
@@ -51,17 +51,17 @@ fn install_rolls_back_on_validation_failure() {
         "thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
-    let env = s.library("install", "sourcetrait/badship", src.to_str().unwrap());
+    let env = s.rig("install", "sourcetrait/badship", src.to_str().unwrap());
     assert_eq!(
         error_kind(&env),
-        Some("library::root_function"),
+        Some("rig::root_function"),
         "install of an invalid source should fail with a validation diagnostic; got {env}"
     );
     assert!(
-        !s.library_dir("sourcetrait/badship").exists(),
+        !s.rig_dir("sourcetrait/badship").exists(),
         "a failed install must leave nothing registered (canonical wiped)",
     );
-    let re = s.library("new", "sourcetrait/badship", src.to_str().unwrap());
+    let re = s.rig("new", "sourcetrait/badship", src.to_str().unwrap());
     assert!(!has_error(&re), "name should be free after rollback; got {re}");
 }
 
@@ -71,9 +71,9 @@ fn check_reports_ok_for_clean_source() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("checkoklib");
-    let _ = s.library("new", "sourcetrait/checkoklib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/checkoklib", src.to_str().unwrap());
     author_double_tree(&src);
-    let env = s.library("check", "sourcetrait/checkoklib", src.to_str().unwrap());
+    let env = s.rig("check", "sourcetrait/checkoklib", src.to_str().unwrap());
     assert!(!has_error(&env), "check should not error; got {env}");
     let summary = &env["summary"];
     assert_eq!(summary["ok"].as_bool(), Some(true), "got {summary}");
@@ -93,14 +93,14 @@ fn check_reports_structural_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("checkerrlib");
-    let _ = s.library("new", "sourcetrait/checkerrlib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/checkerrlib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export use thing\n");
     write_source(
         &src,
         "thing/mod.nu",
         &valid_function_source("x: int", "out: int", "{ out: $args.x }"),
     );
-    let env = s.library("check", "sourcetrait/checkerrlib", src.to_str().unwrap());
+    let env = s.rig("check", "sourcetrait/checkerrlib", src.to_str().unwrap());
     assert!(!has_error(&env), "check itself should not error; got {env}");
     let summary = &env["summary"];
     assert_eq!(summary["ok"].as_bool(), Some(false), "got {summary}");
@@ -112,19 +112,19 @@ fn check_reports_structural_errors() {
         .collect();
     assert!(!err_kinds.is_empty(), "expected >=1 error; got {summary}");
     assert!(
-        err_kinds.iter().any(|k| k.starts_with("library::")),
-        "errors should carry namespaced library:: kinds; got {err_kinds:?}"
+        err_kinds.iter().any(|k| k.starts_with("rig::")),
+        "errors should carry namespaced rig:: kinds; got {err_kinds:?}"
     );
 }
 
 #[test]
-fn check_unregistered_library_errors() {
+fn check_unregistered_rig_errors() {
     let s = TestServer::new();
-    let env = s.library("check", "sourcetrait/ghostlib", "/some/path");
+    let env = s.rig("check", "sourcetrait/ghostlib", "/some/path");
     assert_eq!(
         error_kind(&env),
-        Some("library::not_registered"),
-        "check requires a registered library; got {env}"
+        Some("rig::not_registered"),
+        "check requires a registered rig; got {env}"
     );
 }
 
@@ -134,11 +134,11 @@ fn check_source_dir_mismatch_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("checkmmlib");
-    let _ = s.library("new", "sourcetrait/checkmmlib", src.to_str().unwrap());
-    let env = s.library("check", "sourcetrait/checkmmlib", "/wrong/path");
+    let _ = s.rig("new", "sourcetrait/checkmmlib", src.to_str().unwrap());
+    let env = s.rig("check", "sourcetrait/checkmmlib", "/wrong/path");
     assert_eq!(
         error_kind(&env),
-        Some("library::source_path_mismatch"),
+        Some("rig::source_path_mismatch"),
         "check should cross-check source_dir; got {env}"
     );
 }
@@ -149,37 +149,37 @@ fn uninstall_source_dir_mismatch_errors() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("unmmlib");
-    let _ = s.library("new", "sourcetrait/unmmlib", src.to_str().unwrap());
-    let env = s.library("uninstall", "sourcetrait/unmmlib", "/wrong/path");
+    let _ = s.rig("new", "sourcetrait/unmmlib", src.to_str().unwrap());
+    let env = s.rig("uninstall", "sourcetrait/unmmlib", "/wrong/path");
     assert_eq!(
         error_kind(&env),
-        Some("library::source_path_mismatch"),
+        Some("rig::source_path_mismatch"),
         "uninstall should cross-check source_dir; got {env}"
     );
     assert!(
-        s.library_dir("sourcetrait/unmmlib").exists(),
-        "a rejected uninstall must leave the library registered",
+        s.rig_dir("sourcetrait/unmmlib").exists(),
+        "a rejected uninstall must leave the rig registered",
     );
 }
 
 #[test]
 fn invalid_action_errors() {
     let s = TestServer::new();
-    let env = s.library("frobnicate", "sourcetrait/x", "/p");
+    let env = s.rig("frobnicate", "sourcetrait/x", "/p");
     assert_eq!(
         error_kind(&env),
-        Some("library::invalid_action"),
+        Some("rig::invalid_action"),
         "an unknown action should error; got {env}"
     );
 }
 
 #[test]
 #[named]
-fn run_body_can_use_a_committed_library() {
+fn run_body_can_use_a_committed_rig() {
     let t = testing::test!({ .using_temp_dir() });
     let s = TestServer::new();
     let src = t.temp_dir().join("uselib");
-    let _ = s.library("new", "sourcetrait/uselib", src.to_str().unwrap());
+    let _ = s.rig("new", "sourcetrait/uselib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export module calc\n");
     write_source(&src, "calc/mod.nu", "export use double\n");
     write_source(
@@ -198,7 +198,7 @@ fn run_body_can_use_a_committed_library() {
     );
     assert!(
         !has_error(&env),
-        "a run() body should be able to `use` a committed library; got {env}"
+        "a run() body should be able to `use` a committed rig; got {env}"
     );
     assert_eq!(
         env["result"]["out"].as_i64(),

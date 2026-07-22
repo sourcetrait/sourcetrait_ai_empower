@@ -91,8 +91,8 @@ pub struct NuSh {
     /// This host process's identity, minted once at construction. Namespaces the
     /// per-process emergency log and is reported by `info()`.
     pub(crate) mcp_nom: McpNom,
-    pub(crate) library_locks: Arc<LibraryLocks>,
-    /// The lint + library-validator engine. A HOLDER rather than the engine
+    pub(crate) rig_locks: Arc<RigLocks>,
+    /// The lint + rig-validator engine. A HOLDER rather than the engine
     /// itself, because a `ParseEngine` snapshots the plugin decls at
     /// construction: take it through `current()`, which rebuilds it when the
     /// plugin registry has moved, exactly as the Executor refreshes its base.
@@ -154,7 +154,7 @@ pub(crate) enum InFlightKind {
 impl NuSh {
     pub(crate) fn new(
         nonce_gen: Arc<NonceGen>,
-        library_locks: Arc<LibraryLocks>,
+        rig_locks: Arc<RigLocks>,
         lint_engine: Arc<LintEngine>,
     ) -> Self {
         // Install nushell's TLS crypto provider once for the in-process engine
@@ -169,7 +169,7 @@ impl NuSh {
             env_jobs,
             nonce_gen,
             mcp_nom,
-            library_locks,
+            rig_locks,
             lint_engine,
             in_flight: Arc::new(tk::AsyncMutex::new(HashMap::new())),
             hung_watch: Arc::new(std::sync::Mutex::new(HashMap::new())),

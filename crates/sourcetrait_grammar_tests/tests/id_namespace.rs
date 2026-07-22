@@ -10,34 +10,34 @@ fn default_id_is_user_env() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("mylib");
     let mut host = Host::spawn_full(t.temp_dir(), &[], &[("USER", "udefault")]);
-    let resp = host.library_new("sourcetrait/mylib", &src);
-    assert!(!has_error_path(&resp), "library(new) should succeed; got {resp}");
-    let lib_dir = store_dir(&t.temp_dir().join("data"), "udefault", "default")
-        .join("libraries")
+    let resp = host.rig_new("sourcetrait/mylib", &src);
+    assert!(!has_error_path(&resp), "rig(new) should succeed; got {resp}");
+    let lib_dir = namespace_dir(&t.temp_dir().join("data"), "udefault", "default")
+        .join("rigs")
         .join("rig")
         .join("sourcetrait")
         .join("mylib");
     assert!(
         lib_dir.exists(),
-        "default-id store should land under <user>/default/; expected {}",
+        "default-id namespace should land under <user>/default/; expected {}",
         lib_dir.display(),
     );
 }
 
 #[test]
 #[named]
-fn explicit_id_and_namespace_select_store() {
+fn explicit_id_and_namespace_select_their_own_dirs() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("mylib");
     let mut host = Host::spawn_args(t.temp_dir(), &["--id", "aid", "--namespace", "ns1"]);
-    let resp = host.library_new("sourcetrait/mylib", &src);
-    assert!(!has_error_path(&resp), "library(new) should succeed; got {resp}");
-    let lib_dir = store_dir(&t.temp_dir().join("data"), "aid", "ns1")
-        .join("libraries")
+    let resp = host.rig_new("sourcetrait/mylib", &src);
+    assert!(!has_error_path(&resp), "rig(new) should succeed; got {resp}");
+    let lib_dir = namespace_dir(&t.temp_dir().join("data"), "aid", "ns1")
+        .join("rigs")
         .join("rig")
         .join("sourcetrait")
         .join("mylib");
-    assert!(lib_dir.exists(), "explicit --id/--namespace should select the store; expected {}", lib_dir.display());
+    assert!(lib_dir.exists(), "explicit --id/--namespace should select the namespace; expected {}", lib_dir.display());
 
     let info = host.call("info", json!({}));
     let env = structured(&info);
@@ -47,13 +47,13 @@ fn explicit_id_and_namespace_select_store() {
 
 #[test]
 #[named]
-fn namespaces_are_disjoint_stores() {
+fn namespaces_are_disjoint() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("nslib");
 
     {
         let mut ns1 = Host::spawn_args(t.temp_dir(), &["--id", "aid", "--namespace", "ns1"]);
-        let _ = ns1.library_new("sourcetrait/nslib", &src);
+        let _ = ns1.rig_new("sourcetrait/nslib", &src);
         write_source(&src, "mod.nu", "export module m\n");
         write_source(&src, "m/mod.nu", "export use double\n");
         write_source(
@@ -74,19 +74,19 @@ fn namespaces_are_disjoint_stores() {
         .expect("info carries a signatures block");
     assert!(
         block.is_empty(),
-        "ns2 must not see ns1's libraries, so its block is empty rather than \
+        "ns2 must not see ns1's rigs, so its block is empty rather than \
          absent; got {block:?}",
     );
     let called = ns2.call_np("sourcetrait/nslib:m:double", json!({"x": 4}));
-    assert!(has_error_path(&called), "ns2 call into ns1's library must fail; got {called}");
+    assert!(has_error_path(&called), "ns2 call into ns1's rig must fail; got {called}");
 
-    assert!(store_dir(&t.temp_dir().join("data"), "aid", "ns1").exists());
-    assert!(store_dir(&t.temp_dir().join("data"), "aid", "ns2").exists());
+    assert!(namespace_dir(&t.temp_dir().join("data"), "aid", "ns1").exists());
+    assert!(namespace_dir(&t.temp_dir().join("data"), "aid", "ns2").exists());
 }
 
 #[test]
 #[named]
-fn env_carries_store_coordinate_and_work_dir() {
+fn env_carries_id_namespace_and_work_dir() {
     let t = testing::test!({ .using_temp_dir() });
     let wd = t.temp_dir().join("wd");
     std::fs::create_dir_all(&wd).unwrap();

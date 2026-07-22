@@ -75,11 +75,11 @@ fn seed_env(engine_state: &mut nu::EngineState) {
     );
 }
 
-/// Register the canonical libraries dir as the parse-time `$NU_LIB_DIRS` const, so
-/// a body's `use rig/<author>/<library>` resolves against the signed store. The
-/// host knows `libraries_dir()` directly (no worker spawn-env handoff).
+/// Register the canonical rigs dir as the parse-time `$NU_LIB_DIRS` const, so
+/// a body's `use rig/<author>/<rig>` resolves against the signed repository. The
+/// host knows `rigs_dir()` directly (no worker spawn-env handoff).
 fn seed_lib_dirs(engine_state: &mut nu::EngineState) {
-    set_lib_dirs_const(engine_state, &[libraries_dir()]);
+    set_lib_dirs_const(engine_state, &[rigs_dir()]);
 }
 
 /// `EngineState::merge_env` minus the process chdir.

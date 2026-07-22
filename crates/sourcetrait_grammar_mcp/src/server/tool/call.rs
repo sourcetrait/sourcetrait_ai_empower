@@ -3,7 +3,7 @@ use crate::*;
 /// Parameters for `call()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct CallParams {
-    /// The function's namepath: `library:module/path:function`.
+    /// The function's namepath: `rig:module/path:function`.
     pub namepath: String,
     /// JSON object of argument values passed to the function as `$args`.
     pub args: mcp::JsonObject,
@@ -22,24 +22,24 @@ pub(crate) struct CallEnvelope {
 #[mcp::tool_router(router = call_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Invoke a committed library function with typed args.",
+        description = "Invoke a committed rig function with typed args.",
         output_schema = mcp::schema_for_type::<CallEnvelope>()
     )]
     pub(crate) async fn call(
         &self,
         mcp::Parameters(p): mcp::Parameters<CallParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let (library, module_path, name) = match Namepath(p.namepath.clone()).validate() {
+        let (rig, module_path, name) = match Namepath(p.namepath.clone()).validate() {
             Ok(NamepathRef::Function {
-                library,
+                rig,
                 module_path,
                 name,
-            }) => (library, module_path, name),
+            }) => (rig, module_path, name),
             Ok(_) => {
                 return Ok(error_to_call_result(
                     Error::NamepathInvalid {
                         namepath: p.namepath.clone(),
-                        reason: "call requires a function namepath: library:module/path:function"
+                        reason: "call requires a function namepath: rig:module/path:function"
                             .to_string(),
                     },
                     None,
@@ -47,19 +47,19 @@ impl NuSh {
             }
             Err(e) => return Ok(error_to_call_result(e, None)),
         };
-        let lock = match self.library_locks.lookup(&library).await {
+        let lock = match self.rig_locks.lookup(&rig).await {
             Some(l) => l,
             None => {
                 return Ok(error_to_call_result(
-                    Error::LibraryNotRegistered {
-                        library: library.clone(),
+                    Error::RigNotRegistered {
+                        rig: rig.clone(),
                     },
                     None,
                 ));
             }
         };
         let _guard = lock.read().await;
-        let index = match load_index(&library) {
+        let index = match load_index(&rig) {
             Ok(i) => i,
             Err(e) => {
                 return Ok(error_to_call_result(
@@ -77,7 +77,7 @@ impl NuSh {
         if !is_call_target {
             return Ok(error_to_call_result(
                 Error::FunctionNotDefined {
-                    library: library.clone(),
+                    rig: rig.clone(),
                     module_path: module_path.clone(),
                     name: name.clone(),
                 },
@@ -98,7 +98,7 @@ impl NuSh {
         };
         let nonce = self.nonce_gen.next(&payload_bytes);
         let source = build_call_source(
-            &library,
+            &rig,
             &module_path,
             &name,
             &p.args,

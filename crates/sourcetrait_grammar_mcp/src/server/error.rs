@@ -171,6 +171,9 @@ pub enum Error {
     ThreadReturnedError {
         reason: String,
     },
+    ModuleCircularImport {
+        files: String,
+    },
     Internal {
         phase: String,
         reason: String,
@@ -202,6 +205,7 @@ impl Error {
             Self::ThreadDispatch { .. } => "thread::dispatch",
             Self::ThreadTimeout { .. } => "thread::timeout",
             Self::ThreadReturnedError { .. } => "thread::returned_error",
+            Self::ModuleCircularImport { .. } => "module::circular_import",
             Self::Internal { .. } => "internal",
             Self::RigViolations { .. } | Self::LintViolations { .. } => {
                 unreachable!("violation variants render via bucket, not kind_str")
@@ -273,6 +277,7 @@ impl Error {
             Self::ThreadDispatch { reason } => format!("eval dispatch failed: {reason}"),
             Self::ThreadTimeout { timeout_ms } => format!("eval timed out after {timeout_ms} ms"),
             Self::ThreadReturnedError { reason } => reason.clone(),
+            Self::ModuleCircularImport { files } => files.clone(),
             Self::Internal { phase, reason } => format!("internal error [{phase}]: {reason}"),
             Self::RigViolations { .. } | Self::LintViolations { .. } => {
                 unreachable!("violation variants render via bucket, not message")

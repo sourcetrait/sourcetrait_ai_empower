@@ -17,6 +17,32 @@ impl Drop for FinishGuard {
     }
 }
 
+/// Why an eval failed, carrying the one distinction the wire needs to keep.
+///
+/// Everything an eval reports is prose bound for `thread::returned_error`, with one
+/// exception: a module-resolution cycle is a CONDITION an agent can route on, so it
+/// reaches the envelope as its own kind rather than as a string that happens to read a
+/// certain way. `From<String>` keeps every ordinary `?` site untouched.
+pub(crate) enum EvalFailure {
+    Reported(String),
+    CircularImport(String),
+}
+
+impl From<String> for EvalFailure {
+    fn from(reason: String) -> Self {
+        Self::Reported(reason)
+    }
+}
+
+impl EvalFailure {
+    pub(crate) fn into_error(self) -> Error {
+        match self {
+            Self::Reported(reason) => Error::ThreadReturnedError { reason },
+            Self::CircularImport(files) => Error::ModuleCircularImport { files },
+        }
+    }
+}
+
 /// Build an engine base, mirroring the worker's `WarmBase::new` minus the
 /// process-boundary concerns. `base_context` (shell + extra, is_interactive=false,
 /// is_mcp=true) + plugin decls + `$nu.*` + seeded env + the parse-time
@@ -129,7 +155,7 @@ pub(crate) fn eval_in_process(
     source: &str,
     cancel: Arc<AtomicBool>,
     persist: bool,
-) -> Result<json::Value, String> {
+) -> Result<json::Value, EvalFailure> {
     let stdout_file = fs::File::create(log_dir.join("stdout"))
         .map_err(|e| format!("open {}/stdout: {e}", log_dir.display()))?;
     let stderr_file = fs::File::create(log_dir.join("stderr"))
@@ -148,14 +174,22 @@ pub(crate) fn eval_in_process(
     // Named `grimm`, not after any transport: the same API is meant to survive into
     // an equip-daemon that speaks something other than MCP.
     register_nuapi(&mut working_set, log_dir);
+    // Taken BEFORE the parse: the cycle check counts only what THIS parse registered,
+    // which is what keeps the interact lane's accumulating working set out of it.
+    let files_before = working_set.num_files();
     let block = nu::parse(&mut working_set, None, source.as_bytes(), false);
     if !working_set.parse_errors.is_empty() {
+        // Checked first, because a resolution cycle's own parse errors are unstable in
+        // both variant and payload, and useless in every form (server/cycle.rs).
+        if let Some(files) = detect_import_cycle(&working_set, files_before) {
+            return Err(EvalFailure::CircularImport(files));
+        }
         let msgs: Vec<String> = working_set
             .parse_errors
             .iter()
             .map(|e| format!("{e:?}"))
             .collect();
-        return Err(format!("parse errors: {}", msgs.join("; ")));
+        return Err(format!("parse errors: {}", msgs.join("; ")).into());
     }
     if !working_set.compile_errors.is_empty() {
         let msgs: Vec<String> = working_set
@@ -163,7 +197,7 @@ pub(crate) fn eval_in_process(
             .iter()
             .map(|e| format!("{e:?}"))
             .collect();
-        return Err(format!("compile errors: {}", msgs.join("; ")));
+        return Err(format!("compile errors: {}", msgs.join("; ")).into());
     }
     let delta = working_set.render();
     engine_state
@@ -185,7 +219,7 @@ pub(crate) fn eval_in_process(
         merge_env_no_chdir(engine_state, &mut stack);
     }
     let json_value = nu::JsonValue::from_value(value).map_err(|e| format!("Value to JSON: {e}"))?;
-    json::to_value(&json_value).map_err(|e| format!("json value: {e}"))
+    json::to_value(&json_value).map_err(|e| format!("json value: {e}").into())
 }
 
 /// Generous per-eval stack. P0.7: nu def-recursion is guarded (recursion_limit),
@@ -213,7 +247,7 @@ pub(crate) async fn eval_stateless(
     source: String,
     permit: tk::OwnedSemaphorePermit,
     finished: Arc<AtomicBool>,
-) -> Result<json::Value, String> {
+) -> Result<json::Value, EvalFailure> {
     let (tx, rx) = tk::oneshot::channel();
     let spawned = std::thread::Builder::new()
         .stack_size(EVAL_STACK_SIZE)
@@ -232,16 +266,16 @@ pub(crate) async fn eval_stateless(
             }));
             let result = match outcome {
                 Ok(r) => r,
-                Err(_) => Err("panic during eval (caught)".to_string()),
+                Err(_) => Err("panic during eval (caught)".to_string().into()),
             };
             let _ = tx.send(result);
         });
     if let Err(e) = spawned {
-        return Err(format!("spawn eval thread: {e}"));
+        return Err(format!("spawn eval thread: {e}").into());
     }
     match rx.await {
         Ok(r) => r,
-        Err(_) => Err("eval thread dropped without result".to_string()),
+        Err(_) => Err("eval thread dropped without result".to_string().into()),
     }
 }
 
@@ -262,7 +296,7 @@ struct InteractRequest {
     cancel: Arc<AtomicBool>,
     tracker: nu::ThreadJob,
     finished: Arc<AtomicBool>,
-    respond: tk::oneshot::Sender<Result<json::Value, String>>,
+    respond: tk::oneshot::Sender<Result<json::Value, EvalFailure>>,
 }
 
 impl InteractEngine {
@@ -307,7 +341,8 @@ impl InteractEngine {
                             engine = build_base(Mode::Stateful);
                             engine.jobs = env_jobs.clone();
                             Err("panic during interact eval (caught); interact session reset"
-                                .to_string())
+                                .to_string()
+                                .into())
                         }
                     };
                     let _ = req.respond.send(result);
@@ -326,7 +361,7 @@ impl InteractEngine {
         cancel: Arc<AtomicBool>,
         tracker: nu::ThreadJob,
         finished: Arc<AtomicBool>,
-    ) -> Result<json::Value, String> {
+    ) -> Result<json::Value, EvalFailure> {
         let (respond, rx) = tk::oneshot::channel();
         self.tx
             .send(InteractRequest {
@@ -340,7 +375,7 @@ impl InteractEngine {
             .map_err(|_| "interact engine thread is gone".to_string())?;
         match rx.await {
             Ok(r) => r,
-            Err(_) => Err("interact engine dropped the response".to_string()),
+            Err(_) => Err("interact engine dropped the response".to_string().into()),
         }
     }
 }

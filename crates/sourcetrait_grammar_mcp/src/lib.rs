@@ -5,6 +5,7 @@ pub(crate) mod server {
         pub(crate) mod hub;
         pub(crate) mod state;
     }
+    pub(crate) mod cycle;
     pub(crate) mod embed;
     pub(crate) mod emergency;
     pub(crate) mod error;
@@ -108,7 +109,8 @@ pub(crate) use crate::{
                 SpamVerdict, channel_handle, mint_msg_id, render_nuon, render_packet,
             },
         },
-        embed::{InteractEngine, build_base, eval_stateless},
+        cycle::detect_import_cycle,
+        embed::{EVAL_STACK_SIZE, InteractEngine, build_base, eval_stateless},
         emergency::{
             BackgroundJobsWarningEmergency, ChannelSpamErrorEmergency,
             ChannelSpamWarningEmergency, CpuWarningEmergency, CriticalEmergency,

@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::os::unix::process::ExitStatusExt;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -146,6 +147,67 @@ impl Host {
     ) -> Option<std::process::ExitStatus> {
         let pid = nix::unistd::Pid::from_raw(self.child.id() as i32);
         nix::sys::signal::kill(pid, Some(signal)).expect("signal the host");
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.child.try_wait().expect("try_wait") {
+                Some(status) => return Some(status),
+                None if Instant::now() >= deadline => return None,
+                None => std::thread::sleep(Duration::from_millis(25)),
+            }
+        }
+    }
+
+    /// `read_id`, but tolerant of the host DYING mid-request.
+    ///
+    /// `read_id` panics on EOF, which is the right default for a test whose host is
+    /// expected to answer. A test asserting that some input does NOT kill the host
+    /// needs the other behaviour: EOF is the OBSERVATION, and panicking on it throws
+    /// away the chance to report what actually happened. Pair it with
+    /// `wait_for_exit` + `describe_exit` to name the death mode.
+    pub fn try_read_id(
+        &mut self,
+        expected_id: u64,
+    ) -> Option<Value> {
+        if let Some(msg) = self.pending.remove(&expected_id) {
+            return Some(msg);
+        }
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            let mut line = String::new();
+            match self.stdout.read_line(&mut line) {
+                // EOF: the host's stdout closed, which from here is what a dead host
+                // looks like.
+                Ok(0) | Err(_) => return None,
+                Ok(_) => {}
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Ok(msg) = serde_json::from_str::<Value>(trimmed) else {
+                continue;
+            };
+            match msg.get("id").and_then(|v| v.as_u64()) {
+                Some(id) if id == expected_id => return Some(msg),
+                Some(id) => {
+                    self.pending.insert(id, msg);
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// Wait for the child to exit on its own, returning its status; None on timeout.
+    ///
+    /// Unlike `signal_and_wait` this sends nothing - it observes a host that is
+    /// already on its way out.
+    pub fn wait_for_exit(
+        &mut self,
+        timeout: Duration,
+    ) -> Option<std::process::ExitStatus> {
         let deadline = Instant::now() + timeout;
         loop {
             match self.child.try_wait().expect("try_wait") {
@@ -322,6 +384,29 @@ pub fn author_prefixed(tool: &str, mut args: Value) -> Value {
         _ => {}
     }
     args
+}
+
+/// How a child ended, in a form a failure message can carry.
+///
+/// The distinction is the whole point: a host that EXITED chose to, and its code says
+/// why; a host reported as killed BY a signal was taken down by the kernel, and the
+/// signal names the mechanism (SIGSEGV = a memory fault, which for a parser means a
+/// stack overflow far more often than anything else).
+pub fn describe_exit(status: &std::process::ExitStatus) -> String {
+    match (status.code(), status.signal()) {
+        (Some(code), _) => format!("exited with code {code}"),
+        (None, Some(sig)) => {
+            let name = match sig {
+                6 => " (SIGABRT)",
+                9 => " (SIGKILL)",
+                11 => " (SIGSEGV)",
+                15 => " (SIGTERM)",
+                _ => "",
+            };
+            format!("killed by signal {sig}{name}")
+        }
+        (None, None) => "ended for an unknown reason".to_string(),
+    }
 }
 
 // ---- envelope / error helpers ----

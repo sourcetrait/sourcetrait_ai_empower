@@ -216,7 +216,39 @@ fn resolve_config(cli: HostCli) -> Result<(Config, Option<HostCommand>), String>
     Ok((config, cli.command))
 }
 
-pub async fn host_main() -> process::ExitCode {
+/// Build the runtime, then run the host on it.
+///
+/// Constructed by hand rather than through `#[tokio::main]` for one reason:
+/// `thread_stack_size`. Nushell PARSING is deeply recursive, and two parses run inline
+/// on a runtime worker rather than on the eval thread - the body lint and the rig
+/// validator. A pathological module graph - a circular import, whose resolution recurses
+/// until the accumulated path stops resolving - overflows the 2 MB worker default and
+/// ABORTS the process. A stack overflow is a fatal runtime error rather than a panic, so
+/// `catch_unwind` cannot save it and the host dies leaving no diagnostic at all, which
+/// makes it read as infrastructure rather than as code.
+///
+/// Sizing every worker like the eval thread removes the CLASS rather than one instance:
+/// the recursion is bounded by the filesystem's path limit, so its depth has a finite
+/// ceiling no matter which module graph reaches it, and this clears that ceiling with
+/// room to spare. Doing it at the runtime rather than per call site is deliberate - a
+/// per-site fix has to be applied everywhere a parse can happen, and missing one is a
+/// latent host death.
+pub fn host_main() -> process::ExitCode {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(EVAL_STACK_SIZE)
+        .build()
+        .expect("tokio runtime");
+    // Onto a WORKER, not polled on the calling thread. `block_on` drives the future on
+    // the thread that called it - `main`, whose stack `thread_stack_size` does not
+    // govern - so the serve path would get the sizing while the one-shot CLI parsed on
+    // whatever the process was given. That gap is not theoretical: it survives in a
+    // release build and core-dumps in a debug one, because unoptimized frames are
+    // fatter, which is precisely the kind of difference that hides until it matters.
+    runtime.block_on(async { tk::spawn(serve_or_oneshot()).await.expect("host task") })
+}
+
+async fn serve_or_oneshot() -> process::ExitCode {
     let cli = HostCli::parse();
     let (config, command) = match resolve_config(cli) {
         Ok(resolved) => resolved,

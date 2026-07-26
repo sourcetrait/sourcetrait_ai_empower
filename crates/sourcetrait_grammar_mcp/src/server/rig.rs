@@ -1692,7 +1692,19 @@ fn validate_flat_file(
     let engine_state = engine.engine_state_for_file(parent);
     let mut ws = nu::StateWorkingSet::new(&engine_state);
     let _ = ws.files.push(PathBuf::from(&fname), nu::Span::unknown());
+    let files_before = ws.num_files();
     let _ = nu::parse(&mut ws, Some(&fname), wrapped.as_bytes(), false);
+    if let Some(cycle) = detect_import_cycle(&ws, files_before) {
+        result.diagnostics.push(Diagnostic::error(
+            "module::circular_import",
+            Some(Source {
+                path: Some(rel.clone()),
+                position: [0, 0],
+            }),
+            cycle,
+        ));
+        return Ok(());
+    }
     for err in &ws.parse_errors {
         let span_start = err.span().start.saturating_sub(prefix_len);
         let (line, _col) = span_to_line_col(&source, span_start);
@@ -1882,7 +1894,20 @@ fn validate_mod_nu_ast(
     let engine_state = engine.engine_state_for_file(parent);
     let mut working_set = nu::StateWorkingSet::new(&engine_state);
     let _ = working_set.files.push(PathBuf::from(fname), nu::Span::unknown());
+    let files_before = working_set.num_files();
     let outer_block = nu::parse(&mut working_set, Some(fname), wrapped.as_bytes(), false);
+
+    if let Some(cycle) = detect_import_cycle(&working_set, files_before) {
+        diagnostics.push(Diagnostic::error(
+            "module::circular_import",
+            Some(Source {
+                path: Some(rel.to_string()),
+                position: [0, 0],
+            }),
+            cycle,
+        ));
+        return;
+    }
 
     for err in &working_set.parse_errors {
         let span_start = err.span().start.saturating_sub(prefix_len);
@@ -2028,7 +2053,20 @@ fn validate_function_file_ast(
     let engine_state = engine.engine_state_for_file(parent);
     let mut working_set = nu::StateWorkingSet::new(&engine_state);
     let _ = working_set.files.push(PathBuf::from(fname), nu::Span::unknown());
+    let files_before = working_set.num_files();
     let _ = nu::parse(&mut working_set, Some(fname), wrapped.as_bytes(), false);
+
+    if let Some(cycle) = detect_import_cycle(&working_set, files_before) {
+        diagnostics.push(Diagnostic::error(
+            "module::circular_import",
+            Some(Source {
+                path: Some(rel.to_string()),
+                position: [0, 0],
+            }),
+            cycle,
+        ));
+        return None;
+    }
 
     for err in &working_set.parse_errors {
         let span_start = err.span().start.saturating_sub(prefix_len);

@@ -290,8 +290,8 @@ pub(crate) async fn dispatch_pooled(
     let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
     match timed {
         Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
-        Ok(Err(reason)) => Err(DispatchError {
-            error: Error::ThreadReturnedError { reason },
+        Ok(Err(failure)) => Err(DispatchError {
+            error: failure.into_error(),
             nonce: Some(nonce),
         }),
         Err(_) => {
@@ -380,8 +380,8 @@ pub(crate) async fn dispatch_interact(
     let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
     match timed {
         Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
-        Ok(Err(reason)) => Err(DispatchError {
-            error: Error::ThreadReturnedError { reason },
+        Ok(Err(failure)) => Err(DispatchError {
+            error: failure.into_error(),
             nonce: Some(nonce),
         }),
         Err(_) => {

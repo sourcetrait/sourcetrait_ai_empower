@@ -99,8 +99,13 @@ impl Default for TestServer {
 impl TestServer {
     pub fn new() -> Self {
         ensure_test_config();
+        // Sized like the host's own runtime (cli.rs): the body lint and the rig
+        // validator parse inline on a worker, and nushell parsing is deeply enough
+        // recursive that a pathological module graph overflows the 2 MB default and
+        // aborts - which in-process would take the TEST BINARY down, not just a host.
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
+            .thread_stack_size(EVAL_STACK_SIZE)
             .build()
             .expect("tokio runtime");
         let locks = rt.block_on(ensure_substrate()).expect("ensure_substrate");

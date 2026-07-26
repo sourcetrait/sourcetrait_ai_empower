@@ -1,22 +1,8 @@
-//! The body-facing config surface: read the settings in force, and pin one to the
-//! lifetime of a process.
-//!
-//! The record these return mirrors the TOML - the same two tables, the same key
-//! names - so one shape describes the file, the `.nutype` model beside it, and
-//! what a body sees. The argument-owned values (`--id`, `--namespace`,
-//! `--workdir`) are deliberately absent: they are not config-file settings, and a
-//! body already reads them ambiently as the `EQUIP_*` trio.
-//!
-//! Values are live rather than as-launched. The channel's spam thresholds come
-//! from the channel handle, which `config_channel` mutates, and the supervisor
-//! lines come through the pin layer, so what a body reads is what is actually in
-//! force rather than the startup seed.
+//! The body-facing config surface: read what is in force, and pin a setting.
 
 use crate::*;
 
-/// The dotted key separator, and the reason `get_config_all | get <key>` and
-/// `get_config <key>` agree: the key is a path into the record the other decl
-/// returns, not a parallel naming scheme.
+/// The dotted key separator.
 const KEY_SEP: char = '.';
 
 /// The whole config as a nu record, mirroring the TOML's two tables.
@@ -76,8 +62,7 @@ fn config_record() -> nu::Value {
     nu::Value::record(root, span)
 }
 
-/// Every dotted key the record holds, in order - the vocabulary an error message
-/// needs, derived from the record rather than restated beside it.
+/// Every dotted key the record holds, in order.
 fn config_keys() -> Vec<String> {
     let mut keys = Vec::new();
     let root = config_record();
@@ -107,14 +92,7 @@ fn lookup(key: &str) -> Option<nu::Value> {
     Some(current)
 }
 
-/// The vocabulary goes in the title, not only the label.
-///
-/// `GenericError` renders its title through Display, and that is all the eval
-/// envelope's `message` carries - a label reaches a human reading a rendered
-/// diagnostic and never reaches the agent. Listing the valid keys is the entire
-/// value of this error, so putting them in the label would have shipped an error
-/// that names a problem and withholds the answer. Caught by a test that asserted
-/// the list was present and found it stripped.
+/// The unknown-key error, listing the valid keys in its title.
 fn unknown_key(
     key: &str,
     span: nu::Span,
@@ -128,9 +106,7 @@ fn unknown_key(
     .into()
 }
 
-/// The value type `get_config` can yield. Spelled as a union rather than `any`,
-/// because the set is closed and naming it lets a caller's own annotation be
-/// strict too.
+/// The value type `get_config` can yield, as a closed union.
 fn value_type() -> nu::Type {
     nu::Type::one_of([
         nu::Type::Int,
@@ -141,10 +117,6 @@ fn value_type() -> nu::Type {
 }
 
 /// `grimm get_config_all` - every setting in force, as one record.
-///
-/// The record mirrors the TOML, so `get_config_all | get supervisor.cpu_warn_fraction`
-/// and `get_config "supervisor.cpu_warn_fraction"` are the same question asked two
-/// ways.
 #[derive(Clone)]
 pub(crate) struct GrimmGetConfigAll;
 
@@ -155,9 +127,6 @@ impl nu::Command for GrimmGetConfigAll {
 
     fn signature(&self) -> nu::Signature {
         nu::Signature::build("grimm get_config_all")
-            // An open record: the shape is documented by the `.nutype` model
-            // beside the defaults, not restated here where it would be a second
-            // place to keep in step.
             .input_output_types(vec![(nu::Type::Nothing, nu::Type::record())])
             .category(nu::Category::Custom("grimm".to_string()))
     }
@@ -209,20 +178,12 @@ impl nu::Command for GrimmGetConfig {
         _input: nu::PipelineData,
     ) -> Result<nu::PipelineData, nu::ShellError> {
         let key: String = call.req(engine_state, stack, 0)?;
-        // An unknown key is an error rather than a null, so a typo cannot read as
-        // "configured to nothing" - the two are indistinguishable at the call site
-        // and only one of them is a bug the caller wants to hear about.
         let value = lookup(&key).ok_or_else(|| unknown_key(&key, call.head))?;
         Ok(nu::PipelineData::Value(value, None))
     }
 }
 
-/// `grimm pin_config <cfg_key> <process_id> <value>` - hold a setting for as long
-/// as a process lives.
-///
-/// Only the `[supervisor]` warning lines are pinnable. `[channel]` is excluded so
-/// `config_channel` stays the sole mutator there; everything else is not a runtime
-/// value at all.
+/// `grimm pin_config` - hold a setting for as long as a process lives.
 #[derive(Clone)]
 pub(crate) struct GrimmPinConfig;
 
@@ -281,9 +242,6 @@ impl nu::Command for GrimmPinConfig {
                 call.head,
             )
         })?;
-        // The reason goes in the title, not only the label: GenericError renders
-        // its title through Display, so a bare command name there reaches the
-        // agent with the cause stripped off.
         pin(&key, pid, value).map_err(|reason| {
             nu::GenericError::new(
                 format!("grimm pin_config: {reason}"),

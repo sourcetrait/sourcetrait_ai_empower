@@ -1,25 +1,12 @@
+//! The emergency lane: classify resource trouble, log it, announce it.
 use crate::*;
 
-// The internal emergency lane (EmbedEngine Phase 5, CLASSIFY-FIRST). The
-// watchdog (server/watchdog.rs) DETECTS + CLASSIFIES resource trouble into an
-// `Emergency` and pushes it onto an internal MPSC; one `EmergencyResponder`
-// consumes. Detection is decoupled from response, and we act on internal state
-// INTERNALLY - never by relying on a transmit-out (the #35 channel is a future
-// consumer, not a dependency). The responder's ONLY action FOR NOW is to LOG
-// each Emergency to `emergency.nuonl`: no restart, no notify, no targeted
-// recovery. Those RESPONSES are deferred until every campaign phase is done, so
-// we gather data on which conditions actually fire before designing them.
-
-/// Producer end of the EmergencyChannel. Unbounded so a producer (the watchdog)
-/// never blocks / back-pressures - it must stay schedulable even under total
-/// eval saturation, and the volume is low (the watchdog emits edge-triggered).
+/// Producer end of the EmergencyChannel; unbounded so a producer never blocks.
 pub(crate) type EmergencyTx = tk::UnboundedSender<Emergency>;
-/// Consumer end, drained by the sole `EmergencyResponder`.
+/// Consumer end, drained by the sole responder.
 pub(crate) type EmergencyRx = tk::UnboundedReceiver<Emergency>;
 
-/// Copy discriminant mirror of `Emergency` (the enum-kind-mirror convention):
-/// the bare classification without the payload, for the log `kind` field and the
-/// watchdog's edge-dedup keys.
+/// Copy discriminant mirror of `Emergency`, without the payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum EmergencyKind {
     HungEngineThread,
@@ -49,14 +36,7 @@ impl EmergencyKind {
     }
 }
 
-/// An engine thread whose cancel `Signals` was triggered (timeout / kill) but
-/// which is still alive past the grace window - the accepted-residual HUNG ENGINE
-/// THREAD. It runs the nushell engine on a dedicated blocking thread that will
-/// not stop (stuck in pure-Rust where it never polls Signals), and you cannot
-/// SIGKILL a thread. `lane` is "stateless" (a pooled run/rerun/call eval,
-/// holding a concurrency permit) or "interact" (the single serial lane, the
-/// whole stateful engine deadlocked - followup #41). `hung_ms` is time since the
-/// cancel; `pool_held` / `pool_cap` snapshot the stateless-pool pressure.
+/// A cancelled engine thread still alive past the grace window.
 #[derive(Clone, Debug)]
 pub(crate) struct HungEngineThreadEmergency {
     pub nonce: String,
@@ -69,39 +49,33 @@ pub(crate) struct HungEngineThreadEmergency {
     pub pool_cap: usize,
 }
 
-/// Sustained host-process CPU over the sample window (all threads; can exceed
-/// 100 on multi-core). Ambiguous alone - a legit heavy transform looks the same -
-/// so it is DATA, not an action trigger, which is what the Warning suffix marks.
+/// Sustained host-process CPU over the sample window.
 #[derive(Clone, Debug)]
 pub(crate) struct CpuWarningEmergency {
     pub cpu_pct: f64,
     pub sample_ms: u64,
 }
 
-/// Host-process resident set size (VmRSS) above the generous threshold. Data.
+/// Host-process resident set size above the threshold.
 #[derive(Clone, Debug)]
 pub(crate) struct RamWarningEmergency {
     pub rss_kb: u64,
 }
 
-/// GPU memory in use above the threshold fraction (summed across GPUs, from
-/// nvidia-smi). Data - attribution to our eval children is a later refinement.
+/// GPU memory in use above the line, summed across cards.
 #[derive(Clone, Debug)]
 pub(crate) struct VramWarningEmergency {
     pub used_mib: u64,
     pub total_mib: u64,
 }
 
-/// The host-owned environment-wide jobs table (P0.8) above the threshold count.
-/// A body's `job spawn` persists past its eval; an unbounded accrual is the
-/// signal. Data.
+/// The environment-wide jobs table above the threshold count.
 #[derive(Clone, Debug)]
 pub(crate) struct BackgroundJobsWarningEmergency {
     pub job_count: usize,
 }
 
-/// A watched filesystem reached the warning line. Data, like the rest of the Warning
-/// family - the system supplies the actual error (ENOSPC) if it ever fills.
+/// A watched filesystem reached the warning line.
 #[derive(Clone, Debug)]
 pub(crate) struct DiskWarningEmergency {
     pub mount: String,
@@ -109,13 +83,7 @@ pub(crate) struct DiskWarningEmergency {
     pub threshold_pct: u32,
 }
 
-/// An origin crossed the SOFT send threshold on the channel. Fired ONCE per origin, so
-/// the report about spam never becomes spam itself. It names WHO and how fast, and
-/// deliberately carries NO payload example - the agent is already being spammed by that,
-/// and can investigate the cause itself.
-/// `origin`, NOT `from`. The packet envelope already carries a `from` - the sender,
-/// which for this is the HOST - so an event field of the same name would put two
-/// different meanings under one word in a single record. The offender is the ORIGIN.
+/// An origin crossed the SOFT send threshold, once per origin.
 #[derive(Clone, Debug)]
 pub(crate) struct ChannelSpamWarningEmergency {
     pub origin: String,
@@ -124,9 +92,7 @@ pub(crate) struct ChannelSpamWarningEmergency {
     pub rate: u32,
 }
 
-/// An origin crossed the HARD threshold and was STOPPED. `action` records what the host
-/// actually did about it, since the lever differs between a foreground eval and a job
-/// that outlived its own.
+/// An origin crossed the HARD threshold and was stopped.
 #[derive(Clone, Debug)]
 pub(crate) struct ChannelSpamErrorEmergency {
     pub origin: String,
@@ -136,11 +102,7 @@ pub(crate) struct ChannelSpamErrorEmergency {
     pub action: String,
 }
 
-/// The unambiguous total-failure case: something is 100% wrong and the
-/// guaranteed-correct response is an MCP restart (the restart-of-last-resort - a
-/// Critical restart is INTENDED host-teardown, the legitimate counterpart to the
-/// shadowed body-`exit`). The RESPONSE is deferred; for now Critical only logs,
-/// like every other variant.
+/// The unambiguous total-failure case; the response is an MCP restart.
 #[derive(Clone, Debug)]
 pub(crate) struct CriticalEmergency {
     pub reason: String,
@@ -148,8 +110,7 @@ pub(crate) struct CriticalEmergency {
     pub cap: usize,
 }
 
-/// A classified resource condition, produced by the watchdog and consumed by the
-/// responder. Fieldful `+Clone` with the mirrored `+Copy EmergencyKind`.
+/// A classified resource condition, produced by the watchdog.
 #[derive(Clone, Debug)]
 pub(crate) enum Emergency {
     HungEngineThread(HungEngineThreadEmergency),
@@ -179,12 +140,6 @@ impl Emergency {
     }
 
     /// The RESERVED model path this condition rides under on the channel.
-    ///
-    /// `mcp/` is a RESERVATION (the_user): every host-originated model lives beneath
-    /// it, which is what lets a model path from a FOREIGN source be checked
-    /// mechanically - anything claiming `mcp/` is not entitled to it. The reservation
-    /// is enforced today at the one place a non-host picks a model, `grimm
-    /// channel_send`, and will serve the mcp-to-mcp peer surface the same way.
     pub(crate) fn model(&self) -> &'static str {
         match self.kind() {
             EmergencyKind::HungEngineThread => "mcp/supervisor/HungEngineThread",
@@ -200,9 +155,6 @@ impl Emergency {
     }
 
     /// The variant's OWN fields, without the envelope the log adds.
-    ///
-    /// Shared by the log line and the channel packet, so the durable record and the
-    /// notification can never disagree about what a condition reported.
     fn event_record(&self) -> nu::Record {
         let span = nu::Span::unknown();
         let mut r = nu::Record::new();
@@ -258,10 +210,7 @@ impl Emergency {
         r
     }
 
-    /// Render this Emergency as a SINGLE-LINE NUON record - one `emergency.nuonl`
-    /// line. Every field is a flat scalar (int / float / string with no embedded
-    /// newlines), so the record never spans lines. `ts` is the responder's
-    /// log-write time (ms since epoch); `mcp_nom` namespaces the log per process.
+    /// Render this Emergency as a SINGLE-LINE NUON record.
     pub(crate) fn to_nuon_line(
         &self,
         ts: u64,
@@ -284,17 +233,12 @@ impl Emergency {
     }
 }
 
-/// The per-process emergency log: `<cache>/log/<mcp_nom>/emergency.nuonl`
-/// (nuonl = newline-delimited NUON records). `mcp_nom` is the per-process base62
-/// id minted at startup, so concurrent MCP hosts on one namespace never
-/// clobber each other's log.
+/// The per-process emergency log path.
 pub(crate) fn emergency_log_path(mcp_nom: &str) -> PathBuf {
     cache_base_dir().join("log").join(mcp_nom).join("emergency.nuonl")
 }
 
-/// Append one already-rendered NUON line (a trailing newline is added). Creates
-/// the parent dir on demand; open-append-close per line (low volume, robust
-/// against external truncation).
+/// Append one already-rendered NUON line, creating the parent dir on demand.
 pub(crate) fn append_line(
     path: &std::path::Path,
     line: &str,
@@ -308,18 +252,7 @@ pub(crate) fn append_line(
     Ok(())
 }
 
-/// Put one Emergency on the channel as a packet under its reserved `mcp/` model.
-///
-/// THIS IS WHY THE WARNING FAMILY EXISTS AT ALL. Those conditions are notice BEFORE
-/// the system's own error arrives, so the agent can act while it still has room - and
-/// a line in a log file nobody reads cannot deliver notice. The durable record stays
-/// the log; this is the notification.
-///
-/// Through `emit`, so it is VERIFICATION-GATED like any other telemetry: an unproven
-/// peer must not receive host state. A closed or unverified channel simply drops it,
-/// which is correct rather than an error - channels are OPTIONAL, and the log already
-/// holds the record. No rate limiting is applied or needed: the `LevelGate` upstream
-/// already bounds each condition to roughly one report per episode.
+/// Put one Emergency on the channel under its reserved `mcp/` model.
 fn announce(em: &Emergency) {
     let channel = channel_handle();
     let event = nu::Value::record(em.event_record(), nu::Span::unknown());
@@ -332,11 +265,7 @@ fn announce(em: &Emergency) {
     }
 }
 
-/// Spawn the sole EmergencyResponder: drain the channel, APPEND each Emergency as a
-/// NUON record line to `emergency.nuonl`, and ANNOUNCE it on the packet channel.
-///
-/// The log is written FIRST and unconditionally, so the durable record never depends
-/// on a channel being open. Ends when every producer drops the sender.
+/// Spawn the sole responder: log each Emergency, then announce it.
 pub(crate) fn spawn_emergency_responder(
     mut rx: EmergencyRx,
     mcp_nom: String,

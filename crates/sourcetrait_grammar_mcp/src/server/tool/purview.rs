@@ -1,9 +1,6 @@
 use crate::*;
 
 /// Success result of `purview()`.
-///
-/// One field. The caller just SET the view, so it needs telling neither what is
-/// in view nor what left - only what it can now see.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct PurviewSetEnvelope {
     /// `info()`'s `signatures` for what this call brought INTO view, or null.
@@ -13,8 +10,7 @@ pub(crate) struct PurviewSetEnvelope {
 /// Parameters for `purview()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct PurviewParams {
-    /// The purview ids to put in view, REPLACING whatever is in view now. Each
-    /// may carry the `@` alias form. An EMPTY list means `default`.
+    /// The purview ids to put in view, REPLACING the current set.
     pub purviews: Vec<String>,
 }
 
@@ -32,15 +28,11 @@ impl NuSh {
             Ok(rows) => rows,
             Err(error) => return Ok(error_to_call_result(error, None)),
         };
-        // `@fae` and `fae` name the same purview, as they do for `info()`.
         let want: Vec<String> = p
             .purviews
             .iter()
             .map(|id| purview_ref(id).unwrap_or(id).to_string())
             .collect();
-        // An unknown id is REFUSED rather than silently dropped: a typo would
-        // otherwise narrow the view to something the caller never asked for,
-        // which is indistinguishable from the purview being empty.
         for id in &want {
             if !is_nameable_purview(id, rows.as_ref()) {
                 return Ok(error_to_call_result(
@@ -55,8 +47,6 @@ impl NuSh {
         let before = resolve_patterns(&self.current_purview.ids(), rows.as_ref());
         let ids = self.current_purview.set(&want);
         let after = resolve_patterns(&ids, rows.as_ref());
-        // EXPANDED on both sides: a `@ref` to something already in view reveals
-        // nothing, and comparing raw values would claim otherwise.
         let (revealed, _hidden) = pattern_delta(
             &expand_values(&before, rows.as_ref()),
             &expand_values(&after, rows.as_ref()),

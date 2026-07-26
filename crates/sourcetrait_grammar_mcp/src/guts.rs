@@ -1,13 +1,4 @@
-//! In-process test-support harness (per the test-only-`pub` -> `crate::guts`
-//! convention). `TestServer` wraps a `NuSh` + a tokio runtime and drives the
-//! real tool handlers in-process, returning each tool's success/error envelope
-//! as a serde_json Value - the same shape the wire carries - so integration
-//! tests exercise the handlers without spawning the binary.
-//!
-//! `CONFIG` (OnceLock) + `BASE_DIRS` (LazyLock) are process-global, so every
-//! `TestServer` in a test binary shares ONE namespace under a per-binary temp XDG
-//! root. Tests use unique rig names; a test needing a pristine namespace lives
-//! in its own binary (its own process) or the system-test crate.
+//! In-process test-support harness driving the real tool handlers.
 
 use crate::*;
 
@@ -18,20 +9,6 @@ static TEST_CONFIG: Once = Once::new();
 const INPROC_PREFIX: &str = "grammar_inproc_";
 
 /// Remove the temp namespaces left by test processes that have since exited.
-///
-/// Each test BINARY gets its own `grammar_inproc_<pid>` root holding a full
-/// rigs git repo + keypair, and a test harness returns from `main` with no
-/// hook we can hang teardown on - statics never run `Drop`, and there is no
-/// atexit here. Left alone the roots accumulate one per run, forever (a real
-/// sweep found 128 of them, ~20 MB). So each run sweeps the DEAD ones on the way
-/// IN: a leftover whose pid is gone from /proc cannot be in use by anyone. That
-/// bounds the litter to at most one namespace per currently-running test binary
-/// instead of one per run ever.
-///
-/// Linux-gated like the rest of the /proc work (server/teardown.rs); elsewhere it
-/// is a no-op rather than a guess, since without a liveness check the sweep could
-/// delete a live concurrent binary's namespace. Best-effort throughout - a failed
-/// sweep must never fail a test. Pid REUSE only defers a removal by one round.
 #[cfg(target_os = "linux")]
 fn sweep_dead_test_namespaces(temp: &std::path::Path) {
     let Ok(entries) = fs::read_dir(temp) else {
@@ -55,8 +32,7 @@ fn sweep_dead_test_namespaces(temp: &std::path::Path) {
 #[cfg(not(target_os = "linux"))]
 fn sweep_dead_test_namespaces(_temp: &std::path::Path) {}
 
-/// Point the process-global XDG roots at a per-binary temp dir and seed CONFIG,
-/// once, before any `BASE_DIRS` access.
+/// Point the XDG roots at a per-binary temp dir and seed CONFIG, once.
 fn ensure_test_config() {
     TEST_CONFIG.call_once(|| {
         let temp = std::env::temp_dir();
@@ -64,16 +40,10 @@ fn ensure_test_config() {
         let root = temp.join(format!("{INPROC_PREFIX}{}", process::id()));
         let _ = fs::create_dir_all(root.join("data"));
         let _ = fs::create_dir_all(root.join("cache"));
-        // SAFETY: the Once serializes this, and it runs before the first
-        // BASE_DIRS read (BASE_DIRS is only touched inside ensure_substrate /
-        // the cache paths, all reached through a TestServer after this).
         unsafe {
             std::env::set_var("XDG_DATA_HOME", root.join("data"));
             std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
         }
-        // Built from the embedded defaults so the harness picks up every field
-        // (including [channel]) without restating them; only the id, namespace and
-        // work dir are test-specific.
         let mut config = Config::default();
         config.id = "test".to_string();
         config.namespace = "default".to_string();
@@ -82,9 +52,7 @@ fn ensure_test_config() {
     });
 }
 
-/// An in-process handle to the grammar tool surface. Each method drives the real
-/// handler and returns its envelope (the `{ result, nonce }` success shape, or
-/// the `{ error: { errors, warnings, nonce? } }` error shape) as a JSON value.
+/// An in-process handle to the grammar tool surface.
 pub struct TestServer {
     rt: tokio::runtime::Runtime,
     nush: NuSh,
@@ -99,10 +67,6 @@ impl Default for TestServer {
 impl TestServer {
     pub fn new() -> Self {
         ensure_test_config();
-        // Sized like the host's own runtime (cli.rs): the body lint and the rig
-        // validator parse inline on a worker, and nushell parsing is deeply enough
-        // recursive that a pathological module graph overflows the 2 MB default and
-        // aborts - which in-process would take the TEST BINARY down, not just a host.
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_stack_size(EVAL_STACK_SIZE)
@@ -233,9 +197,7 @@ impl TestServer {
         self.info_as(&[])
     }
 
-    /// `info()` rendered AS IF the given purview ids were in view - the subagent
-    /// blinders path. An empty slice means the CURRENT purview, and neither form
-    /// changes what actually is in view.
+    /// `info()` rendered as if the given purviews were in view.
     pub fn info_as(
         &self,
         purviews: &[&str],
@@ -289,9 +251,7 @@ impl TestServer {
         Self::envelope(self.rt.block_on(self.nush.purview(mcp::Parameters(p))))
     }
 
-    /// Where this namespace's purview table lands, for tests asserting the namespace
-    /// LAYOUT rather than the tool surface - the namespace meta dir is new with
-    /// purviews.
+    /// Where this namespace's purview table lands.
     pub fn purviews_path(&self) -> std::path::PathBuf {
         crate::purviews_path()
     }
@@ -318,12 +278,7 @@ impl TestServer {
         Self::envelope(self.rt.block_on(self.nush.kill(mcp::Parameters(p))))
     }
 
-    /// `channel_verified` is a no-return tool: the envelope is JSON null on success.
-    ///
-    /// There is deliberately no `channel_open` here. That one binds a real socket and
-    /// presents a CA-issued leaf, so an in-process test would be asserting the box's
-    /// certificate installation rather than this crate; it is exercised live on the
-    /// test channel instead.
+    /// `channel_verified` is a no-return tool; the envelope is null.
     pub fn channel_verified(&self) -> json::Value {
         Self::envelope(
             self.rt
@@ -331,8 +286,7 @@ impl TestServer {
         )
     }
 
-    /// `config_channel` is a PARTIAL update; pass `None` for anything that should not
-    /// move. Returns the policy now in force.
+    /// A PARTIAL update; pass `None` for anything that should not move.
     pub fn config_channel(
         &self,
         warn_window_secs: Option<u64>,
@@ -349,7 +303,7 @@ impl TestServer {
         Self::envelope(self.rt.block_on(self.nush.config_channel(mcp::Parameters(p))))
     }
 
-    /// `channel_close` is a no-return tool; closing an already-closed channel succeeds.
+    /// `channel_close` is a no-return tool; closing a closed channel succeeds.
     pub fn channel_close(&self) -> json::Value {
         Self::envelope(
             self.rt
@@ -357,16 +311,12 @@ impl TestServer {
         )
     }
 
-    /// The in-process rigs git repo dir (the `(test, default)`
-    /// namespace under the per-binary temp XDG data root), for tests that
-    /// inspect on-disk namespace artifacts (git-tracked paths, the canonical tree).
+    /// The in-process rigs git repo dir.
     pub fn rigs_dir(&self) -> std::path::PathBuf {
         crate::rigs_dir()
     }
 
-    /// The per-call log dir for a run-family nonce - where the eval's captured
-    /// stdout/stderr, its cached body, and the embedded API's `debug.nuonl` land.
-    /// For tests asserting on-disk call artifacts.
+    /// The per-call log dir for a run-family nonce.
     pub fn run_log_dir(&self, nonce: &str) -> std::path::PathBuf {
         crate::run_body_file(nonce)
             .parent()
@@ -374,15 +324,12 @@ impl TestServer {
             .to_path_buf()
     }
 
-    /// The canonical committed dir for a rig by its compound `author/name`
-    /// (under `rigs/rig/`), for on-disk carried-file / meta assertions.
+    /// The canonical committed dir for a rig by its compound `author/name`.
     pub fn rig_dir(&self, name: &str) -> std::path::PathBuf {
         crate::rigs_dir().join("rig").join(name)
     }
 
-    /// A rig's committed index, decoded into the JSON shape assertions are
-    /// written against. The index is NUON on disk (the house format for anything we
-    /// persist); a test checking `source_path` should not have to know that.
+    /// A rig's committed index, decoded into the JSON shape assertions use.
     pub fn rig_index(&self, name: &str) -> json::Value {
         let path = crate::server::rig::rig_meta_path(name);
         let text = fs::read_to_string(&path)
@@ -393,13 +340,7 @@ impl TestServer {
     }
 }
 
-// ---- envelope readers (shared by the in-process integration tests) ----
-
 /// Drop every config pin.
-///
-/// The pin registry is process-global, so an integration test that pins has to be
-/// able to put it back for the next test in the same binary - and unlike the
-/// namespace on disk, a pin is not isolated by using a unique name.
 pub fn clear_config_pins() {
     crate::clear_pins();
 }
@@ -440,7 +381,7 @@ pub fn has_kind(env: &json::Value, kind: &str) -> bool {
     error_kinds(env).iter().any(|k| k == kind)
 }
 
-/// Every ERROR-bucket diagnostic `message` in the envelope (warnings excluded).
+/// Every ERROR-bucket diagnostic `message` in the envelope.
 pub fn error_messages(env: &json::Value) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(arr) = env
@@ -457,18 +398,12 @@ pub fn error_messages(env: &json::Value) -> Vec<String> {
     out
 }
 
-/// The whole error object rendered to a string (for assertion messages).
+/// The whole error object rendered to a string.
 pub fn error_text(env: &json::Value) -> String {
     env.get("error").map(|e| e.to_string()).unwrap_or_default()
 }
 
-/// One rig's slice of an `info()` signature block - its `<leaf>:` line plus
-/// everything indented beneath it.
-///
-/// The in-process namespace is shared across a test BINARY, so the block carries
-/// every rig that binary has created. A test asserting on its own rig
-/// must slice first: a bare `contains` check against the whole block can be
-/// satisfied - or falsified - by an unrelated rig another test committed.
+/// One rig's slice of an `info()` signature block.
 pub fn rig_block(
     signatures: &str,
     leaf: &str,
@@ -482,8 +417,6 @@ pub fn rig_block(
             }
             continue;
         }
-        // Depth 0 is an author and depth 1 the next rig; either ends this
-        // rig's own subtree.
         let indent = line.len() - line.trim_start_matches(' ').len();
         if indent <= 1 {
             break;
@@ -496,8 +429,6 @@ pub fn rig_block(
     );
     format!("{}\n", out.join("\n"))
 }
-
-// ---- source-tree helpers (small inline trees; larger inputs use fixtures) ----
 
 pub fn write_source(dir: &std::path::Path, rel: &str, contents: &str) {
     let target = dir.join(rel);
@@ -519,8 +450,6 @@ pub fn valid_function_source(args_schema: &str, result_schema: &str, body: &str)
     )
 }
 
-// ---- lint + template drivers (for the in-process lint / template integration tests) ----
-
 fn to_obj(v: json::Value) -> mcp::JsonObject {
     match v {
         json::Value::Object(m) => m,
@@ -529,11 +458,7 @@ fn to_obj(v: json::Value) -> mcp::JsonObject {
     }
 }
 
-/// Lint an agent body with the given converted args positional type (as run() /
-/// interact() do), returning each Diagnostic as its wire JSON
-/// (`{kind, source: {path, position}, message}`). Builds a full-shell ParseEngine
-/// per call (the plugin-registry read + heavy engine build is why the lint tests
-/// are integration, not unit).
+/// Lint an agent body, returning each Diagnostic as its wire JSON.
 pub fn lint_body(args_type: &str, body: &str) -> Vec<json::Value> {
     let engine = ParseEngine::new_full();
     crate::lint_body(&engine, args_type, body)
@@ -542,17 +467,7 @@ pub fn lint_body(args_type: &str, body: &str) -> Vec<json::Value> {
         .collect()
 }
 
-/// Whether two `current()` handles off ONE `LintEngine` are the same instance.
-///
-/// The property that keeps the validator refresh cheap: rebuild only when the
-/// plugin registry has actually moved, never per call. A regression that rebuilt
-/// every time would still behave correctly and would still pass every
-/// behavioural test, while quietly paying a full command-context build on each
-/// lint and each commit - so identity is the only thing that catches it.
-///
-/// The other direction - that a CHANGED registry does rebuild - is proven on the
-/// live channel rather than here, because faking it means writing to the
-/// user-global `plugin.msgpackz` that every process on the box shares.
+/// Are two `current()` handles off ONE `LintEngine` the same instance?
 pub fn lint_engine_reuses_until_the_registry_moves() -> bool {
     let engine = LintEngine::new();
     let first = engine.current();
@@ -560,8 +475,7 @@ pub fn lint_engine_reuses_until_the_registry_moves() -> bool {
     Arc::ptr_eq(&first, &second)
 }
 
-/// True if `src` parses clean (no parse errors) on a full-shell ParseEngine - the
-/// check the template tests apply to a rendered run/interact source string.
+/// True if `src` parses clean on a full-shell ParseEngine.
 pub fn parses_clean(src: &str) -> bool {
     let engine = ParseEngine::new_full();
     let mut ws = nu::StateWorkingSet::new(engine.engine_state());
@@ -569,8 +483,7 @@ pub fn parses_clean(src: &str) -> bool {
     ws.parse_errors.is_empty()
 }
 
-/// The synthesized run() source (server/template.rs) for the given converted
-/// positional types + args JSON.
+/// The synthesized run() source for these positional types and args.
 pub fn build_run_source(
     args_type: &str,
     result_type: &str,
@@ -581,7 +494,7 @@ pub fn build_run_source(
     crate::build_run_source(args_type, result_type, &to_obj(args), body, nonce)
 }
 
-/// The synthesized call() source (the aliased, prefixed overlay of the target).
+/// The synthesized call() source.
 pub fn build_call_source(
     rig: &str,
     module_path: &str,
@@ -592,7 +505,7 @@ pub fn build_call_source(
     crate::build_call_source(rig, module_path, name, &to_obj(args), nonce)
 }
 
-/// The synthesized interact() source (the `def --env` subexpression).
+/// The synthesized interact() source.
 pub fn build_interact_source(
     args_type: &str,
     result_type: &str,

@@ -732,13 +732,6 @@ fn render_nu_result(r: &NuResultTypedef) -> std::string::String {
 }
 
 
-// The SIGNATURE renderers - the compact form the eyesig block prints. A parallel
-// pair rather than a flag threaded through the pair above, so each stays readable
-// on its own. Two differences from the full spelling, both only at the TOP level:
-// the `record<...>` wrapper collapses to `<...>`, and a void renders `<>` rather
-// than `<nothing>`. Nested types keep their full spelling; the separators lose
-// their spaces throughout.
-
 fn render_signature_typedef(t: &NuTypedef) -> std::string::String {
     match t {
         NuTypedef::Scalar(s) => s.name().to_string(),

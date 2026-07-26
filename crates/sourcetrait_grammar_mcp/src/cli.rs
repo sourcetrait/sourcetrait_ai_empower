@@ -1,84 +1,47 @@
 use crate::*;
 
-/// What: the host binary's CLI surface -- the `--id` / `--namespace`,
-/// the agent work dir (`--workdir`), the
-/// operator tool-deny list (`--deny`), and an optional `cli` subcommand
-/// (the one-shot tool surface). A bare invocation serves MCP over stdio,
-/// so `.mcp.json` entries stay plain commands plus args.
-///
-/// Why: one binary, variant selected at runtime by trusted operator
-/// config. `id` / `namespace` are NOT ident-validated here (a bad value
-/// errors naturally downstream); `--workdir` is tilde-expanded but not
-/// existence-checked (same trust); `--deny` IS validated (fail-fast on an
-/// unknown tool name -- a typo silently denying nothing would defeat the
-/// operator's intent).
-///
-/// Where: parsed by `host_main` from `src/main.rs`.
+/// The host binary's CLI surface; a bare invocation serves MCP over stdio.
 #[derive(clap::Parser)]
 #[command(version, about = "Nushell engine MCP server")]
 pub(crate) struct HostCli {
-    /// Path to a grammar_mcp.toml, carrying the settings that are NOT
-    /// arguments (currently the [channel] table). An absent or malformed
-    /// path is a hard error.
+    /// Path to a grammar_mcp.toml carrying the non-argument settings.
     #[arg(long)]
     pub config: Option<String>,
-    /// Agent identity owning the state namespace (trusted operator config).
-    /// Defaults to the invoking user's name.
+    /// Agent identity owning the state namespace; defaults to the invoking user.
     #[arg(long, default_value_t = default_id())]
     pub id: String,
-    /// State namespace within the id's identity. Defaults to `default`, or to
-    /// `test` under --test.
+    /// State namespace within the id; defaults to `default`, or `test` under --test.
     #[arg(long)]
     pub namespace: Option<String>,
-    /// Run as the test channel: default the namespace to `test`, and keep the
-    /// resource watchdog online only while the packet channel is.
+    /// Test channel: the namespace defaults to test; the watchdog follows the channel.
     #[arg(long)]
     pub test: bool,
-    /// Agent working directory, exported to every eval body as
-    /// $env.EQUIP_WORK_DIR. Defaults to <home>/proj/equip/<id>.
+    /// Agent working directory, exported to bodies as $env.EQUIP_WORK_DIR.
     #[arg(long)]
     pub workdir: Option<String>,
-    /// Comma-separated tools to deny: run,rerun,interact,call,learn,new,
-    /// commit,rig,channel_open,channel_verified,channel_close,config_channel,
-    /// purviews,purview_configure,purview_extend,purview.
+    /// Comma-separated tools to withhold from the registered surface.
     #[arg(long, value_delimiter = ',', value_parser = parse_deniable)]
     pub deny: Vec<DeniableTool>,
     #[command(subcommand)]
     pub command: Option<HostCommand>,
 }
 
-/// What: the host's subcommands. Absent = serve MCP over stdio.
+/// The host's subcommands; absent means serve MCP over stdio.
 #[derive(clap::Subcommand)]
 pub(crate) enum HostCommand {
-    /// One-shot CLI over the tool surface (prints the tool envelope as
-    /// bare compact JSON, one line, machine format; exit 1 on an error
-    /// envelope).
+    /// One-shot CLI over the tool surface; prints one line of bare compact JSON.
     Cli {
         #[command(subcommand)]
         tool: CliTool,
     },
 }
 
-/// What: one-shot mirrors of the 12 MCP tools. Record-shaped inputs
-/// arrive as single-quoted NUON strings (e.g. '{x: 5}'); an omitted args
-/// value defaults to the empty record. Output is bare compact JSON --
-/// the cli's consumer is a wrapper (e.g. a nu-native front that takes
-/// real records and serializes at this argv boundary), never a human
-/// eye.
-///
-/// Why: gives the operator the identical tool surface with no agent and
-/// no MCP client -- rig authoring (new/commit/rig), consumption
-/// (call/inspect/info), and eval (run) -- through whatever front wraps
-/// this binary. Deny does not apply here (it gates agent registration,
-/// not the operator).
-///
-/// Where: dispatched by `server::oneshot::run_oneshot`.
+/// One-shot mirrors of the MCP tools, for an operator with no agent.
 #[derive(clap::Subcommand)]
 pub(crate) enum CliTool {
     /// Versions, plugins, and rigs summary.
     Info,
-    /// Documentation of one namepath (rig,
-    /// rig:module/path, or rig:module/path:function).
+    /// Documentation of one namepath, at any arity.
     Inspect { namepath: String },
     /// Invoke a committed rig function.
     Call {
@@ -107,8 +70,7 @@ pub(crate) enum CliTool {
         #[arg(long)]
         timeout_ms: Option<u64>,
     },
-    /// Evaluate a body on a stateful thread. Single-shot: the session
-    /// state dies with this process.
+    /// Evaluate a body on a stateful thread; single-shot, state dies with it.
     Interact {
         /// The nushell source-code body.
         body: String,
@@ -135,15 +97,13 @@ pub(crate) enum CliTool {
         #[arg(long)]
         timeout_ms: Option<u64>,
     },
-    /// List in-flight usage. Process-scoped: a one-shot invocation
-    /// shows none.
+    /// List in-flight usage; a one-shot invocation shows none.
     Processes,
     /// Cancel an in-flight usage by nonce. Process-scoped.
     Kill { nonce: String },
     /// Generate the /nu skill at <harness_dir>/skills/nu/SKILL.md.
     Learn { harness_dir: String },
-    /// Scaffold module / function skeletons by namepath into
-    /// established rigs.
+    /// Scaffold module / function skeletons by namepath into established rigs.
     New { namepaths: Vec<String> },
     /// Validate + promote a rig's source tree into the namespace.
     Commit { rig: String },
@@ -153,15 +113,12 @@ pub(crate) enum CliTool {
         action: RigCliAction,
         /// The compound rig name: <author>/<name>.
         rig: String,
-        /// The rig's source directory (the "are you sure"
-        /// cross-check).
+        /// The rig's source directory (the "are you sure" cross-check).
         source_dir: String,
     },
 }
 
-/// What: the `cli rig` action, as a clap ValueEnum so an unknown
-/// action fails at parse instead of round-tripping to the tool's
-/// invalid-action error.
+/// The `cli rig` action; an unknown one fails at parse.
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 pub(crate) enum RigCliAction {
     New,
@@ -182,11 +139,6 @@ impl RigCliAction {
 }
 
 /// `--test` supplies a default namespace, never an override.
-///
-/// Resolved here, at the argument boundary, so `test` is an ordinary namespace
-/// string from that point on and nothing downstream has to re-derive it. That is
-/// what keeps the flag from becoming a mode: the namespace half ends at this
-/// function, leaving `Config.test` to mean only the watchdog half.
 fn resolve_namespace(
     namespace: Option<String>,
     test: bool,
@@ -200,8 +152,7 @@ fn resolve_namespace(
     })
 }
 
-/// Every path out of an argument is expanded here, the same way config paths are, so a
-/// `~` or `$VAR` means the same thing whichever surface it arrived on.
+/// Expand a work-dir argument the same way a config path is expanded.
 fn resolve_work_dir(
     raw: Option<&str>,
     id: &str,
@@ -222,8 +173,7 @@ fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
     })
 }
 
-/// The argument-owned values plus whatever the file contributes. The two surfaces are
-/// disjoint, so there is no precedence to resolve between them.
+/// The argument-owned values plus whatever the file contributes.
 fn resolve_config(cli: HostCli) -> Result<(Config, Option<HostCommand>), String> {
     let file = match &cli.config {
         Some(raw) => Config::read_toml(&expand_path(raw)?)?,
@@ -243,34 +193,12 @@ fn resolve_config(cli: HostCli) -> Result<(Config, Option<HostCommand>), String>
 }
 
 /// Build the runtime, then run the host on it.
-///
-/// Constructed by hand rather than through `#[tokio::main]` for one reason:
-/// `thread_stack_size`. Nushell PARSING is deeply recursive, and two parses run inline
-/// on a runtime worker rather than on the eval thread - the body lint and the rig
-/// validator. A pathological module graph - a circular import, whose resolution recurses
-/// until the accumulated path stops resolving - overflows the 2 MB worker default and
-/// ABORTS the process. A stack overflow is a fatal runtime error rather than a panic, so
-/// `catch_unwind` cannot save it and the host dies leaving no diagnostic at all, which
-/// makes it read as infrastructure rather than as code.
-///
-/// Sizing every worker like the eval thread removes the CLASS rather than one instance:
-/// the recursion is bounded by the filesystem's path limit, so its depth has a finite
-/// ceiling no matter which module graph reaches it, and this clears that ceiling with
-/// room to spare. Doing it at the runtime rather than per call site is deliberate - a
-/// per-site fix has to be applied everywhere a parse can happen, and missing one is a
-/// latent host death.
 pub fn host_main() -> process::ExitCode {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(EVAL_STACK_SIZE)
         .build()
         .expect("tokio runtime");
-    // Onto a WORKER, not polled on the calling thread. `block_on` drives the future on
-    // the thread that called it - `main`, whose stack `thread_stack_size` does not
-    // govern - so the serve path would get the sizing while the one-shot CLI parsed on
-    // whatever the process was given. That gap is not theoretical: it survives in a
-    // release build and core-dumps in a debug one, because unoptimized frames are
-    // fatter, which is precisely the kind of difference that hides until it matters.
     runtime.block_on(async { tk::spawn(serve_or_oneshot()).await.expect("host task") })
 }
 
@@ -280,7 +208,6 @@ async fn serve_or_oneshot() -> process::ExitCode {
         Ok(resolved) => resolved,
         Err(reason) => {
             eprintln!("{reason}");
-            // 2 is the operator-input exit code the one-shot CLI already uses.
             return process::ExitCode::from(2);
         }
     };

@@ -1,14 +1,7 @@
-// EmbedEngine: in-process nushell evaluation - the host-side replacement for the
-// deleted worker's `WarmBase` + `eval_source`. The stateless base is built once
-// and held by the `Executor` (server/executor.rs), which hands each eval a
-// pre-built clone onto a dedicated 64 MB blocking thread; the stateful interact
-// engine is a single long-lived thread. Cancellation rides a per-eval `Signals`
-// flag that server/tool/common.rs registers in the resource registry.
+//! In-process nushell evaluation: the host-side eval engine.
 use crate::*;
 
-/// Flips a liveness flag true on drop, so the watchdog can tell a finished eval
-/// (normal return OR caught panic - both drop it) from a HUNG thread (stuck where
-/// it never returns, so this never drops). server/watchdog.rs reads the flag.
+/// Flips a liveness flag on drop, so a hung thread is distinguishable.
 struct FinishGuard(Arc<AtomicBool>);
 
 impl Drop for FinishGuard {
@@ -17,12 +10,7 @@ impl Drop for FinishGuard {
     }
 }
 
-/// Why an eval failed, carrying the one distinction the wire needs to keep.
-///
-/// Everything an eval reports is prose bound for `thread::returned_error`, with one
-/// exception: a module-resolution cycle is a CONDITION an agent can route on, so it
-/// reaches the envelope as its own kind rather than as a string that happens to read a
-/// certain way. `From<String>` keeps every ordinary `?` site untouched.
+/// Why an eval failed, keeping the one distinction the wire needs.
 pub(crate) enum EvalFailure {
     Reported(String),
     CircularImport(String),
@@ -43,22 +31,12 @@ impl EvalFailure {
     }
 }
 
-/// Build an engine base, mirroring the worker's `WarmBase::new` minus the
-/// process-boundary concerns. `base_context` (shell + extra, is_interactive=false,
-/// is_mcp=true) + plugin decls + `$nu.*` + seeded env + the parse-time
-/// `$NU_LIB_DIRS` const. The stateful (interact) base additionally layers the
-/// `plugin add/rm/list` admin family. `setsid()` is dropped (the host is a child
-/// of the MCP client and cannot detach its own tty); the TLS crypto provider is
-/// installed once at host startup, not here.
+/// Build an engine base for the given mode.
 pub(crate) fn build_base(mode: Mode) -> nu::EngineState {
     let mut engine_state = base_context();
     if matches!(mode, Mode::Stateful) {
         engine_state = nu::add_plugin_command_context(engine_state);
     }
-    // Principle 1 (intercept host-death): shadow exit/exec with erroring decls so
-    // an in-process body cannot terminate the shared host - there is no worker
-    // process boundary to absorb it. Must follow the shell context that defines
-    // the real ones (last-registered decl wins name resolution).
     shadow_host_fatal_decls(&mut engine_state);
     load_plugin_decls(&mut engine_state);
     engine_state.generate_nu_constant();
@@ -69,9 +47,7 @@ pub(crate) fn build_base(mode: Mode) -> nu::EngineState {
     engine_state
 }
 
-/// Seed the process env into `$env` (externals need `$env.PATH`; bodies read the
-/// ambient EQUIP_* trio). PWD is set to the process cwd; NU_LIB_DIRS is excluded
-/// so it cannot override the parse-time const set below.
+/// Seed the process env into `$env`, plus the ambient EQUIP trio.
 fn seed_env(engine_state: &mut nu::EngineState) {
     if let Ok(cwd) = std::env::current_dir() {
         engine_state.add_env_var(
@@ -85,9 +61,6 @@ fn seed_env(engine_state: &mut nu::EngineState) {
         }
         engine_state.add_env_var(key, nu::Value::string(val, nu::Span::unknown()));
     }
-    // The EQUIP_* trio a body reads ambiently (who-am-I / where-is-my-work). The
-    // worker era carried these as the worker's spawn env; in-process there is no
-    // worker, so set them directly from CONFIG - they are not in the host's env.
     let cfg = config();
     let span = nu::Span::unknown();
     engine_state.add_env_var("EQUIP_ID".to_string(), nu::Value::string(cfg.id.clone(), span));
@@ -101,27 +74,12 @@ fn seed_env(engine_state: &mut nu::EngineState) {
     );
 }
 
-/// Register the canonical rigs dir as the parse-time `$NU_LIB_DIRS` const, so
-/// a body's `use rig/<author>/<rig>` resolves against the signed repository. The
-/// host knows `rigs_dir()` directly (no worker spawn-env handoff).
+/// Register the canonical rigs dir as the parse-time `$NU_LIB_DIRS` const.
 fn seed_lib_dirs(engine_state: &mut nu::EngineState) {
     set_lib_dirs_const(engine_state, &[rigs_dir()]);
 }
 
 /// `EngineState::merge_env` minus the process chdir.
-///
-/// nushell's own `merge_env` ends by calling `std::env::set_current_dir` with the
-/// stack's `$env.PWD` (nu-protocol engine_state.rs, 0.114.1 rev 0df4ca2) - correct
-/// for a REPL that owns its process, wrong here. Eval is IN-PROCESS, so that call
-/// moved the whole host's working directory whenever an interact body ran `cd`, and
-/// it stayed moved for the process lifetime; the worker era confined it to the
-/// interact SUBPROCESS. PWD is engine state instead - nothing of ours reads the
-/// process cwd, and a run() body's externals take their cwd from `$env.PWD`.
-///
-/// The env-overlay drain mirrors nushell's exactly. The config half goes through
-/// the public `set_config`, which carries the same plugin-GC propagation `merge_env`
-/// does inline (and fires it only when the GC config actually changed). Dropping the
-/// chdir also drops merge_env's only error path, so this is infallible.
 fn merge_env_no_chdir(
     engine_state: &mut nu::EngineState,
     stack: &mut nu::Stack,
@@ -142,13 +100,7 @@ fn merge_env_no_chdir(
     }
 }
 
-/// Evaluate a synthesized source string against `engine_state`, redirecting the
-/// eval's external stdout/stderr into `<log_dir>/{stdout,stderr}` (fd 1 is the
-/// JSON-RPC channel). Returns the body's terminal value as a friendly JSON value.
-/// The caller supplies a fresh clone for a stateless eval, or the persistent
-/// engine for interact; `persist` merges the body's `$env`/cd back (interact) and
-/// strips the per-call `$env.NONCE`. Port of the worker's `eval_source`, minus the
-/// IPC/msgpack hop.
+/// Evaluate a synthesized source string against `engine_state`.
 pub(crate) fn eval_in_process(
     engine_state: &mut nu::EngineState,
     log_dir: &std::path::Path,
@@ -164,23 +116,12 @@ pub(crate) fn eval_in_process(
         .stdout_file(stdout_file)
         .stderr_file(stderr_file)
         .capture_all();
-    // `cancel` becomes this eval's interrupt Signals: kill(nonce) / a timeout
-    // flip it and nushell bails at its next check point (server/tool/common.rs).
     engine_state.set_signals(nu::Signals::new(cancel));
     let mut working_set = nu::StateWorkingSet::new(engine_state);
-    // The embedded API (`grimm dbg` / `grimm channel_send`), registered per eval so
-    // each decl carries THIS call's log dir. Must precede the parse - command names
-    // resolve at parse time - and rides out on the same render/merge_delta below.
-    // Named `grimm`, not after any transport: the same API is meant to survive into
-    // an equip-daemon that speaks something other than MCP.
     register_nuapi(&mut working_set, log_dir);
-    // Taken BEFORE the parse: the cycle check counts only what THIS parse registered,
-    // which is what keeps the interact lane's accumulating working set out of it.
     let files_before = working_set.num_files();
     let block = nu::parse(&mut working_set, None, source.as_bytes(), false);
     if !working_set.parse_errors.is_empty() {
-        // Checked first, because a resolution cycle's own parse errors are unstable in
-        // both variant and payload, and useless in every form (server/cycle.rs).
         if let Some(files) = detect_import_cycle(&working_set, files_before) {
             return Err(EvalFailure::CircularImport(files));
         }
@@ -222,24 +163,10 @@ pub(crate) fn eval_in_process(
     json::to_value(&json_value).map_err(|e| format!("json value: {e}").into())
 }
 
-/// Generous per-eval stack. P0.7: nu def-recursion is guarded (recursion_limit),
-/// so the only native overflow is pathological parser nesting (~1000-deep clears
-/// at 8 MB, ~10000-deep at 64 MB). 64 MB clears any realistic body; the residual
-/// (deeper nesting) aborts the whole host (accepted, the locked contract).
+/// Generous per-eval stack; the parser is what needs it.
 pub(crate) const EVAL_STACK_SIZE: usize = 64 * 1024 * 1024;
 
-/// Run one stateless eval on a dedicated, generously-stacked thread (nu eval is
-/// synchronous blocking Rust; the `engine` clone drops when it returns,
-/// reclaiming its memory), bridging the result to async via a oneshot. A panic is
-/// caught. The caller (the `Executor`) hands a pre-built clone that already
-/// carries the host-owned environment-wide `env_jobs` (P0.8), so a body's
-/// `job spawn` persists + is visible/killable across evals.
-///
-/// Cancellation rides `cancel`: it becomes this eval's `Signals`, so kill(nonce)
-/// / a timeout trigger it and the eval bails at nushell's next check point,
-/// dropping its clone + releasing the permit. A HUNG THREAD (a pure-Rust hot loop
-/// that never polls Signals) cannot be reached - it runs to its natural end holding
-/// the permit (the accepted residual); external children are reaped separately.
+/// Run one stateless eval on a dedicated, generously-stacked thread.
 pub(crate) async fn eval_stateless(
     mut engine: nu::EngineState,
     cancel: Arc<AtomicBool>,
@@ -253,13 +180,7 @@ pub(crate) async fn eval_stateless(
         .stack_size(EVAL_STACK_SIZE)
         .name("nu-eval".to_string())
         .spawn(move || {
-            // The permit rides in the thread: a hung (uncancellable) eval keeps
-            // its bounded slot occupied, staying visible + bounded rather than
-            // leaking a thread while freeing the slot for another hang.
             let _permit = permit;
-            // Liveness for the watchdog: flips true when this closure ends (normal
-            // OR caught panic); a hung thread never reaches the end, so it stays
-            // false (server/watchdog.rs).
             let _finish = FinishGuard(finished);
             let outcome = catch_unwind(AssertUnwindSafe(|| {
                 eval_in_process(&mut engine, &log_dir, &source, cancel, false)
@@ -279,12 +200,7 @@ pub(crate) async fn eval_stateless(
     }
 }
 
-/// The persistent stateful interact engine: a dedicated long-lived thread owning
-/// one `EngineState` (build_base Stateful, with the plugin-admin family), fed eval
-/// requests over a channel and processing them serially. Replaces the stateful
-/// worker PROCESS - env/cd persist across calls via merge_env_no_chdir; the thread carries
-/// the same generous stack as the stateless executor (P0.7). A caught eval panic
-/// is reported and the loop continues (Phase 4 adds engine rebuild-on-panic/poison).
+/// The persistent stateful interact engine: one long-lived serial thread.
 #[derive(Clone)]
 pub(crate) struct InteractEngine {
     tx: tk::UnboundedSender<InteractRequest>,
@@ -300,13 +216,9 @@ struct InteractRequest {
 }
 
 impl InteractEngine {
-    /// Spawn the interact engine thread, injecting the host-owned environment-wide
-    /// jobs table into its persistent engine (P0.8: run() + interact share one
-    /// `env_jobs`, so a bg `job spawn` is visible/killable across both).
+    /// Spawn the interact engine thread with the host-owned jobs table.
     pub(crate) fn spawn(env_jobs: Arc<std::sync::Mutex<nu::Jobs>>) -> Self {
         let (tx, mut rx) = tk::unbounded_channel::<InteractRequest>();
-        // If the thread fails to spawn (effectively impossible), `rx` drops with the
-        // closure and every eval() surfaces the closed channel as an error.
         let _ = std::thread::Builder::new()
             .stack_size(EVAL_STACK_SIZE)
             .name("nu-interact".to_string())
@@ -314,13 +226,7 @@ impl InteractEngine {
                 let mut engine = build_base(Mode::Stateful);
                 engine.jobs = env_jobs.clone();
                 while let Some(req) = rx.blocking_recv() {
-                    // Liveness for the watchdog: drops at the END of this iteration
-                    // (normal OR caught panic), flipping `finished` true; a hung
-                    // thread never ends the iteration, so it stays false (followup
-                    // #41, server/watchdog.rs).
                     let _finish = FinishGuard(req.finished.clone());
-                    // Track this eval's external children (server/teardown.rs) so a
-                    // cancel/timeout can reap them; overwritten fresh each eval.
                     engine.current_job.background_thread_job = Some(req.tracker.clone());
                     let outcome = catch_unwind(AssertUnwindSafe(|| {
                         eval_in_process(&mut engine, &req.log_dir, &req.source, req.cancel.clone(), true)
@@ -328,11 +234,6 @@ impl InteractEngine {
                     let result = match outcome {
                         Ok(r) => r,
                         Err(_) => {
-                            // Reset-on-panic: a caught panic may have poisoned the
-                            // shared env_jobs lock or left the persistent engine
-                            // inconsistent. Reset the jobs table past any poison and
-                            // rebuild the interact engine fresh - session env/cd/defs
-                            // are lost, but the host + the lane survive.
                             if env_jobs.is_poisoned() {
                                 *env_jobs.lock().unwrap_or_else(|e| e.into_inner()) =
                                     nu::Jobs::default();
@@ -351,9 +252,7 @@ impl InteractEngine {
         Self { tx }
     }
 
-    /// Submit one interact eval to the engine thread and await its result. The
-    /// thread serializes calls, so the persistent session state stays consistent
-    /// without holding a lock across the eval.
+    /// Submit one interact eval to the engine thread and await its result.
     pub(crate) async fn eval(
         &self,
         log_dir: std::path::PathBuf,

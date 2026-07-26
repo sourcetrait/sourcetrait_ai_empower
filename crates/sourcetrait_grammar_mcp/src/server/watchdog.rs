@@ -1,20 +1,7 @@
+//! The watchdog: sample the host, classify trouble, emit it edge-triggered.
 use crate::*;
 
-// The watchdog (EmbedEngine Phase 5): a background tokio task sampling the
-// resource registry + the host, CLASSIFYING trouble into `Emergency`s pushed
-// onto the EmergencyChannel (server/emergency.rs). It runs as a tokio task, and
-// eval runs on dedicated blocking threads OFF the runtime, so the watchdog stays
-// schedulable even under TOTAL eval saturation - the emergency path can't be
-// hung by what it reports.
-//
-// CLASSIFY-FIRST: it never kills or recovers (a legit heavy transform looks
-// identical to a runaway - the false-positive to avoid). Conditions are
-// edge-triggered (emitted once when they arise, not per sample) so the log
-// captures distinct events. Thresholds are conservative and are the tuning
-// surface as `emergency.nuonl` data accrues.
-
-/// Which eval substrate a hung engine thread belongs to. Stateless threads hold
-/// a pooled permit; the interact thread is the single serial lane.
+/// Which eval substrate a hung engine thread belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Lane {
     Stateless,
@@ -30,12 +17,7 @@ impl Lane {
     }
 }
 
-/// A cancelled engine thread the watchdog watches for a hang. Registered when a
-/// timeout / kill triggers cancel on a running eval (server/tool/common.rs,
-/// server/tool/kill.rs). The eval thread flips `finished` on exit via a Drop
-/// guard (a caught panic still exits, so it flips; only a thread stuck where it
-/// never returns leaves it false). The watchdog prunes finished entries and
-/// CONFIRMS the rest as hung once they outlive the grace window.
+/// A cancelled engine thread the watchdog watches for a hang.
 #[derive(Clone)]
 pub(crate) struct HungWatch {
     pub nonce: String,
@@ -49,9 +31,7 @@ pub(crate) struct HungWatch {
 /// The cancelled-thread registry the watchdog scans for hangs. Keyed by nonce.
 pub(crate) type HungRegistry = Arc<std::sync::Mutex<HashMap<String, HungWatch>>>;
 
-/// Record a cancelled-but-maybe-alive engine thread for the watchdog. Idempotent
-/// per nonce (a kill then the later timeout both fire for one eval; the first
-/// stamp wins). Poison-tolerant (never `expect`).
+/// Record a cancelled-but-maybe-alive engine thread for the watchdog.
 pub(crate) fn register_hung(
     registry: &HungRegistry,
     watch: HungWatch,
@@ -60,31 +40,14 @@ pub(crate) fn register_hung(
     map.entry(watch.nonce.clone()).or_insert(watch);
 }
 
-// --- tuning surface (conservative; classify-first data-gather) ---
-
 /// How often the watchdog samples.
 const SAMPLE_INTERVAL: tk::TkDuration = tk::TkDuration::from_secs(2);
-/// A cancelled thread still alive this long past its cancel is CONFIRMED hung.
+/// A cancelled thread still alive this long past its cancel is hung.
 const HUNG_GRACE_MS: u64 = 5_000;
-// RESOURCE LEVELS ARE THE AGENT'S CALL, NOT THE HOST'S (the_user). Heavy load is
-// something the agent decides how to react to, and it needs ONE warning over a long
-// period to make that decision - not a stream of them. So every level below fires at
-// most once per episode, only after HOLDING for a full minute, and re-arms only after
-// recovering for a full minute past a LOWER line. The dead band between the two is what
-// stops a value hovering at the threshold from flapping.
 
-/// How long a level must HOLD before it is worth telling the agent about. A momentary
-/// excursion is not an event.
+/// How long a level must HOLD before it is worth telling the agent about.
 const LEVEL_SUSTAIN: tk::TkDuration = tk::TkDuration::from_secs(60);
-/// The floor between two warnings about the SAME condition (the_user: 10 minutes is the
-/// MINIMUM, dozens of minutes the intent). The agent needs one signal to decide on, and
-/// repeating it while the condition persists is nagging rather than information.
-///
-/// 30 minutes because an INFERENCE PROJECT RUNS 30-60 MINUTES and holds resources high
-/// for all of it - that is NORMAL, not a fault. At the 10-minute floor such a run would
-/// warn six times about a condition the agent already knows about and chose; at 30 it
-/// warns about twice, which is enough to notice a genuinely sustained level without
-/// talking over the work.
+/// The floor between two warnings about the SAME condition.
 const LEVEL_REWARN: tk::TkDuration = tk::TkDuration::from_secs(30 * 60);
 
 /// Environment-wide background job count.
@@ -93,9 +56,6 @@ const JOBS_THRESHOLD: f64 = 32.0;
 const VRAM_SAMPLE_EVERY: u64 = 8;
 
 /// Total system RAM in kB, read once from /proc/meminfo.
-///
-/// The RAM warning is a FRACTION OF THE MACHINE rather than an absolute figure, so it
-/// means the same thing on a box with different memory instead of silently ageing.
 #[cfg(target_os = "linux")]
 fn total_ram_kb() -> Option<f64> {
     static TOTAL: OnceLock<Option<u64>> = OnceLock::new();
@@ -121,13 +81,10 @@ pub(crate) fn parse_mem_total_kb(meminfo: &str) -> Option<u64> {
     None
 }
 
-/// `df` is SLOW, so it is sampled rarely - five minutes rather than the two-second tick.
+/// `df` is SLOW, so it is sampled rarely.
 const DISK_SAMPLE_EVERY: u64 = 150;
 
 /// Parse `df -P` output into `(mount, used_pct)` rows.
-///
-/// The mount point is everything after the fifth column, since a mount path may contain
-/// spaces while the five numeric-ish columns before it may not.
 pub(crate) fn parse_df(output: &str) -> Vec<(String, u32)> {
     let mut rows = Vec::new();
     for line in output.lines().skip(1) {
@@ -144,12 +101,6 @@ pub(crate) fn parse_df(output: &str) -> Vec<(String, u32)> {
 }
 
 /// Which filesystems we watch, and their gates.
-///
-/// THE BASELINE DECIDES WHAT WE WATCH (the_user). A filesystem already at or above the
-/// line when the host starts is a PRE-EXISTING CONDITION, not something to report: this
-/// box has a 4 KiB `/run/nvidia-ctk-hook…` pseudo-mount sitting at 100% by design, and a
-/// naive threshold rule would warn about it forever. Only those below the line at
-/// startup are enrolled; they warn if they later cross it.
 #[derive(Default)]
 pub(crate) struct DiskWatch {
     gates: HashMap<String, LevelGate>,
@@ -194,8 +145,7 @@ impl DiskWatch {
     }
 }
 
-/// Run `df -P` on a blocking pool thread - it can stall on a wedged mount, and must not
-/// take the async runtime with it.
+/// Run `df -P` on a blocking pool thread.
 async fn sample_disk() -> Option<Vec<(String, u32)>> {
     tk::spawn_blocking(|| {
         let out = std::process::Command::new("df").arg("-P").output().ok()?;
@@ -217,15 +167,6 @@ fn cpu_capacity_pct() -> f64 {
 }
 
 /// A debounced level detector with a long re-warn floor.
-///
-/// Fires when a value has been at or above `fire_at` continuously for `sustain`, and not
-/// again until `rewarn` has passed. Any dip below the line restarts the sustain clock,
-/// so a spike is never an event; and because `rewarn` is measured in dozens of minutes,
-/// a value hovering AT the threshold cannot flap - which is why no separate clear
-/// threshold is needed to damp it.
-///
-/// Pure over its own state so it is unit-testable with an injected `now`, like
-/// `scan_hung`.
 #[derive(Default)]
 pub(crate) struct LevelGate {
     over_since: Option<Instant>,
@@ -258,26 +199,11 @@ impl LevelGate {
         true
     }
 }
-/// Linux `_SC_CLK_TCK` (jiffies/sec); the CPU% conversion assumes the standard
-/// 100. A non-100 kernel skews only the logged percentage, not any action.
+
+/// Linux `_SC_CLK_TCK`; the CPU conversion assumes the standard 100.
 const CLK_TCK: f64 = 100.0;
 
 /// May the watchdog SAMPLE on this tick?
-///
-/// Normally yes, always - a production host watches its own resources whether or
-/// not anyone is listening, because the log is the durable record and sampling
-/// while idle is intended.
-///
-/// Under `--test` it follows the channel instead. The reason is measured rather
-/// than theoretical: during one 25-hour training burn a test host sat connected
-/// with its channel closed, shelling `nvidia-smi` every 16 seconds and logging 57
-/// VramWarnings about a card it had no stake in, none of which could ever be
-/// delivered - the announce is verification-gated while the log is not. A second
-/// host on the same box duplicating the first host's readings is pure waste, and
-/// `--test` is exactly the flag that says this host is the second one.
-///
-/// It follows the phase rather than latching on it, so closing and re-opening a
-/// channel takes sampling down and brings it back.
 fn sampling_online() -> bool {
     !config().test || !matches!(channel_handle().status().phase, ChannelPhase::Closed)
 }
@@ -291,11 +217,7 @@ pub(crate) struct WatchdogDeps {
     pub tx: EmergencyTx,
 }
 
-/// Prune finished entries and confirm the rest as hung once past `grace_ms`.
-/// Returns `(edge_key, Emergency)` pairs for every currently-confirmed hung
-/// engine thread, plus the count of confirmed STATELESS ones (the permit-
-/// pressure signal). Pure over the registry so it is unit-testable with a
-/// synthetic map.
+/// Prune finished entries and confirm the rest as hung past `grace_ms`.
 pub(crate) fn scan_hung(
     registry: &HungRegistry,
     now: u64,
@@ -342,10 +264,7 @@ pub(crate) fn parse_rss_kb(status: &str) -> Option<u64> {
     None
 }
 
-/// Parse cumulative CPU jiffies (utime + stime) out of `/proc/self/stat`
-/// contents. Fields are counted AFTER the last ')', since the comm field can
-/// itself contain spaces/parens: after it, index 0 = state (field 3), so utime
-/// (field 14) = index 11 and stime (field 15) = index 12.
+/// Parse cumulative CPU jiffies (utime + stime) out of a stat line.
 pub(crate) fn parse_cpu_ticks(stat: &str) -> Option<u64> {
     let rparen = stat.rfind(')')?;
     let fields: Vec<&str> = stat[rparen + 1..].split_whitespace().collect();
@@ -354,8 +273,7 @@ pub(crate) fn parse_cpu_ticks(stat: &str) -> Option<u64> {
     Some(utime + stime)
 }
 
-/// Sum `(used_mib, total_mib)` across the CSV rows nvidia-smi emits for
-/// `--query-gpu=memory.used,memory.total --format=csv,noheader,nounits`.
+/// Sum `(used_mib, total_mib)` across the nvidia-smi CSV rows.
 pub(crate) fn parse_vram(csv: &str) -> Option<(u64, u64)> {
     let mut used_sum = 0u64;
     let mut total_sum = 0u64;
@@ -397,9 +315,7 @@ fn read_cpu_ticks() -> Option<u64> {
     None
 }
 
-/// Runtime-probe nvidia-smi for summed GPU memory. Skips (None) on a GPU-less
-/// box (the binary is absent -> `output()` errors). Runs on a blocking pool
-/// thread so the subprocess never stalls the async runtime.
+/// Runtime-probe nvidia-smi for summed GPU memory.
 async fn sample_vram() -> Option<(u64, u64)> {
     tk::spawn_blocking(|| {
         let out = std::process::Command::new("nvidia-smi")
@@ -425,19 +341,13 @@ fn job_count(env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>) -> usize {
     jobs.iter().count()
 }
 
-/// Spawn the watchdog task. Samples on `SAMPLE_INTERVAL`, classifies each
-/// detected condition, and emits it edge-triggered onto the EmergencyChannel.
+/// Spawn the watchdog task.
 pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
     tk::spawn(async move {
         let mut prev_active: HashSet<String> = HashSet::new();
         let mut prev_cpu: Option<(u64, Instant)> = None;
         let mut tick: u64 = 0;
-        // The subreaper adopts every orphan in an eval's process tree, so the host owes
-        // them a wait() or they accrue as zombies for its lifetime. This tick is the
-        // natural home: it already runs off the eval threads, so a /proc scan here
-        // cannot be starved by eval saturation (server/teardown.rs).
         let mut reaper = OrphanReaper::new();
-        // One gate per resource level, so each warns at most once per episode.
         let mut cpu_gate = LevelGate::default();
         let mut ram_gate = LevelGate::default();
         let mut vram_gate = LevelGate::default();
@@ -446,18 +356,9 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
         loop {
             tk::sleep(SAMPLE_INTERVAL).await;
             tick += 1;
-            // Housekeeping runs ungated, above the sampling gate. Harvesting
-            // adopted zombies and lapsed pins is owed whether or not anyone is
-            // watching resource levels - skipping it would trade a little wasted
-            // sampling for a real leak.
             reaper.reap();
             reap_pins();
             if !sampling_online() {
-                // Reset the state that depends on continuity, so resuming
-                // re-establishes rather than inherits. Without this the first
-                // sample back would report a CPU average across the whole offline
-                // gap, and a LevelGate could fire on a sustain window that spanned
-                // a period nobody measured - a reading we never actually observed.
                 prev_cpu = None;
                 prev_active.clear();
                 cpu_gate = LevelGate::default();
@@ -471,7 +372,6 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
             let now = now_millis();
             let mut current: Vec<(String, Emergency)> = Vec::new();
 
-            // --- hung engine threads + the derived Critical ---
             let held = deps.cap.saturating_sub(deps.semaphore.available_permits());
             let (hung, confirmed_stateless) =
                 scan_hung(&deps.hung_watch, now, HUNG_GRACE_MS, held, deps.cap);
@@ -488,9 +388,6 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                 ));
             }
 
-            // --- resource levels: WARN ONLY, never a reaction (the_user) ---
-            // Heavy load is NORMAL and how to react to it is the agent's call, so these
-            // are one-shot observations gated on a full minute of sustained level.
             let sample_at = Instant::now();
             let jobs = job_count(&deps.env_jobs);
             if jobs_gate.sample(
@@ -520,7 +417,6 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                     .send(Emergency::RamWarning(RamWarningEmergency { rss_kb: rss }));
             }
 
-            // --- host CPU (delta since last sample) ---
             let sample_now = Instant::now();
             let cur_ticks = read_cpu_ticks();
             if let (Some(ct), Some((pt, pinst))) = (cur_ticks, prev_cpu) {
@@ -545,13 +441,9 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                 prev_cpu = Some((ct, sample_now));
             }
 
-            // --- VRAM (coarse cadence, runtime-probed) ---
             if tick % VRAM_SAMPLE_EVERY == 0
                 && let Some((used, total)) = sample_vram().await
                 && total > 0
-                // Headroom, not a fraction: what matters is how much room is LEFT before
-                // the allocation that fails, and 4 GiB free is the same danger whatever
-                // the card's capacity.
                 && vram_gate.sample(
                     used as f64,
                     (total as f64 - supervisor.vram_warn_headroom_mib as f64).max(0.0),
@@ -566,7 +458,6 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                 }));
             }
 
-            // --- filesystems (coarse; df is slow, and the first pass is the baseline) ---
             if (tick == 1 || tick % DISK_SAMPLE_EVERY == 0)
                 && let Some(rows) = sample_disk().await
             {
@@ -576,7 +467,6 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                 }
             }
 
-            // --- emit rising edges only ---
             let keys: HashSet<String> = current.iter().map(|(k, _)| k.clone()).collect();
             for (k, em) in current {
                 if !prev_active.contains(&k) {

@@ -7,9 +7,7 @@ pub struct RigParams {
     pub action: String,
     /// The rig: the compound `<author>/<name>`.
     pub rig: String,
-    /// The rig's source directory. The "are you sure" cross-check on
-    /// every action: for an already-registered rig it must equal the
-    /// recorded source_path; for `new` / `install` it is the path recorded.
+    /// The rig's source directory: the "are you sure" cross-check.
     pub source_dir: String,
 }
 
@@ -27,9 +25,7 @@ pub(crate) struct InstallSummary {
     pub removed: Vec<String>,
 }
 
-/// `check` summary: the rig's validation pass. Error-severity rows block a
-/// commit; Warning-severity rows advise. The rows are the unified
-/// `Diagnostic`s bucketed by severity; `ok` is true iff there are no errors.
+/// `check` summary: `ok` is true iff there are no error rows.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct CheckSummary {
     pub ok: bool,
@@ -37,9 +33,7 @@ pub(crate) struct CheckSummary {
     pub warnings: Vec<Diagnostic>,
 }
 
-/// The per-action result, serialized as `{ summary: oneof<...> }`. `uninstall`
-/// returns no summary (void; idempotent success). Untagged: the caller knows
-/// the variant from the action it invoked, and the shapes are distinct.
+/// The per-action result; `uninstall` returns no summary.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 #[serde(untagged)]
 pub(crate) enum RigSummary {
@@ -181,20 +175,6 @@ impl NuSh {
 }
 
 /// Bring a freshly installed rig into view.
-///
-/// ADDS, never replaces. `default` always carries a row - startup writes it as
-/// `['*']` - so the first install simply appends beside it, giving
-/// `['*', 'my/rig:']`, and nothing leaves view. Narrowing everything down to one
-/// rig as the price of installing it would be a surprising trade.
-///
-/// The CURRENT view is a set of purview ids rather than of patterns, so "add it
-/// to the current purview" means adding it to each configured purview that is
-/// currently in view - `default` always, plus whatever else the session named.
-///
-/// Non-fatal: the install already succeeded and is not rolled back, so a
-/// bookkeeping failure is reported to stderr rather than turned into a failed
-/// install. It is worth reading, because a configured `default` that failed to
-/// gain the pattern leaves the new rig installed but out of view.
 fn purview_add_rig(
     rig: &str,
     current_ids: &[String],
@@ -214,8 +194,6 @@ fn purview_add_rig(
         }
     }
     for id in targets {
-        // Every target HAS a row: startup materializes `default`, and any other
-        // id in the current view was checked against the table to get there.
         if let Some(row) = rows.iter_mut().find(|row| row.id == id) {
             if !row.namepath_patterns.contains(&pattern) {
                 row.namepath_patterns.push(pattern.clone());
@@ -229,12 +207,6 @@ fn purview_add_rig(
 }
 
 /// Drop an uninstalled rig from every purview that named it.
-///
-/// The bare `author/name:` pattern goes explicitly; anything ELSE that pointed
-/// into the rig - a module pattern beneath it, an exact call inside it - is
-/// now dangling and goes with the prune, which is the same sweep any other
-/// detection runs.
-///
 fn purview_remove_rig(rig: &str) {
     let mut rows = match load_purviews() {
         Ok(rows) => rows.unwrap_or_default(),

@@ -1,20 +1,10 @@
 use crate::*;
 
-/// RFC 6455 policy violation - the peer was emitted to before it proved itself.
+/// RFC 6455 policy violation - the peer was emitted to before verifying.
 const CLOSE_UNVERIFIED_EMIT: u16 = 1008;
 const UNVERIFIED_EMIT_REASON: &str = "emit before verification";
 
-/// `grimm channel_send <model> <event> [attached]` - the body's state-update lane.
-///
-/// THE CHANNEL IS A NOTIFICATION LANE, NOT A SERIALIZATION LANE. `event` says "state
-/// changed, here is a tiny summary"; the agent fetches actual data itself. That is why
-/// the signature has two slots: an author with something bulky puts it in `attached`,
-/// which the host writes to the inbox and NAMES on the wire rather than carrying. The
-/// contract is structural - the ergonomic path is the next argument, so nobody has to be
-/// talked out of putting data on the wire.
-///
-/// Returns the message id, so an author can correlate what it sent with what the agent
-/// later fetches.
+/// `grimm channel_send <model> <event> [attached]` - the state-update lane.
 #[derive(Clone)]
 pub(crate) struct GrimmChannelSend {
     call: NuapiCall,
@@ -52,10 +42,6 @@ impl nu::Command for GrimmChannelSend {
         _input: nu::PipelineData,
     ) -> Result<nu::PipelineData, nu::ShellError> {
         let model: String = call.req(engine_state, stack, 0)?;
-        // The `mcp/` RESERVATION. A body is not the host, so letting it stamp a model
-        // under that prefix would let it forge a host control packet - and would destroy
-        // the property the reservation exists for, that provenance is checkable from the
-        // path alone. Refused here because this is the one place a non-host picks a model.
         if model.starts_with(MCP_RESERVED_PREFIX) {
             return Err(shell_error(
                 &format!(
@@ -75,17 +61,11 @@ impl nu::Command for GrimmChannelSend {
         let channel = channel_handle();
         let from = self.call.origin();
 
-        // Phase FIRST, before any rendering: a send that cannot happen should cost a
-        // lock and an error, not a hash and a render.
         match channel.status().phase {
             ChannelPhase::Closed => {
                 return Err(shell_error(ChannelSendError::NotOpen.message(), call.head));
             }
             ChannelPhase::Open => {
-                // Telemetry must not reach a peer that has not proven it owns the stdio
-                // session, and the channel is torn down for the attempt rather than
-                // merely refused - an unproven peer that has been emitted to is not a
-                // peer we keep.
                 channel.close(CLOSE_UNVERIFIED_EMIT, UNVERIFIED_EMIT_REASON);
                 return Err(shell_error(
                     ChannelSendError::NotVerified.message(),
@@ -114,12 +94,7 @@ impl nu::Command for GrimmChannelSend {
                 notify,
             } => {
                 let rate = channel.thresholds().error_rate;
-                // SPAM IS THE ONE THING WE STOP, because it implies a BUG rather than
-                // load. Both levers are needed: the throw kills an author who never
-                // try/caught it, and the stop covers one who catches it and loops anyway.
                 let action = stop_offender(engine_state);
-                // ONCE per episode. The refusal below persists for every later send, but
-                // announcing each one would turn the report about spam into spam.
                 if notify {
                     channel.fire_emergency(Emergency::ChannelSpamError(
                         ChannelSpamErrorEmergency {
@@ -155,8 +130,6 @@ impl nu::Command for GrimmChannelSend {
             attached_nuon.as_deref(),
         );
 
-        // The id names the file, so it is minted before the write - which is also why the
-        // hash covers the attached CONTENT rather than its path.
         let attached_name = match &attached_nuon {
             Some(nuon) => Some(
                 write_attachment(&channel, &id.to_string(), nuon)
@@ -177,9 +150,7 @@ impl nu::Command for GrimmChannelSend {
     }
 }
 
-/// The REASON goes in the title, not only the label: a `GenericError` renders its title
-/// through Display, so a bare "grimm channel_send" there would reach the agent with the
-/// cause stripped off - which is the opaque-error failure this crate already knows well.
+/// The reason goes in the title; only the title reaches the envelope message.
 fn shell_error(
     message: &str,
     span: nu::Span,
@@ -192,19 +163,10 @@ fn shell_error(
     .into()
 }
 
-/// The root job: a foreground eval. It owns no entry in the jobs table, so `Signals` is
-/// the only lever that reaches it.
+/// The root job: a foreground eval, owning no entry in the jobs table.
 const ROOT_JOB_ID: usize = 0;
 
 /// Stop the origin that just crossed the hard threshold.
-///
-/// TWO LEVERS, because the offender has two shapes. `Signals::trigger` reaches a spam
-/// loop whatever it runs under - such a loop invokes a decl over and over, so it polls at
-/// every one of those boundaries and bails. But a job that OUTLIVED the eval that spawned
-/// it has no `in_flight` entry left - `InFlightCleanup` removed that the moment the
-/// dispatch returned - and the jobs table is the only place it is still reachable. A
-/// spawned closure reads its OWN JobId here, so `current_job` names the actual offender
-/// rather than its parent.
 fn stop_offender(engine_state: &nu::EngineState) -> String {
     engine_state.signals().trigger();
     let job_id = engine_state.current_job.id;
@@ -214,8 +176,6 @@ fn stop_offender(engine_state: &nu::EngineState) -> String {
     let mut jobs = engine_state.jobs.lock().unwrap_or_else(|e| e.into_inner());
     match jobs.kill_and_remove(job_id) {
         Ok(()) => format!("signals triggered; job {job_id} killed"),
-        // The table entry is dropped either way; only killing its processes can fail, and
-        // an external the job left behind is the tree-kill machinery's to reap.
         Err(e) => format!("signals triggered; job {job_id} removed, kill incomplete: {e}"),
     }
 }

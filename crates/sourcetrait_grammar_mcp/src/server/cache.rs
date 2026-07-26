@@ -48,10 +48,7 @@ pub(crate) fn cache_dir(kind: CacheKind, nonce: Nonce) -> PathBuf {
 
 pub(crate) const BODY_FILE: &str = "body.nuon";
 
-/// The cached run body, co-located under the per-call log dir at
-/// `runs/<nonce>/body.nuon`. The nonce IS the re-evaluation handle (no separate
-/// closure id space), so `rerun(nonce)` reads this and it is pruned with the
-/// rest of `runs/<nonce>/`. `nonce` must be base62-validated by the caller.
+/// The cached run body, co-located at `runs/<nonce>/body.nuon`.
 pub(crate) fn run_body_file(nonce: &str) -> PathBuf {
     cache_kind_dir(CacheKind::Runs).join(nonce).join(BODY_FILE)
 }

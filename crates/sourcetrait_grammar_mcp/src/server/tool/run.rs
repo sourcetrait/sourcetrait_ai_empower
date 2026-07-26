@@ -5,8 +5,7 @@ use crate::*;
 pub(crate) struct RunEnvelope {
     /// The source-code body's return value, as a JSON object matching `result_schema`.
     pub result: mcp::JsonObject,
-    /// This eval's id, and its re-evaluation handle: `rerun(nonce, args)` replays
-    /// this body with fresh args. Also names the per-call log dir + cached body.
+    /// This eval's id, and its re-evaluation handle for `rerun`.
     pub nonce: String,
 }
 

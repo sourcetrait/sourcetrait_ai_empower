@@ -1,9 +1,6 @@
 use crate::*;
 
-/// Parameters for `config_channel()` - a PARTIAL update: supply only what should move.
-///
-/// Windows are INTEGER SECONDS because MCP arguments cross as JSON, which cannot carry a
-/// nu `duration`; the `10s` form lives in the model and the docs.
+/// Parameters for `config_channel()` - a PARTIAL update.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct ConfigChannelParams {
     /// Window for the SOFT threshold, in whole seconds.
@@ -20,8 +17,7 @@ pub struct ConfigChannelParams {
     pub spam_error_rate: Option<u32>,
 }
 
-/// Success result of `config_channel()` - the policy now IN FORCE, whether or not this
-/// call changed it, so a caller never has to assume its own update took.
+/// The policy now IN FORCE, whether or not this call changed it.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct ConfigChannelEnvelope {
     pub spam_warn_window_secs: u64,
@@ -51,8 +47,6 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<ConfigChannelParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // Only the thresholds are settable here. The port and the cert dir cannot change
-        // under a live hub, so they stay where they are set once, at startup.
         match self.channel.set_thresholds(
             p.spam_warn_window_secs,
             p.spam_warn_rate,

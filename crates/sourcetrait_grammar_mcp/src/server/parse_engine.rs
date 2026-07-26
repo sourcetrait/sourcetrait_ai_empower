@@ -63,19 +63,7 @@ impl ParseEngine {
     }
 }
 
-/// The lint + validator engine, REBUILT when the plugin registry moves.
-///
-/// A `ParseEngine` snapshots the plugin decls at construction, exactly as the
-/// stateless eval base does. A long-lived one therefore DRIFTS the moment a
-/// `plugin add` lands: the eval side picks that change up through
-/// `Executor::refresh_base_if_stale`, so a validator that never refreshed would
-/// reject rig source that RUNS - and reject it as an opaque
-/// `ExtraPositional` mis-bind naming nothing about plugins.
-///
-/// This holder removes that asymmetry with the SAME registry-mtime signal the
-/// Executor uses, applied to the other engine. A rebuild is heavier than the
-/// Executor's clone-swap (a whole command context plus a registry read), which
-/// is why it fires only on an actual mtime change rather than per call.
+/// The lint and validator engine, rebuilt when the plugin registry moves.
 pub(crate) struct LintEngine {
     inner: std::sync::Mutex<LintHolder>,
 }
@@ -101,13 +89,7 @@ impl LintEngine {
         }
     }
 
-    /// The engine to lint or validate with, rebuilt first if the plugin
-    /// registry moved since it was last built.
-    ///
-    /// ONE method rather than a separate refresh plus getter, so a caller
-    /// cannot take the engine and forget the refresh - which is precisely the
-    /// bug this type exists to remove. Poison-tolerant, like every other
-    /// long-lived lock here.
+    /// The engine to lint or validate with, rebuilt first if the registry moved.
     pub(crate) fn current(&self) -> Arc<ParseEngine> {
         let mut holder = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let now = registry_mtime();

@@ -1,38 +1,31 @@
 use crate::*;
 
-/// The namespace-level meta directory. NEW with purviews - the namespace carried
-/// only `keypair/`, `rigs/` and `host.lock` before it.
+/// The namespace-level meta directory.
 pub(crate) const META_DIR: &str = ".meta";
 
 const PURVIEWS_FILE: &str = "purviews.nuon";
 
-/// What is in view when nothing says otherwise. CONFIGURABLE, unlike the other
-/// two built-ins.
+/// What is in view when nothing says otherwise; CONFIGURABLE.
 pub(crate) const PURVIEW_DEFAULT: &str = "default";
 
-/// What is in view right now. DERIVED from the session's current ids, so it is
-/// never a row in the file.
+/// What is in view right now; DERIVED, never a row.
 pub(crate) const PURVIEW_CURRENT: &str = ".";
 
-/// Everything. Both a built-in purview id and a namepath pattern, and the same
-/// thing either way.
+/// Everything: both a built-in purview id and a namepath pattern.
 pub(crate) const PURVIEW_ALL: &str = "*";
 
 pub(crate) fn purviews_path() -> PathBuf {
     data_base_dir().join(META_DIR).join(PURVIEWS_FILE)
 }
 
-/// One configured purview: an arbitrary path-like label bound to the namepath
-/// patterns it puts in view.
+/// One configured purview: a label bound to what it puts in view.
 #[derive(Debug, Clone, ser::Serialize, ser::Deserialize)]
 pub(crate) struct PurviewRow {
     pub id: String,
     pub namepath_patterns: Vec<String>,
 }
 
-/// Render the purview table as NUON, through the serde Value bridge the rig
-/// index already uses - one bridge for the whole shape, and it cannot drift from
-/// the struct.
+/// Render the purview table as NUON through the serde Value bridge.
 pub(crate) fn purviews_to_nuon(rows: &[PurviewRow]) -> Result<String, String> {
     let json = json::to_value(rows).map_err(|e| e.to_string())?;
     let value = json_value_to_nu_value(&json);
@@ -47,12 +40,7 @@ pub(crate) fn purviews_from_nuon(text: &str) -> Result<Vec<PurviewRow>, String> 
     json::from_value(json).map_err(|e| e.to_string())
 }
 
-/// Every configured purview. None only BEFORE `ensure_default_purview` has run,
-/// since that writes the file if it is missing.
-///
-/// A decode failure is a LOUD error rather than a silent empty. The rig
-/// index made the opposite mistake once - a missing meta file reads as "no
-/// rigs" rather than as an error - and this file must not repeat the shape.
+/// Every configured purview; None only before startup materialized it.
 pub(crate) fn load_purviews() -> Result<Option<Vec<PurviewRow>>, Error> {
     let path = purviews_path();
     let text = match fs::read_to_string(&path) {
@@ -81,12 +69,7 @@ pub(crate) fn save_purviews(rows: &[PurviewRow]) -> Result<(), Error> {
     Ok(())
 }
 
-/// Is `id` a legal purview label?
-///
-/// Path-LIKE but never a path: bare relative, slash-separated snake components.
-/// A leading `/` or `./` is rejected outright, because a label that looks like a
-/// filesystem path invites being read as one - and a purview id is arbitrary,
-/// unrelated to any namepath or file on disk.
+/// Is `id` a legal purview label? Path-LIKE, but never a path.
 pub(crate) fn is_valid_purview_id(id: &str) -> bool {
     if id.is_empty() || id.starts_with('/') || id.starts_with("./") || id.ends_with('/') {
         return false;
@@ -105,41 +88,25 @@ pub(crate) fn is_valid_purview_id(id: &str) -> bool {
     })
 }
 
-/// A built-in that is DERIVED rather than stored, so it can never be configured.
+/// A built-in that is DERIVED rather than stored.
 pub(crate) fn is_derived_purview(id: &str) -> bool {
     id == PURVIEW_CURRENT || id == PURVIEW_ALL
 }
 
-/// The sigil marking a value as a REFERENCE to another purview rather than a
-/// namepath pattern. Unambiguous: `is_valid_ident` never admits `@`, so no
-/// author, rig, module or call can begin with one.
+/// The sigil marking a value as a REFERENCE to another purview.
 pub(crate) const PURVIEW_REF: char = '@';
 
-/// The purview id a value references, or None when it is an ordinary pattern.
+/// The purview id a value references, or None for a plain pattern.
 pub(crate) fn purview_ref(value: &str) -> Option<&str> {
     value.strip_prefix(PURVIEW_REF)
 }
 
 /// May `id` be referenced as `@id`?
-///
-/// The DERIVED built-ins may not: `@*` and `@.` name nothing that is ever a row,
-/// so they are rejected rather than left to resolve to everything or to nothing.
 pub(crate) fn is_valid_purview_ref(id: &str) -> bool {
     !is_derived_purview(id) && is_valid_purview_id(id)
 }
 
-/// Expand purview REFERENCES into the concrete namepath patterns they stand for,
-/// passing everything else through untouched.
-///
-/// Reports stay RAW (the_user) - only the FILTER path expands - which is why
-/// this is separate from `resolve_patterns` rather than folded into it. A
-/// caller that displays configuration shows what was written; a caller that
-/// matches against it expands first.
-///
-/// CYCLES FLATTEN rather than lock up. A purview already visited on this walk
-/// contributes nothing the second time, so `a -> @b -> @a` terminates with the
-/// union of both and `a -> @a` terminates with a's own patterns. Writing a cycle
-/// is legal; it simply cannot buy anything on the revisit.
+/// Expand purview REFERENCES into the patterns they stand for.
 pub(crate) fn expand_values(
     values: &[String],
     rows: Option<&Vec<PurviewRow>>,
@@ -174,12 +141,6 @@ pub(crate) fn expand_values(
 }
 
 /// Write `default` as `['*']` when it has no row. Runs at startup.
-///
-/// THERE IS NO SUCH THING AS AN UNCONFIGURED DEFAULT (the_user). Materializing
-/// it once here is what makes that an INVARIANT rather than a fallback every
-/// reader would otherwise have to remember - so nothing downstream resolves,
-/// propagates to, or reports an absent `default`, and the "is this namespace
-/// configured yet" question simply does not arise.
 pub(crate) fn ensure_default_purview() -> Result<(), Error> {
     let mut rows = load_purviews()?.unwrap_or_default();
     if rows.iter().any(|row| row.id == PURVIEW_DEFAULT) {
@@ -192,13 +153,7 @@ pub(crate) fn ensure_default_purview() -> Result<(), Error> {
     save_purviews(&rows)
 }
 
-/// The namepath patterns a set of purview ids puts in view, in order and
-/// de-duplicated.
-///
-/// `*` is everything. EVERY other id must have a row, `default` included -
-/// startup guarantees it has one - so there is no unconfigured default to fall
-/// back for. An id with no row contributes NOTHING rather than everything,
-/// because a typo must narrow the view rather than silently open it.
+/// The namepath patterns a set of ids puts in view, in order and deduplicated.
 pub(crate) fn resolve_patterns(
     ids: &[String],
     rows: Option<&Vec<PurviewRow>>,
@@ -222,12 +177,7 @@ pub(crate) fn resolve_patterns(
     out
 }
 
-/// Parse namepath pattern strings into the matcher form, dropping any that do
-/// not parse.
-///
-/// A stored pattern that no longer parses is treated as absent rather than
-/// fatal: a purview file is agent-authored data, and one bad row must not take
-/// `info()` down with it.
+/// Parse pattern strings into the matcher form, dropping any that fail.
 pub(crate) fn parse_patterns(patterns: &[String]) -> Vec<NamepathStr> {
     patterns
         .iter()
@@ -236,11 +186,7 @@ pub(crate) fn parse_patterns(patterns: &[String]) -> Vec<NamepathStr> {
 }
 
 /// What a stored value needs in order to mean anything.
-///
-/// None means it needs nothing in particular (`*`), so it can never dangle.
 fn pattern_requires(pattern: &str) -> Option<PatternNeed> {
-    // Checked BEFORE parsing: `@id` is not a namepath and must never reach the
-    // namepath grammar.
     if let Some(id) = purview_ref(pattern) {
         return Some(PatternNeed::Purview(id.to_string()));
     }
@@ -271,23 +217,9 @@ enum PatternNeed {
     Nothing,
 }
 
-/// Drop namepath patterns no registered rig can satisfy, returning what was
-/// pruned.
-///
-/// Pruning is by REGISTRATION, not by emptiness: a rig with no calls yet
-/// still satisfies its own pattern, and a purview that pointed at it should
-/// survive until the rig actually goes away.
-///
-/// A row pruned down to NOTHING is dropped rather than kept as an empty purview,
-/// because an empty namepath pattern list is already the DELETE operation on the
-/// configure tool - so a surviving empty row would be a state the tool surface
-/// cannot otherwise produce, and it would resolve to "sees nothing" while
-/// looking configured.
+/// Drop patterns no registered rig can satisfy, returning what was pruned.
 pub(crate) fn prune_dangling(rows: &mut Vec<PurviewRow>) -> Vec<String> {
     let names = registered_rig_names();
-    // Taken BEFORE the mutable walk, so a reference is judged against the whole
-    // table: a purview referencing one defined beside it survives, and so does a
-    // cycle, since both ends have rows.
     let ids: Vec<String> = rows.iter().map(|row| row.id.clone()).collect();
     let mut pruned: Vec<String> = Vec::new();
     for row in rows.iter_mut() {
@@ -311,8 +243,7 @@ pub(crate) fn prune_dangling(rows: &mut Vec<PurviewRow>) -> Vec<String> {
     pruned
 }
 
-/// What changed between two namepath pattern sets - the delta the extend and
-/// reset tools report, as `(added, removed)`.
+/// What changed between two pattern sets, as `(added, removed)`.
 pub(crate) fn pattern_delta(
     before: &[String],
     after: &[String],
@@ -331,11 +262,6 @@ pub(crate) fn pattern_delta(
 }
 
 /// May `id` be named as something to bring into view?
-///
-/// `*` always may, being derived rather than stored; everything else must have a
-/// row, `default` included, since startup guarantees it has one. An unknown id
-/// would otherwise contribute nothing in silence, which turns a typo into a view
-/// that simply does not widen.
 pub(crate) fn is_nameable_purview(
     id: &str,
     rows: Option<&Vec<PurviewRow>>,
@@ -343,11 +269,7 @@ pub(crate) fn is_nameable_purview(
     id == PURVIEW_ALL || rows.is_some_and(|r| r.iter().any(|row| row.id == id))
 }
 
-/// The CURRENT purview: which purview ids this HOST PROCESS has in view.
-///
-/// Session-resident by design - it is a view rather than a configuration, so it
-/// belongs in memory and dies with the host. It starts at `default`, so a host
-/// nobody tells otherwise shows exactly what `default` shows.
+/// The CURRENT purview: which ids this HOST PROCESS has in view.
 pub(crate) struct CurrentPurview {
     ids: std::sync::Mutex<Vec<String>>,
 }
@@ -373,9 +295,7 @@ impl CurrentPurview {
         self.lock().clone()
     }
 
-    /// Add ids to the current view. Additive and order-preserving; an id already
-    /// in view is not repeated, since duplicates would only widen the render's
-    /// work without widening the view.
+    /// Add ids to the current view; additive and order-preserving.
     pub(crate) fn extend(
         &self,
         add: &[String],
@@ -389,12 +309,7 @@ impl CurrentPurview {
         ids.clone()
     }
 
-    /// Replace what is in view.
-    ///
-    /// An EMPTY list means `default`, so the view always names at least one
-    /// purview and there is no looking-at-nothing state to reason about. That
-    /// is also what subsumes the retired `purview_reset`: resetting is just
-    /// setting the view to nothing in particular.
+    /// Replace what is in view; an EMPTY list means `default`.
     pub(crate) fn set(
         &self,
         want: &[String],
@@ -408,8 +323,7 @@ impl CurrentPurview {
         ids.clone()
     }
 
-    /// Drop ids that no longer exist, so an uninstall or a deletion cannot leave
-    /// the session pointing at something gone.
+    /// Drop ids that no longer exist.
     pub(crate) fn retain_known(
         &self,
         rows: Option<&Vec<PurviewRow>>,
@@ -424,12 +338,11 @@ impl CurrentPurview {
     }
 }
 
-/// One `[id, namepath_patterns]` pair as `info()` and `purviews()` report it.
+/// One `[id, namepath_patterns]` pair as the tools report it.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct PurviewView(pub String, pub Vec<String>);
 
-/// The reported form of a set of purview ids: each id beside the namepath
-/// patterns it resolves to, in the order they came into view.
+/// Each id beside the namepath patterns it resolves to.
 pub(crate) fn purview_views(
     ids: &[String],
     rows: Option<&Vec<PurviewRow>>,

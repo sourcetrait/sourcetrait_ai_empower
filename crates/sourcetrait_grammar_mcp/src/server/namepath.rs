@@ -21,28 +21,16 @@ pub(crate) enum NamepathRef {
 /// The whole-namespace pattern.
 pub(crate) const PATTERN_ALL: &str = "*";
 
-/// The current-purview pattern. Parsed here so the grammar is complete;
-/// RESOLVED by purview, which is the only thing that knows what it names.
+/// The current-purview pattern.
 pub(crate) const PATTERN_CURRENT: &str = ".";
 
-/// A raw namepath string classified by SHAPE: a trailing `/` or `:`, or the
-/// bare `*` / `.`, is a PATTERN; anything else is an exact namepath.
-///
-/// Classification is NOT validation, and the distinction is the whole point of
-/// the split. A bare author (`sourcetrait`) is exact in shape but names nothing
-/// addressable, so it classifies as `Namepath` here and then fails
-/// `validate` exactly as it does today - the exact parser's strictness is
-/// unchanged by the pattern arm existing.
+/// A raw namepath string classified by SHAPE: a pattern, or an exact namepath.
 pub(crate) enum NamepathStr {
     Namepath(Namepath),
     Pattern(NamepathPattern),
 }
 
 /// A set of namepaths, addressed by the trailing hierarchy character.
-///
-/// `/` DESCENDS the tree and `:` selects the level BELOW - which is what each
-/// separator already means in an exact namepath, so the two module forms differ:
-/// `lib:mod/` is that module's whole subtree, `lib:mod:` is only its calls.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NamepathPattern {
     /// `<author>/` - everything that author published.
@@ -61,9 +49,7 @@ pub(crate) enum NamepathPattern {
     },
     /// `*` - the whole namespace.
     All,
-    /// `.` - the current purview. It must be RESOLVED to that purview's own
-    /// namepath patterns before matching (`inspect()` does this); an unresolved
-    /// `.` therefore matches NOTHING rather than silently matching everything.
+    /// `.` - the current purview; it must be RESOLVED before matching.
     Current,
 }
 
@@ -79,11 +65,6 @@ impl NamepathStr {
 
 impl NamepathStr {
     /// Does this put `namepath` in view?
-    ///
-    /// A PATTERN covers a SET; an EXACT namepath covers only itself. Purview
-    /// values are allowed to be either - a whole author, or one specific call -
-    /// so answering the same question for both is what lets a purview hold a
-    /// mixed list without ever branching on which kind it got.
     pub(crate) fn covers(
         &self,
         namepath: &NamepathRef,
@@ -211,8 +192,6 @@ impl NamepathPattern {
         };
         let parts: Vec<&str> = body.split(':').collect();
         match parts.as_slice() {
-            // `<author>/`. A `/` after the RIG is the wrong separator -
-            // everything past a rig is reached with `:`.
             [single] if descends => {
                 if single.contains('/') {
                     return Err(bad(raw, "after a rig the separator is `:`, not `/`"));
@@ -258,12 +237,6 @@ impl NamepathPattern {
     }
 
     /// Does `namepath` fall within this pattern?
-    ///
-    /// The per-SIGNATURE primitive: one namepath, asked whether this pattern
-    /// covers it. The renderer walks the index putting exactly that question to
-    /// every signature, and purview filtering is the same question over a SET of
-    /// namepath patterns - `NamepathStr::covers` wraps it for both, so there is
-    /// one answer and not two.
     pub(crate) fn matches(
         &self,
         namepath: &NamepathRef,
@@ -307,8 +280,6 @@ impl NamepathPattern {
 }
 
 /// Is `path` the module `base`, or one below it?
-///
-/// Compared on SEGMENT boundaries, so `a` covers `a/b` but never `ab`.
 fn at_or_below(
     path: &str,
     base: &str,

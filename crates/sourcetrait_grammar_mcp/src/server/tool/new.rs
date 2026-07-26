@@ -3,9 +3,7 @@ use crate::*;
 /// Parameters for `new()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct NewParams {
-    /// Namepaths to scaffold into existing rigs: `rig:module/path`
-    /// (a utility module) or `rig:module/path:function` (a single-`main`
-    /// function skeleton). Multiple may target multiple rigs.
+    /// Namepaths to scaffold into existing rigs: a module or a function.
     pub namepaths: Vec<String>,
 }
 

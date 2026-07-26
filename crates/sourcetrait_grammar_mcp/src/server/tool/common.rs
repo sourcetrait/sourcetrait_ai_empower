@@ -3,24 +3,20 @@ use crate::*;
 /// Parameters for `run()` / `interact()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct RunParams {
-    /// The strictly typed Nu `record` schema for `$args`, as a JSON object mapping each field name to its type (`{}` for no arguments).
+    /// The args schema: field name to type; `{}` for no arguments.
     pub args_schema: mcp::JsonObject,
-    /// The strictly typed Nu `record` schema for the return value, as a JSON object mapping each field name to its type (`{}` for no return value).
+    /// The result schema: field name to type; `{}` for no return value.
     pub result_schema: mcp::JsonObject,
-    /// JSON object representation of the strictly typed Nu `record` schema for `$args` as passed to the source-code body.
+    /// JSON object of argument values passed to the body as `$args`.
     pub args: mcp::JsonObject,
     /// The nushell source-code body; its final value must match result_schema.
     pub body: String,
-    /// Optional per-call timeout in milliseconds; defaults to 120000 (2 minutes). The usage is cancelled if it exceeds this.
+    /// Per-call timeout in milliseconds; defaults to 120000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }
 
-/// The cached run body -- the converted positional types plus the source body,
-/// enough to re-synthesize the run source for `rerun(nonce, args)`. Persisted as
-/// NUON at `runs/<nonce>/body.nuon` (the house format for persisted nu data),
-/// co-located with the call's stdout/stderr so a single prune of `runs/<nonce>/`
-/// reclaims logs and body together.
+/// The cached run body: the converted types plus the source body.
 pub(crate) struct CachedRunBody {
     pub(crate) args_type: String,
     pub(crate) result_type: String,
@@ -60,9 +56,7 @@ impl CachedRunBody {
     }
 }
 
-/// Persist the run body beside the call's logs (`runs/<nonce>/body.nuon`).
-/// Non-fatal: a write failure is logged and the call proceeds -- the run still
-/// returns its result + nonce; only a later `rerun(nonce)` would miss the body.
+/// Persist the run body beside the call's logs.
 fn write_run_body(
     log_dir: &std::path::Path,
     body: &CachedRunBody,
@@ -80,67 +74,44 @@ fn write_run_body(
 
 pub struct NuSh {
     pub(crate) interact_engine: Arc<tk::AsyncMutex<Option<InteractEngine>>>,
-    /// The stateless eval executor: a swappable base + a pre-cloned ready buffer,
-    /// concurrency-bounded; hands each eval a ready clone (server/executor.rs).
+    /// The stateless eval executor; hands each eval a ready clone.
     pub(crate) executor: Arc<Executor>,
-    /// Host-owned environment-wide jobs table shared into every eval (P0.8) - a
-    /// body's `job spawn` persists + is visible/killable across evals + the
-    /// interact lane.
+    /// Host-owned environment-wide jobs table shared into every eval.
     pub(crate) env_jobs: Arc<std::sync::Mutex<nu::Jobs>>,
     pub(crate) nonce_gen: Arc<NonceGen>,
-    /// This host process's identity, minted once at construction. Namespaces the
-    /// per-process emergency log and is reported by `info()`.
+    /// This host process's identity, minted once at construction.
     pub(crate) mcp_nom: McpNom,
     pub(crate) rig_locks: Arc<RigLocks>,
-    /// The lint + rig-validator engine. A HOLDER rather than the engine
-    /// itself, because a `ParseEngine` snapshots the plugin decls at
-    /// construction: take it through `current()`, which rebuilds it when the
-    /// plugin registry has moved, exactly as the Executor refreshes its base.
+    /// The lint and rig-validator engine, taken through `current()`.
     pub(crate) lint_engine: Arc<LintEngine>,
-    /// The resource registry, keyed by nonce string: each eval's cancel handle
-    /// plus the self-matching {tool, started_at, args, kind}. processes()
-    /// snapshots it; kill(nonce) triggers the cancel handle.
+    /// The resource registry, keyed by nonce string.
     pub(crate) in_flight: Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
-    /// The hang-detection registry (server/watchdog.rs): cancelled engine threads
-    /// that may still be alive, populated on timeout / kill. The watchdog prunes
-    /// finished entries and confirms hangs past grace.
+    /// The hang-detection registry the watchdog scans.
     pub(crate) hung_watch: HungRegistry,
-    /// The host's single packet channel. Present from startup but CLOSED - channels
-    /// are optional and the hub starts lazily on the first `channel_open()`, so a
-    /// session that never opens one pays nothing for it.
+    /// The host's single packet channel; present but CLOSED at startup.
     pub(crate) channel: Arc<ChannelHandle>,
-    /// Serializes `channel_open`'s decide-then-start, which spans an await. Async
-    /// because it is held across that await; the channel's own state lock is a std
-    /// Mutex precisely because the emit path must never need a runtime.
+    /// Serializes `channel_open`'s decide-then-start across its await.
     pub(crate) channel_open_lock: Arc<tk::AsyncMutex<()>>,
-    /// Which purview ids this host has in view. SESSION-resident: a purview is a
-    /// view rather than a configuration, so it lives in memory and dies with the
-    /// host, starting at `default`.
+    /// Which purview ids this host has in view; SESSION-resident.
     pub(crate) current_purview: Arc<CurrentPurview>,
     pub(crate) tool_router: mcp::ToolRouter<NuSh>,
 }
 
 pub(crate) const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 
-/// Pre-clone depth N for the stateless executor's ready buffer (keep 1 ready).
+/// Pre-clone depth N for the stateless executor's ready buffer.
 pub(crate) const READY_POOL_TARGET: usize = 1;
-
 
 pub(crate) struct InFlightEntry {
     pub tool: &'static str,
     pub started_at: u64,
     pub args: serde_json::Value,
     pub kind: InFlightKind,
-    /// This eval's interrupt flag - the `Signals` handle the eval thread polls.
-    /// kill(nonce) / a timeout flips it to cancel the eval cooperatively.
+    /// This eval's interrupt flag - the `Signals` handle its thread polls.
     pub cancel: Arc<AtomicBool>,
-    /// This eval's external-child tracker (Arc-shared pids). kill / timeout reads
-    /// collect_pids() + tree-kills the process tree (server/teardown.rs).
+    /// This eval's external-child tracker, holding Arc-shared pids.
     pub tracker: nu::ThreadJob,
-    /// Liveness: the eval thread flips this true on exit via a Drop guard (a
-    /// caught panic still exits, so it flips; only a thread stuck where it never
-    /// returns leaves it false). The watchdog reads it to confirm / prune hangs;
-    /// kill(nonce) copies it into a HungWatch (server/watchdog.rs).
+    /// Liveness: the eval thread flips this on exit via a Drop guard.
     pub finished: Arc<AtomicBool>,
 }
 
@@ -157,8 +128,6 @@ impl NuSh {
         rig_locks: Arc<RigLocks>,
         lint_engine: Arc<LintEngine>,
     ) -> Self {
-        // Install nushell's TLS crypto provider once for the in-process engine
-        // (the http family reads nushell's own OnceLock; formerly per-worker).
         nu::CRYPTO_PROVIDER.default();
         let env_jobs = Arc::new(std::sync::Mutex::new(nu::Jobs::default()));
         let executor = Arc::new(Executor::new(env_jobs.clone(), READY_POOL_TARGET));
@@ -173,8 +142,6 @@ impl NuSh {
             lint_engine,
             in_flight: Arc::new(tk::AsyncMutex::new(HashMap::new())),
             hung_watch: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            // The process-wide handle, not a fresh one: an eval reaches the channel
-            // through the same global, so a per-NuSh handle would diverge from it.
             channel: channel_handle(),
             channel_open_lock: Arc::new(tk::AsyncMutex::new(())),
             current_purview: Arc::new(CurrentPurview::new()),
@@ -182,8 +149,6 @@ impl NuSh {
         }
     }
 }
-
-
 
 pub(crate) fn envelope_to_structured<T: ser::Serialize>(
     envelope: &T,
@@ -247,8 +212,6 @@ pub(crate) async fn dispatch_pooled(
     if let Some(body) = &cache_body {
         write_run_body(&log_dir, body);
     }
-    // Pick up a plugin add/rm (or an external registry edit) before taking a
-    // clone, so this eval runs against current plugin decls (server/executor.rs).
     executor.refresh_base_if_stale();
     let permit = executor
         .semaphore()
@@ -264,9 +227,6 @@ pub(crate) async fn dispatch_pooled(
     let cancel = Arc::new(AtomicBool::new(false));
     let started_at = now_millis();
     let finished = Arc::new(AtomicBool::new(false));
-    // Track this eval's external children so a cancel/timeout reaps the whole
-    // process tree (server/teardown.rs): nushell registers each external's pid
-    // into the tracker once it is the engine's background_thread_job.
     let tracker = make_tracker(cancel.clone());
     engine.current_job.background_thread_job = Some(tracker.clone());
     register_in_flight(
@@ -295,13 +255,8 @@ pub(crate) async fn dispatch_pooled(
             nonce: Some(nonce),
         }),
         Err(_) => {
-            // Trigger the eval's Signals so the abandoned thread bails at nushell's
-            // next check point + releases its permit, and reap any external process
-            // tree it spawned (a pure-Rust hung eval cannot be reached - the residual).
             cancel.store(true, Ordering::SeqCst);
             tree_kill(&tracker.collect_pids());
-            // Record the cancelled eval for the watchdog: an engine thread still
-            // alive past grace is a confirmed hang (server/watchdog.rs).
             register_hung(
                 hung_watch,
                 HungWatch {
@@ -342,9 +297,6 @@ pub(crate) async fn dispatch_interact(
         },
         nonce: None,
     })?;
-    // Lazily spawn the persistent interact engine (a dedicated 64 MB thread owning
-    // the stateful EngineState), then clone the cheap handle out so the eval does
-    // not hold the guard - the engine thread serializes calls itself.
     let engine = {
         let mut guard = interact.lock().await;
         if guard.is_none() {
@@ -385,13 +337,8 @@ pub(crate) async fn dispatch_interact(
             nonce: Some(nonce),
         }),
         Err(_) => {
-            // Trigger the current interact eval's Signals + reap its external tree;
-            // a non-hung eval bails and the serial lane frees for the next call (a
-            // hung interact lane is Phase 4's respawn).
             cancel.store(true, Ordering::SeqCst);
             tree_kill(&tracker.collect_pids());
-            // Record the cancelled interact eval for the watchdog (followup #41): a
-            // thread still alive past grace is the interact-lane hang.
             register_hung(
                 hung_watch,
                 HungWatch {
@@ -462,11 +409,7 @@ pub(crate) fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-/// Clean-shutdown teardown: cancel every still-in-flight eval and reap its
-/// external process tree + the background jobs + the plugin subprocesses. Called
-/// after the MCP service stops (the client closed stdin) and from the signal
-/// handlers, so a disconnect or a signalled death mid-eval never leaks a process
-/// tree.
+/// Clean-shutdown teardown: cancel every in-flight eval and reap its tree.
 pub(crate) async fn teardown_all_in_flight(
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>,
@@ -485,22 +428,10 @@ pub(crate) async fn teardown_all_in_flight(
     kill_plugin_subprocesses();
 }
 
-/// Kill every background job in the host-owned table and reap the process trees
-/// they spawned.
-///
-/// `in_flight` CANNOT cover these, which is the whole reason this exists: a
-/// `job spawn` that outlives its eval has had its registry entry removed by
-/// `InFlightCleanup` the moment that dispatch returned, while `env_jobs` still
-/// holds it - and its external child is precisely the one that would otherwise be
-/// orphaned onto the box, still running as the box user with its supervising
-/// thread already gone.
+/// Kill every background job in the host-owned table and reap their trees.
 pub(crate) fn sweep_env_jobs(env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>) {
     let tracked: Vec<u32> = {
         let mut jobs = env_jobs.lock().unwrap_or_else(|e| e.into_inner());
-        // Collected BEFORE the kill: `kill_all` clears the table and takes the
-        // tracked pid sets with it, and nushell's own `kill` reaches only the
-        // DIRECT child anyway - the /proc descendant walk below is what gets a
-        // grandchild.
         let tracked = jobs
             .iter()
             .filter_map(|(_, job)| match job {
@@ -514,5 +445,3 @@ pub(crate) fn sweep_env_jobs(env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>) {
     };
     tree_kill(&tracked);
 }
-
-

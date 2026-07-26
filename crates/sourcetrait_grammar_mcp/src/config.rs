@@ -1,18 +1,4 @@
 //! The runtime configuration, split format-layer from model-layer.
-//!
-//! `*Toml` types are the FILE shape - every field optional, paths as portable strings,
-//! unknown keys rejected. `Config` and its sub-items are the format-free runtime shape
-//! with concrete types. Sub-items get the same pair, so a future format adds a shell
-//! without touching the model.
-//!
-//! THE FILE CARRIES ONLY WHAT IS NOT ALREADY AN ARGUMENT. The `id` and `namespace`,
-//! the agent work dir and the deny list stay ARGUMENTS: they were
-//! arguments before this file existed, and they identify or gate the invocation itself.
-//! A file-settable `id` / `namespace` would let the namespace silently diverge from the
-//! `.mcp.json` entry the agent believes it is talking to, and would reintroduce the
-//! sticky default already ruled out. So the two surfaces are DISJOINT - there is no
-//! precedence question between them - and `deny_unknown_fields` turns an attempt to set
-//! one from the file into a loud error rather than a silent no-op.
 use crate::*;
 
 /// The embedded base every load merges onto.
@@ -21,14 +7,10 @@ const DEFAULTS_CONFIG: &str = include_str!("../defaults/grammar_mcp.toml");
 /// The namespace when `--namespace` is not given.
 pub(crate) const DEFAULT_NAMESPACE: &str = "default";
 
-/// The namespace `--test` defaults to. An explicit `--namespace` still wins, so
-/// this is a default rather than an override: `--test` names the ordinary test
-/// channel without spelling its namespace out, and says nothing about a run that
-/// asks for a different one.
+/// The namespace `--test` defaults to.
 pub(crate) const TEST_NAMESPACE: &str = "test";
 
-/// Lowest port the channel hub may be pinned to. Anything below is privileged and the
-/// host is unprivileged by design.
+/// Lowest port the channel hub may be pinned to.
 const MIN_CHANNEL_PORT: u16 = 1024;
 
 /// The file shape.
@@ -39,10 +21,7 @@ pub(crate) struct ConfigToml {
     pub supervisor: Option<SupervisorConfigToml>,
 }
 
-/// The `[supervisor]` table: when a resource level is worth ONE warning to the agent.
-///
-/// Expressed against the machine's TOTAL capacity rather than as absolute figures, so
-/// the same defaults mean the same thing on a different box and do not silently age.
+/// The `[supervisor]` table: when a resource level is worth one warning.
 #[derive(Debug, Clone, Default, ser::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SupervisorConfigToml {
@@ -64,22 +43,14 @@ pub(crate) struct SupervisorConfig {
     pub disk_warn_fraction: f64,
 }
 
-/// The `[channel]` table: the wss port and the cert directory, and nothing else.
-///
-/// Everything else about the channel is fixed by design rather than configured. It is
-/// a loopback socket serving a single host, so there is no address to choose and no
-/// peer policy to express - the bind is 127.0.0.1 by construction, which is what makes
-/// "only localhost gets in" a property of the socket rather than a rule to enforce.
+/// The `[channel]` table: the wss port, the cert dir, and the spam policy.
 #[derive(Debug, Clone, Default, ser::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ChannelConfigToml {
-    /// Omit for a kernel-assigned port, which is the default. When present it must be
-    /// an unprivileged port (1024-65535); 0 is rejected rather than treated as "any".
+    /// Omit for a kernel-assigned port, which is the default.
     pub port: Option<u16>,
     pub cert_dir: Option<String>,
-    /// Windows are INTEGER SECONDS on this surface. MCP args cross as JSON, where a nu
-    /// `duration` cannot be represented, and TOML has no duration type either - so the
-    /// `10s` form lives in the model and the docs, never on a wire or in a file.
+    /// Windows are whole seconds here and on `config_channel`.
     pub spam_warn_window_secs: Option<u64>,
     pub spam_warn_rate: Option<u32>,
     pub spam_error_window_secs: Option<u64>,
@@ -93,42 +64,23 @@ pub(crate) struct Config {
     pub work_dir: PathBuf,
     pub deny: DenySet,
     /// Was this host launched with `--test`?
-    ///
-    /// A binary flag with exactly two meanings, and it is deliberately not a
-    /// mode: it defaults the namespace to `test` (resolved at the argument
-    /// boundary, so nothing downstream re-reads it for that), and it ties the
-    /// watchdog to the channel's phase. Everything else behaves identically.
     pub test: bool,
     pub channel: ChannelConfig,
     pub supervisor: SupervisorConfig,
 }
 
-/// The channel hub's operating parameters. The hub reads these rather than the
-/// environment directly, so the cert location is configurable without a rebuild.
+/// The channel hub's operating parameters.
 #[derive(Debug, Clone)]
 pub(crate) struct ChannelConfig {
-    /// None = kernel-assigned, which is the default. The agent learns the real endpoint
-    /// from `channel_open`'s return, so an unpinned port is the sane default and a
-    /// pinned one is the exception. Modelled as an Option rather than a 0 sentinel
-    /// because 0 is not a port.
+    /// None means kernel-assigned, which is the default.
     pub port: Option<u16>,
-    /// Fully expanded at load, like every other path out of config or arguments.
+    /// Fully expanded at load, like every other path.
     pub cert_dir: PathBuf,
-    /// The starting spam policy. Runtime changes go through `config_channel`, which
-    /// mutates the channel's live copy rather than this - CONFIG is set once.
+    /// The starting spam policy.
     pub spam: SpamThresholds,
 }
 
-/// How much a single origin may emit before it is warned, and before it is stopped.
-///
-/// Two INDEPENDENT (window, rate) pairs so warn and error can measure different things -
-/// a short window catches a burst, a longer one catches sustained misbehaviour.
-///
-/// THESE VALUES ARE INITIAL. There is no basis for them beyond reasoning; only production
-/// traffic will say what a normal producer actually does. The gap between legitimate and
-/// runaway is enormous rather than marginal - a state lane emits single digits per burst,
-/// a loop emits thousands per second - so the numbers barely affect detection and mostly
-/// decide how often a well-behaved fast command gets flagged.
+/// How much one origin may emit before it is warned, then stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SpamThresholds {
     pub warn_window: tk::TkDuration,
@@ -138,7 +90,7 @@ pub(crate) struct SpamThresholds {
 }
 
 impl SpamThresholds {
-    /// The longer of the two windows - how far back the counter has to remember.
+    /// The longer of the two windows.
     pub(crate) fn retention(&self) -> tk::TkDuration {
         if self.warn_window > self.error_window {
             self.warn_window
@@ -169,9 +121,6 @@ fn merged_channel(
     let Some(cert_dir) = user.cert_dir.or(base.cert_dir) else {
         return Err("the embedded defaults carry no channel.cert_dir".to_string());
     };
-    // Below 1024 is privileged: the host runs unprivileged, so such a bind could only
-    // ever fail. Rejecting it at load turns a confusing permission error at
-    // channel_open into a legible config error at startup.
     let port = user.port.or(base.port);
     if let Some(port) = port
         && port < MIN_CHANNEL_PORT
@@ -220,12 +169,7 @@ fn merged_supervisor(
     })
 }
 
-/// A fraction of total capacity. Outside (0, 1] it would either warn always or never.
-///
-/// `pub(crate)` so a runtime PIN is held to the same bound the file layer enforces
-/// (server/pin.rs): a pin must not be able to reach a state a config load would
-/// have refused, and the only way to guarantee that is to share the check rather
-/// than restate it.
+/// A fraction of total capacity; outside (0, 1] it would warn always or never.
 pub(crate) fn fraction_field(
     name: &str,
     value: Option<f64>,
@@ -239,7 +183,7 @@ pub(crate) fn fraction_field(
     }
 }
 
-/// A window, in whole seconds. Zero would mean "no window", which is not a rate at all.
+/// A window, in whole seconds.
 fn secs_field(
     name: &str,
     user: Option<u64>,
@@ -251,7 +195,7 @@ fn secs_field(
     }
 }
 
-/// A rate. Zero would forbid the first send outright rather than police a rate.
+/// A rate.
 fn rate_field(
     name: &str,
     user: Option<u32>,
@@ -264,12 +208,7 @@ fn rate_field(
 }
 
 impl Config {
-    /// Build the runtime config: the argument-owned values arrive already resolved, the
-    /// file contributes only what it owns.
-    ///
-    /// Deliberately not `TryFrom`: the model carries fields the format layer does not,
-    /// and a constructor that names them keeps that asymmetry visible rather than
-    /// hiding it behind a conversion.
+    /// Build the runtime config from the file layer plus the arguments.
     pub(crate) fn from_toml(
         user: ConfigToml,
         id: String,
@@ -291,8 +230,7 @@ impl Config {
         })
     }
 
-    /// Read a user file. An explicit `--config` that is absent or malformed is an
-    /// error - a typo'd path must fail rather than silently serve the defaults.
+    /// Read a user file; an absent or malformed `--config` is an error.
     pub(crate) fn read_toml(path: &std::path::Path) -> Result<ConfigToml, String> {
         let text = fs::read_to_string(path)
             .map_err(|e| format!("read config {}: {e}", path.display()))?;
@@ -316,8 +254,7 @@ impl Default for Config {
     }
 }
 
-/// The invoking user's name, for the zero-config human case. Harness `.mcp.json`
-/// entries always pass `--id` explicitly.
+/// The invoking user's name, for the zero-config human case.
 pub(crate) fn default_id() -> String {
     std::env::var("USER").unwrap_or_else(|_| "default".to_string())
 }
@@ -326,7 +263,7 @@ pub(crate) fn default_work_dir(id: &str) -> PathBuf {
     BASE_DIRS.home_dir().join("proj").join("equip").join(id)
 }
 
-/// A `$VAR` value, honoring the XDG basedir spec fallbacks; anything else must be set.
+/// A `$VAR` value, honoring the XDG basedir spec fallbacks.
 fn var_or_xdg(name: &str) -> Result<String, String> {
     if let Ok(value) = std::env::var(name)
         && !value.is_empty()
@@ -343,8 +280,7 @@ fn var_or_xdg(name: &str) -> Result<String, String> {
     })
 }
 
-/// Expand a leading `~` (home) or `$VAR` segment so config files stay portable; any
-/// other path passes through literally.
+/// Expand a leading `~` or `$VAR` segment so config files stay portable.
 pub(crate) fn expand_path(raw: &str) -> Result<PathBuf, String> {
     if raw == "~" {
         return Ok(BASE_DIRS.home_dir().to_path_buf());

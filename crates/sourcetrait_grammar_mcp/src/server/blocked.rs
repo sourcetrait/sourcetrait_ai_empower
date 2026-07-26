@@ -1,14 +1,6 @@
 use crate::*;
 
-/// A shadow command that replaces a host-fatal builtin (`exit`, `exec`, `panic`)
-/// in the in-process EmbedEngine: it parses like the real one (a catch-all `rest`)
-/// but always errors at runtime, so a body invoking it fails that single eval
-/// instead of terminating the shared host process.
-///
-/// EmbedEngine principle 1 (intercept every host-death vector): `exit` calls
-/// `std::process::exit` and `exec` replaces the process image - either would take
-/// the whole MCP down in-process, where there is no worker subprocess boundary to
-/// absorb it (the boundary the shell-out era relied on).
+/// A shadow decl replacing a host-fatal builtin; it always errors at runtime.
 #[derive(Clone)]
 pub(crate) struct BlockedDecl {
     name: &'static str,
@@ -54,25 +46,10 @@ impl nu::Command for BlockedDecl {
     }
 }
 
-/// The host-fatal builtins shadowed out of every in-process engine base:
-/// `exit` -> `std::process::exit`, `exec` -> `execvp` image replacement, `panic`
-/// -> an unconditional `panic!` (the nu-command Debug builtin whose whole purpose
-/// is to crash nushell; catch_unwind catches it but it poisons shared mutexes on
-/// the way up, so shadowing it out is cleaner). A full nu 0.114.1 registered-decl
-/// audit found these three the only builtins that terminate the host DIRECTLY
-/// in-process from user input. The guardrail principle: shadow a vector whose
-/// LOCAL intent (tear down this eval's engine state) would be a GLOBAL host
-/// teardown; a command with explicit target intent stays ALLOWED. So `kill <pid>`
-/// is NOT shadowed - it names a process and means it (killing the host's own pid is
-/// the operator's intent; the body runs as the assigned box user with those rights
-/// and could signal any pid via an external regardless). The shadows guard SURPRISE
-/// self-teardown, not a trusted body's deliberate box actions.
+/// The host-fatal builtins shadowed out of every in-process engine base.
 pub(crate) const HOST_FATAL_DECLS: &[&str] = &["exit", "exec", "panic"];
 
-/// Shadow every host-fatal builtin with an erroring decl on `engine_state`, so a
-/// run()/interact() body can never call one and take down the shared host. Must
-/// run after the shell command context that defines the real ones, so the shadow
-/// wins name resolution (a later-registered decl overrides the earlier).
+/// Shadow every host-fatal builtin with an erroring decl on `engine_state`.
 pub(crate) fn shadow_host_fatal_decls(engine_state: &mut nu::EngineState) {
     let mut working_set = nu::StateWorkingSet::new(engine_state);
     for name in HOST_FATAL_DECLS {

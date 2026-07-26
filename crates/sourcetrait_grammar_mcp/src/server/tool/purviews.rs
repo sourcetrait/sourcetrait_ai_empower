@@ -9,8 +9,7 @@ pub struct PurviewsParams {}
 pub(crate) struct PurviewsEnvelope {
     /// Every CONFIGURED purview, as persisted.
     pub purviews: Vec<PurviewView>,
-    /// The purview ids in view right now - the `.` built-in. The KEYS alone:
-    /// `purviews` above already says what each one resolves to.
+    /// The purview ids in view right now - the KEYS alone.
     pub current: Vec<String>,
 }
 

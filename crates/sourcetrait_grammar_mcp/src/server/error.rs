@@ -6,44 +6,14 @@ pub enum Severity {
     Warning,
 }
 
-/// What: a diagnostic's location. `path` is the file RELATIVE TO THE RIGS
-/// DIR (`<rig>/<file>`, e.g. `geo/shape/area.nu`, `geo/mod.nu`) for a
-/// rig-validation diagnostic, and `null` for a run/interact body
-/// diagnostic (located in the body, no file). `position` is `[line, col]`,
-/// 1-based; `[0, 0]` is file-level (no specific line).
-///
-/// Why: replaces the prior `Where` + `WhereSource` carrier with the flat wire
-/// shape the agent consumes. The whole `Source` is `null` (on the
-/// `Diagnostic`) for a non-located diagnostic (an eval timeout, an
-/// unregistered-rig error).
-///
-/// Where: built by the body lint (`server::lint`, `path: None`) and the
-/// rig validator (`server::rig`, `path: Some("<rig>/<rel>")`);
-/// serialized as part of a `Diagnostic`.
+/// A diagnostic's location; `path` is rigs-dir-relative, or null in a body.
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
 pub struct Source {
     pub path: Option<String>,
     pub position: [usize; 2],
 }
 
-/// What: one agent-facing diagnostic row. `kind` is the namespaced taxonomy
-/// string (`rig::*`, `lint::*`, `thread::*`, ...); `source` is the
-/// location (`null` when non-located); `message` carries the human detail.
-/// `severity` selects the envelope bucket and is NOT serialized.
-///
-/// Why: the single unified diagnostic type collapses the former
-/// `rig::Violation` (structural validator) and `lint::LintViolation`
-/// (body lint) into one shape. The former typed per-variant `data`
-/// (timeout_ms, passed/registered, reason, ...) folds into `message` -- no
-/// loss, it is text either way -- so there is no separate `data` field, and
-/// the bucket (`errors` vs `warnings`) carries severity instead of a row
-/// field.
-///
-/// Where: produced by `server::lint` (body lint, severity Error) and
-/// `server::rig::validate_rig_source` (structural Error +
-/// `lint::summary_length` Warning); carried by `Error::RigViolations` /
-/// `Error::LintViolations` and `tool::rig::CheckSummary`; rendered to the
-/// wire by `error_to_call_result`.
+/// One agent-facing diagnostic row.
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
 pub struct Diagnostic {
     pub kind: String,
@@ -295,29 +265,13 @@ impl From<io::Error> for Error {
     }
 }
 
-/// What: top-of-wire envelope -- the structured error body keyed under the
-/// `error` field of `structured_content`.
-///
-/// Why: the single typed shape that lands in `CallToolResult::structured_content`
-/// for every tool-execution error; the `error` wrapper is the
-/// success-vs-error discriminator the agent branches on.
-///
-/// Where: produced by `error_to_call_result`; consumed by integration tests
-/// asserting `result.structuredContent.error`.
+/// Top-of-wire envelope: the structured error body keyed under `error`.
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
 pub struct ErrorEnvelope {
     pub error: ErrorBody,
 }
 
-/// What: the unified error body -- `errors` + `warnings` diagnostic lists plus
-/// an optional `nonce`. Both lists are always present (possibly empty);
-/// `nonce` is omitted when absent.
-///
-/// Why: every failure response now carries the same `{ errors, warnings,
-/// nonce? }` shape regardless of the originating condition; the bucket split
-/// conveys severity without a per-row `severity` field.
-///
-/// Where: built by `error_to_call_result`.
+/// The unified error body: `errors`, `warnings`, and an optional nonce.
 #[derive(Debug, Clone, ser::Serialize, schema::JsonSchema)]
 pub struct ErrorBody {
     pub errors: Vec<Diagnostic>,

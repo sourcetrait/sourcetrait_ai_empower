@@ -19,9 +19,7 @@ fn json_object_to_nu_value(map: &mcp::JsonObject) -> nu::Value {
     nu::Value::record(record, span)
 }
 
-/// serde_json -> nu, the one JSON-to-Value bridge in the crate. Also the write half
-/// of the rig index's NUON round-trip (server/rig.rs), which is why it is
-/// pub(crate) rather than private to the templates.
+/// serde_json to nu: the one JSON-to-Value bridge in the crate.
 pub(crate) fn json_value_to_nu_value(v: &serde_json::Value) -> nu::Value {
     let span = nu::Span::unknown();
     match v {

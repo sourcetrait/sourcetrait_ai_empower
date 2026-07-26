@@ -3,24 +3,14 @@ use crate::*;
 /// Parameters for `inspect()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct InspectParams {
-    /// A namepath - `rig`, `rig:module/path`, or
-    /// `rig:module/path:function` - or a PATTERN, which ends in a trailing
-    /// `/` or `:` (`author/`, `rig:`, `rig:module/`, `rig:module:`)
-    /// or is the bare `*` (everything) or `.` (the current purview).
+    /// A namepath at any arity, or a PATTERN ending in `/` or `:`, or `*` / `.`.
     pub namepath: String,
 }
 
-/// Success result of `inspect()` -- the documentation for one namepath, or the
-/// signature block for a pattern.
-///
-/// EXACTLY one field. The namepath is not reprinted, because the caller supplied
-/// it, and the per-kind shapes carry nothing in common worth hoisting.
+/// Success result of `inspect()`.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct InspectEnvelope {
-    /// An exact namepath's documentation - a rig (`srcdir`), a module
-    /// (`src`), or a call (`src` + its full `signature`), each also carrying
-    /// `details`, with `summary` on the rig and module while a call's rides
-    /// its signature - or, for a PATTERN, the `signatures` block rooted there.
+    /// An exact namepath's documentation, or a pattern's `signatures` block.
     pub doc: InspectDoc,
 }
 
@@ -34,16 +24,8 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<InspectParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // Classification is by SHAPE and happens first: a trailing hierarchy
-        // character - or a bare `*` / `.` - makes this a PATTERN, and anything
-        // else validates as the exact namepath it always did.
         let namepath = match NamepathStr::parse(&p.namepath) {
             Ok(NamepathStr::Pattern(pattern)) => {
-                // `.` is the CURRENT PURVIEW, and purview is the only thing that
-                // knows what it names: the parser leaves it unresolved and an
-                // unresolved `.` matches nothing, so resolving it HERE is what
-                // makes `inspect(".")` the current view instead of an empty
-                // block.
                 let patterns = match pattern {
                     NamepathPattern::Current => {
                         let rows = match load_purviews() {
@@ -57,8 +39,6 @@ impl NuSh {
                     }
                     other => vec![NamepathStr::Pattern(other)],
                 };
-                // A pattern spans rigs, so the per-rig READ locks are
-                // taken inside the renderer rather than around one lookup here.
                 let signatures =
                     render_signatures_within(&self.rig_locks, &patterns).await;
                 return envelope_to_structured(&InspectEnvelope {

@@ -1,11 +1,6 @@
 use crate::*;
 
 /// `grimm dbg <data>` - append a record or table to this eval's `debug.nuonl`.
-///
-/// The debug lane of the embedded API: a body drops structured values into its
-/// OWN nonce log dir, beside the stdout/stderr the eval already captures, and the
-/// agent fetches them by nonce out of band. Deliberately not a print - fd 1 is the
-/// JSON-RPC channel, and a value written here keeps its types (NUON, not text).
 #[derive(Clone)]
 pub(crate) struct GrimmDbg {
     call: NuapiCall,

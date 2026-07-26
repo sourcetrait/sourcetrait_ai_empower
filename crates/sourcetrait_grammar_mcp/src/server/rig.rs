@@ -28,8 +28,7 @@ pub(crate) struct IndexModule {
 
 pub(crate) const META_FILE: &str = ".meta/rig.nuon";
 
-/// The pre-NUON index filename. Nothing writes it any more; it exists so
-/// `migrate_meta_to_nuon` can find a namespace written by an older host and retire it.
+/// The pre-NUON index filename; nothing writes it any more.
 const LEGACY_META_FILE: &str = ".meta/library.json";
 
 
@@ -468,11 +467,6 @@ pub(crate) fn is_valid_module_path(s: &str) -> bool {
 
 
 /// Render the index as NUON - the house format for anything we persist.
-///
-/// Routed through serde's Value rather than hand-mapping every field: the index types
-/// already derive Serialize/Deserialize and the schemas they carry are `JsonObject`s,
-/// so ONE bridge at the Value layer covers the whole tree and cannot drift from the
-/// structs as they change.
 pub(crate) fn index_to_nuon(index: &RigIndex) -> Result<String, String> {
     let json = json::to_value(index).map_err(|e| e.to_string())?;
     let value = json_value_to_nu_value(&json);
@@ -483,8 +477,6 @@ pub(crate) fn index_to_nuon(index: &RigIndex) -> Result<String, String> {
 /// Parse an index back out of NUON, the mirror of `index_to_nuon`.
 pub(crate) fn index_from_nuon(text: &str) -> Result<RigIndex, String> {
     let value = nu::from_nuon(text, None).map_err(|e| e.to_string())?;
-    // `nu_json` is the FRIENDLY converter (what `to json` emits); serde's own
-    // Serialize on a nu Value would hand back the internal tagged form with spans.
     let json_compat = nu::JsonValue::from_value(value).map_err(|e| e.to_string())?;
     let json = json::to_value(&json_compat).map_err(|e| e.to_string())?;
     json::from_value(json).map_err(|e| e.to_string())
@@ -499,16 +491,6 @@ pub(crate) fn load_index(rig: &str) -> io::Result<RigIndex> {
 
 
 /// A one-line summary from `.meta/docs/<docs_path>/summary.md`, FLATTENED.
-///
-/// A summary is single-line in EFFECT, but it is hard-wrapped in source like any
-/// other comment (the_user), so the stored text carries the author's line breaks
-/// and the wrap has to come back out. Every consumer wants one line, and the
-/// signature block structurally REQUIRES it: an unflattened continuation lands
-/// at column 0, where the block's own grammar reads it as an AUTHOR line.
-///
-/// Normalizing HERE rather than at each consumer is what keeps the block, the
-/// standalone signature, and inspect's rig/module `summary` fields agreeing.
-/// `details` is prose and keeps its newlines, so it stays on `read_doc`.
 fn read_summary(
     docs_dir: &std::path::Path,
     docs_path: &str,
@@ -528,8 +510,7 @@ fn read_doc(docs_dir: &std::path::Path, docs_path: &str, file: &str) -> String {
     fs::read_to_string(dir.join(file)).unwrap_or_default()
 }
 
-/// Every registered rig's compound `<author>/<name>`, sorted - which sorts by
-/// author then name, since the author is the leading segment.
+/// Every registered rig's compound `<author>/<name>`, sorted.
 pub(crate) fn registered_rig_names() -> Vec<String> {
     let dir = rigs_dir().join(RIG_TYPE_DIR);
     let mut names: Vec<String> = Vec::new();
@@ -564,11 +545,7 @@ pub(crate) fn registered_rig_names() -> Vec<String> {
 /// One space per depth level - the indentation IS the structure.
 const SIGNATURE_INDENT: &str = " ";
 
-/// `<token> # <summary>`, with the ` # ...` omitted ENTIRELY when the line is
-/// undocumented rather than left as an empty comment.
-///
-/// Shared by the block and the standalone form, so a summary is attached the
-/// same way wherever a signature appears.
+/// `<token> # <summary>`, with the ` # ...` omitted entirely when undocumented.
 pub(crate) fn with_summary(
     token: &str,
     summary: &str,
@@ -593,14 +570,7 @@ fn push_signature_line(
     out.push('\n');
 }
 
-/// A call's `<name> <args> <result>`, with `name` the caller's choice of leaf or
-/// full namepath.
-///
-/// THE TWO MODES OVER ONE IMPLEMENTATION: the TREE form passes the leaf name,
-/// because the indentation around it supplies the hierarchy; a STANDALONE form
-/// (an exact inspect) passes the full namepath, because nothing around it does.
-/// Everything after that first token is identical between them, which is the
-/// point - the two surfaces cannot drift.
+/// A call's `<name> <args> <result>`; `name` is a leaf or a full namepath.
 pub(crate) fn signature_of(
     name: &str,
     f: &IndexFunction,
@@ -617,9 +587,6 @@ pub(crate) fn signature_of(
 }
 
 /// Join a parent module path with a leaf name, tolerating an empty parent.
-///
-/// Serves both uses: a submodule's own module path, and the docs path a
-/// signature's summary lives under (`<module_path>/<name>` for a call).
 fn join_path(
     parent: &str,
     name: &str,
@@ -631,22 +598,7 @@ fn join_path(
     }
 }
 
-/// Render the calls and submodules of one module that `patterns` put in view,
-/// returning whether anything was emitted.
-///
-/// Calls before submodules: the callables at a level are what a reader scans
-/// for, and a submodule pushes the eye deeper. Each group sorts by name.
-///
-/// A module line is emitted when the module's OWN namepath is covered OR when
-/// anything below it was. That second case is what keeps the ANCESTORS of a
-/// deep match present, so the indentation still spells a whole namepath - a
-/// subtree without its ancestors is one a reader cannot turn back into a
-/// namepath, and the block's whole grammar is its indentation.
-///
-/// A per-signature predicate rather than a rooted walk, because a purview is a
-/// SET of namepath patterns: two of them can root in different rigs at
-/// different depths, which no single root expresses, while "does any of them
-/// cover this signature" composes for free.
+/// Render one module's calls and submodules that `patterns` put in view.
 fn push_within_signatures(
     out: &mut String,
     depth: usize,
@@ -682,8 +634,6 @@ fn push_within_signatures(
     subs.sort_by(|a, b| a.name.cmp(&b.name));
     for m in subs {
         let module_path = join_path(parent, &m.name);
-        // Rendered into a buffer first: whether the module's own line belongs in
-        // the block is not knowable until its subtree has been walked.
         let mut body = String::new();
         let below = push_within_signatures(
             &mut body,
@@ -710,37 +660,7 @@ fn push_within_signatures(
     showed
 }
 
-/// The namespace as ONE indented signature block, filtered to a SET of namepath
-/// patterns - the union of everything they put in view.
-///
-/// THE ONE renderer. `info()` shows the current purview through it, a pattern
-/// `inspect()` shows one namepath pattern through it, and the whole namespace is
-/// just the `*` pattern - so none of the three can drift from the others. It
-/// replaced the structured `rigs` tree info() used to return: roughly 8 KB
-/// of nested JSON for two rigs, and the agent's first read after the skill.
-///
-/// NOTHING IS STATED THAT CAN BE INFERRED, and the separators are inferable from
-/// shape alone (the_user): depth 0 is an author and depth 1 a rig - a rig
-/// is ALWAYS the two levels `<author>/<name>` - everything deeper is a module
-/// UNLESS it carries the two signature groups, which makes it a call. So a reader
-/// joins author to rig with `/`, module segments with `/`, and puts `:` before
-/// the first module and before the call.
-///
-/// Trailing hierarchy characters were tried and REMOVED. They cost bytes and did
-/// not buy the property they were for: a module holding both submodules and calls
-/// cannot be described by any single one, so `a/b:c/` + `:call` needs an override
-/// rule - which is re-inference wearing a costume. Shape settles every case
-/// including that one, because a call is recognizable on its own.
-///
-/// A rig appears when its OWN namepath is covered or when anything inside it
-/// is. That is what lets a bare `author/` list a rig that has no calls yet,
-/// while a pattern naming a module the rig does not have contributes
-/// nothing at all - no orphan author or rig heading left behind.
-///
-/// Namepath patterns matching NOTHING render EMPTY rather than erroring. A
-/// pattern is a filter, and an unresolved `.` matches nothing BY DESIGN, so an
-/// empty block is already this format's answer for "nothing here" - a fresh
-/// namespace renders empty for the same reason.
+/// The namespace as ONE indented signature block, filtered to a set of patterns.
 pub(crate) async fn render_signatures_within(
     locks: &RigLocks,
     patterns: &[NamepathStr],
@@ -764,8 +684,6 @@ pub(crate) async fn render_signatures_within(
             }
         };
         let docs_dir = rig_docs_dir(&name);
-        // Buffered, because whether this rig's heading belongs in the block
-        // is not knowable until its whole tree has been walked.
         let mut body = String::new();
         let showed = push_within_signatures(
             &mut body,
@@ -785,7 +703,6 @@ pub(crate) async fn render_signatures_within(
             continue;
         }
         if current_author.as_deref() != Some(author) {
-            // No summary: there is no author-level doc to read.
             push_signature_line(&mut out, 0, author, "");
             current_author = Some(author.to_string());
         }
@@ -795,8 +712,7 @@ pub(crate) async fn render_signatures_within(
     out
 }
 
-/// A rig's documentation. `srcdir` is the COMMITTED CANONICAL directory, not
-/// the authored source - the agent already knows where its own domains are.
+/// A rig's documentation; `srcdir` is the COMMITTED CANONICAL directory.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct RigDoc {
     pub srcdir: String,
@@ -813,9 +729,6 @@ pub struct ModuleDoc {
 }
 
 /// A call's documentation; `src` is the committed `mod.nu` holding its `main`.
-///
-/// There is no `summary` field: SUMMARY IS PART OF THE SIGNATURE, which carries
-/// it as the trailing ` # ...` exactly as the info() block does.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct CallDoc {
     pub src: String,
@@ -824,27 +737,12 @@ pub struct CallDoc {
 }
 
 /// What a PATTERN inspect returns: the `info()` block rooted at the pattern.
-///
-/// The field keeps the name `signatures` that `info()` uses, because it IS that
-/// block - a reader who knows one surface knows the other, and the format has
-/// exactly one description.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub struct SignaturesDoc {
     pub signatures: String,
 }
 
 /// What `inspect()` returns - one exact namepath, or a pattern's block.
-///
-/// UNTAGGED, so each member serializes as its own bare shape and schemars renders
-/// the set as a `oneOf`. The caller always knows which member it will get,
-/// because it knows whether it passed a pattern or an exact namepath and it
-/// knows what it asked for. It rides under the envelope's single
-/// `doc` field rather than at the root - a root-level oneOf carries no
-/// `type: "object"` and Claude Code rejects it.
-///
-/// The four shapes stay distinguishable by FIELD SET alone, which is what an
-/// untagged oneOf needs: `srcdir` marks a rig, `src` + `summary` a module,
-/// `src` + `signature` a call, and a lone `signatures` a pattern.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 #[serde(untagged)]
 pub enum InspectDoc {
@@ -895,8 +793,6 @@ pub(crate) fn inspect_impl(
     }
     let index = load_index(rig)?;
     let docs_dir = rig_docs_dir(rig);
-    // The COMMITTED canonical tree, never the authored source. All three paths
-    // compose from the namepath, so nothing here reads `source_path`.
     let root = rig_dir(rig);
     match name {
         Some(fn_name) => {
@@ -914,9 +810,6 @@ pub(crate) fn inspect_impl(
                 }
             })?;
             let docs_path = format!("{module_path}/{fn_name}");
-            // The STANDALONE form: the FULL NAMEPATH in place of the leaf name,
-            // because nothing around it supplies the hierarchy the block's
-            // indentation would.
             let namepath = format!("{rig}:{module_path}:{fn_name}");
             Ok(InspectDoc::Call(CallDoc {
                 src: root
@@ -2546,17 +2439,7 @@ fn copy_tree_all(src: &std::path::Path, dst: &std::path::Path) -> io::Result<()>
 }
 
 
-/// One-time migration: `.meta/library.json` -> `.meta/rig.nuon`.
-///
-/// The index was the last JSON we persisted, against the house rule that anything we
-/// persist is NUON. Changing the FORMAT without migrating existing NAMESPACES would be a
-/// silent break rather than a fix: rig DETECTION keys on the meta file, so an
-/// unmigrated rig simply stops existing - no error, just an empty `info()` and a
-/// `not_registered` on every call.
-///
-/// Idempotent. A namespace with no legacy file is a no-op; a rig that somehow carries
-/// both keeps the `.nuon` it already has and drops the stale `.json`. Returns how many
-/// rigs were touched.
+/// One-time migration: `.meta/library.json` to `.meta/rig.nuon`.
 fn migrate_meta_to_nuon() -> io::Result<usize> {
     let root = rigs_dir().join(RIG_TYPE_DIR);
     if !root.exists() {
@@ -2596,13 +2479,9 @@ fn migrate_meta_to_nuon() -> io::Result<usize> {
 pub(crate) async fn ensure_substrate() -> io::Result<Arc<RigLocks>> {
     ensure_keypair()?;
     ensure_rigs_repo()?;
-    // BEFORE hydration, or an unmigrated namespace hydrates as empty.
     let migrated = migrate_meta_to_nuon()?;
     if migrated > 0 {
         eprintln!("grammar: migrated {migrated} rig index file(s) to NUON");
-        // Hygiene rather than correctness - the files on disk are already right. A
-        // failure here leaves the signed repo dirty until the next commit sweeps it,
-        // which is worth saying out loud but not worth refusing to start over.
         let dir = rigs_dir();
         if let Err(e) = run_git(&dir, &["add", "--", RIG_TYPE_DIR])
             .and_then(|()| run_git(&dir, &["commit", "-m", "migrate rig index to NUON"]))
@@ -2612,8 +2491,6 @@ pub(crate) async fn ensure_substrate() -> io::Result<Arc<RigLocks>> {
     }
     let locks = Arc::new(RigLocks::new());
     locks.hydrate_from_disk().await?;
-    // AFTER hydration, so the prune inside it judges against the real set.
-    // Non-fatal: purview bookkeeping must not stop the host from serving.
     if let Err(e) = ensure_default_purview() {
         eprintln!("grammar: default purview not materialized: {e:?}");
     }

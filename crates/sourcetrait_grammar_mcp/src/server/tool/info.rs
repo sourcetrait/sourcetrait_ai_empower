@@ -3,8 +3,7 @@ use crate::*;
 /// Parameters for `info()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct InfoParams {
-    /// Purview ids to render as if they were in view. EMPTY (the default) means
-    /// the CURRENT purview. Supplying ids does not change what is in view.
+    /// Purview ids to render as if in view; EMPTY means the CURRENT purview.
     #[serde(default)]
     pub purviews: Vec<String>,
 }
@@ -15,25 +14,17 @@ pub(crate) struct InfoEnvelope {
     pub name: String,
     pub version: String,
     pub nu_version: String,
-    /// The `--id` and `--namespace` this server was configured with -- lets an
-    /// agent self-confirm which one it is talking to.
+    /// The `--id` this server was configured with.
     pub id: String,
     pub namespace: String,
-    /// This host process's id, stable for its lifetime. A change across two calls
-    /// means the server was restarted.
+    /// This host process's id, stable for its lifetime.
     pub mcp_nom: String,
-    /// The agent working directory this server was configured with
-    /// (`--workdir`), exported to eval bodies as $env.EQUIP_WORK_DIR.
+    /// The agent working directory, exported as $env.EQUIP_WORK_DIR.
     pub work_dir: String,
     pub plugins: Vec<crate::plugins::PluginInfo>,
-    /// The callable surface WITHIN the reported purview, as one indented block
-    /// where the indentation is the hierarchy: depth 0 an author, depth 1 a
-    /// rig, deeper a module unless it carries the two signature groups,
-    /// which makes it a call.
+    /// The callable surface within the reported purview, as one block.
     pub signatures: String,
-    /// The purview `signatures` was rendered for: each id beside the namepath
-    /// patterns it resolves to. Last, because it is the frame around the block
-    /// rather than part of it.
+    /// The purview `signatures` was rendered for.
     pub purview: Vec<PurviewView>,
 }
 
@@ -47,17 +38,10 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<InfoParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // A purviews file that exists but will not decode is an ERROR, never a
-        // silently empty (and therefore silently total) view - the same rule the
-        // rig index already holds itself to.
         let rows = match load_purviews() {
             Ok(rows) => rows,
             Err(error) => return Ok(error_to_call_result(error, None)),
         };
-        // EMPTY means CURRENT. Ids given explicitly are the subagent blinders:
-        // they render as if those were in view without changing what is.
-        // `@fae` and `fae` name the same purview here, so a caller can paste a
-        // reference straight out of a purview's configuration.
         let ids: Vec<String> = if p.purviews.is_empty() {
             self.current_purview.ids()
         } else {
@@ -66,8 +50,6 @@ impl NuSh {
                 .map(|id| purview_ref(id).unwrap_or(id).to_string())
                 .collect()
         };
-        // FILTERING expands `@` references; the `purview` field below reports the
-        // raw configuration.
         let patterns = parse_patterns(&expand_values(
             &resolve_patterns(&ids, rows.as_ref()),
             rows.as_ref(),

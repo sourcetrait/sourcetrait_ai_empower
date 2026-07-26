@@ -13,9 +13,6 @@ impl NuSh {
         &self,
         mcp::Parameters(_p): mcp::Parameters<ChannelVerifiedParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // THIS is the authentication: the same agent that drives the MCP over stdio
-        // proves it owns the claiming connection, which is all the Monitor's
-        // `{url, protocols}` input can support - so a claim has to exist to own.
         match self.channel.mark_verified() {
             Ok(()) => Ok(mcp::CallToolResult::default()),
             Err(ChannelVerifyError::NotOpen) => {

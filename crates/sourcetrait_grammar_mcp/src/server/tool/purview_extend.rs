@@ -3,32 +3,21 @@ use crate::*;
 /// Parameters for `purview_extend()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct PurviewExtendParams {
-    /// Purview ids to add to what is currently in view. Additive: nothing
-    /// already in view is disturbed.
+    /// Purview ids to add to the current view; additive.
     pub purviews: Vec<String>,
 }
 
-/// What a change to the current view did, shared by extend and reset.
-///
-/// The two halves are asymmetric on purpose: extending normally only ADDS, and
-/// resetting normally only REMOVES, so each tool reports null for the half it
-/// did not touch rather than an empty list that reads like a result.
+/// What a change to the current view did.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct PurviewDeltaEnvelope {
     /// `info()`'s `signatures` for what this call brought INTO view, or null.
     pub revealed: Option<String>,
-    /// The purview ids in view now - the KEYS alone; `purviews()` says what
-    /// each one resolves to.
+    /// The purview ids in view now - the KEYS alone.
     pub current: Vec<String>,
 }
 
 impl NuSh {
     /// The shared delta report for a change to the current view.
-    ///
-    /// `added` is `info()`'s `signatures` rendered for the namepath patterns
-    /// that were newly added - NOT a diff of two whole blocks. So when the view
-    /// already carries `*`, what it shows was visible before as well: the
-    /// patterns are what changed, and the block says what they name.
     pub(crate) async fn purview_delta(
         &self,
         before: Vec<String>,
@@ -36,11 +25,6 @@ impl NuSh {
         ids: Vec<String>,
         rows: Option<Vec<PurviewRow>>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        // The DELTA is computed on the raw values, so `removed` reports what was
-        // configured; only the block RENDER expands `@` references.
-        // Both sides are EXPANDED before the delta. Comparing raw values would
-        // count `@ants` as new against a `sourcetrait/ant:` already in view,
-        // and reveal a block the caller could already see.
         let (revealed, _left) = pattern_delta(
             &expand_values(&before, rows.as_ref()),
             &expand_values(&after, rows.as_ref()),
@@ -71,9 +55,6 @@ impl NuSh {
             Ok(rows) => rows,
             Err(error) => return Ok(error_to_call_result(error, None)),
         };
-        // An unknown id is REFUSED rather than ignored. Contributing nothing in
-        // silence would turn a typo into a view that simply fails to widen,
-        // which looks identical to a purview that is genuinely empty.
         for id in &p.purviews {
             if !is_nameable_purview(id, rows.as_ref()) {
                 return Ok(error_to_call_result(

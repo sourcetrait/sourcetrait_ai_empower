@@ -3,26 +3,16 @@ use crate::*;
 /// Parameters for `purview_configure()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct PurviewConfigureParams {
-    /// The purview to set, created if absent. A path-like snake label
-    /// (`default`, `iter/almost`, `john/cindy/mary`) - always bare relative,
-    /// never a leading `/` or `./`, and arbitrary rather than derived from any
-    /// namepath or filesystem path.
+    /// The purview to set, created if absent; a path-like snake label.
     pub purview: String,
-    /// The namepath patterns it puts in view, or an exact namepath for a single
-    /// call. An EMPTY list DELETES the purview entirely.
+    /// Its namepath patterns; an EMPTY list DELETES the purview.
     pub namepaths: Vec<String>,
 }
 
 /// Success result of `purview_configure()` - the state after the write.
 #[derive(Debug, ser::Serialize, schema::JsonSchema)]
 pub(crate) struct PurviewConfigureEnvelope {
-    /// `info()`'s `signatures` for EVERYTHING this purview reveals - the WHOLE
-    /// set, never a delta - or null when the purview no longer exists.
-    ///
-    /// Full rather than incremental because the caller needs to CHECK what it
-    /// just wrote. A delta cannot answer "what does this configuration actually
-    /// do now", and against a purview the session is not looking through it
-    /// answers nothing at all.
+    /// Everything this purview reveals; null when the call deleted it.
     pub signatures: Option<String>,
 }
 
@@ -57,8 +47,6 @@ impl NuSh {
                 None,
             ));
         }
-        // A `@id` value must name a purview that COULD exist. Whether it does
-        // yet is the prune's business, not the parser's.
         for value in &p.namepaths {
             if let Some(id) = purview_ref(value)
                 && !is_valid_purview_ref(id)
@@ -79,8 +67,6 @@ impl NuSh {
             Err(error) => return Ok(error_to_call_result(error, None)),
         };
         rows.retain(|row| row.id != p.purview);
-        // `default` CANNOT not exist, so an empty list RESETS it to `*` rather
-        // than deleting it - the same state startup would put it back in.
         let namepaths = if p.namepaths.is_empty() && p.purview == PURVIEW_DEFAULT {
             vec![PURVIEW_ALL.to_string()]
         } else {
@@ -96,7 +82,6 @@ impl NuSh {
         if let Err(error) = save_purviews(&rows) {
             return Ok(error_to_call_result(error, None));
         }
-        // A deletion must not leave the session pointing at something gone.
         self.current_purview.retain_known(Some(&rows));
         let values = rows
             .iter()

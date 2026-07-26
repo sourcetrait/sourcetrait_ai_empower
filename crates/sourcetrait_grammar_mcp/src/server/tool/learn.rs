@@ -3,7 +3,7 @@ use crate::*;
 /// Parameters for `learn()`.
 #[derive(Debug, ser::Deserialize, ser::Serialize, schema::JsonSchema)]
 pub struct LearnParams {
-    /// Harness root directory; the skill is written under `<harness_dir>/skills/nu/SKILL.md`.
+    /// Harness root; the skill lands at `<harness_dir>/skills/nu/SKILL.md`.
     pub harness_dir: String,
 }
 

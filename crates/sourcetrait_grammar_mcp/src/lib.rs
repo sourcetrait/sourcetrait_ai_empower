@@ -17,6 +17,7 @@ pub(crate) mod server {
     pub(crate) mod nonce;
     pub(crate) mod oneshot;
     pub(crate) mod parse_engine;
+    pub(crate) mod pin;
     pub(crate) mod purview;
     pub(crate) mod run;
     pub(crate) mod schema;
@@ -54,6 +55,7 @@ pub(crate) mod server {
         mod emergency;
         mod rig;
         mod namepath;
+        mod pin;
         mod schema;
         mod teardown;
         mod watchdog;
@@ -63,6 +65,7 @@ pub(crate) mod nuapi {
     pub(crate) mod grimm {
         pub(crate) mod channel_send;
         pub(crate) mod common;
+        pub(crate) mod config;
         pub(crate) mod dbg;
     }
 }
@@ -82,12 +85,14 @@ pub(crate) use crate::{
     nuapi::grimm::{
         channel_send::GrimmChannelSend,
         common::{NuapiCall, data_shape, register_nuapi, require_record_or_table},
+        config::{GrimmGetConfig, GrimmGetConfigAll, GrimmPinConfig},
         dbg::GrimmDbg,
     },
     cli::CliTool,
     config::{
-        CONFIG, Config, ConfigToml, DeniableTool, DenySet, SpamThresholds, config, default_id,
-        default_work_dir, expand_path,
+        CONFIG, Config, ConfigToml, DEFAULT_NAMESPACE, DeniableTool, DenySet, SpamThresholds,
+        SupervisorConfig, TEST_NAMESPACE, config, default_id, default_work_dir, expand_path,
+        fraction_field,
     },
     engine::base_context,
     mcp::ServiceExt,
@@ -139,6 +144,7 @@ pub(crate) use crate::{
             LintEngine, ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body,
             wrap_as_module,
         },
+        pin::{clear_pins, effective_supervisor, pin, reap_pins},
         purview::{
             CurrentPurview, PURVIEW_ALL, PURVIEW_DEFAULT, PurviewRow,
             PurviewView, is_derived_purview, is_valid_purview_id, load_purviews,
@@ -153,7 +159,7 @@ pub(crate) use crate::{
         },
         teardown::{
             OrphanReaper, install_child_subreaper, kill_plugin_subprocesses, make_tracker,
-            tree_kill,
+            process_start_time, tree_kill,
         },
         watchdog::{
             HungRegistry, HungWatch, Lane, WatchdogDeps, register_hung, spawn_watchdog,

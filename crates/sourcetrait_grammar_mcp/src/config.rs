@@ -18,8 +18,14 @@ use crate::*;
 /// The embedded base every load merges onto.
 const DEFAULTS_CONFIG: &str = include_str!("../defaults/grammar_mcp.toml");
 
-/// The namespace namespace when `--namespace` is not given.
+/// The namespace when `--namespace` is not given.
 pub(crate) const DEFAULT_NAMESPACE: &str = "default";
+
+/// The namespace `--test` defaults to. An explicit `--namespace` still wins, so
+/// this is a default rather than an override: `--test` names the ordinary test
+/// channel without spelling its namespace out, and says nothing about a run that
+/// asks for a different one.
+pub(crate) const TEST_NAMESPACE: &str = "test";
 
 /// Lowest port the channel hub may be pinned to. Anything below is privileged and the
 /// host is unprivileged by design.
@@ -86,6 +92,13 @@ pub(crate) struct Config {
     pub namespace: String,
     pub work_dir: PathBuf,
     pub deny: DenySet,
+    /// Was this host launched with `--test`?
+    ///
+    /// A binary flag with exactly two meanings, and it is deliberately not a
+    /// mode: it defaults the namespace to `test` (resolved at the argument
+    /// boundary, so nothing downstream re-reads it for that), and it ties the
+    /// watchdog to the channel's phase. Everything else behaves identically.
+    pub test: bool,
     pub channel: ChannelConfig,
     pub supervisor: SupervisorConfig,
 }
@@ -208,7 +221,12 @@ fn merged_supervisor(
 }
 
 /// A fraction of total capacity. Outside (0, 1] it would either warn always or never.
-fn fraction_field(
+///
+/// `pub(crate)` so a runtime PIN is held to the same bound the file layer enforces
+/// (server/pin.rs): a pin must not be able to reach a state a config load would
+/// have refused, and the only way to guarantee that is to share the check rather
+/// than restate it.
+pub(crate) fn fraction_field(
     name: &str,
     value: Option<f64>,
 ) -> Result<f64, String> {
@@ -258,6 +276,7 @@ impl Config {
         namespace: String,
         work_dir: PathBuf,
         deny: DenySet,
+        test: bool,
     ) -> Result<Self, String> {
         let base: ConfigToml = toml::from_str(DEFAULTS_CONFIG)
             .map_err(|e| format!("the embedded defaults do not parse: {e}"))?;
@@ -266,6 +285,7 @@ impl Config {
             namespace,
             work_dir,
             deny,
+            test,
             channel: merged_channel(user.channel, base.channel)?,
             supervisor: merged_supervisor(user.supervisor, base.supervisor)?,
         })
@@ -290,6 +310,7 @@ impl Default for Config {
             DEFAULT_NAMESPACE.to_string(),
             work_dir,
             DenySet::default(),
+            false,
         )
         .expect("embedded defaults parse")
     }

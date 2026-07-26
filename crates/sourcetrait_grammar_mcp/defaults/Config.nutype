@@ -1,0 +1,58 @@
+# Config: the host's configuration, as the file writes it and as a body reads it.
+#
+#     let cfg: <this type> = (grimm get_config_all)
+#
+# One model describes both surfaces. The record `grimm get_config_all` returns
+# mirrors grammar_mcp.toml table for table and key for key, so this type
+# annotates the parsed file and the live reading equally. That is also what makes
+# a dotted key a real path: `get_config "supervisor.cpu_warn_fraction"` and
+# `get_config_all | get supervisor.cpu_warn_fraction` are the same question asked
+# two ways, because the key is the path into this shape.
+#
+# What is absent is absent on purpose. The store coordinate (--id, --namespace),
+# the work dir (--workdir) and the deny list (--deny) are arguments rather than
+# settings: they identify the invocation rather than tune it, and a file that sets
+# one is an unknown-field error. A body already reads the first three ambiently as
+# $env.EQUIP_ID / $env.EQUIP_NAMESPACE / $env.EQUIP_WORK_DIR.
+#
+# Values are live rather than as-launched. The four channel spam thresholds move
+# through `config_channel`; the four supervisor lines move through
+# `grimm pin_config`. A read reports what is actually in force at that moment,
+# which is the only reading worth having - a startup seed nobody is using would be
+# a lie with a timestamp.
+#
+# `port` is null when the channel's port is unpinned, which is the default and the
+# intended mode: the kernel assigns one and `channel_open` reports it back. A
+# pinned port is an int in 1024-65535.
+#
+# `cert_dir` is `directory` rather than `string` because it is one - the type says
+# so even though nushell collapses the sugar to a string after parse. Its stored
+# form is fully expanded: a `~` or `$VAR` in the file resolves at load, so what is
+# read here is always an absolute path.
+#
+# The four `spam_*` windows are whole seconds rather than durations. MCP arguments
+# cross as JSON, which cannot carry a nu duration, and TOML has no duration type
+# either, so the `10sec` form lives in prose and the wire carries an int.
+#
+# The two fraction pairs and the headroom differ in kind, which is why they differ
+# in type. A fraction is measured against the machine's own total, so it means the
+# same thing on a bigger box; the VRAM line is a headroom in MiB, because what
+# matters there is how much room is left before the allocation that fails, and
+# 4 GiB free is the same danger whatever the card's capacity.
+
+record<
+    channel: record<
+        port: oneof<int, nothing>,
+        cert_dir: directory,
+        spam_warn_window_secs: int,
+        spam_warn_rate: int,
+        spam_error_window_secs: int,
+        spam_error_rate: int
+    >,
+    supervisor: record<
+        cpu_warn_fraction: float,
+        ram_warn_fraction: float,
+        vram_warn_headroom_mib: int,
+        disk_warn_fraction: float
+    >
+>

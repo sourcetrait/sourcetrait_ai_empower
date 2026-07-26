@@ -26,9 +26,14 @@ pub(crate) struct HostCli {
     /// Defaults to the invoking user's name.
     #[arg(long, default_value_t = default_id())]
     pub id: String,
-    /// State namespace within the id's identity.
-    #[arg(long, default_value = "default")]
-    pub namespace: String,
+    /// State namespace within the id's identity. Defaults to `default`, or to
+    /// `test` under --test.
+    #[arg(long)]
+    pub namespace: Option<String>,
+    /// Run as the test channel: default the namespace to `test`, and keep the
+    /// resource watchdog online only while the packet channel is.
+    #[arg(long)]
+    pub test: bool,
     /// Agent working directory, exported to every eval body as
     /// $env.EQUIP_WORK_DIR. Defaults to <home>/proj/equip/<id>.
     #[arg(long)]
@@ -176,6 +181,25 @@ impl RigCliAction {
     }
 }
 
+/// `--test` supplies a default namespace, never an override.
+///
+/// Resolved here, at the argument boundary, so `test` is an ordinary namespace
+/// string from that point on and nothing downstream has to re-derive it. That is
+/// what keeps the flag from becoming a mode: the namespace half ends at this
+/// function, leaving `Config.test` to mean only the watchdog half.
+fn resolve_namespace(
+    namespace: Option<String>,
+    test: bool,
+) -> String {
+    namespace.unwrap_or_else(|| {
+        if test {
+            TEST_NAMESPACE.to_string()
+        } else {
+            DEFAULT_NAMESPACE.to_string()
+        }
+    })
+}
+
 /// Every path out of an argument is expanded here, the same way config paths are, so a
 /// `~` or `$VAR` means the same thing whichever surface it arrived on.
 fn resolve_work_dir(
@@ -206,12 +230,14 @@ fn resolve_config(cli: HostCli) -> Result<(Config, Option<HostCommand>), String>
         None => ConfigToml::default(),
     };
     let work_dir = resolve_work_dir(cli.workdir.as_deref(), &cli.id)?;
+    let namespace = resolve_namespace(cli.namespace, cli.test);
     let config = Config::from_toml(
         file,
         cli.id,
-        cli.namespace,
+        namespace,
         work_dir,
         DenySet::new(cli.deny),
+        cli.test,
     )?;
     Ok((config, cli.command))
 }

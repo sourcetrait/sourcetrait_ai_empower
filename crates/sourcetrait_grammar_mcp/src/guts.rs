@@ -395,6 +395,15 @@ impl TestServer {
 
 // ---- envelope readers (shared by the in-process integration tests) ----
 
+/// Drop every config pin.
+///
+/// The pin registry is process-global, so an integration test that pins has to be
+/// able to put it back for the next test in the same binary - and unlike the
+/// namespace on disk, a pin is not isolated by using a unique name.
+pub fn clear_config_pins() {
+    crate::clear_pins();
+}
+
 /// True when the envelope is the error shape (`{ error: ... }`).
 pub fn has_error(env: &json::Value) -> bool {
     env.get("error").is_some()

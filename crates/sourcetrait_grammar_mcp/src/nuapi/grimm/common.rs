@@ -123,4 +123,11 @@ pub(crate) fn register_nuapi(
     let call = NuapiCall::new(log_dir.to_path_buf());
     working_set.add_decl(Box::new(GrimmDbg::new(call.clone())));
     working_set.add_decl(Box::new(GrimmChannelSend::new(call)));
+    // The config trio carries no per-call state - it reads process-global config
+    // and the pin layer - so these take no `NuapiCall`. They register here anyway
+    // rather than on the base, because this one site is what keeps the whole
+    // `grimm` family unreachable outside an eval.
+    working_set.add_decl(Box::new(GrimmGetConfigAll));
+    working_set.add_decl(Box::new(GrimmGetConfig));
+    working_set.add_decl(Box::new(GrimmPinConfig));
 }

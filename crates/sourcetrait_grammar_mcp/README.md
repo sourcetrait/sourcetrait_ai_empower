@@ -8,20 +8,28 @@ SourceTrait AI Grammar: Nushell MCP
 Usage
 --------------------------------------------------------------------------------
 
-Refer to the [MCP Interface](docs/Interface.md).
+The server documents itself. Its `learn()` tool writes a complete guide - the
+tool surface, the type vocabulary, and the rig ecosystem - to
+`<harness_dir>/skills/nu/SKILL.md`, stamped with the version that produced it.
+Generate it against the server you are actually running, rather than reading a
+copy that may have drifted.
+
+`info()` is the live index of what a running server offers: its versions, its
+loaded plugins, and every callable currently in view.
 
 
 Installation
 --------------------------------------------------------------------------------
 
-Build from source, install to the nushell plugin directory, register:
+Build from source and register the `grammar_mcp` binary as an MCP server over
+stdio:
 
 ```nu
 ^cargo install --path .
-^claude mcp add --transport stdio nu_sh_mcp
 ```
 
-Requires nushell 0.113 or later.
+The embedded nushell engine is pinned by the workspace; the binary reports the
+version it was built against through `info()`.
 
 
 AI

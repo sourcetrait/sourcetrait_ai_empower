@@ -44,6 +44,52 @@ fn explicit_id_and_namespace_select_their_own_dirs() {
 }
 
 #[tested]
+fn the_test_flag_defaults_the_namespace() {
+    let t = testing::test!({ .using_temp_dir() });
+    let mut host = Host::spawn_args(t.temp_dir(), &["--id", "tflag", "--test"]);
+    let info = host.call("info", json!({}));
+    assert_eq!(
+        structured(&info)["namespace"].as_str(),
+        Some("test"),
+        "--test names the ordinary test channel without spelling its namespace \
+         out; got {info}",
+    );
+    assert!(
+        namespace_dir(&t.temp_dir().join("data"), "tflag", "test").exists(),
+        "and the namespace it selects is a real one on disk",
+    );
+}
+
+#[tested]
+fn an_explicit_namespace_beats_the_test_default() {
+    let t = testing::test!({ .using_temp_dir() });
+    // --test supplies a DEFAULT, never an override. A run that asks for a
+    // particular namespace gets it, which is what keeps the flag from being a mode.
+    let mut host = Host::spawn_args(
+        t.temp_dir(),
+        &["--id", "tflag2", "--test", "--namespace", "elsewhere"],
+    );
+    let info = host.call("info", json!({}));
+    assert_eq!(
+        structured(&info)["namespace"].as_str(),
+        Some("elsewhere"),
+        "an explicit --namespace wins over the --test default; got {info}",
+    );
+}
+
+#[tested]
+fn without_the_flag_the_namespace_is_still_default() {
+    let t = testing::test!({ .using_temp_dir() });
+    let mut host = Host::spawn_args(t.temp_dir(), &["--id", "noflag"]);
+    let info = host.call("info", json!({}));
+    assert_eq!(
+        structured(&info)["namespace"].as_str(),
+        Some("default"),
+        "normal operation is unchanged; got {info}",
+    );
+}
+
+#[tested]
 fn namespaces_are_disjoint() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("nslib");

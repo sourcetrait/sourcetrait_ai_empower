@@ -51,6 +51,44 @@ pub(crate) fn parse_state_ppid(stat: &str) -> Option<(String, u32)> {
     Some((state, ppid))
 }
 
+/// Parse a process's START TIME (field 22 of `/proc/<pid>/stat`, in clock ticks
+/// since boot) out of a stat line.
+///
+/// The field is counted after the LAST ')' for the same reason `parse_state_ppid`
+/// does it: the comm field is unquoted and may itself contain spaces and parens.
+/// After it, index 0 is state (field 3), so field 22 is index 19.
+///
+/// ## DEV
+/// This exists for the pid-reuse guard on config pins (server/pin.rs). A pid alone
+/// cannot say whether the process holding a pin is still the one that took it -
+/// pids are recycled, and a long-lived host will outlive plenty of them. The start
+/// time makes the pair (pid, start_time) an identity: the kernel will not hand out
+/// the same pid with the same start tick, so a pin whose stored start time no
+/// longer matches belongs to a process that has already gone.
+/// ##
+pub(crate) fn parse_start_time(stat: &str) -> Option<u64> {
+    let rparen = stat.rfind(')')?;
+    stat[rparen + 1..]
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()
+}
+
+/// A live process's start time, or None when the pid is not running.
+#[cfg(target_os = "linux")]
+pub(crate) fn process_start_time(pid: u32) -> Option<u64> {
+    parse_start_time(&fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+/// Off Linux there is no /proc to read, so a pin can never be proven live and the
+/// pin surface refuses rather than guessing. We target Linux; this keeps the
+/// shipped crate honest by construction rather than by assumption.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn process_start_time(_pid: u32) -> Option<u64> {
+    None
+}
+
 /// Harvests children the subreaper ADOPTED that nobody is waiting on.
 ///
 /// `install_child_subreaper` makes us the parent of every orphan in an eval's process

@@ -262,6 +262,26 @@ impl LevelGate {
 /// 100. A non-100 kernel skews only the logged percentage, not any action.
 const CLK_TCK: f64 = 100.0;
 
+/// May the watchdog SAMPLE on this tick?
+///
+/// Normally yes, always - a production host watches its own resources whether or
+/// not anyone is listening, because the log is the durable record and sampling
+/// while idle is intended.
+///
+/// Under `--test` it follows the channel instead. The reason is measured rather
+/// than theoretical: during one 25-hour training burn a test host sat connected
+/// with its channel closed, shelling `nvidia-smi` every 16 seconds and logging 57
+/// VramWarnings about a card it had no stake in, none of which could ever be
+/// delivered - the announce is verification-gated while the log is not. A second
+/// host on the same box duplicating the first host's readings is pure waste, and
+/// `--test` is exactly the flag that says this host is the second one.
+///
+/// It follows the phase rather than latching on it, so closing and re-opening a
+/// channel takes sampling down and brings it back.
+fn sampling_online() -> bool {
+    !config().test || !matches!(channel_handle().status().phase, ChannelPhase::Closed)
+}
+
 /// Everything the watchdog samples. All Arc handles onto NuSh state.
 pub(crate) struct WatchdogDeps {
     pub hung_watch: HungRegistry,
@@ -426,7 +446,28 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
         loop {
             tk::sleep(SAMPLE_INTERVAL).await;
             tick += 1;
+            // Housekeeping runs ungated, above the sampling gate. Harvesting
+            // adopted zombies and lapsed pins is owed whether or not anyone is
+            // watching resource levels - skipping it would trade a little wasted
+            // sampling for a real leak.
             reaper.reap();
+            reap_pins();
+            if !sampling_online() {
+                // Reset the state that depends on continuity, so resuming
+                // re-establishes rather than inherits. Without this the first
+                // sample back would report a CPU average across the whole offline
+                // gap, and a LevelGate could fire on a sustain window that spanned
+                // a period nobody measured - a reading we never actually observed.
+                prev_cpu = None;
+                prev_active.clear();
+                cpu_gate = LevelGate::default();
+                ram_gate = LevelGate::default();
+                vram_gate = LevelGate::default();
+                jobs_gate = LevelGate::default();
+                disk = DiskWatch::default();
+                continue;
+            }
+            let supervisor = effective_supervisor();
             let now = now_millis();
             let mut current: Vec<(String, Emergency)> = Vec::new();
 
@@ -468,7 +509,7 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                 && let Some(total_kb) = total_ram_kb()
                 && ram_gate.sample(
                     rss as f64,
-                    total_kb * config().supervisor.ram_warn_fraction,
+                    total_kb * supervisor.ram_warn_fraction,
                     sample_at,
                     LEVEL_SUSTAIN,
                     LEVEL_REWARN,
@@ -488,7 +529,7 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                     let cpu_pct = (ct.saturating_sub(pt) as f64 / CLK_TCK) / elapsed * 100.0;
                     if cpu_gate.sample(
                         cpu_pct,
-                        cpu_capacity_pct() * config().supervisor.cpu_warn_fraction,
+                        cpu_capacity_pct() * supervisor.cpu_warn_fraction,
                         sample_at,
                         LEVEL_SUSTAIN,
                         LEVEL_REWARN,
@@ -513,7 +554,7 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
                 // the card's capacity.
                 && vram_gate.sample(
                     used as f64,
-                    (total as f64 - config().supervisor.vram_warn_headroom_mib as f64).max(0.0),
+                    (total as f64 - supervisor.vram_warn_headroom_mib as f64).max(0.0),
                     Instant::now(),
                     LEVEL_SUSTAIN,
                     LEVEL_REWARN,
@@ -529,7 +570,7 @@ pub(crate) fn spawn_watchdog(deps: WatchdogDeps) {
             if (tick == 1 || tick % DISK_SAMPLE_EVERY == 0)
                 && let Some(rows) = sample_disk().await
             {
-                let threshold_pct = (config().supervisor.disk_warn_fraction * 100.0) as u32;
+                let threshold_pct = (supervisor.disk_warn_fraction * 100.0) as u32;
                 for emergency in disk.sample(&rows, threshold_pct, Instant::now()) {
                     let _ = deps.tx.send(emergency);
                 }

@@ -10,6 +10,7 @@ fn from_text(text: &str) -> Result<Config, String> {
         "ns".to_string(),
         PathBuf::from("/w"),
         DenySet::default(),
+        false,
     )
 }
 
@@ -90,12 +91,35 @@ fn the_namespace_cannot_be_set_from_a_file() {
         "namespace = \"other\"\n",
         "work_dir = \"/elsewhere\"\n",
         "deny = [\"run\"]\n",
+        // `--test` joins the argument-owned set for the same reason: it selects
+        // the namespace, so a file-settable one could move the namespace out from
+        // under the .mcp.json entry that launched the server.
+        "test = true\n",
     ] {
         assert!(
             from_text(text).is_err(),
             "{text:?} must be rejected as an unknown field",
         );
     }
+}
+
+#[test]
+fn the_test_flag_is_carried_on_the_runtime_config() {
+    let toml: ConfigToml = toml::from_str("").expect("empty file is valid");
+    let config = Config::from_toml(
+        toml,
+        "id".to_string(),
+        TEST_NAMESPACE.to_string(),
+        PathBuf::from("/w"),
+        DenySet::default(),
+        true,
+    )
+    .expect("valid");
+    assert!(config.test, "the watchdog half reads this at every tick");
+    assert!(
+        !from_text("").expect("valid").test,
+        "and an ordinary host is not a test host",
+    );
 }
 
 #[test]

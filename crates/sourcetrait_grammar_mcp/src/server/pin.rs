@@ -31,25 +31,41 @@ pub(crate) enum PinnableKey {
     DiskWarnFraction,
 }
 
+/// The table every pinnable setting lives under, and the prefix its dotted key
+/// carries.
+const SUPERVISOR_TABLE: &str = "supervisor";
+
 impl PinnableKey {
-    /// The dotted config key, matching the TOML path exactly.
-    pub(crate) fn name(self) -> &'static str {
+    /// The bare TOML field name, without its table prefix.
+    ///
+    /// This is what the file layer's validators take, because they compose the
+    /// prefix themselves. Passing the already-dotted `name()` to one produced
+    /// `supervisor.supervisor.cpu_warn_fraction` in a live error message - caught
+    /// by the production smoke test rather than by the unit test, which asserted
+    /// only that the value was refused and never read the text back.
+    pub(crate) fn field(self) -> &'static str {
         match self {
-            Self::CpuWarnFraction => "supervisor.cpu_warn_fraction",
-            Self::RamWarnFraction => "supervisor.ram_warn_fraction",
-            Self::VramWarnHeadroomMib => "supervisor.vram_warn_headroom_mib",
-            Self::DiskWarnFraction => "supervisor.disk_warn_fraction",
+            Self::CpuWarnFraction => "cpu_warn_fraction",
+            Self::RamWarnFraction => "ram_warn_fraction",
+            Self::VramWarnHeadroomMib => "vram_warn_headroom_mib",
+            Self::DiskWarnFraction => "disk_warn_fraction",
         }
     }
 
+    /// The dotted config key, matching the TOML path exactly.
+    ///
+    /// Composed from `field()` rather than written out a second time, so the two
+    /// spellings of one setting cannot drift apart.
+    pub(crate) fn name(self) -> String {
+        format!("{SUPERVISOR_TABLE}.{}", self.field())
+    }
+
+    /// Parse a dotted key back to its setting.
+    ///
+    /// Matched against `name()` rather than against a third list of literals, for
+    /// the same reason `name()` composes from `field()`: one spelling, one place.
     pub(crate) fn from_name(key: &str) -> Option<Self> {
-        Some(match key {
-            "supervisor.cpu_warn_fraction" => Self::CpuWarnFraction,
-            "supervisor.ram_warn_fraction" => Self::RamWarnFraction,
-            "supervisor.vram_warn_headroom_mib" => Self::VramWarnHeadroomMib,
-            "supervisor.disk_warn_fraction" => Self::DiskWarnFraction,
-            _ => return None,
-        })
+        Self::ALL.into_iter().find(|k| k.name() == key)
     }
 
     pub(crate) const ALL: [Self; 4] = [
@@ -113,7 +129,9 @@ fn validate(
             }
             Ok(PinValue::Mib(value as u64))
         }
-        _ => fraction_field(key.name(), Some(value)).map(PinValue::Fraction),
+        // The bare field name: `fraction_field` composes the `supervisor.` prefix
+        // itself, so handing it the dotted key doubles it.
+        _ => fraction_field(key.field(), Some(value)).map(PinValue::Fraction),
     }
 }
 

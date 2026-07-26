@@ -61,7 +61,7 @@ fn our_own_process_has_a_start_time() {
 fn every_pinnable_key_round_trips_its_name() {
     for key in PinnableKey::ALL {
         assert_eq!(
-            PinnableKey::from_name(key.name()),
+            PinnableKey::from_name(&key.name()),
             Some(key),
             "{} must parse back to itself",
             key.name(),
@@ -141,9 +141,19 @@ fn a_pin_is_held_to_the_file_layers_own_validators() {
     // the file layer enforces, shared rather than restated so a pin cannot reach a
     // state a config load would have refused.
     for bad in [0.0, -0.1, 1.5] {
+        let err = pin("supervisor.ram_warn_fraction", me(), bad)
+            .expect_err("fraction {bad} must be refused");
+        // Read the message, not merely the Err. Asserting only is_err() let a
+        // doubled `supervisor.supervisor.ram_warn_fraction` reach production,
+        // because the validators compose the table prefix themselves and the pin
+        // path was handing them an already-dotted key.
         assert!(
-            pin("supervisor.ram_warn_fraction", me(), bad).is_err(),
-            "fraction {bad} must be refused",
+            err.contains("supervisor.ram_warn_fraction"),
+            "the refusal should name the setting once; got {err}",
+        );
+        assert!(
+            !err.contains("supervisor.supervisor"),
+            "the table prefix must not be doubled; got {err}",
         );
     }
     assert!(pin("supervisor.ram_warn_fraction", me(), 1.0).is_ok(), "1.0 is the top of the range");

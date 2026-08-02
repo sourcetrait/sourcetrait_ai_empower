@@ -1,10 +1,10 @@
 # embed.rs
 
-The host-side replacement for the deleted worker's `WarmBase` plus `eval_source`. The
-stateless base is built once and held by the `Executor`, which hands each eval a
-pre-built clone onto a dedicated 64 MB blocking thread; the stateful interact engine is
-a single long-lived thread. Cancellation rides a per-eval `Signals` flag the dispatch
-layer registers in the resource registry.
+In-process nushell evaluation, the host-side eval engine. The stateless base is built
+once and held by the `Executor`, which hands each eval a pre-built clone onto a
+dedicated 64 MB blocking thread; the stateful interact engine is a single long-lived
+thread. Cancellation rides a per-eval `Signals` flag the dispatch layer registers in
+the resource registry.
 
 ## struct FinishGuard
 The discriminator between "slow, or bailed on cancel" and "actually hung", and it works
@@ -27,9 +27,9 @@ shadow only wins if it is registered second.
 
 `generate_nu_constant` must follow the plugin load, or `$nu.plugin-path` is empty.
 
-`setsid()` is DROPPED from what the worker era did here: the host is a child of the MCP
-client and cannot detach its own controlling terminal. The TLS crypto provider likewise
-moved out, to `NuSh::new`, since nushell reads its own OnceLock once per process.
+No `setsid()`: the host is a child of the MCP client and cannot detach its own
+controlling terminal. The TLS crypto provider is installed in `NuSh::new`, not here,
+since nushell reads its own OnceLock once per process.
 
 ## fn seed_env
 The whole OS env goes in because externals need `$env.PATH`.
@@ -38,18 +38,17 @@ The whole OS env goes in because externals need `$env.PATH`.
 seeded below - that const is the sole controlled lib path, and letting the environment
 win would let a body reach outside the namespace.
 
-The EQUIP trio is set directly from CONFIG rather than inherited. The worker era carried
-these as the worker's spawn env; in-process there is no worker, and they are not in the
-host's own environment, so the host seeds them itself.
+The EQUIP trio is set directly from CONFIG rather than inherited: eval is in-process
+with no spawn-env to carry them, and they are not in the host's own environment, so the
+host seeds them itself.
 
 ## fn merge_env_no_chdir
 NOT nushell's own `merge_env`, and this is the single most consequential deviation in
 the file. `merge_env` ends by calling `std::env::set_current_dir` with the stack's
 `$env.PWD` (nu-protocol engine_state.rs, 0.114.1 rev 0df4ca2) - correct for a REPL that
-owns its process, wrong here. Eval is IN-PROCESS, so that call moved the whole HOST's
-working directory whenever an interact body ran `cd`, and it stayed moved for the
-process lifetime, pinning that directory open. The worker era confined the same call to
-the interact SUBPROCESS.
+owns its process, wrong here. Eval is IN-PROCESS, so that call would move the whole
+HOST's working directory whenever an interact body ran `cd`, and it would stay moved for
+the process lifetime, pinning that directory open.
 
 The env-overlay drain mirrors nushell's exactly. The config half goes through the public
 `set_config`, which carries the same plugin-GC propagation `merge_env` does inline and

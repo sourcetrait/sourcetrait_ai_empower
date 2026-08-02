@@ -23,10 +23,9 @@ you happen to ask.
 
 ### fn field
 This is what the file layer's validators take, because they compose the table prefix
-themselves. Passing the already-dotted `name()` to one produced
-`supervisor.supervisor.cpu_warn_fraction` in a live error message - caught by the
-production smoke test rather than by the unit test, which asserted only that the value
-was refused and never read the text back.
+themselves - so passing the already-dotted `name()` to one would double it to
+`supervisor.supervisor.cpu_warn_fraction` in the error message. A test asserting refusal
+alone would miss that; the text has to be read back.
 
 ### fn name
 Composed from `field()` rather than written out a second time, so the two spellings of

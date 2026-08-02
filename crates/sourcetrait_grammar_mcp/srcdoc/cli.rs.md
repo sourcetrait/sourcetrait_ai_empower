@@ -5,9 +5,9 @@ ONE BINARY, with the variant selected at runtime by trusted operator config -
 which is why there is no build feature for a test host and no second target.
 
 The validation here is deliberately UNEVEN, and the unevenness is the design.
-`id` and `namespace` are NOT ident-checked: the_user owns the `.mcp.json`
-entries, and a bad value surfaces as the natural downstream error rather than
-being pre-empted here. `workdir` is expanded but never existence-checked, on the
+`id` and `namespace` are NOT ident-checked: they come from trusted operator
+config (the `.mcp.json` entries), and a bad value surfaces as the natural
+downstream error rather than being pre-empted here. `workdir` is expanded but never existence-checked, on the
 same trust. `--deny` IS validated, because a typo silently denying nothing would
 defeat the operator's whole intent - the failure mode differs in kind from the
 others, so the treatment does.
@@ -18,7 +18,7 @@ explicitly-passed value from a defaulted one, and `--test` needs exactly that
 distinction to supply a default without overriding an explicit choice.
 
 The parse error in `parse_deniable` carries the full deniable list, which is why
-the `--deny` help text no longer repeats it. That is the general shape of what
+the `--deny` help text does not repeat it. That is the general shape of what
 the summary cap costs here: duplication, not information.
 
 ## enum CliTool

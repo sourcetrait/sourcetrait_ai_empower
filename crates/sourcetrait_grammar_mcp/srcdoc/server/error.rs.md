@@ -14,22 +14,22 @@ Both fields serialize as PRESENT, with `path` as null when absent rather than om
 The whole `Source` is null on the `Diagnostic` for a non-located condition - an eval
 timeout, an unregistered-rig error.
 
-It replaced a `Where` plus `WhereSource` carrier pair with the flat shape the agent
-actually consumes.
+The shape stays flat - `path` plus `position` - which is what the agent consumes
+directly, rather than a nested source-carrier the reader would have to unwrap.
 
 ## struct Diagnostic
-The single type collapsing the former rig-validator `Violation` and body-lint
-`LintViolation` into one shape.
+The single type for both a rig-validation finding and a body-lint finding - one shape
+the wire and the check summary both carry.
 
 THE BUCKET CONVEYS SEVERITY, which is why `severity` is `#[serde(skip)]` - absent from
 the wire AND from the emitted JSON schema. It is an internal partition key only.
 
-The former typed per-variant `data` - `timeout_ms`, passed/registered, reason - folds
-INTO `message`. Nothing is lost, because it was text either way, and the alternative
-was a field whose shape varied per kind.
+Per-condition data (`timeout_ms`, names, reason) lives IN `message`, not a typed
+per-variant field: it is text either way, and a per-variant field would vary its shape
+by kind.
 
 ## enum Error
-Stays as the ergonomic typed value the impls build and bubble with `?`; it is no longer
+Stays the ergonomic typed value the impls build and bubble with `?`; it is not
 serde-tagged on the wire. Two variants carry already-unified rows, and the rest are
 single-condition.
 

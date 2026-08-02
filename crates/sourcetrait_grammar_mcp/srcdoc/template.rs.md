@@ -61,6 +61,5 @@ parenthesized subexpression lets a `def --env` body's `$env` writes and `cd`
 reach eval-top where the interact engine's merge persists them. The `;` after the
 def is required inside `()`.
 
-The `[args: ARGS_TYPE]` positional is the FIX for a real hole. The earlier shape
-bound the args through a typed `let`, which enforced NOTHING at all; a positional
-runtime-checks them.
+The `[args: ARGS_TYPE]` positional is what runtime-checks the args: a typed `let`
+binding would enforce NOTHING at all, so a wrong-shaped record would slip through.

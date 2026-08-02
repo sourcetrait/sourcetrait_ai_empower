@@ -5,10 +5,9 @@ CLASSIFY-FIRST. The watchdog DETECTS and CLASSIFIES resource trouble into an
 decoupled from response, and internal state is acted on INTERNALLY - never by relying on
 a transmit-out succeeding.
 
-RECOVERY IS STILL DEFERRED: no restart, no targeted recovery. The log keeps gathering
-data on which conditions actually fire before any recovery is designed. What is NOT
-deferred any longer is NOTICE - a warning that only reaches a log cannot do the job the
-Warning family exists for.
+RECOVERY IS DEFERRED: no restart, no targeted recovery. The log keeps gathering data on
+which conditions actually fire before any recovery is designed. NOTICE is not deferred,
+though - a warning that only reaches a log cannot do the job the Warning family exists for.
 
 ## type EmergencyTx
 Unbounded so the watchdog never blocks or back-pressures. It must stay schedulable even

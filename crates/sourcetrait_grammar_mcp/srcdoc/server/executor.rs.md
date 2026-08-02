@@ -10,8 +10,7 @@ SNAPSHOT of the base's plugin decls and env. The base is a swap point tagged wit
 `generation`; a plugin-registry change - a `plugin add/rm` on the interact lane, OR
 an external edit from the user's own shell, both seen through the file mtime -
 rebuilds the base, bumps the generation, and DROPS the stale ready buffer. So run()
-picks up a plugin the interact lane just registered without a restart, which is
-better than the worker era managed, where the change landed only on respawn.
+picks up a plugin the interact lane just registered without a restart.
 
 In-flight evals finish on the clone they already hold, dispatched under the old
 state, which is fine; only the buffer and future clones pick the change up.

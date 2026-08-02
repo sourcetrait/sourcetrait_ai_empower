@@ -5,12 +5,11 @@ unknown keys rejected - and `Config` with its sub-items is the format-free
 runtime layer. Sub-items get the same pair so a future format adds a shell
 without touching the model.
 
-THE FILE CARRIES ONLY WHAT WAS NEVER AN ARGUMENT. The store namespace (`--id`,
-`--namespace`), the work dir and the deny list stay arguments: they were
-arguments before this file existed, and they IDENTIFY or GATE the invocation
-rather than tune it. A file-settable `id` or `namespace` would let the namespace
-silently diverge from the `.mcp.json` entry the agent believes it is talking to,
-and would reintroduce the sticky default already ruled out. So the two surfaces
+THE FILE CARRIES ONLY WHAT IS NOT AN ARGUMENT. The store namespace (`--id`,
+`--namespace`), the work dir and the deny list stay arguments: they IDENTIFY or
+GATE the invocation rather than tune it. A file-settable `id` or `namespace` would
+let the namespace silently diverge from the `.mcp.json` entry the agent believes it
+is talking to, and a sticky default is worse than an explicit argument. So the two surfaces
 are DISJOINT - there is no precedence question between them at all - and
 `deny_unknown_fields` turns an attempt to set one from the file into a loud error
 rather than a silent no-op.
@@ -79,10 +78,9 @@ refused, and the only way to guarantee that is to SHARE the check rather than
 restate it.
 
 Note the callers pass the BARE field name, not the dotted key - this function
-composes the `supervisor.` prefix itself. Handing it an already-dotted key
-produced `supervisor.supervisor.cpu_warn_fraction` in a live error message, and
-the unit test missed it because it asserted only that the value was refused and
-never read the text back.
+composes the `supervisor.` prefix itself, so handing it an already-dotted key would
+double it to `supervisor.supervisor.cpu_warn_fraction` in the error message. A test
+that asserts refusal alone would miss that; the text has to be read back.
 
 ## fn secs_field
 Zero would mean "no window", which is not a rate at all.

@@ -6,9 +6,8 @@ SOCKET rather than a policy to enforce - the kernel will not route anything else
 127.0.0.1 listener. That is why there is no peer allow list, deny list, origin check or
 per-connection CA pinning anywhere in this file.
 
-A literal rather than `localhost` also removes the resolution ambiguity that once made a
-v4 reset read as a TLS verdict during the live exercises; the leaf carries IP SANs for
-this.
+A literal rather than `localhost` also removes the v4/v6 resolution ambiguity that can
+make a v4 reset read as a TLS verdict; the leaf carries IP SANs for this.
 
 ## const FROM_MCP
 Plain `mcp`, not `mcp/<id>`: the channel is 1:1, so there is no second MCP to tell apart.
@@ -32,8 +31,7 @@ hook.
 ## fn start
 EPHEMERAL PORT by default. The agent always learns the endpoint from `channel_open`'s
 return, so a fixed port buys nothing and costs a squatting failure mode - a stale host or
-an escaped child holding it makes the next open fail with a raw `Address already in use`,
-which was hit live.
+an escaped child holding it makes the next open fail with a raw `Address already in use`.
 
 The port is read back from `local_addr` rather than trusted from config: with 0 it is the
 only way to know it, and with a pinned one it confirms what was actually bound.
@@ -52,16 +50,15 @@ agent SEES a real packet - there is no separate ack channel by design.
 THE LOOP IS `biased;` AND THE ARM ORDER IS LOAD-BEARING. `close_locked` signals the close
 AND drops the packet sender in the same breath, so the close arm and the `None` arm go
 ready TOGETHER - and `tokio::select!` picks among ready arms at RANDOM unless told
-otherwise. The `None` arm breaks the loop without writing a frame, so a planned close
-carried our code and reason only about HALF the time and otherwise left the bare 1006 the
-lanes existed to prevent. Biasing makes the precedence structural instead of probabilistic,
-and states the design directly: a planned close must never wait behind queued traffic.
+otherwise. The `None` arm breaks the loop without writing a frame, so without the bias a
+planned close would carry our code and reason only about HALF the time and otherwise leave
+the bare 1006 the lanes exist to prevent. Biasing makes the precedence structural instead of
+probabilistic, and states the design directly: a planned close must never wait behind queued
+traffic.
 
-THE WAY IT WAS FOUND IS THE PART TO REMEMBER. This was latent from the first phase - this
-file did not change in the second - and that phase's live exercise recorded ONE observed
-1000 as proof the mechanism worked. One sample of a coin flip is not evidence. A
-nondeterministic path needs either repetition or a structural argument; this one now has
-both.
+The race is NONDETERMINISTIC, so one observed clean close is not evidence the mechanism
+works - a nondeterministic path needs either repetition or a structural argument, and the
+bias supplies the structural one.
 
 POLLING THE READ HALF IS NOT OPTIONAL: it is what lets tungstenite answer pings and observe
 the peer's own close.

@@ -54,8 +54,8 @@ BINARY down rather than just a host.
 
 A fresh `TestServer` per test builds a fresh `NuSh`, which is roughly the spawned
 binary's startup cost MINUS the process spawn. That is what makes the in-process
-tier both faster than the old subprocess tests and cleanly isolated, since each
-test gets its own interact engine on its own runtime.
+tier fast and cleanly isolated - each test gets its own interact engine on its own
+runtime, with no subprocess.
 
 ### fn channel_verified
 There is deliberately NO `channel_open` on this harness. That one binds a real

@@ -18,5 +18,5 @@ cannot serve that, since pids are reused.
 ## struct NonceGen
 The counter and the nanosecond timestamp are both mixed in, which is what makes
 concurrent `next()` calls yield distinct nonces AND makes two runs of an identical
-payload distinct. That last property is deliberate: content-addressed dedup was
-retired, so each run gets its own body cache rather than sharing one.
+payload distinct. That last property is deliberate: there is no content-addressed
+dedup, so each run gets its own body cache rather than sharing one.

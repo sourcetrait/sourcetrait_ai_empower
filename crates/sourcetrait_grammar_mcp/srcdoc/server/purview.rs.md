@@ -1,8 +1,8 @@
 # purview.rs
 
 ## const META_DIR
-NEW with purviews. The namespace carried only `keypair/`, `rigs/` and `host.lock`
-before this, so a reader of an older namespace will not find it.
+The namespace's meta directory - where `purviews.nuon` lives, alongside `keypair/`,
+`rigs/` and `host.lock`.
 
 ## const PURVIEW_DEFAULT
 THERE IS NO UNCONFIGURED DEFAULT, which is the invariant the whole subsystem rests on.
@@ -17,10 +17,9 @@ Through the serde Value bridge - the same one the rig index uses - so ONE bridge
 the whole shape and the file cannot drift from the struct as it changes.
 
 ## fn load_purviews
-A DECODE FAILURE IS A LOUD ERROR, never a silent empty. The rig index made the opposite
-mistake once, where a missing meta file reads as "no rigs" rather than as an error, and
-this file must not repeat that shape - an empty purview table resolves to "sees nothing"
-while looking configured.
+A DECODE FAILURE IS A LOUD ERROR, never a silent empty: an empty purview table resolves to
+"sees nothing" while looking configured, so a corrupt file read as empty would be a silent
+misconfiguration rather than a fault the caller can see.
 
 ## fn is_valid_purview_id
 Path-LIKE but never a path: a leading `/` or `./` is rejected outright, because a label
@@ -91,8 +90,8 @@ persisted and the view reset.
 
 ### fn set
 An EMPTY list means `default`, so the view always names at least one purview and there is
-no looking-at-nothing state to reason about. That is also what subsumed the retired
-`purview_reset`: resetting is just setting the view to nothing in particular.
+no looking-at-nothing state to reason about - which is why there is no separate reset:
+resetting is just setting the view to nothing in particular.
 
 ### fn retain_known
 So a rig uninstall or a purview deletion cannot leave the session pointing at something

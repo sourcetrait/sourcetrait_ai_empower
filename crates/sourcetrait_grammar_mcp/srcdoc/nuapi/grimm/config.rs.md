@@ -21,7 +21,7 @@ PATH into the record the other decl returns, not a parallel naming scheme.
 The walked form needs a LITERAL cell path, which is the trap here. A string
 variable passed to `get` binds as one member containing the dots, so it looks for a
 column of that whole name - splitting on dots is the source parser's job, not
-`get`'s. Found by a test asserting the coherence and getting
+`get`'s, so a `$key` string variable fails with
 `Cannot find column 'supervisor.cpu_warn_fraction'`.
 
 ## fn config_record
@@ -37,9 +37,9 @@ message needs cannot drift from the vocabulary the record actually has.
 THE VOCABULARY GOES IN THE TITLE, NOT ONLY THE LABEL. `GenericError` renders its
 title through Display, and that is all the eval envelope's `message` carries - a
 label reaches a human reading a rendered diagnostic and never reaches the agent.
-Listing the valid keys IS the entire value of this error, so putting them only in
-the label shipped an error that names a problem and withholds the answer. Caught by
-a test that asserted the list was present and found it stripped.
+Listing the valid keys IS the entire value of this error, so keeping them only in the
+label would name a problem and withhold the answer. A test asserts the list reaches
+the message.
 
 ## fn value_type
 Spelled as a union rather than `any`, because the set is CLOSED and naming it lets

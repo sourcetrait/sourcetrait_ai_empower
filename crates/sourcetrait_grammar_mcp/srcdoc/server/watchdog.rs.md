@@ -40,7 +40,7 @@ A momentary excursion is not an event, so a level must hold for a full minute. A
 below the line restarts this clock.
 
 ## const LEVEL_REWARN
-Ten minutes was the stated MINIMUM; dozens of minutes was the intent. Thirty is chosen
+Ten minutes is the minimum that would matter; dozens of minutes is the intent. Thirty is chosen
 because AN INFERENCE PROJECT RUNS 30 TO 60 MINUTES and holds resources high for all of
 it - which is NORMAL work, not a fault. At the ten-minute floor such a run would warn six
 times about a condition the agent already knows about and chose; at thirty it warns about
@@ -91,14 +91,13 @@ record, and sampling while idle is intended. Under `--test` it FOLLOWS the chann
 instead, and follows rather than latches, so closing and re-opening a channel takes
 sampling down and brings it back.
 
-The waste this removes was MEASURED rather than theorised. During one 25-hour training
-burn a grammar_test host sat connected with its channel closed, shelling `nvidia-smi`
-every 16 seconds and logging 57 VramWarnings about a card it had no stake in, none of
-which could ever be delivered - because the announce is verification-gated while the log
-is not. Both namespaces logged the same 57 readings with timestamps within 18 ms: the
-watchdog is spawned per host and `sample_vram` reads the whole card, so a second host on
-the box duplicates the first's work exactly. `--test` is precisely the flag that says
-this host is the second one.
+The waste this removes is MEASURED, not theorised. A second host on the box - a
+`grammar_test` host connected with its channel closed - shells `nvidia-smi` every 16
+seconds and logs VramWarnings about a card it has no stake in, none deliverable (the
+announce is verification-gated while the log is not). Across a long training burn both
+namespaces logged the same 57 readings with timestamps within 18 ms, because the watchdog
+is spawned per host and `sample_vram` reads the whole card. `--test` is precisely the flag
+that says this host is the second one.
 
 ## fn scan_hung
 Pure over the registry so it is unit-testable with a synthetic map, and it returns the

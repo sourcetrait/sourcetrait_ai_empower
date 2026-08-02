@@ -66,12 +66,12 @@ The reliable producer is `git commit`, which detaches its own auto-maintenance
 a child lands here identically.
 
 THE RATE IS WORSE THAN ONE PER COMMIT IMPLIES, because it compounds through nested
-process trees. Measured 2026-07-21: a host sat at 6 zombies, and one
+process trees. Measured: a host at 6 zombies, and one
 `cargo test -p sourcetrait_grammar_mcp` run took it to 166 - the integration suite does
 dozens of in-process rig commits, and each test binary then exits, orphaning its gc
-children onto the nearest subreaper ancestor, which is the host running the eval. That
+children onto the nearest subreaper ancestor, which is the host running the eval. The
 same sample carried `grep` and `awk` zombies from an agent-side Monitor's tail pipeline,
-which puts the not-git-specific claim in evidence rather than in principle.
+putting the not-git-specific claim in evidence rather than in principle.
 
 SERVE-PATH ONLY. A one-shot CLI process exits promptly, at which point its orphans
 reparent to init and are reaped there.

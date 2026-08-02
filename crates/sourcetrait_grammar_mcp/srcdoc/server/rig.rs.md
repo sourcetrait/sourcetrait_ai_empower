@@ -6,18 +6,17 @@ body and from external nu scripting.
 
 ## const META_FILE
 This file is ALSO the rig-detection marker: an `<author>/<name>` subdir under `rig/`
-carrying it IS a rig. That is why changing its NAME forced a migration rather than making
-one optional.
+carrying it IS a rig. Detection keys on the exact filename, so a namespace written under the
+legacy name needs `migrate_meta_to_nuon` rather than an optional dual-read.
 
 ## const LEGACY_META_FILE
-The index was the last JSON we persisted, against the house rule that anything persisted is
-NUON. It exists only so `migrate_meta_to_nuon` can find a namespace written by an older
-host and retire it.
+The legacy JSON index filename, against the house rule that anything persisted is NUON. It
+exists only so `migrate_meta_to_nuon` can find a namespace written under it and retire it.
 
 ## fn is_valid_rig
 EXACTLY `<author>/<name>`: two parts, each a valid ident, neither `main`. A BARE rig with no
-slash is REJECTED - a hard cutover with no default-author back-compat, so there is one
-spelling of a rig everywhere.
+slash is REJECTED: there is one spelling of a rig everywhere, with no default-author
+shorthand to disambiguate.
 
 ## struct RigLocks
 The outer mutex guards only MAP MUTATION; the per-rig `RwLock` is what serializes work.
@@ -72,9 +71,8 @@ A summary is single-line in EFFECT but is hard-wrapped in SOURCE like any other 
 the stored text carries the author's line breaks and the wrap has to come back out.
 
 THE SIGNATURE BLOCK STRUCTURALLY REQUIRES IT: an unflattened continuation lands at column
-0, where the block's own grammar reads it as an AUTHOR line. That is how a real summary
-broke the block while every test fixture passed, because every fixture had a single-line
-summary.
+0, where the block's own grammar reads it as an AUTHOR line - so a multi-line summary would
+break the block, a case a single-line test fixture never exercises.
 
 Normalizing HERE rather than at each consumer is what keeps the block, the standalone
 signature and inspect's `summary` fields agreeing. `details` is prose and keeps its
@@ -109,9 +107,9 @@ back into one, and the block's entire grammar is its indentation.
 
 A PER-SIGNATURE PREDICATE rather than a rooted walk, because a purview is a SET of patterns:
 two of them can root in different rigs at different depths, which no single root expresses,
-while "does any of them cover this signature" composes for free. That predicate subsumed an
-earlier rooted implementation, producing identical output for every single-pattern case, so
-the rooted version was deleted rather than kept beside it.
+while "does any of them cover this signature" composes for free. That predicate subsumes a
+rooted walk - identical output for every single-pattern case - so one predicate covers it
+rather than a predicate plus a separate rooted path.
 
 The buffering is not stylistic: whether a module's own line belongs in the block is not
 knowable until its subtree has been walked.
@@ -119,8 +117,9 @@ knowable until its subtree has been walked.
 ## fn render_signatures_within
 THE ONE RENDERER. `info()` shows the current purview through it, a pattern `inspect()` shows
 one pattern through it, and the whole namespace is just the `*` pattern - so none of the
-three can drift. It replaced the structured `rigs` tree `info()` used to return, which was
-roughly 8 KB of nested JSON for two rigs and is the agent's FIRST read after the skill.
+three can drift. This is the agent's FIRST read after the skill, so it is compact by
+design: a structured nested-JSON tree of the same surface runs roughly 8 KB for just two
+rigs.
 
 NOTHING IS STATED THAT CAN BE INFERRED, and the separators are inferable from shape alone:
 depth 0 is an author and depth 1 a rig - a rig is ALWAYS the two levels
@@ -128,13 +127,13 @@ depth 0 is an author and depth 1 a rig - a rig is ALWAYS the two levels
 groups, which makes it a call. So a reader joins author to rig with `/`, module segments
 with `/`, and puts `:` before the first module and before the call.
 
-TRAILING HIERARCHY CHARACTERS WERE TRIED AND REMOVED, and the reasoning generalizes. They
-were introduced so a line could state its own separator rather than have one inferred, and
-they failed at exactly the MIXED MODULE, which no single character describes: `a/b:c/` plus
-`:call` needs an override rule, and an override rule IS re-inference wearing a costume.
-Shape settles every case including that one, because a call is recognizable on its own.
+NO TRAILING HIERARCHY CHARACTERS, and the reasoning generalizes. A trailing separator would
+let a line state its own separator rather than have one inferred, but it fails at exactly
+the MIXED MODULE, which no single character describes: `a/b:c/` plus `:call` needs an
+override rule, and an override rule IS re-inference wearing a costume. Shape settles every
+case including that one, because a call is recognizable on its own.
 
-Two further arguments landed with the removal. REUSE: a new kind extends the format by
+Two further arguments favour SHAPE over separators. REUSE: a new kind extends the format by
 taking a new SHAPE - a helper would be `name [...]` beside a call's `name <> <>` - rather
 than by carving another character out of a two-character vocabulary that is already
 overloaded. Separators do not scale; shapes do. And this block is the PROTOTYPE for a
@@ -169,10 +168,9 @@ and a lone `signatures` a pattern.
 
 ## fn inspect_impl
 Every path composes from the NAMEPATH against the COMMITTED canonical tree, so nothing here
-reads `source_path`. One consequence worth holding: with the structured tree gone,
-`source_path` is no longer surfaced to the agent at all. It stays load-bearing INTERNALLY -
-`commit` re-reads it and `check_source_dir` cross-checks it - so the index field stays; only
-the agent-facing exposure ended.
+reads `source_path`. Nothing agent-facing composes from it at all, so `source_path` is not
+surfaced to the agent; it stays load-bearing INTERNALLY - `commit` re-reads it and
+`check_source_dir` cross-checks it - so the index field stays.
 
 ## fn cap_diagnostics
 Caps each SEVERITY independently, so a flood of warnings cannot crowd out the errors that
@@ -196,9 +194,10 @@ A temp `<tmp>/rig/<author>/<rig>` symlink to the source, prepended to `NU_LIB_DI
 rig's OWN rig-prefixed `use` resolves against itself during its FIRST commit - before it has
 been placed in the namespace at all.
 
-This REPLACED a retired inline self-reference form, which failed at serve: a call target's
-`main` parses DURING the rig's own load, before the rig finishes registering, so the bare
-self-reference resolved to nothing and surfaced as "External command failed".
+The symlink is needed because a call target's `main` parses DURING the rig's own load,
+before the rig finishes registering: a bare in-tree self-reference would resolve to nothing
+and surface as "External command failed", so the view gives its rig-prefixed `use`
+something to resolve against.
 
 The sequence number is what keeps two concurrent validations from sharing a view directory.
 
@@ -220,10 +219,9 @@ carry more than one edge, which is exactly the case the convention prescribes.
 THE VALIDATOR IS LOOSER THAN THE CONVENTION, deliberately for now: it requires an
 `export use` edge on a call and SOME edge on a pure module, but does not require
 `export module` on a call nor reject `export use` on a pure module. So a hand-authored call
-wired `export use`-only still commits. The namespace is now fully conformant, so tightening
-no longer invalidates anything - the ORDER was the whole constraint, since an enforcement
-change that turns valid artifacts into violations cannot precede the sweep that makes them
-valid.
+wired `export use`-only still commits. The estate is now conformant, so tightening would
+invalidate nothing; the ordering is the constraint - an enforcement change that turns valid
+artifacts into violations cannot precede the sweep that makes them valid.
 
 ## fn parse_module_has_main
 Classification by nushell's OWN `Module.main` sentinel rather than by grepping for
@@ -303,9 +301,9 @@ enters the repo and is NOT a validation exemption: the walk covers the full file
 an ignored-but-invalid file still blocks the commit.
 
 ## fn migrate_meta_to_nuon
-CHANGING THE FILENAME IS WHAT MADE THIS MANDATORY rather than optional, because DETECTION
-keys on the meta file: an unmigrated namespace would not error, it would simply report no
-rigs and answer `not_registered` to every call.
+MANDATORY rather than optional, because DETECTION keys on the meta filename: an unmigrated
+namespace would not error, it would simply report no rigs and answer `not_registered` to
+every call.
 
 Idempotent. A namespace with no legacy file is a no-op, and a rig somehow carrying both
 keeps the `.nuon` it already has and drops the stale `.json`.

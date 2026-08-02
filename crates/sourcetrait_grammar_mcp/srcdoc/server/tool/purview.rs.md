@@ -18,7 +18,7 @@ indistinguishable from the purview being empty.
 
 BOTH SIDES OF THE DELTA ARE EXPANDED before comparison. Comparing raw values would count
 `@ants` as new against a `sourcetrait/ant:` already in view, and re-reveal a block the caller
-could already see. That was found by exercising rather than by the suite.
+could already see.
 
-This tool is what retired `purview_reset`: resetting is just setting the view to nothing in
+There is no separate reset tool: resetting is just setting the view to nothing in
 particular, which an empty list already means.

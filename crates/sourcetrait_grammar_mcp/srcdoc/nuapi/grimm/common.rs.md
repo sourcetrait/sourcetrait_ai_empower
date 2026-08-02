@@ -37,8 +37,8 @@ double-quoted strings, where `\n` and `\r` ARE the escapes nushell reads back, s
 the line still parses to the original value. Backslashes `to nuon` already escaped
 are untouched, since only the newline bytes themselves are replaced.
 
-Caught by a live probe writing a two-line string, not by reading the nushell
-source - worth remembering as the shape of assumption that needs a test.
+This is the shape of assumption that needs a live probe rather than a read of the
+nushell source - the render's behaviour is not what the source suggests.
 
 ## fn require_record_or_table
 The signature's `SyntaxShape` rejects a bad LITERAL at parse time, but a dynamic
@@ -61,8 +61,8 @@ THIS ONE SITE IS THE ACCESS CONTROL. It is called from exactly one place, inside
 `eval_in_process`, so the decls are absent from every engine that is not
 mid-eval - not on the stateless base, not on the interact base, and not in the
 validator's `ParseEngine`. Off-host nushell cannot resolve the names at all. That
-is a stronger trap than the signing scheme originally sketched for this, because
-there is no reachable entry point to authenticate. A committed rig CAN call them,
+is a stronger trap than a signing scheme, because there is no reachable entry
+point to authenticate. A committed rig CAN call them,
 but only because its call-target body runs inside an eval.
 
 The config trio carries no per-call state - it reads process-global config and the

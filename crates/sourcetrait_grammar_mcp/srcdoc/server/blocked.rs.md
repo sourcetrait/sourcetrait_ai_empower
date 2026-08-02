@@ -4,10 +4,9 @@
 It parses like the real builtin - a catch-all `rest` - and errors at run time, so a
 body invoking one fails that SINGLE eval rather than terminating the shared host.
 
-In-process there is no worker subprocess boundary to absorb any of this. The
-shell-out era relied on exactly that boundary: `exit` calling
-`std::process::exit`, or `exec` replacing the process image, killed only the worker
-and the host saw EOF.
+In-process there is no subprocess boundary to absorb any of this: `exit` calling
+`std::process::exit`, or `exec` replacing the process image, would take the whole host
+directly rather than some child, which is why each is shadowed.
 
 ## const HOST_FATAL_DECLS
 A full nu 0.114.1 registered-decl audit found these THREE the only builtins that

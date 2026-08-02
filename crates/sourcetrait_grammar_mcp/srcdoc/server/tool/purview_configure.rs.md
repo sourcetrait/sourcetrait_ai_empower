@@ -1,11 +1,10 @@
 # purview_configure.rs
 
 ## struct PurviewConfigureEnvelope
-THE WHOLE SET, never a delta, and that is a correction rather than a preference: the caller
-needs to CHECK what it just wrote. A delta cannot answer "what does this configuration
-actually do now", and against a purview the session is not looking through - the common
-case - it answers nothing at all. Three different writes returned identical null deltas
-before this changed.
+THE WHOLE SET, never a delta: the caller needs to CHECK what it just wrote. A delta cannot
+answer "what does this configuration actually do now", and against a purview the session is
+not looking through - the common case - it answers nothing at all (several distinct writes
+would all report an identical null delta).
 
 ## fn purview_configure
 The `@id` values are validated for SHAPE only. Whether the referenced purview exists yet is

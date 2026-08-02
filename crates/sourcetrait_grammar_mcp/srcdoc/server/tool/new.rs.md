@@ -4,9 +4,10 @@
 The handler is named `scaffold` while the TOOL is named `new`, because `new` is not usable as a
 method name here - hence the explicit `name = "new"` on the attribute.
 
-A BARE RIG NAMEPATH IS REJECTED with a message pointing at `rig(new)`. This tool no longer
-establishes rigs, and an author reaching for it that way needs the other tool named rather than
-a generic arity complaint.
+A BARE RIG NAMEPATH IS REJECTED with a message pointing at `rig(new)`. This tool scaffolds
+modules and functions into already-established rigs; establishing a rig is `rig(new)`'s job, so
+an author reaching for it that way needs the other tool named rather than a generic arity
+complaint.
 
 THE BATCH IS ALL-OR-NOTHING ON PRE-EXISTENCE. Every target rig is locked in canonical sorted,
 deduped order first - sorted because a consistent lock order is what prevents a deadlock

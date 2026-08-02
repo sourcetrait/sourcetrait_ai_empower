@@ -34,8 +34,8 @@ indistinguishable from a crashed host - the very distinction the explicit close 
 exists to provide.
 
 The frame is written by the hub task, so the wait is an ACK rather than a sleep: the
-hub fires the completion AFTER its flush. A sleep long enough to usually work is the
-shape of bug this campaign already paid for once.
+hub fires the completion AFTER its flush. A sleep long enough to usually work would be a
+race dressed as a guarantee.
 
 ## fn spawn_signal_sweep
 EXITING IS PART OF THE CONTRACT: handling a termination signal without terminating
@@ -48,7 +48,5 @@ the sweep ran, which is what the system test measures.
 
 ## fn eval_concurrency_cap
 Halved rather than the full parallelism because eval runs on a dedicated blocking
-thread and the host itself needs cores for the async runtime and the supervisor.
-
-The worker era's `- 3` reserved cores for the interact-worker and reaper PROCESSES,
-both now deleted, which is why the shape of the formula changed rather than the number.
+thread and the host itself needs cores for the async runtime and the supervisor. Eval is
+in-process, so there are no separate interact / reaper processes to reserve cores for.

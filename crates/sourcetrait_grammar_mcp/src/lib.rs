@@ -1,6 +1,7 @@
 pub(crate) mod server {
     pub(crate) mod blocked;
     pub(crate) mod cache;
+    pub(crate) mod cert;
     pub(crate) mod channel {
         pub(crate) mod hub;
         pub(crate) mod state;
@@ -106,6 +107,7 @@ pub(crate) use crate::{
             BASE_DIRS, BODY_FILE, CacheKind, cache_base_dir, cache_dir, data_base_dir,
             run_body_file,
         },
+        cert::ensure_cert_profile,
         channel::{
             hub::{FROM_MCP, open_packet, start as start_channel_hub},
             state::{
@@ -214,6 +216,7 @@ pub(crate) use std::{
 
 pub(crate) use clap::Parser;
 
+pub(crate) use sourcetrait_cert_lib as lib_cert;
 pub(crate) use sourcetrait_grammar_lib as lib_grammar;
 
 pub(crate) mod xxh3 {

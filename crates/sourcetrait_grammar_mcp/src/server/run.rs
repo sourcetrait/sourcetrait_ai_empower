@@ -2,6 +2,7 @@ use crate::*;
 
 pub(crate) async fn run_server() {
     install_child_subreaper();
+    ensure_cert_profile();
     let rig_locks = ensure_substrate().await.expect("ensure_substrate");
     let nonce_gen = Arc::new(NonceGen::new());
     let lint_engine = Arc::new(LintEngine::new());

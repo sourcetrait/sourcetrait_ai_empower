@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_grammar_mcp"
-version = "0.0.0-107"
+version = "0.0.0-108"
 edition = "2024"
 description = "Nushell engine MCP server"
 authors = ["SourceTrait <development@sourcetrait.com>"]
@@ -42,6 +42,7 @@ rustls.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sourcetrait_cert_lib.workspace = true
 sourcetrait_grammar_lib.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true

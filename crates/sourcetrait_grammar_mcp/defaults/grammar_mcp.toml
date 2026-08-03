@@ -18,8 +18,8 @@
 #
 #   port = 47800
 #
-# Where grammar_cert installs the leaf the hub presents. Kept in step with that tool's
-# own layout and its $XDGX_SECRET_DATA_HOME fallback.
+# Where srcert installs the leaf the hub presents (`srcert install grammar`). Kept in
+# step with that tool's $XDGX_SECRET_DATA_HOME/sourcetrait/<name>/certs layout.
 cert_dir = "$XDGX_SECRET_DATA_HOME/sourcetrait/grammar/certs"
 
 # How much ONE origin may emit before it is warned, and before it is stopped. Two

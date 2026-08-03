@@ -56,6 +56,7 @@ serde_norway = { version = "0.9" }
 semver = { version = "1" }
 shellexpand = { version = "3", features = ["path"] }
 snafu = "0.8"
+sourcetrait_cert_lib = { path = "../sourcetrait_cert/crates/sourcetrait_cert_lib" }
 sourcetrait_chronox = { version = "1" }
 sourcetrait_clapx = { version = "1" }
 sourcetrait_grammar_bed = { path = "crates/sourcetrait_grammar_bed" }

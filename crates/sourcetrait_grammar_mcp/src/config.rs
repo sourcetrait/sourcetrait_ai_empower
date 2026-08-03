@@ -19,6 +19,21 @@ const MIN_CHANNEL_PORT: u16 = 1024;
 pub(crate) struct ConfigToml {
     pub channel: Option<ChannelConfigToml>,
     pub supervisor: Option<SupervisorConfigToml>,
+    pub remote: Option<HashMap<String, RemoteAliasToml>>,
+}
+
+/// One `[remote.<alias>]` table: a peer to link with. All fields required.
+#[derive(Debug, Clone, ser::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RemoteAliasToml {
+    /// The peer's socket address, `ip:port`.
+    pub address: Option<String>,
+    /// This host's own entity leaf presented to the peer (public).
+    pub self_public_key_file: Option<String>,
+    /// The private key paired with `self_public_key_file`.
+    pub self_private_key_file: Option<String>,
+    /// The peer's entity leaf to pin (public).
+    pub remote_public_key_file: Option<String>,
 }
 
 /// The `[supervisor]` table: when a resource level is worth one warning.
@@ -67,6 +82,22 @@ pub(crate) struct Config {
     pub test: bool,
     pub channel: ChannelConfig,
     pub supervisor: SupervisorConfig,
+    /// Configured remote peers, by alias.
+    #[allow(dead_code)]
+    pub remote: HashMap<String, RemoteConfig>,
+}
+
+/// A resolved `[remote.<alias>]` peer: where it is and its mTLS material.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct RemoteConfig {
+    pub addr: std::net::SocketAddr,
+    /// This host's own leaf, presented for client auth.
+    pub self_cert_file: PathBuf,
+    /// The private key paired with `self_cert_file`.
+    pub self_key_file: PathBuf,
+    /// The peer's leaf, pinned byte-for-byte.
+    pub remote_pin_file: PathBuf,
 }
 
 /// The channel hub's operating parameters.
@@ -169,6 +200,40 @@ fn merged_supervisor(
     })
 }
 
+/// Resolve the user's `[remote.<alias>]` tables; there are no embedded defaults.
+fn merged_remote(
+    user: Option<HashMap<String, RemoteAliasToml>>,
+) -> Result<HashMap<String, RemoteConfig>, String> {
+    let mut out = HashMap::new();
+    for (alias, cfg) in user.unwrap_or_default() {
+        let address = cfg
+            .address
+            .ok_or_else(|| format!("[remote.{alias}] is missing `address`"))?;
+        let addr = address
+            .parse::<std::net::SocketAddr>()
+            .map_err(|e| format!("[remote.{alias}] address `{address}` is not ip:port: {e}"))?;
+        let self_cert = cfg
+            .self_public_key_file
+            .ok_or_else(|| format!("[remote.{alias}] is missing `self_public_key_file`"))?;
+        let self_key = cfg
+            .self_private_key_file
+            .ok_or_else(|| format!("[remote.{alias}] is missing `self_private_key_file`"))?;
+        let remote_pin = cfg
+            .remote_public_key_file
+            .ok_or_else(|| format!("[remote.{alias}] is missing `remote_public_key_file`"))?;
+        out.insert(
+            alias,
+            RemoteConfig {
+                addr,
+                self_cert_file: expand_path(&self_cert)?,
+                self_key_file: expand_path(&self_key)?,
+                remote_pin_file: expand_path(&remote_pin)?,
+            },
+        );
+    }
+    Ok(out)
+}
+
 /// A fraction of total capacity; outside (0, 1] it would warn always or never.
 pub(crate) fn fraction_field(
     name: &str,
@@ -227,6 +292,7 @@ impl Config {
             test,
             channel: merged_channel(user.channel, base.channel)?,
             supervisor: merged_supervisor(user.supervisor, base.supervisor)?,
+            remote: merged_remote(user.remote)?,
         })
     }
 

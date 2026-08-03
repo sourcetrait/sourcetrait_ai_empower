@@ -22,6 +22,7 @@ pub(crate) mod server {
     pub(crate) mod purview;
     pub(crate) mod remote {
         pub(crate) mod codec;
+        pub(crate) mod link;
         pub(crate) mod verify;
     }
     pub(crate) mod run;
@@ -159,6 +160,10 @@ pub(crate) use crate::{
             parse_patterns, pattern_delta, prune_dangling, purview_ref, purview_views,
             purviews_path, resolve_patterns, save_purviews,
         },
+        remote::{
+            codec::{AcceptorToInitiator, BitcodeCodec, InitiatorToAcceptor, RemoteStream},
+            verify::EntityPin,
+        },
         run::{eval_concurrency_cap, run_server},
         schema::{
             args_schema_to_nu, args_schema_to_signature, nu_to_args_schema, nu_to_result_schema,
@@ -284,8 +289,8 @@ pub(crate) mod mcp {
 }
 
 pub(crate) mod tls {
-    pub(crate) use tokio_rustls::TlsAcceptor;
-    pub(crate) use tokio_rustls::rustls::ServerConfig;
+    pub(crate) use tokio_rustls::{TlsAcceptor, TlsConnector, client, server};
+    pub(crate) use tokio_rustls::rustls::{ClientConfig, ServerConfig};
     pub(crate) use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 }
 
@@ -311,9 +316,10 @@ pub(crate) use tokio_rustls::rustls::pki_types::pem::PemObject;
 pub(crate) mod tk {
     pub(crate) use tokio::{
         spawn,
+        io::{ReadHalf, WriteHalf, split},
         net::{TcpListener, TcpStream},
         signal::unix::{SignalKind, signal},
-        task::spawn_blocking,
+        task::{JoinHandle, spawn_blocking},
         sync::{
             Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore, oneshot,
             mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -323,8 +329,9 @@ pub(crate) mod tk {
 }
 
 pub(crate) mod tku {
-    pub(crate) use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
+    pub(crate) use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LengthDelimitedCodec};
     pub(crate) use tokio_util::bytes::BytesMut;
+    pub(crate) use tokio_util::sync::CancellationToken;
 }
 
 pub(crate) mod json {

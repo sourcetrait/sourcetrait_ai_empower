@@ -1,6 +1,6 @@
 [package]
 name = "sourcetrait_grammar_mcp"
-version = "0.0.0-108"
+version = "0.0.0-109"
 edition = "2024"
 description = "Nushell engine MCP server"
 authors = ["SourceTrait <development@sourcetrait.com>"]
@@ -20,6 +20,7 @@ path = "src/main.rs"
 test-hooks = []
 
 [dependencies]
+bitcode.workspace = true
 clap.workspace = true
 directories.workspace = true
 futures-util.workspace = true
@@ -47,6 +48,7 @@ sourcetrait_grammar_lib.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
 tokio-tungstenite.workspace = true
+tokio-util.workspace = true
 toml.workspace = true
 xxhash-rust.workspace = true
 

@@ -20,6 +20,10 @@ pub(crate) mod server {
     pub(crate) mod parse_engine;
     pub(crate) mod pin;
     pub(crate) mod purview;
+    pub(crate) mod remote {
+        pub(crate) mod codec;
+        pub(crate) mod verify;
+    }
     pub(crate) mod run;
     pub(crate) mod schema;
     pub(crate) mod teardown;
@@ -54,6 +58,7 @@ pub(crate) mod server {
     mod tests {
         mod channel;
         mod emergency;
+        mod remote;
         mod rig;
         mod namepath;
         mod pin;
@@ -202,6 +207,7 @@ pub(crate) use std::{
     fs,
     io::{self, Write},
     hash::{Hash, Hasher},
+    marker::PhantomData,
     os::unix::fs::OpenOptionsExt,
     ops::ControlFlow,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -283,6 +289,15 @@ pub(crate) mod tls {
     pub(crate) use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 }
 
+pub(crate) mod rv {
+    pub(crate) use rustls::{CertificateError, DigitallySignedStruct, DistinguishedName, SignatureScheme};
+    pub(crate) use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+    pub(crate) use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+    pub(crate) use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
+    pub(crate) use rustls::crypto::ring::default_provider;
+    pub(crate) use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+}
+
 pub(crate) mod ws {
     pub(crate) use tokio_tungstenite::accept_async;
     pub(crate) use tokio_tungstenite::tungstenite::Message;
@@ -305,6 +320,11 @@ pub(crate) mod tk {
         },
         time::{Duration as TkDuration, sleep, timeout},
     };
+}
+
+pub(crate) mod tku {
+    pub(crate) use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
+    pub(crate) use tokio_util::bytes::BytesMut;
 }
 
 pub(crate) mod json {

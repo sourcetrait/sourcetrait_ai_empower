@@ -8,52 +8,61 @@ impl NuSh {
             + Self::info_router()
             + Self::inspect_router();
         if !deny.denies(DeniableTool::Run) {
-            router = router + Self::run_router();
+            router += Self::run_router();
         }
         if !deny.denies(DeniableTool::Rerun) {
-            router = router + Self::rerun_router();
+            router += Self::rerun_router();
         }
         if !deny.denies(DeniableTool::Interact) {
-            router = router + Self::interact_router();
+            router += Self::interact_router();
         }
         if !deny.denies(DeniableTool::Call) {
-            router = router + Self::call_router();
+            router += Self::call_router();
         }
         if !deny.denies(DeniableTool::Learn) {
-            router = router + Self::learn_router();
+            router += Self::learn_router();
         }
         if !deny.denies(DeniableTool::New) {
-            router = router + Self::new_router();
+            router += Self::new_router();
         }
         if !deny.denies(DeniableTool::Commit) {
-            router = router + Self::commit_router();
+            router += Self::commit_router();
         }
         if !deny.denies(DeniableTool::Rig) {
-            router = router + Self::rig_router();
+            router += Self::rig_router();
         }
         if !deny.denies(DeniableTool::ChannelOpen) {
-            router = router + Self::channel_open_router();
+            router += Self::channel_open_router();
         }
         if !deny.denies(DeniableTool::ChannelVerified) {
-            router = router + Self::channel_verified_router();
+            router += Self::channel_verified_router();
         }
         if !deny.denies(DeniableTool::ChannelClose) {
-            router = router + Self::channel_close_router();
+            router += Self::channel_close_router();
         }
         if !deny.denies(DeniableTool::ConfigChannel) {
-            router = router + Self::config_channel_router();
+            router += Self::config_channel_router();
         }
         if !deny.denies(DeniableTool::Purviews) {
-            router = router + Self::purviews_router();
+            router += Self::purviews_router();
         }
         if !deny.denies(DeniableTool::PurviewConfigure) {
-            router = router + Self::purview_configure_router();
+            router += Self::purview_configure_router();
         }
         if !deny.denies(DeniableTool::PurviewExtend) {
-            router = router + Self::purview_extend_router();
+            router += Self::purview_extend_router();
         }
         if !deny.denies(DeniableTool::Purview) {
-            router = router + Self::purview_router();
+            router += Self::purview_router();
+        }
+        if !deny.denies(DeniableTool::RemoteChannelOpen) {
+            router += Self::remote_channel_open_router();
+        }
+        if !deny.denies(DeniableTool::RemoteChannelClose) {
+            router += Self::remote_channel_close_router();
+        }
+        if !deny.denies(DeniableTool::RemoteChannels) {
+            router += Self::remote_channels_router();
         }
         router
     }

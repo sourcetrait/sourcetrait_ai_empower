@@ -168,7 +168,8 @@ fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
         format!(
             "unknown tool `{s}`; deniable tools: run, rerun, interact, call, learn, new, \
              commit, rig, channel_open, channel_verified, channel_close, config_channel, \
-             purviews, purview_configure, purview_extend, purview",
+             purviews, purview_configure, purview_extend, purview, \
+             remote_channel_open, remote_channel_close, remote_channels",
         )
     })
 }

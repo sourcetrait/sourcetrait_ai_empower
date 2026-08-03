@@ -83,13 +83,11 @@ pub(crate) struct Config {
     pub channel: ChannelConfig,
     pub supervisor: SupervisorConfig,
     /// Configured remote peers, by alias.
-    #[allow(dead_code)]
     pub remote: HashMap<String, RemoteConfig>,
 }
 
 /// A resolved `[remote.<alias>]` peer: where it is and its mTLS material.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct RemoteConfig {
     pub addr: std::net::SocketAddr,
     /// This host's own leaf, presented for client auth.
@@ -382,6 +380,9 @@ pub(crate) enum DeniableTool {
     PurviewConfigure,
     PurviewExtend,
     Purview,
+    RemoteChannelOpen,
+    RemoteChannelClose,
+    RemoteChannels,
 }
 
 impl DeniableTool {
@@ -403,6 +404,9 @@ impl DeniableTool {
             "purview_configure" => Self::PurviewConfigure,
             "purview_extend" => Self::PurviewExtend,
             "purview" => Self::Purview,
+            "remote_channel_open" => Self::RemoteChannelOpen,
+            "remote_channel_close" => Self::RemoteChannelClose,
+            "remote_channels" => Self::RemoteChannels,
             _ => return None,
         })
     }

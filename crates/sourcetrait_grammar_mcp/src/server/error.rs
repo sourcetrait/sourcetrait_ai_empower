@@ -132,6 +132,19 @@ pub enum Error {
     ChannelNotOpen,
     ChannelNotClaimed,
     ChannelPeerGone,
+    RemoteInvalidParams {
+        reason: String,
+    },
+    RemoteAlreadyOpen {
+        alias: String,
+    },
+    RemoteNotOpen {
+        alias: String,
+    },
+    RemoteConnect {
+        alias: String,
+        reason: String,
+    },
     ThreadDispatch {
         reason: String,
     },
@@ -172,6 +185,10 @@ impl Error {
             Self::ChannelNotOpen => "channel::not_open",
             Self::ChannelNotClaimed => "channel::not_claimed",
             Self::ChannelPeerGone => "channel::peer_gone",
+            Self::RemoteInvalidParams { .. } => "remote::invalid_params",
+            Self::RemoteAlreadyOpen { .. } => "remote::already_open",
+            Self::RemoteNotOpen { .. } => "remote::not_open",
+            Self::RemoteConnect { .. } => "remote::connect",
             Self::ThreadDispatch { .. } => "thread::dispatch",
             Self::ThreadTimeout { .. } => "thread::timeout",
             Self::ThreadReturnedError { .. } => "thread::returned_error",
@@ -244,6 +261,14 @@ impl Error {
             Self::ChannelPeerGone => "the channel's peer connection is gone; call \
                  channel_close() then channel_open() for a fresh channel"
                 .to_string(),
+            Self::RemoteInvalidParams { reason } => {
+                format!("invalid remote link parameters: {reason}")
+            }
+            Self::RemoteAlreadyOpen { alias } => format!("remote link `{alias}` is already open"),
+            Self::RemoteNotOpen { alias } => format!("no open remote link `{alias}`"),
+            Self::RemoteConnect { alias, reason } => {
+                format!("could not open remote link `{alias}`: {reason}")
+            }
             Self::ThreadDispatch { reason } => format!("eval dispatch failed: {reason}"),
             Self::ThreadTimeout { timeout_ms } => format!("eval timed out after {timeout_ms} ms"),
             Self::ThreadReturnedError { reason } => reason.clone(),

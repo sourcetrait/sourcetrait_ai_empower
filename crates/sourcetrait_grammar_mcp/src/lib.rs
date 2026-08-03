@@ -52,6 +52,9 @@ pub(crate) mod server {
         pub(crate) mod purview_extend;
         pub(crate) mod purviews;
         pub(crate) mod purview;
+        pub(crate) mod remote_channel_open;
+        pub(crate) mod remote_channel_close;
+        pub(crate) mod remote_channels;
         pub(crate) mod rerun;
         pub(crate) mod run;
     }
@@ -162,6 +165,7 @@ pub(crate) use crate::{
         },
         remote::{
             codec::{AcceptorToInitiator, BitcodeCodec, InitiatorToAcceptor, RemoteStream},
+            link::{RemoteLink, RemoteLinkHandle, RemoteLinkOptions},
             verify::EntityPin,
         },
         run::{eval_concurrency_cap, run_server},
@@ -183,9 +187,9 @@ pub(crate) use crate::{
             commit::CommitParams,
             config_channel::ConfigChannelParams,
             common::{
-                CachedRunBody, InFlightEntry, InFlightKind, NuSh, RunParams, convert_schemas,
-                dispatch_interact, dispatch_pooled, envelope_to_structured, lint_run_params,
-                now_millis, teardown_all_in_flight,
+                CachedRunBody, InFlightEntry, InFlightKind, NuSh, RemoteLinkEntry, RunParams,
+                convert_schemas, dispatch_interact, dispatch_pooled, envelope_to_structured,
+                lint_run_params, now_millis, teardown_all_in_flight,
             },
             info::InfoParams,
             inspect::InspectParams,

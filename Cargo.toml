@@ -9,7 +9,6 @@ members = [
   "crates/sourcetrait_grammar_claudeline",
   "crates/sourcetrait_grammar_puremd_mdbook",
   "crates/sourcetrait_grammar_arxivmd",
-  "crates/sourcetrait_grammar_cert",
   "crates/sourcetrait_grammar_tests",
 ]
 
@@ -43,7 +42,6 @@ nuon = { git = "https://github.com/nushell/nushell", tag = "0.114.1" }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 pretty_assertions = { version = "1" }
 pulldown-cmark = { version = "0.13" }
-rcgen = { version = "0.14" }
 regex = { version = "1" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip"] }
 rmcp = { version = "1.7", features = ["server", "transport-io", "schemars", "macros"] }

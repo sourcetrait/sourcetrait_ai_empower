@@ -19,9 +19,21 @@ McpNom handshake - the initiator's also names the stream, the acceptor's just
 replies its nom) and Close. The request/response + notice variants land with the
 send path (RemoteSend leg).
 
+## const REMOTE_ZSTD_LEVEL
+Every frame is zstd-compressed before framing (the_user): `zstd(bitcode(msg))`,
+applied UNIFORMLY to both streams rather than gated on stream type. Obviously worth
+it for file chunks, but also for the control messages, which are string-heavy
+(McpNoms, and the file paths + payloads of the leg-5 send path) and compress well
+(the_user). Level 3 (zstd's default) is the speed/ratio balance; a single level
+keeps the codec branch-free. Tiny handshake frames pay a few bytes of zstd overhead,
+accepted for the uniform rule.
+
 ## struct BitcodeCodec
-A tokio-util Decoder+Encoder wrapping LengthDelimitedCodec: the length prefix
-frames the stream, bitcode is the payload. `PhantomData<T>` binds the codec to one
-message type, so a `FramedRead<_, BitcodeCodec<AcceptorToInitiator>>` can only
-yield that language. io::Error is what the Framed traits want. Shape copied from
-~/info/example/tls/frame.rs, a working reference.
+A tokio-util Decoder+Encoder wrapping LengthDelimitedCodec: the length prefix frames
+the stream, and each frame is zstd-compressed bitcode (encode: bitcode -> zstd ->
+frame; decode reverses it). `PhantomData<T>` binds the codec to one message type, so
+a `FramedRead<_, BitcodeCodec<AcceptorToInitiator>>` can only yield that language.
+io::Error is what the Framed traits want. Shape from ~/info/example/tls/frame.rs (a
+working reference), with the zstd layer added. The round-trip is unit-tested
+(server/tests/remote.rs) since the TLS lifecycle that would exercise it end-to-end
+is deferred to leg 6.

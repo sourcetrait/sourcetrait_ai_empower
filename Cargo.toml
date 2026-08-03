@@ -76,6 +76,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 toml = { version = "0.8" }
 walkdir = { version = "2" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+zstd = { version = "0.13" }
 
 [profile.release]
 # EmbedEngine principle 1 (grammar): eval runs in-process on host threads and a

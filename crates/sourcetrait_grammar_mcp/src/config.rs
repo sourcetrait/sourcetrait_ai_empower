@@ -19,7 +19,7 @@ const MIN_CHANNEL_PORT: u16 = 1024;
 pub(crate) struct ConfigToml {
     pub channel: Option<ChannelConfigToml>,
     pub supervisor: Option<SupervisorConfigToml>,
-    pub remote: Option<HashMap<String, RemoteAliasToml>>,
+    pub remote: Option<RemoteToml>,
 }
 
 /// One `[remote.<alias>]` table: a peer to link with. All fields required.
@@ -34,6 +34,20 @@ pub(crate) struct RemoteAliasToml {
     pub self_private_key_file: Option<String>,
     /// The peer's entity leaf to pin (public).
     pub remote_public_key_file: Option<String>,
+}
+
+/// The `[remote]` table: the acceptor's own listen config plus the peer aliases.
+#[derive(Debug, Clone, Default, ser::Deserialize)]
+pub(crate) struct RemoteToml {
+    /// `ip:port` the acceptor binds; absent = initiator-only (no listener).
+    pub listen: Option<String>,
+    /// This host's own entity leaf the acceptor presents (public).
+    pub self_public_key_file: Option<String>,
+    /// The private key paired with `self_public_key_file`.
+    pub self_private_key_file: Option<String>,
+    /// The peer aliases, `[remote.<alias>]`.
+    #[serde(flatten)]
+    pub peers: HashMap<String, RemoteAliasToml>,
 }
 
 /// The `[supervisor]` table: when a resource level is worth one warning.
@@ -84,6 +98,8 @@ pub(crate) struct Config {
     pub supervisor: SupervisorConfig,
     /// Configured remote peers, by alias.
     pub remote: HashMap<String, RemoteConfig>,
+    /// The acceptor's listen config, when `[remote].listen` is set.
+    pub remote_listen: Option<RemoteListen>,
 }
 
 /// A resolved `[remote.<alias>]` peer: where it is and its mTLS material.
@@ -96,6 +112,16 @@ pub(crate) struct RemoteConfig {
     pub self_key_file: PathBuf,
     /// The peer's leaf, pinned byte-for-byte.
     pub remote_pin_file: PathBuf,
+}
+
+/// The resolved `[remote]` acceptor config: its listen address and identity.
+#[derive(Debug, Clone)]
+pub(crate) struct RemoteListen {
+    pub addr: std::net::SocketAddr,
+    /// This host's own leaf, presented to inbound peers.
+    pub self_cert_file: PathBuf,
+    /// The private key paired with `self_cert_file`.
+    pub self_key_file: PathBuf,
 }
 
 /// The channel hub's operating parameters.
@@ -198,12 +224,20 @@ fn merged_supervisor(
     })
 }
 
-/// Resolve the user's `[remote.<alias>]` tables; there are no embedded defaults.
+/// Resolve the `[remote]` section: the peer aliases plus this host's own
+/// acceptor listen config. There are no embedded defaults.
 fn merged_remote(
-    user: Option<HashMap<String, RemoteAliasToml>>,
-) -> Result<HashMap<String, RemoteConfig>, String> {
+    user: Option<RemoteToml>,
+) -> Result<(HashMap<String, RemoteConfig>, Option<RemoteListen>), String> {
+    let RemoteToml {
+        listen,
+        self_public_key_file,
+        self_private_key_file,
+        peers,
+    } = user.unwrap_or_default();
+
     let mut out = HashMap::new();
-    for (alias, cfg) in user.unwrap_or_default() {
+    for (alias, cfg) in peers {
         let address = cfg
             .address
             .ok_or_else(|| format!("[remote.{alias}] is missing `address`"))?;
@@ -229,7 +263,27 @@ fn merged_remote(
             },
         );
     }
-    Ok(out)
+
+    let remote_listen = match (listen, self_public_key_file, self_private_key_file) {
+        (None, None, None) => None,
+        (Some(addr), Some(cert), Some(key)) => {
+            let parsed = addr.parse::<std::net::SocketAddr>().map_err(|e| {
+                format!("[remote] listen `{addr}` is not ip:port: {e}")
+            })?;
+            Some(RemoteListen {
+                addr: parsed,
+                self_cert_file: expand_path(&cert)?,
+                self_key_file: expand_path(&key)?,
+            })
+        }
+        _ => {
+            return Err("[remote] listen, self_public_key_file, and self_private_key_file \
+                 must all be set together (the acceptor's own listen address and identity)"
+                .to_string());
+        }
+    };
+
+    Ok((out, remote_listen))
 }
 
 /// A fraction of total capacity; outside (0, 1] it would warn always or never.
@@ -282,15 +336,19 @@ impl Config {
     ) -> Result<Self, String> {
         let base: ConfigToml = toml::from_str(DEFAULTS_CONFIG)
             .map_err(|e| format!("the embedded defaults do not parse: {e}"))?;
+        let channel = merged_channel(user.channel, base.channel)?;
+        let supervisor = merged_supervisor(user.supervisor, base.supervisor)?;
+        let (remote, remote_listen) = merged_remote(user.remote)?;
         Ok(Self {
             id,
             namespace,
             work_dir,
             deny,
             test,
-            channel: merged_channel(user.channel, base.channel)?,
-            supervisor: merged_supervisor(user.supervisor, base.supervisor)?,
-            remote: merged_remote(user.remote)?,
+            channel,
+            supervisor,
+            remote,
+            remote_listen,
         })
     }
 

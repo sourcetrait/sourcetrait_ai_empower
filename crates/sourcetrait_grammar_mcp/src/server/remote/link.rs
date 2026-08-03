@@ -9,6 +9,9 @@ const PIN_SERVER_NAME: &str = "grammar.invalid";
 /// How long a closing side waits for the reciprocal `Close` before giving up.
 const CLOSE_FRAME_GRACE: tk::TkDuration = tk::TkDuration::from_secs(2);
 
+/// How long a replaced acceptor link is given to close before it is abandoned.
+const REPLACE_CLOSE_TIMEOUT: tk::TkDuration = tk::TkDuration::from_secs(5);
+
 /// What an initiator needs to open a link to a remote acceptor.
 pub(crate) struct RemoteLinkOptions {
     /// The acceptor's listen address.
@@ -98,15 +101,28 @@ impl RemoteLink {
         let (remote_msg, msg_read, msg_write) = message.expect("message half present");
         let (remote_file, file_read, file_write) = file.expect("file half present");
         pair_check(&remote_msg, &remote_file)?;
-        let cancel = tku::CancellationToken::new();
-        let message_join = tk::spawn(run_acceptor_conn(cancel.clone(), msg_read, msg_write));
-        let file_join = tk::spawn(run_acceptor_conn(cancel.clone(), file_read, file_write));
-        Ok(RemoteLinkHandle {
-            remote_mcp_nom: remote_msg,
-            cancel,
-            message_join: Some(message_join),
-            file_join: Some(file_join),
-        })
+        Ok(spawn_acceptor_drivers(
+            remote_msg,
+            (msg_read, msg_write),
+            (file_read, file_write),
+        ))
+    }
+}
+
+/// Turn two handshaked connections into a running link handle.
+fn spawn_acceptor_drivers(
+    remote_mcp_nom: String,
+    message: (AcceptFramedRead, AcceptFramedWrite),
+    file: (AcceptFramedRead, AcceptFramedWrite),
+) -> RemoteLinkHandle {
+    let cancel = tku::CancellationToken::new();
+    let message_join = tk::spawn(run_acceptor_conn(cancel.clone(), message.0, message.1));
+    let file_join = tk::spawn(run_acceptor_conn(cancel.clone(), file.0, file.1));
+    RemoteLinkHandle {
+        remote_mcp_nom,
+        cancel,
+        message_join: Some(message_join),
+        file_join: Some(file_join),
     }
 }
 
@@ -310,6 +326,23 @@ fn server_config(
     Ok(Arc::new(config))
 }
 
+/// The acceptor's server config: present our own leaf, UNION-pin every peer.
+fn union_server_config(
+    self_cert_file: &std::path::Path,
+    self_key_file: &std::path::Path,
+    peer_pins: Vec<rv::CertificateDer<'static>>,
+) -> io::Result<Arc<tls::ServerConfig>> {
+    let verifier = Arc::new(UnionPin::new(peer_pins));
+    let provider = Arc::new(rv::default_provider());
+    let config = tls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(io_other)?
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(load_chain(self_cert_file)?, load_key(self_key_file)?)
+        .map_err(io_other)?;
+    Ok(Arc::new(config))
+}
+
 fn load_leaf(path: &std::path::Path) -> io::Result<rv::CertificateDer<'static>> {
     rv::CertificateDer::from_pem_file(path)
         .map_err(|e| io_other(format!("load cert {}: {e}", path.display())))
@@ -326,4 +359,133 @@ fn load_key(path: &std::path::Path) -> io::Result<tls::PrivateKeyDer<'static>> {
 
 fn io_other<E: Display>(e: E) -> io::Error {
     io::Error::other(e.to_string())
+}
+
+// ---- acceptor listener + pairing coordinator (leg 4c) ----
+
+/// One handshaked inbound connection awaiting its pair.
+struct PendingHalf {
+    remote_mcp_nom: String,
+    stream: RemoteStream,
+    addr: std::net::SocketAddr,
+    read: AcceptFramedRead,
+    write: AcceptFramedWrite,
+}
+
+/// Spawn the acceptor listener when `[remote].listen` is configured.
+pub(crate) async fn spawn_remote_listener_from_config(
+    self_mcp_nom: String,
+    registry: Arc<tk::AsyncMutex<HashMap<String, RemoteLinkEntry>>>,
+) {
+    let Some(listen) = &config().remote_listen else {
+        return;
+    };
+    let mut peer_pins = Vec::new();
+    for (alias, cfg) in &config().remote {
+        match load_leaf(&cfg.remote_pin_file) {
+            Ok(der) => peer_pins.push(der),
+            Err(e) => eprintln!("grammar: remote acceptor skips peer `{alias}` pin: {e}"),
+        }
+    }
+    if peer_pins.is_empty() {
+        eprintln!(
+            "grammar: [remote].listen is set but no peer pins loaded; \
+             the acceptor rejects all inbound links",
+        );
+    }
+    let tls_config =
+        match union_server_config(&listen.self_cert_file, &listen.self_key_file, peer_pins) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("grammar: remote acceptor not started (tls config): {e}");
+                return;
+            }
+        };
+    let listener = match tk::TcpListener::bind(listen.addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!(
+                "grammar: remote acceptor not started (bind {}): {e}",
+                listen.addr,
+            );
+            return;
+        }
+    };
+    eprintln!("grammar: remote acceptor listening on {}", listen.addr);
+    tk::spawn(run_accept_loop(
+        listener,
+        tls::TlsAcceptor::from(tls_config),
+        self_mcp_nom,
+        registry,
+    ));
+}
+
+/// The accept loop + McpNom-keyed pairing coordinator.
+async fn run_accept_loop(
+    listener: tk::TcpListener,
+    acceptor: tls::TlsAcceptor,
+    self_mcp_nom: String,
+    registry: Arc<tk::AsyncMutex<HashMap<String, RemoteLinkEntry>>>,
+) {
+    let (tx, mut rx) = tk::unbounded_channel::<PendingHalf>();
+    // Handshake each inbound connection on its own task so a slow peer never
+    // blocks other accepts.
+    tk::spawn(async move {
+        loop {
+            let (tcp, peer) = match listener.accept().await {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let acceptor = acceptor.clone();
+            let self_nom = self_mcp_nom.clone();
+            let tx = tx.clone();
+            tk::spawn(async move {
+                if let Ok((remote, stream, read, write)) =
+                    accept_conn(&acceptor, &self_nom, tcp).await
+                {
+                    let _ = tx.send(PendingHalf {
+                        remote_mcp_nom: remote,
+                        stream,
+                        addr: peer,
+                        read,
+                        write,
+                    });
+                }
+            });
+        }
+    });
+
+    // Single-consumer pairing coordinator, so the pending map needs no lock.
+    let mut pending: HashMap<String, PendingHalf> = HashMap::new();
+    while let Some(half) = rx.recv().await {
+        match pending.remove(&half.remote_mcp_nom) {
+            // Two DIFFERENT streams for one McpNom -> a complete link.
+            Some(other) if other.stream != half.stream => {
+                let addr = half.addr;
+                let (message, file) = if matches!(half.stream, RemoteStream::Message) {
+                    ((half.read, half.write), (other.read, other.write))
+                } else {
+                    ((other.read, other.write), (half.read, half.write))
+                };
+                let handle =
+                    spawn_acceptor_drivers(half.remote_mcp_nom.clone(), message, file);
+                let replaced = registry
+                    .lock()
+                    .await
+                    .insert(half.remote_mcp_nom.clone(), RemoteLinkEntry { handle, addr });
+                // A re-linking peer replaces its prior link; close the old one.
+                if let Some(mut old) = replaced {
+                    tk::spawn(async move { old.handle.close(REPLACE_CLOSE_TIMEOUT).await });
+                }
+            }
+            // Same stream twice for one McpNom: keep the newer, drop the older
+            // (dropping its framed halves closes that connection).
+            Some(_older) => {
+                pending.insert(half.remote_mcp_nom.clone(), half);
+            }
+            None => {
+                pending.insert(half.remote_mcp_nom.clone(), half);
+            }
+        }
+    }
 }

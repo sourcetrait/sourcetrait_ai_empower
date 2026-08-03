@@ -165,8 +165,10 @@ pub(crate) use crate::{
         },
         remote::{
             codec::{AcceptorToInitiator, BitcodeCodec, InitiatorToAcceptor, RemoteStream},
-            link::{RemoteLink, RemoteLinkHandle, RemoteLinkOptions},
-            verify::EntityPin,
+            link::{
+                RemoteLink, RemoteLinkHandle, RemoteLinkOptions, spawn_remote_listener_from_config,
+            },
+            verify::{EntityPin, UnionPin},
         },
         run::{eval_concurrency_cap, run_server},
         schema::{

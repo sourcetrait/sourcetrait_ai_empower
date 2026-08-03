@@ -1,7 +1,9 @@
 #![allow(dead_code)]
-//! The remote-link wire: a bitcode payload inside a length-delimited frame, plus
-//! the per-direction message languages.
+//! The remote-link wire: zstd-compressed bitcode in a length-delimited frame.
 use crate::*;
+
+/// The zstd level applied to every remote frame before it hits the wire.
+const REMOTE_ZSTD_LEVEL: i32 = 3;
 
 /// Which of a link's two connections a handshake announces.
 #[derive(
@@ -37,7 +39,7 @@ pub(crate) enum AcceptorToInitiator {
     Close,
 }
 
-/// A tokio-util codec framing a bitcode-encoded `T` in a length-delimited frame.
+/// A tokio-util codec: a zstd-compressed bitcode `T` in a length-delimited frame.
 pub(crate) struct BitcodeCodec<T> {
     frames: tku::LengthDelimitedCodec,
     _marker: PhantomData<T>,
@@ -63,7 +65,13 @@ where
         let Some(frame) = self.frames.decode(src)? else {
             return Ok(None);
         };
-        bitcode::decode(&frame).map(Some).map_err(|_| {
+        let bytes = zstd::decode_all(frame.as_ref()).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("remote frame: zstd decode failed: {e}"),
+            )
+        })?;
+        bitcode::decode(&bytes).map(Some).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "remote frame: bitcode decode failed")
         })
     }
@@ -77,6 +85,8 @@ where
 
     fn encode(&mut self, item: T, dst: &mut tku::BytesMut) -> Result<(), io::Error> {
         let bytes = bitcode::encode(&item);
-        self.frames.encode(bytes.into(), dst)
+        let compressed = zstd::encode_all(bytes.as_slice(), REMOTE_ZSTD_LEVEL)
+            .map_err(|e| io::Error::other(format!("remote frame: zstd encode failed: {e}")))?;
+        self.frames.encode(compressed.into(), dst)
     }
 }

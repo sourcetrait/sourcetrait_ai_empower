@@ -70,6 +70,34 @@ single digits per burst, a loop emits thousands per second - so the numbers bare
 affect DETECTION and mostly decide how often a well-behaved fast command gets
 flagged. That is why erring permissive is right here.
 
+## struct RemoteToml
+The `[remote]` file table carries two disjoint things: this host's own acceptor
+config (`listen` + the self key pair) and the peer aliases (`[remote.<alias>]`
+subtables). The aliases ride `#[serde(flatten)]` so they stay at `[remote.<alias>]`
+- the 4a shape, unchanged - while the self keys are named fields of the same table.
+Flatten forbids `deny_unknown_fields` on RemoteToml, but validation survives where
+it matters: a mistyped self key deserializes a string where a table (an alias) is
+expected and fails on the type mismatch, and a mistyped peer field is still caught
+by RemoteAliasToml's own `deny_unknown_fields`. The only unreachable case is a
+"typo'd alias name", which is not a concept - any table under `[remote]` is by
+design a peer. A peers-only `[remote]` (no `listen`) is the initiator-only host and
+parses exactly as at 4a, so the section is backward compatible.
+
+## struct RemoteListen
+The acceptor's resolved self config: where it listens and the entity it presents.
+The self identity is EXPLICIT here (its own `self_public_key_file` / private key),
+extending 4a's "both self keys explicit, no derivation" ruling to the accept side
+(the_user's choice) rather than deriving the acceptor's leaf from the channel cert
+or a peer alias. Present only when `[remote].listen` is set.
+
+## fn merged_remote
+Returns BOTH the peer map and the optional listen config from the one `[remote]`
+table. The listen triple (`listen`, `self_public_key_file`, `self_private_key_file`)
+is all-or-nothing: an acceptor with an address but no identity, or an identity with
+nowhere to listen, is a half-configured listener, so any partial set is a load error
+rather than a silently-inert one. The address parses to a SocketAddr at load (like a
+peer's), so a bad `ip:port` fails at startup, not at bind.
+
 ## fn fraction_field
 `pub(crate)` for one reason, and it is worth stating because the visibility looks
 arbitrary otherwise: a runtime PIN is held to the same bound the file layer

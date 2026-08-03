@@ -32,3 +32,17 @@ which the pin then checks.
 provider = ring, matching the crate's other TLS (rustls_ring_pin); no second
 backend. The unit test (server/tests/remote.rs) covers the pin decision over raw
 DER blobs; the full handshake is system-tier (RemoteChannelTests leg).
+
+## struct UnionPin
+The acceptor's verifier (leg 4c): a peer is accepted iff its client leaf DER
+byte-matches ANY of a configured set - the UNION over every `[remote.<alias>]`
+remote_public_key_file. Same entity-pin trust as EntityPin, widened from one leaf
+to a set, because the acceptor does not know which peer is connecting until after
+the TLS handshake and so must trust every configured peer at once. A
+ClientCertVerifier ONLY: the acceptor is always the TLS server, so unlike EntityPin
+(dual-role for the symmetric single-link path) it never verifies a server cert. The
+signature-delegation and empty root_hint_subjects are identical to EntityPin and
+load-bearing for the same reason (a matched leaf without a proven private key is a
+replayed public cert). An empty set trusts nobody - a listener configured with no
+loadable peer pins rejects every inbound link, which is logged at startup. Unit-
+tested (server/tests/remote.rs) over raw DER; the full handshake is leg-6 system-tier.

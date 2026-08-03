@@ -9,7 +9,7 @@ fn deny_removes_tools_from_list() {
     let t = testing::test!({ .using_temp_dir() });
     let mut host = Host::spawn_args(t.temp_dir(), &["--deny", "run,interact,learn"]);
     let names = host.tool_names();
-    assert_eq!(names.len(), 17, "20 - 3 denied = 17; got {names:?}");
+    assert_eq!(names.len(), 20, "23 - 3 denied = 20; got {names:?}");
     for absent in ["run", "interact", "learn"] {
         assert!(
             !names.contains(&absent.to_string()),
@@ -34,6 +34,9 @@ fn deny_removes_tools_from_list() {
         "inspect",
         "processes",
         "kill",
+        "remote_channel_open",
+        "remote_channel_close",
+        "remote_channels",
     ] {
         assert!(
             names.contains(&present.to_string()),
@@ -70,7 +73,7 @@ fn deny_full_set_leaves_core_four() {
         t.temp_dir(),
         &[
             "--deny",
-            "run,rerun,interact,call,learn,new,commit,rig,channel_open,channel_verified,channel_close,config_channel,purviews,purview_configure,purview_extend,purview",
+            "run,rerun,interact,call,learn,new,commit,rig,channel_open,channel_verified,channel_close,config_channel,purviews,purview_configure,purview_extend,purview,remote_channel_open,remote_channel_close,remote_channels",
         ],
     );
     let mut names = host.tool_names();

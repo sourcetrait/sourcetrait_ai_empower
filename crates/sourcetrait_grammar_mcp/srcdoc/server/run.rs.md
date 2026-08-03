@@ -21,6 +21,12 @@ eval children and its background jobs onto the box unreaped, because the stdio p
 only ever learns about a CLEAN client disconnect. None of it reaches SIGKILL - that is
 what the host lock is for.
 
+The REMOTE ACCEPTOR listener is spawned last before serving, and only when
+`[remote].listen` is configured, so a host that accepts inbound remote links has one
+bound before it answers MCP traffic. Like the host lock it is non-fatal: a bind or
+cert failure logs and the host serves on, since a broken remote listener must never
+sink the MCP (`spawn_remote_listener_from_config`, server/remote/link.rs).
+
 The final two lines are the clean-shutdown path: the client closed stdin, so the
 channel is told we are going away and every in-flight eval is cancelled and reaped, so
 a disconnect mid-eval leaks no process tree.

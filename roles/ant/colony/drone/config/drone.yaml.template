@@ -1,4 +1,4 @@
-ai_identity: "%{ai_identity}%"
+ai_id: "%{ai_identity}%"
 ai_shm_dir: "{infer:env:XDGX_SHM_DIR}/ai/{infer:ai_identity}/{infer:session_nom}"
 fae:
     identity: "%{fae_identity}%"

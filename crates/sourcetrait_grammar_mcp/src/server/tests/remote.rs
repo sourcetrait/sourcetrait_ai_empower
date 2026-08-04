@@ -1,20 +1,20 @@
-//! Unit tests for the remote-link entity-pin verifiers.
+//! Unit tests for the remote-link known-public-key verifier.
 
 use crate::rv;
-use crate::server::remote::verify::{EntityPin, UnionPin};
+use crate::server::remote::verify::PublicKeyVerifier;
 use rustls::client::danger::ServerCertVerifier;
 use rustls::server::danger::ClientCertVerifier;
 
-/// A leaf byte-identical to the pin is accepted; any other leaf is rejected -
-/// both as a server cert (client-side) and a client cert (server-side).
+/// A leaf byte-identical to the known public key is accepted; any other leaf is
+/// rejected - both as a server cert (client-side) and a client cert (server-side).
 #[test]
-fn entity_pin_accepts_only_the_pinned_leaf() {
-    let pin_bytes = vec![1u8, 2, 3, 4, 5];
+fn public_key_verifier_accepts_only_the_matching_leaf() {
+    let key_bytes = vec![1u8, 2, 3, 4, 5];
     let other_bytes = vec![9u8, 9, 9];
-    let pin = rv::CertificateDer::from(pin_bytes.clone());
-    let verifier = EntityPin::new(pin);
+    let known = rv::CertificateDer::from(key_bytes.clone());
+    let verifier = PublicKeyVerifier::new(known);
 
-    let same = rv::CertificateDer::from(pin_bytes);
+    let same = rv::CertificateDer::from(key_bytes);
     let different = rv::CertificateDer::from(other_bytes);
     let now = rustls::pki_types::UnixTime::now();
     let name = rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
@@ -28,34 +28,6 @@ fn entity_pin_accepts_only_the_pinned_leaf() {
     // Server-side: verifying the remote's CLIENT cert.
     assert!(ClientCertVerifier::verify_client_cert(&verifier, &same, &[], now).is_ok());
     assert!(ClientCertVerifier::verify_client_cert(&verifier, &different, &[], now).is_err());
-}
-
-/// A leaf in the union set is accepted; one absent from it is rejected; an empty
-/// set rejects everything. ClientCertVerifier only - the acceptor is the server.
-#[test]
-fn union_pin_accepts_any_member_and_rejects_the_rest() {
-    let a = vec![1u8, 2, 3];
-    let b = vec![4u8, 5, 6];
-    let outsider = vec![7u8, 8, 9];
-    let verifier = UnionPin::new(vec![
-        rv::CertificateDer::from(a.clone()),
-        rv::CertificateDer::from(b.clone()),
-    ]);
-    let now = rustls::pki_types::UnixTime::now();
-    let der = rv::CertificateDer::from;
-
-    assert!(ClientCertVerifier::verify_client_cert(&verifier, &der(a), &[], now).is_ok());
-    assert!(ClientCertVerifier::verify_client_cert(&verifier, &der(b), &[], now).is_ok());
-    assert!(
-        ClientCertVerifier::verify_client_cert(&verifier, &der(outsider), &[], now).is_err(),
-        "a leaf outside the union set must be rejected",
-    );
-
-    let empty = UnionPin::new(vec![]);
-    assert!(
-        ClientCertVerifier::verify_client_cert(&empty, &der(vec![1, 2, 3]), &[], now).is_err(),
-        "an empty union set trusts nobody",
-    );
 }
 
 /// The codec round-trips a message through zstd + bitcode: what encode writes,
@@ -76,14 +48,12 @@ fn bitcode_codec_round_trips_a_message_through_zstd() {
     assert_eq!(got, msg, "encode -> zstd -> frame -> decode must round-trip");
 }
 
-/// The leg-5 send frames round-trip through both wire enums: a Deliver, both
-/// DeliverAck results, and a FileChunk carrying real bytes (a live zstd payload).
+/// The send frames round-trip through both wire enums: a Deliver and a FileChunk
+/// carrying real bytes (a live zstd payload).
 #[test]
 fn bitcode_codec_round_trips_the_send_frames() {
     use crate::tku::{BytesMut, Decoder, Encoder};
-    use crate::{
-        AcceptorToInitiator, BitcodeCodec, DeliveryResult, FileFrame, InitiatorToAcceptor, MsgFrame,
-    };
+    use crate::{AcceptorToInitiator, BitcodeCodec, FileFrame, InitiatorToAcceptor, MsgFrame};
 
     fn roundtrip_init(msg: InitiatorToAcceptor) {
         let mut dst = BytesMut::new();
@@ -106,17 +76,6 @@ fn bitcode_codec_round_trips_the_send_frames() {
         event_nuon: "{a: 1, b: \"x\"}".to_string(),
         files: vec!["out.txt".to_string()],
     };
-    let ack_ok = MsgFrame::DeliverAck {
-        id: "id1".to_string(),
-        result: DeliveryResult::Accepted,
-    };
-    let ack_err = MsgFrame::DeliverAck {
-        id: "id1".to_string(),
-        result: DeliveryResult::Refused {
-            kind: "channel".to_string(),
-            message: "closed".to_string(),
-        },
-    };
     let chunk = FileFrame::Chunk {
         id: "id1".to_string(),
         dest: "out.txt".to_string(),
@@ -126,10 +85,8 @@ fn bitcode_codec_round_trips_the_send_frames() {
     };
 
     roundtrip_init(InitiatorToAcceptor::Msg(deliver.clone()));
-    roundtrip_init(InitiatorToAcceptor::Msg(ack_ok.clone()));
     roundtrip_init(InitiatorToAcceptor::File(chunk.clone()));
     roundtrip_acc(AcceptorToInitiator::Msg(deliver));
-    roundtrip_acc(AcceptorToInitiator::Msg(ack_err));
     roundtrip_acc(AcceptorToInitiator::File(chunk));
 }
 

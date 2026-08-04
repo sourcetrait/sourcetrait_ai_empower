@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-//! Remote link lifecycle: two entity-pinned mTLS connections to one peer,
+//! Remote link lifecycle: two known-public-key mTLS connections to one peer,
 //! message/control + file. A link is opened on demand by remote_channel_open
 //! (connector or listener, from config), after the agent's Channel is up. The
 //! open task owns the lifecycle: it emits mcp/remote/Connected once both
@@ -8,8 +8,9 @@
 //! onto its own Channel with from = mcp/remote/<sender_nom>, files alongside.
 use crate::*;
 
-/// Server-name presented on the client handshake; entity-pin ignores it.
-const PIN_SERVER_NAME: &str = "grammar.invalid";
+/// Server-name presented on the client handshake; the known-public-key match
+/// ignores it.
+const PLACEHOLDER_SERVER_NAME: &str = "grammar.invalid";
 
 /// How long a closing side waits for the reciprocal `Close` before giving up.
 const CLOSE_FRAME_GRACE: tk::TkDuration = tk::TkDuration::from_secs(2);
@@ -17,12 +18,12 @@ const CLOSE_FRAME_GRACE: tk::TkDuration = tk::TkDuration::from_secs(2);
 /// One file chunk's uncompressed payload ceiling; zstd + the frame ride on top.
 const CHUNK_BYTES: usize = 256 * 1024;
 
-/// How long a sender waits for a delivery receipt before reporting Unsent{timeout}.
-const SEND_ACK_TIMEOUT: tk::TkDuration = tk::TkDuration::from_secs(30);
-
-/// Host-origin lifecycle models, on the local Channel under the mcp/ reservation.
+/// Host-origin lifecycle + delivery models, on the local Channel under the mcp/
+/// reservation.
 const MODEL_CONNECTED: &str = "mcp/remote/Connected";
 const MODEL_DISCONNECTED: &str = "mcp/remote/Disconnected";
+const MODEL_SENT: &str = "mcp/remote/Sent";
+const MODEL_UNSENT: &str = "mcp/remote/Unsent";
 
 // ---- the process-wide open-link registry ----
 
@@ -71,7 +72,7 @@ pub(crate) fn safe_dest(dest: &str) -> bool {
 /// once. remote_channel_open drives this; the Connected notification lands async.
 pub(crate) fn open_remote(
     self_mcp_nom: String,
-    entry: RemoteEntry,
+    entry: RemoteConfig,
 ) {
     let addr_hint = match &entry.role {
         RemoteRole::Connector { addr } => *addr,
@@ -150,12 +151,12 @@ fn emit_open_failed(
 pub(crate) struct RemoteLinkOptions {
     /// The acceptor's listen address.
     pub addr: std::net::SocketAddr,
-    /// This host's own entity leaf, presented as the client certificate.
-    pub self_cert_file: PathBuf,
-    /// The private key paired with `self_cert_file`.
-    pub self_key_file: PathBuf,
-    /// The peer's entity leaf; the presented leaf must match it byte-for-byte.
-    pub peer_pin_file: PathBuf,
+    /// This host's own public key, presented as the client certificate.
+    pub self_public_key_file: PathBuf,
+    /// The private key paired with `self_public_key_file`.
+    pub self_private_key_file: PathBuf,
+    /// The peer's known public key; the presented leaf must match it byte-for-byte.
+    pub peer_public_key_file: PathBuf,
 }
 
 /// A running link: the peer McpNom, the outbound queues a send pushes onto, and
@@ -164,10 +165,12 @@ pub(crate) struct RemoteLinkOptions {
 pub(crate) struct RemoteLinkHandle {
     pub remote_mcp_nom: String,
     cancel: tku::CancellationToken,
-    /// Deliver/receipt to the message-connection driver.
+    /// Deliver to the message-connection driver.
     msg_out_tx: tk::UnboundedSender<MsgFrame>,
     /// FileChunk to the file-connection driver.
     file_out_tx: tk::UnboundedSender<FileFrame>,
+    /// Aggregate write-outcome tracking behind the Sent/Unsent report.
+    send: SendTracker,
 }
 
 impl RemoteLinkHandle {
@@ -179,9 +182,12 @@ impl RemoteLinkHandle {
         }
     }
 
-    /// Chunk each file onto the file connection, then Deliver onto the message
-    /// connection. Synchronous (mpsc sends), so a grimm eval thread drives it; a
-    /// closed receiver (driver gone) surfaces as an error the send reports.
+    /// Register the send, then queue its frames (file chunks onto the file
+    /// connection, the Deliver onto the message connection). Synchronous (mpsc
+    /// sends), so a grimm eval thread drives it. Registration precedes the pushes
+    /// so no write outcome can arrive for an unknown id; a mid-push failure means
+    /// the driver is gone (link down at enqueue) - forget the send and surface a
+    /// synchronous error, since nothing left the host and there is no async notice.
     pub(crate) fn enqueue_send(
         &self,
         id: String,
@@ -189,43 +195,73 @@ impl RemoteLinkHandle {
         event_nuon: String,
         payloads: Vec<(String, Vec<u8>)>,
     ) -> Result<(), String> {
-        let closing = || "remote link is closing".to_string();
         let dests: Vec<String> = payloads.iter().map(|(dest, _)| dest.clone()).collect();
-        for (dest, bytes) in payloads {
-            if bytes.is_empty() {
-                self.file_out_tx
-                    .send(FileFrame::Chunk {
-                        id: id.clone(),
-                        dest: dest.clone(),
-                        seq: 0,
-                        bytes: Vec::new(),
-                        last: true,
-                    })
-                    .map_err(|_| closing())?;
-                continue;
-            }
-            let total = bytes.len().div_ceil(CHUNK_BYTES);
-            for (i, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
-                self.file_out_tx
-                    .send(FileFrame::Chunk {
-                        id: id.clone(),
-                        dest: dest.clone(),
-                        seq: i as u32,
-                        bytes: chunk.to_vec(),
-                        last: i + 1 == total,
-                    })
-                    .map_err(|_| closing())?;
+        self.send.register(&id, &dests);
+        match push_frames(
+            &self.msg_out_tx,
+            &self.file_out_tx,
+            &id,
+            model,
+            event_nuon,
+            payloads,
+            dests,
+        ) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.send.forget(&id);
+                Err(e)
             }
         }
-        self.msg_out_tx
-            .send(MsgFrame::Deliver {
-                id,
-                model,
-                event_nuon,
-                files: dests,
-            })
-            .map_err(|_| closing())
     }
+}
+
+/// Queue every frame of one send: each file's chunks onto the file connection,
+/// then the Deliver onto the message connection. A closed receiver (the driver is
+/// gone) is the link-down-at-enqueue case, returned as an error.
+fn push_frames(
+    msg_out_tx: &tk::UnboundedSender<MsgFrame>,
+    file_out_tx: &tk::UnboundedSender<FileFrame>,
+    id: &str,
+    model: String,
+    event_nuon: String,
+    payloads: Vec<(String, Vec<u8>)>,
+    dests: Vec<String>,
+) -> Result<(), String> {
+    let closing = || "remote link is closing".to_string();
+    for (dest, bytes) in payloads {
+        if bytes.is_empty() {
+            file_out_tx
+                .send(FileFrame::Chunk {
+                    id: id.to_string(),
+                    dest: dest.clone(),
+                    seq: 0,
+                    bytes: Vec::new(),
+                    last: true,
+                })
+                .map_err(|_| closing())?;
+            continue;
+        }
+        let total = bytes.len().div_ceil(CHUNK_BYTES);
+        for (i, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
+            file_out_tx
+                .send(FileFrame::Chunk {
+                    id: id.to_string(),
+                    dest: dest.clone(),
+                    seq: i as u32,
+                    bytes: chunk.to_vec(),
+                    last: i + 1 == total,
+                })
+                .map_err(|_| closing())?;
+        }
+    }
+    msg_out_tx
+        .send(MsgFrame::Deliver {
+            id: id.to_string(),
+            model,
+            event_nuon,
+            files: dests,
+        })
+        .map_err(|_| closing())
 }
 
 /// The drivers a spawn returns: the handle plus both join handles (the open task
@@ -236,14 +272,14 @@ type LinkDrivers = (RemoteLinkHandle, tk::JoinHandle<()>, tk::JoinHandle<()>);
 /// handshaked, both drivers spawned under one cancel.
 async fn connect_link(
     self_mcp_nom: &str,
-    entry: &RemoteEntry,
+    entry: &RemoteConfig,
     addr: std::net::SocketAddr,
 ) -> io::Result<LinkDrivers> {
     let opts = RemoteLinkOptions {
         addr,
-        self_cert_file: entry.self_cert_file.clone(),
-        self_key_file: entry.self_key_file.clone(),
-        peer_pin_file: entry.peer_pin_file.clone(),
+        self_public_key_file: entry.self_public_key_file.clone(),
+        self_private_key_file: entry.self_private_key_file.clone(),
+        peer_public_key_file: entry.peer_public_key_file.clone(),
     };
     let connector = tls::TlsConnector::from(client_config(&opts)?);
     let (remote_msg, msg_read, msg_write) =
@@ -259,15 +295,20 @@ async fn connect_link(
     ))
 }
 
-/// Listen as the acceptor: bind, take one peer's two connections (entity-pinned,
-/// optionally source-IP-filtered), spawn its drivers. Binding stops once paired.
+/// Listen as the acceptor: bind, take one peer's two connections
+/// (known-public-key-verified, optionally source-IP-filtered), spawn its drivers.
+/// Binding stops once paired.
 async fn listen_link(
     self_mcp_nom: &str,
-    entry: &RemoteEntry,
+    entry: &RemoteConfig,
     bind: std::net::SocketAddr,
     allow: Option<std::net::IpAddr>,
 ) -> io::Result<LinkDrivers> {
-    let tls_config = server_config(&entry.self_cert_file, &entry.self_key_file, &entry.peer_pin_file)?;
+    let tls_config = server_config(
+        &entry.self_public_key_file,
+        &entry.self_private_key_file,
+        &entry.peer_public_key_file,
+    )?;
     let acceptor = tls::TlsAcceptor::from(tls_config);
     let listener = tk::TcpListener::bind(bind).await?;
     let mut message: Option<(String, AcceptFramedRead, AcceptFramedWrite)> = None;
@@ -312,23 +353,31 @@ fn spawn_initiator_drivers(
     let cancel = tku::CancellationToken::new();
     let (msg_out_tx, msg_out_rx) = tk::unbounded_channel::<MsgFrame>();
     let (file_out_tx, file_out_rx) = tk::unbounded_channel::<FileFrame>();
-    let recv = RecvContext::new(self_mcp_nom, &remote_mcp_nom, msg_out_tx.clone());
-    let send = SendContext::new(&remote_mcp_nom);
+    let recv = RecvContext::new(self_mcp_nom, &remote_mcp_nom);
+    let send = SendTracker::new(&remote_mcp_nom);
     let message_join = tk::spawn(run_initiator_message(
         cancel.clone(),
         message.0,
         message.1,
         msg_out_rx,
         recv.clone(),
-        send,
+        send.clone(),
     ));
-    let file_join = tk::spawn(run_initiator_file(cancel.clone(), file.0, file.1, file_out_rx, recv));
+    let file_join = tk::spawn(run_initiator_file(
+        cancel.clone(),
+        file.0,
+        file.1,
+        file_out_rx,
+        recv,
+        send.clone(),
+    ));
     (
         RemoteLinkHandle {
             remote_mcp_nom,
             cancel,
             msg_out_tx,
             file_out_tx,
+            send,
         },
         message_join,
         file_join,
@@ -345,23 +394,31 @@ fn spawn_acceptor_drivers(
     let cancel = tku::CancellationToken::new();
     let (msg_out_tx, msg_out_rx) = tk::unbounded_channel::<MsgFrame>();
     let (file_out_tx, file_out_rx) = tk::unbounded_channel::<FileFrame>();
-    let recv = RecvContext::new(self_mcp_nom, &remote_mcp_nom, msg_out_tx.clone());
-    let send = SendContext::new(&remote_mcp_nom);
+    let recv = RecvContext::new(self_mcp_nom, &remote_mcp_nom);
+    let send = SendTracker::new(&remote_mcp_nom);
     let message_join = tk::spawn(run_acceptor_message(
         cancel.clone(),
         message.0,
         message.1,
         msg_out_rx,
         recv.clone(),
-        send,
+        send.clone(),
     ));
-    let file_join = tk::spawn(run_acceptor_file(cancel.clone(), file.0, file.1, file_out_rx, recv));
+    let file_join = tk::spawn(run_acceptor_file(
+        cancel.clone(),
+        file.0,
+        file.1,
+        file_out_rx,
+        recv,
+        send.clone(),
+    ));
     (
         RemoteLinkHandle {
             remote_mcp_nom,
             cancel,
             msg_out_tx,
             file_out_tx,
+            send,
         },
         message_join,
         file_join,
@@ -410,15 +467,12 @@ struct RecvContext {
     peer_nom: String,
     /// `<shm>/mcp/<self_nom>/inbox` - where landed files + the Channel inbox meet.
     inbox_root: PathBuf,
-    /// Push a delivery receipt back onto the message connection.
-    msg_out_tx: tk::UnboundedSender<MsgFrame>,
 }
 
 impl RecvContext {
     fn new(
         self_mcp_nom: &str,
         peer_nom: &str,
-        msg_out_tx: tk::UnboundedSender<MsgFrame>,
     ) -> Self {
         let inbox_root = inbox_dir(self_mcp_nom).unwrap_or_else(|e| {
             eprintln!("grammar: remote inbox root unresolved ({e}); files will not land");
@@ -428,24 +482,148 @@ impl RecvContext {
             slots: Arc::new(std::sync::Mutex::new(HashMap::new())),
             peer_nom: peer_nom.to_string(),
             inbox_root,
-            msg_out_tx,
         }
     }
 }
 
-/// The sender half: which of this host's sends are awaiting a receipt.
+/// The sender half: aggregate write-outcome tracking per outbound send. A send is
+/// Sent once the Deliver and every file dest have written OK across both
+/// connections, Unsent on the first write error or a link teardown with the send
+/// still in flight. No peer frame is involved - the transport write is the ack.
 #[derive(Clone)]
-struct SendContext {
-    pending: Arc<std::sync::Mutex<HashSet<String>>>,
+struct SendTracker {
+    sends: Arc<std::sync::Mutex<HashMap<String, PendingSend>>>,
     /// The peer's McpNom, stamped into the Sent/Unsent report event.
     peer_nom: String,
 }
 
-impl SendContext {
+/// One outbound send's outstanding writes: the file dests and the Deliver not yet
+/// written OK. Complete (-> Sent) when both are empty/false.
+struct PendingSend {
+    pending_dests: HashSet<String>,
+    message_pending: bool,
+}
+
+impl PendingSend {
+    fn complete(&self) -> bool {
+        self.pending_dests.is_empty() && !self.message_pending
+    }
+}
+
+impl SendTracker {
     fn new(peer_nom: &str) -> Self {
         Self {
-            pending: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            sends: Arc::new(std::sync::Mutex::new(HashMap::new())),
             peer_nom: peer_nom.to_string(),
+        }
+    }
+
+    /// Register a send before its frames are queued, so no write outcome can
+    /// arrive for an unknown id.
+    fn register(
+        &self,
+        id: &str,
+        dests: &[String],
+    ) {
+        let mut map = self.sends.lock().unwrap_or_else(|e| e.into_inner());
+        map.insert(
+            id.to_string(),
+            PendingSend {
+                pending_dests: dests.iter().cloned().collect(),
+                message_pending: true,
+            },
+        );
+    }
+
+    /// Drop a registered send WITHOUT a report - the synchronous enqueue-failure
+    /// path, where the caller already surfaces the error to the agent.
+    fn forget(
+        &self,
+        id: &str,
+    ) {
+        self.sends.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+    }
+
+    /// One dest's last chunk wrote OK; fire Sent if it completes the send.
+    fn dest_written(
+        &self,
+        id: &str,
+        dest: &str,
+    ) {
+        let done = {
+            let mut map = self.sends.lock().unwrap_or_else(|e| e.into_inner());
+            let complete = match map.get_mut(id) {
+                Some(send) => {
+                    send.pending_dests.remove(dest);
+                    send.complete()
+                }
+                None => false,
+            };
+            if complete {
+                map.remove(id);
+            }
+            complete
+        };
+        if done {
+            report_sent(&self.peer_nom, id);
+        }
+    }
+
+    /// The Deliver wrote OK; fire Sent if it completes the send.
+    fn message_written(
+        &self,
+        id: &str,
+    ) {
+        let done = {
+            let mut map = self.sends.lock().unwrap_or_else(|e| e.into_inner());
+            let complete = match map.get_mut(id) {
+                Some(send) => {
+                    send.message_pending = false;
+                    send.complete()
+                }
+                None => false,
+            };
+            if complete {
+                map.remove(id);
+            }
+            complete
+        };
+        if done {
+            report_sent(&self.peer_nom, id);
+        }
+    }
+
+    /// A write for this send failed; fire Unsent once (idempotent per id).
+    fn failed(
+        &self,
+        id: &str,
+        kind: &str,
+        message: &str,
+    ) {
+        let present = self
+            .sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id)
+            .is_some();
+        if present {
+            report_unsent(&self.peer_nom, id, kind, message);
+        }
+    }
+
+    /// Link teardown: fire Unsent for every still-pending send. Idempotent - the
+    /// drain empties the map, so a second driver's flush finds nothing.
+    fn flush_unsent(
+        &self,
+        kind: &str,
+        message: &str,
+    ) {
+        let drained: Vec<String> = {
+            let mut map = self.sends.lock().unwrap_or_else(|e| e.into_inner());
+            map.drain().map(|(id, _)| id).collect()
+        };
+        for id in drained {
+            report_unsent(&self.peer_nom, &id, kind, message);
         }
     }
 }
@@ -482,9 +660,11 @@ fn record_file_done(
     try_finalize(ctx, id);
 }
 
-/// If the Deliver is in and every manifest file has landed, relay once and ack.
-/// Called by whichever driver completed the condition; the map remove makes it
-/// fire exactly once.
+/// If the Deliver is in and every manifest file has landed, relay once. Called by
+/// whichever driver completed the condition; the map remove makes it fire exactly
+/// once. Nothing goes back to the sender - its Sent already fired from its own
+/// write, and a receiver-side relay failure is intentionally not surfaced remotely
+/// (only logged locally).
 fn try_finalize(
     ctx: &RecvContext,
     id: &str,
@@ -503,14 +683,9 @@ fn try_finalize(
     let Some(slot) = taken else { return };
     let info = slot.deliver.expect("ready implies a deliver");
     let has_files = slot.expected.is_some_and(|want| !want.is_empty());
-    let result = match relay_to_channel(ctx, id, &info, has_files) {
-        Ok(()) => DeliveryResult::Accepted,
-        Err((kind, message)) => DeliveryResult::Refused { kind, message },
-    };
-    let _ = ctx.msg_out_tx.send(MsgFrame::DeliverAck {
-        id: id.to_string(),
-        result,
-    });
+    if let Err((kind, message)) = relay_to_channel(ctx, id, &info, has_files) {
+        eprintln!("grammar: remote delivery `{id}` not relayed onto the Channel: {kind}: {message}");
+    }
 }
 
 /// Append one chunk to `<inbox_root>/<peer_nom>/<id>/<dest>`; true iff `last`.
@@ -564,42 +739,35 @@ fn relay_to_channel(
         .map_err(|e| ("channel".to_string(), e.message().to_string()))
 }
 
-/// Push a Sent/Unsent delivery report onto the LOCAL (sender's own) Channel.
-fn report_delivery(
+/// Push a Sent report {id, mcp_nom} onto the LOCAL (sender's own) Channel.
+fn report_sent(
     peer_nom: &str,
     id: &str,
-    result: &DeliveryResult,
 ) {
     let span = nu::Span::unknown();
     let mut event = nu::Record::new();
     event.insert("id", nu::Value::string(id.to_string(), span));
     event.insert("mcp_nom", nu::Value::string(peer_nom.to_string(), span));
-    let model = match result {
-        DeliveryResult::Accepted => "mcp/remote/Sent",
-        DeliveryResult::Refused { kind, message } => {
-            let mut err = nu::Record::new();
-            err.insert("kind", nu::Value::string(kind.clone(), span));
-            err.insert("message", nu::Value::string(message.clone(), span));
-            event.insert("error", nu::Value::record(err, span));
-            "mcp/remote/Unsent"
-        }
-    };
-    push_report(model, nu::Value::record(event, span));
+    push_report(MODEL_SENT, nu::Value::record(event, span));
 }
 
-/// The Unsent report for a send that never got its receipt in time.
-fn report_timeout(
+/// Push an Unsent report {id, mcp_nom, error{kind, message}} onto the LOCAL
+/// (sender's own) Channel.
+fn report_unsent(
     peer_nom: &str,
     id: &str,
+    kind: &str,
+    message: &str,
 ) {
-    report_delivery(
-        peer_nom,
-        id,
-        &DeliveryResult::Refused {
-            kind: "timeout".to_string(),
-            message: format!("no delivery receipt within {}s", SEND_ACK_TIMEOUT.as_secs()),
-        },
-    );
+    let span = nu::Span::unknown();
+    let mut err = nu::Record::new();
+    err.insert("kind", nu::Value::string(kind.to_string(), span));
+    err.insert("message", nu::Value::string(message.to_string(), span));
+    let mut event = nu::Record::new();
+    event.insert("id", nu::Value::string(id.to_string(), span));
+    event.insert("mcp_nom", nu::Value::string(peer_nom.to_string(), span));
+    event.insert("error", nu::Value::record(err, span));
+    push_report(MODEL_UNSENT, nu::Value::record(event, span));
 }
 
 /// Mint, render, and emit a host-origin packet (`from = mcp`) onto the Channel.
@@ -619,54 +787,18 @@ fn push_report(
     }
 }
 
-/// Register a send as awaiting its receipt and arm the Unsent{timeout} fallback.
-fn arm_send(
-    send: &SendContext,
-    id: &str,
-) {
-    {
-        let mut pending = send.pending.lock().unwrap_or_else(|e| e.into_inner());
-        pending.insert(id.to_string());
-    }
-    let pending = send.pending.clone();
-    let peer = send.peer_nom.clone();
-    let id = id.to_string();
-    tk::spawn(async move {
-        tk::sleep(SEND_ACK_TIMEOUT).await;
-        let fired = {
-            let mut g = pending.lock().unwrap_or_else(|e| e.into_inner());
-            g.remove(&id)
-        };
-        if fired {
-            report_timeout(&peer, &id);
-        }
-    });
-}
-
-/// Handle one inbound message-connection frame (receiver + sender sides).
+/// Handle one inbound message-connection frame (a Deliver to relay).
 fn handle_msg_frame(
     recv: &RecvContext,
-    send: &SendContext,
     frame: MsgFrame,
 ) {
-    match frame {
-        MsgFrame::Deliver {
-            id,
-            model,
-            event_nuon,
-            files,
-        } => record_deliver(recv, &id, DeliverInfo { model, event_nuon }, files),
-        MsgFrame::DeliverAck { id, result } => {
-            let claimed = send
-                .pending
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
-            if claimed {
-                report_delivery(&send.peer_nom, &id, &result);
-            }
-        }
-    }
+    let MsgFrame::Deliver {
+        id,
+        model,
+        event_nuon,
+        files,
+    } = frame;
+    record_deliver(recv, &id, DeliverInfo { model, event_nuon }, files);
 }
 
 /// Handle one inbound file-connection frame (receiver side).
@@ -707,7 +839,7 @@ async fn connect_conn(
     stream: RemoteStream,
 ) -> io::Result<(String, InitFramedRead, InitFramedWrite)> {
     let tcp = tk::TcpStream::connect(addr).await?;
-    let domain = rv::ServerName::try_from(PIN_SERVER_NAME).map_err(io_other)?;
+    let domain = rv::ServerName::try_from(PLACEHOLDER_SERVER_NAME).map_err(io_other)?;
     let tls = connector.connect(domain, tcp).await?;
     let (read, write) = tk::split(tls);
     let mut framed_read = tku::FramedRead::new(read, BitcodeCodec::<AcceptorToInitiator>::new());
@@ -727,14 +859,15 @@ async fn connect_conn(
     Ok((remote, framed_read, framed_write))
 }
 
-/// Drive the initiator's MESSAGE connection: Deliver/DeliverAck both ways.
+/// Drive the initiator's MESSAGE connection: send Deliver frames (reporting
+/// Sent/Unsent on the write), relay inbound ones.
 async fn run_initiator_message(
     cancel: tku::CancellationToken,
     mut framed_read: InitFramedRead,
     mut framed_write: InitFramedWrite,
     mut msg_out_rx: tk::UnboundedReceiver<MsgFrame>,
     recv: RecvContext,
-    send: SendContext,
+    send: SendTracker,
 ) {
     loop {
         tokio::select! {
@@ -745,17 +878,21 @@ async fn run_initiator_message(
             }
             out = msg_out_rx.recv() => match out {
                 Some(frame) => {
-                    if let MsgFrame::Deliver { id, .. } = &frame {
-                        arm_send(&send, id);
-                    }
-                    if framed_write.send(InitiatorToAcceptor::Msg(frame)).await.is_err() {
-                        break;
+                    let MsgFrame::Deliver { id, .. } = &frame;
+                    let id = id.clone();
+                    match framed_write.send(InitiatorToAcceptor::Msg(frame)).await {
+                        Ok(()) => send.message_written(&id),
+                        Err(_) => {
+                            send.failed(&id, "write", "message connection write failed");
+                            cancel.cancel();
+                            break;
+                        }
                     }
                 }
                 None => break,
             },
             incoming = framed_read.next() => match incoming {
-                Some(Ok(AcceptorToInitiator::Msg(frame))) => handle_msg_frame(&recv, &send, frame),
+                Some(Ok(AcceptorToInitiator::Msg(frame))) => handle_msg_frame(&recv, frame),
                 Some(Ok(AcceptorToInitiator::Close)) => {
                     let _ = framed_write.send(InitiatorToAcceptor::Close).await;
                     break;
@@ -766,6 +903,7 @@ async fn run_initiator_message(
         }
     }
     let _ = framed_write.close().await;
+    send.flush_unsent("link_down", "the remote link closed before the send completed");
 }
 
 /// Drive the initiator's FILE connection: FileChunk in (land) and out (send).
@@ -775,6 +913,7 @@ async fn run_initiator_file(
     mut framed_write: InitFramedWrite,
     mut file_out_rx: tk::UnboundedReceiver<FileFrame>,
     recv: RecvContext,
+    send: SendTracker,
 ) {
     loop {
         tokio::select! {
@@ -785,8 +924,19 @@ async fn run_initiator_file(
             }
             out = file_out_rx.recv() => match out {
                 Some(frame) => {
-                    if framed_write.send(InitiatorToAcceptor::File(frame)).await.is_err() {
-                        break;
+                    let FileFrame::Chunk { id, dest, last, .. } = &frame;
+                    let (id, dest, last) = (id.clone(), dest.clone(), *last);
+                    match framed_write.send(InitiatorToAcceptor::File(frame)).await {
+                        Ok(()) => {
+                            if last {
+                                send.dest_written(&id, &dest);
+                            }
+                        }
+                        Err(_) => {
+                            send.failed(&id, "write", "file connection write failed");
+                            cancel.cancel();
+                            break;
+                        }
                     }
                 }
                 None => break,
@@ -803,6 +953,7 @@ async fn run_initiator_file(
         }
     }
     let _ = framed_write.close().await;
+    send.flush_unsent("link_down", "the remote link closed before the send completed");
 }
 
 /// Send `Close` and wait briefly for the peer's reciprocal `Close`.
@@ -857,14 +1008,15 @@ async fn accept_conn(
     Ok((remote, stream, framed_read, framed_write))
 }
 
-/// Drive the acceptor's MESSAGE connection: Deliver/DeliverAck both ways.
+/// Drive the acceptor's MESSAGE connection: send Deliver frames (reporting
+/// Sent/Unsent on the write), relay inbound ones.
 async fn run_acceptor_message(
     cancel: tku::CancellationToken,
     mut framed_read: AcceptFramedRead,
     mut framed_write: AcceptFramedWrite,
     mut msg_out_rx: tk::UnboundedReceiver<MsgFrame>,
     recv: RecvContext,
-    send: SendContext,
+    send: SendTracker,
 ) {
     loop {
         tokio::select! {
@@ -875,17 +1027,21 @@ async fn run_acceptor_message(
             }
             out = msg_out_rx.recv() => match out {
                 Some(frame) => {
-                    if let MsgFrame::Deliver { id, .. } = &frame {
-                        arm_send(&send, id);
-                    }
-                    if framed_write.send(AcceptorToInitiator::Msg(frame)).await.is_err() {
-                        break;
+                    let MsgFrame::Deliver { id, .. } = &frame;
+                    let id = id.clone();
+                    match framed_write.send(AcceptorToInitiator::Msg(frame)).await {
+                        Ok(()) => send.message_written(&id),
+                        Err(_) => {
+                            send.failed(&id, "write", "message connection write failed");
+                            cancel.cancel();
+                            break;
+                        }
                     }
                 }
                 None => break,
             },
             incoming = framed_read.next() => match incoming {
-                Some(Ok(InitiatorToAcceptor::Msg(frame))) => handle_msg_frame(&recv, &send, frame),
+                Some(Ok(InitiatorToAcceptor::Msg(frame))) => handle_msg_frame(&recv, frame),
                 Some(Ok(InitiatorToAcceptor::Close)) => {
                     let _ = framed_write.send(AcceptorToInitiator::Close).await;
                     break;
@@ -896,6 +1052,7 @@ async fn run_acceptor_message(
         }
     }
     let _ = framed_write.close().await;
+    send.flush_unsent("link_down", "the remote link closed before the send completed");
 }
 
 /// Drive the acceptor's FILE connection: FileChunk in (land) and out (send).
@@ -905,6 +1062,7 @@ async fn run_acceptor_file(
     mut framed_write: AcceptFramedWrite,
     mut file_out_rx: tk::UnboundedReceiver<FileFrame>,
     recv: RecvContext,
+    send: SendTracker,
 ) {
     loop {
         tokio::select! {
@@ -915,8 +1073,19 @@ async fn run_acceptor_file(
             }
             out = file_out_rx.recv() => match out {
                 Some(frame) => {
-                    if framed_write.send(AcceptorToInitiator::File(frame)).await.is_err() {
-                        break;
+                    let FileFrame::Chunk { id, dest, last, .. } = &frame;
+                    let (id, dest, last) = (id.clone(), dest.clone(), *last);
+                    match framed_write.send(AcceptorToInitiator::File(frame)).await {
+                        Ok(()) => {
+                            if last {
+                                send.dest_written(&id, &dest);
+                            }
+                        }
+                        Err(_) => {
+                            send.failed(&id, "write", "file connection write failed");
+                            cancel.cancel();
+                            break;
+                        }
                     }
                 }
                 None => break,
@@ -933,6 +1102,7 @@ async fn run_acceptor_file(
         }
     }
     let _ = framed_write.close().await;
+    send.flush_unsent("link_down", "the remote link closed before the send completed");
 }
 
 /// Send `Close` and wait briefly for the peer's reciprocal `Close`.
@@ -956,46 +1126,52 @@ async fn close_acceptor(
     .await;
 }
 
-// ---- TLS config (entity-pin mTLS) ----
+// ---- TLS config (known-public-key mTLS) ----
 
-/// Build the client config: present our leaf, entity-pin the peer's.
+/// Build the client config: present our public key, match the peer's known one.
 fn client_config(opts: &RemoteLinkOptions) -> io::Result<Arc<tls::ClientConfig>> {
-    let verifier = Arc::new(EntityPin::new(load_leaf(&opts.peer_pin_file)?));
+    let verifier = Arc::new(PublicKeyVerifier::new(load_public_key(&opts.peer_public_key_file)?));
     let provider = Arc::new(rv::default_provider());
     let config = tls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(io_other)?
         .dangerous()
         .with_custom_certificate_verifier(verifier)
-        .with_client_auth_cert(load_chain(&opts.self_cert_file)?, load_key(&opts.self_key_file)?)
+        .with_client_auth_cert(
+            load_chain(&opts.self_public_key_file)?,
+            load_key(&opts.self_private_key_file)?,
+        )
         .map_err(io_other)?;
     Ok(Arc::new(config))
 }
 
-/// Build the server config: present our leaf, entity-pin the client's.
+/// Build the server config: present our public key, match the client's known one.
 fn server_config(
-    self_cert_file: &std::path::Path,
-    self_key_file: &std::path::Path,
-    peer_pin_file: &std::path::Path,
+    self_public_key_file: &std::path::Path,
+    self_private_key_file: &std::path::Path,
+    peer_public_key_file: &std::path::Path,
 ) -> io::Result<Arc<tls::ServerConfig>> {
-    let verifier = Arc::new(EntityPin::new(load_leaf(peer_pin_file)?));
+    let verifier = Arc::new(PublicKeyVerifier::new(load_public_key(peer_public_key_file)?));
     let provider = Arc::new(rv::default_provider());
     let config = tls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(io_other)?
         .with_client_cert_verifier(verifier)
-        .with_single_cert(load_chain(self_cert_file)?, load_key(self_key_file)?)
+        .with_single_cert(
+            load_chain(self_public_key_file)?,
+            load_key(self_private_key_file)?,
+        )
         .map_err(io_other)?;
     Ok(Arc::new(config))
 }
 
-fn load_leaf(path: &std::path::Path) -> io::Result<rv::CertificateDer<'static>> {
+fn load_public_key(path: &std::path::Path) -> io::Result<rv::CertificateDer<'static>> {
     rv::CertificateDer::from_pem_file(path)
-        .map_err(|e| io_other(format!("load cert {}: {e}", path.display())))
+        .map_err(|e| io_other(format!("load public key {}: {e}", path.display())))
 }
 
 fn load_chain(path: &std::path::Path) -> io::Result<Vec<rv::CertificateDer<'static>>> {
-    Ok(vec![load_leaf(path)?])
+    Ok(vec![load_public_key(path)?])
 }
 
 fn load_key(path: &std::path::Path) -> io::Result<tls::PrivateKeyDer<'static>> {

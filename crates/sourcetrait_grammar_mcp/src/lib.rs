@@ -102,7 +102,7 @@ pub(crate) use crate::{
     },
     cli::CliTool,
     config::{
-        CONFIG, Config, ConfigToml, DEFAULT_NAMESPACE, DeniableTool, DenySet, RemoteEntry,
+        CONFIG, Config, ConfigToml, DEFAULT_NAMESPACE, DeniableTool, DenySet, RemoteConfig,
         RemoteRole, SpamThresholds, SupervisorConfig, TEST_NAMESPACE, config, default_id,
         default_work_dir, expand_path, fraction_field,
     },
@@ -167,11 +167,11 @@ pub(crate) use crate::{
         },
         remote::{
             codec::{
-                AcceptorToInitiator, BitcodeCodec, DeliveryResult, FileFrame, InitiatorToAcceptor,
-                MsgFrame, RemoteStream,
+                AcceptorToInitiator, BitcodeCodec, FileFrame, InitiatorToAcceptor, MsgFrame,
+                RemoteStream,
             },
             link::{RemoteLinkHandle, find_link_send, open_remote, remote_links, safe_dest},
-            verify::EntityPin,
+            verify::PublicKeyVerifier,
         },
         run::{eval_concurrency_cap, run_server},
         schema::{

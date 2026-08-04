@@ -160,9 +160,9 @@ fn an_unset_variable_fails_the_load() {
 /// `.grammar/mcp/remotes.toml` would.
 fn remotes(
     text: &str,
-) -> Result<std::collections::HashMap<String, crate::config::RemoteEntry>, String> {
-    let parsed: crate::config::RemotesToml = toml::from_str(text).map_err(|e| e.to_string())?;
-    crate::config::merged_remote(parsed.remote)
+) -> Result<std::collections::HashMap<String, crate::config::RemoteConfig>, String> {
+    let file: crate::config::RemotesConfigToml = toml::from_str(text).map_err(|e| e.to_string())?;
+    Ok(crate::config::RemotesConfig::try_from(file)?.by_alias)
 }
 
 #[test]
@@ -186,7 +186,7 @@ public_key_file = \"/keys/bob.pem\"
         }
         other => panic!("expected a listener, got {other:?}"),
     }
-    assert!(entry.peer_pin_file.ends_with("bob.pem"));
+    assert!(entry.peer_public_key_file.ends_with("bob.pem"));
 }
 
 #[test]

@@ -16,7 +16,7 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RemoteChannelOpenParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let Some(entry) = config().remote.get(&p.alias).cloned() else {
+        let Some(entry) = config().remotes.by_alias.get(&p.alias).cloned() else {
             return Ok(error_to_call_result(
                 Error::RemoteInvalidParams {
                     reason: format!(

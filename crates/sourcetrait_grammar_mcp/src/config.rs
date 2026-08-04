@@ -21,12 +21,13 @@ pub(crate) struct ConfigToml {
     pub supervisor: Option<SupervisorConfigToml>,
 }
 
-/// One `[[remote]]` entry: a peer to link with, addressed by alias. Its role is
-/// the presence of `listen` - set means this host binds and waits (listener),
-/// unset means it dials `address` (connector). remote_channel_open drives it.
+/// One `[[remote]]` entry (file layer): a peer to link with, addressed by alias.
+/// Role is the presence of `listen` - set means this host binds and waits
+/// (listener), unset means it dials `address` (connector). The field names are
+/// the operator's and are never renamed for internal use.
 #[derive(Debug, Clone, ser::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RemoteEntryToml {
+pub(crate) struct RemoteToml {
     /// The name remote_channel_open addresses this peer by.
     pub alias: Option<String>,
     /// `ip:port` to bind; present = listener, absent = connector.
@@ -34,21 +35,21 @@ pub(crate) struct RemoteEntryToml {
     /// Connector: the peer's `ip:port` to dial (required). Listener: optional -
     /// a bare source IP to require on an inbound connection (no port).
     pub address: Option<String>,
-    /// This host's own entity leaf it presents (public).
+    /// This host's own public key it presents.
     pub self_public_key_file: Option<String>,
     /// The private key paired with `self_public_key_file`.
     pub self_private_key_file: Option<String>,
-    /// The peer's entity leaf to pin (public); `remote_` is implied by the entry.
+    /// The peer's known public key to match; `remote_` is implied by the entry.
     pub public_key_file: Option<String>,
 }
 
-/// The `.grammar/mcp/remotes.toml` file: the RemoteChannel peer set, as
-/// `[[remote]]` entries. Optional - an absent file means no RemoteChannel.
+/// The `.grammar/mcp/remotes.toml` file (file layer): the RemoteChannel peer set,
+/// as `[[remote]]` entries. Optional - an absent file means no RemoteChannel.
 #[derive(Debug, Clone, Default, ser::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RemotesToml {
+pub(crate) struct RemotesConfigToml {
     #[serde(default)]
-    pub remote: Vec<RemoteEntryToml>,
+    pub remote: Vec<RemoteToml>,
 }
 
 /// The `[supervisor]` table: when a resource level is worth one warning.
@@ -97,8 +98,8 @@ pub(crate) struct Config {
     pub test: bool,
     pub channel: ChannelConfig,
     pub supervisor: SupervisorConfig,
-    /// Configured remote peers, by alias (from `.grammar/mcp/remotes.toml`).
-    pub remote: HashMap<String, RemoteEntry>,
+    /// Configured remote peers (from `.grammar/mcp/remotes.toml`).
+    pub remotes: RemotesConfig,
     /// The process's cwd at startup, captured before any interact() `cd` can
     /// move it - the root `.grammar/mcp/remotes.toml` is resolved against it.
     /// Held for future cwd-relative reads; not read again after the first load.
@@ -106,17 +107,24 @@ pub(crate) struct Config {
     pub startup_cwd: PathBuf,
 }
 
-/// A resolved remote peer: its role (dial or bind) plus its mTLS material.
+/// A resolved remote peer (model layer): its role plus its known-public-key mTLS
+/// material. Field names mirror the toml.
 #[derive(Debug, Clone)]
-pub(crate) struct RemoteEntry {
+pub(crate) struct RemoteConfig {
     pub alias: String,
     pub role: RemoteRole,
-    /// This host's own leaf it presents.
-    pub self_cert_file: PathBuf,
-    /// The private key paired with `self_cert_file`.
-    pub self_key_file: PathBuf,
-    /// The peer's leaf, pinned byte-for-byte.
-    pub peer_pin_file: PathBuf,
+    /// This host's own public key it presents.
+    pub self_public_key_file: PathBuf,
+    /// The private key paired with `self_public_key_file`.
+    pub self_private_key_file: PathBuf,
+    /// The peer's known public key, matched byte-for-byte.
+    pub peer_public_key_file: PathBuf,
+}
+
+/// The resolved RemoteChannel peer set (model layer), by alias.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RemotesConfig {
+    pub by_alias: HashMap<String, RemoteConfig>,
 }
 
 /// A remote entry's role, decided by the presence of `listen`.
@@ -233,39 +241,38 @@ fn merged_supervisor(
 
 /// Load `.grammar/mcp/remotes.toml` under the startup cwd, if present. Absent =
 /// no RemoteChannel (an empty peer set).
-fn load_remotes(startup_cwd: &std::path::Path) -> Result<HashMap<String, RemoteEntry>, String> {
+fn load_remotes(startup_cwd: &std::path::Path) -> Result<RemotesConfig, String> {
     let path = startup_cwd
         .join(".grammar")
         .join("mcp")
         .join("remotes.toml");
     let text = match fs::read_to_string(&path) {
         Ok(t) => t,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(RemotesConfig::default()),
         Err(e) => return Err(format!("read {}: {e}", path.display())),
     };
-    let parsed: RemotesToml =
+    let file: RemotesConfigToml =
         toml::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))?;
-    merged_remote(parsed.remote)
+    RemotesConfig::try_from(file)
 }
 
-/// Resolve the `[[remote]]` entries into peers keyed by alias. Each entry's role
-/// is the presence of `listen`. There are no embedded defaults.
-pub(crate) fn merged_remote(
-    entries: Vec<RemoteEntryToml>,
-) -> Result<HashMap<String, RemoteEntry>, String> {
-    let mut out = HashMap::new();
-    for entry in entries {
+impl TryFrom<RemoteToml> for RemoteConfig {
+    type Error = String;
+
+    /// Resolve one `[[remote]]` entry into a peer. Role is the presence of
+    /// `listen`; the three key paths are required and expanded at load.
+    fn try_from(entry: RemoteToml) -> Result<Self, String> {
         let alias = entry
             .alias
             .ok_or_else(|| "a [[remote]] entry is missing `alias`".to_string())?;
         let missing = |field: &str| format!("[[remote]] `{alias}` is missing `{field}`");
-        let self_cert = entry
+        let self_public = entry
             .self_public_key_file
             .ok_or_else(|| missing("self_public_key_file"))?;
-        let self_key = entry
+        let self_private = entry
             .self_private_key_file
             .ok_or_else(|| missing("self_private_key_file"))?;
-        let peer_pin = entry
+        let peer_public = entry
             .public_key_file
             .ok_or_else(|| missing("public_key_file"))?;
         let role = match entry.listen {
@@ -295,21 +302,32 @@ pub(crate) fn merged_remote(
                 RemoteRole::Connector { addr }
             }
         };
-        if out.contains_key(&alias) {
-            return Err(format!("duplicate [[remote]] alias `{alias}`"));
-        }
-        out.insert(
-            alias.clone(),
-            RemoteEntry {
-                alias,
-                role,
-                self_cert_file: expand_path(&self_cert)?,
-                self_key_file: expand_path(&self_key)?,
-                peer_pin_file: expand_path(&peer_pin)?,
-            },
-        );
+        Ok(RemoteConfig {
+            alias,
+            role,
+            self_public_key_file: expand_path(&self_public)?,
+            self_private_key_file: expand_path(&self_private)?,
+            peer_public_key_file: expand_path(&peer_public)?,
+        })
     }
-    Ok(out)
+}
+
+impl TryFrom<RemotesConfigToml> for RemotesConfig {
+    type Error = String;
+
+    /// Resolve every `[[remote]]` entry, keyed by alias; a duplicate alias is a
+    /// load error. There are no embedded defaults (deployment-specific).
+    fn try_from(file: RemotesConfigToml) -> Result<Self, String> {
+        let mut by_alias = HashMap::new();
+        for entry in file.remote {
+            let resolved = RemoteConfig::try_from(entry)?;
+            if by_alias.contains_key(&resolved.alias) {
+                return Err(format!("duplicate [[remote]] alias `{}`", resolved.alias));
+            }
+            by_alias.insert(resolved.alias.clone(), resolved);
+        }
+        Ok(RemotesConfig { by_alias })
+    }
 }
 
 /// A fraction of total capacity; outside (0, 1] it would warn always or never.
@@ -366,7 +384,7 @@ impl Config {
         let supervisor = merged_supervisor(user.supervisor, base.supervisor)?;
         let startup_cwd =
             std::env::current_dir().map_err(|e| format!("cannot read the startup cwd: {e}"))?;
-        let remote = load_remotes(&startup_cwd)?;
+        let remotes = load_remotes(&startup_cwd)?;
         Ok(Self {
             id,
             namespace,
@@ -375,7 +393,7 @@ impl Config {
             test,
             channel,
             supervisor,
-            remote,
+            remotes,
             startup_cwd,
         })
     }

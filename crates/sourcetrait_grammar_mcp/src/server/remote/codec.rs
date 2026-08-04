@@ -16,36 +16,22 @@ pub(crate) enum RemoteStream {
     File,
 }
 
-/// The result a receiver reports for one delivery: accepted, or refused with a
-/// reason (a delivery whose message it could not inject or whose files it could
-/// not land).
-#[derive(
-    Debug, Clone, PartialEq, Eq, ser::Serialize, ser::Deserialize, bitcode::Encode, bitcode::Decode,
-)]
-pub(crate) enum DeliveryResult {
-    /// Injected into the receiver's Channel; files (if any) landed.
-    Accepted,
-    /// Refused; `kind`/`message` say why (channel closed, event unparseable, ...).
-    Refused { kind: String, message: String },
-}
-
-/// A message-connection frame, peer-neutral (both ends send both variants). The
-/// request/response pair is Deliver -> DeliverAck, one answer per send.
+/// A message-connection frame carrying one delivery, peer-neutral (both ends send
+/// it). Nothing rides back: the sender's own transport write is the ack, and
+/// mcp/remote/Sent|Unsent fire from that write.
 #[derive(
     Debug, Clone, PartialEq, ser::Serialize, ser::Deserialize, bitcode::Encode, bitcode::Decode,
 )]
 pub(crate) enum MsgFrame {
     /// A message to deliver: the sender's message id, the model + event NUON the
-    /// receiver injects, and the dest names it must receive on the file
-    /// connection before injecting (empty for a message with no files).
+    /// receiver relays, and the dest names it must receive on the file connection
+    /// before relaying (empty for a message with no files).
     Deliver {
         id: String,
         model: String,
         event_nuon: String,
         files: Vec<String>,
     },
-    /// The one answer per Deliver, correlated by `id`.
-    DeliverAck { id: String, result: DeliveryResult },
 }
 
 /// A file-connection frame: one ordered chunk of one dest file for a delivery.

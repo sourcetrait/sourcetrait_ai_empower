@@ -5,7 +5,7 @@ cat <<'EOF'
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "deny",
-    "permissionDecisionReason": "Do not use Bash. Use the Nushell MCP instead."
+    "permissionDecisionReason": "Do not use Bash. Use your MCP instead."
   }
 }
 EOF

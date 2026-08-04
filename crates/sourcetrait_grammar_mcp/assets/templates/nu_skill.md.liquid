@@ -254,7 +254,9 @@ the eval that spawned it.
   envelope, and keeps types. Read it back afterwards from
   `<cache>/<kind>/<nonce>/debug.nuonl`.
 - `grimm channel_send <model> <event> [attached]` -> the message id. The notification
-  lane (below).
+  lane (below). It stays within your OWN session: it emits only onto this host's own
+  Channel/Monitor and loops back to you, and does NOT cross a remote link. To reach or
+  reply to an agent on ANOTHER host, use `grimm remote_channel_send` (below), never this.
 - `grimm get_config_all` -> the whole config record, mirroring the TOML's two tables:
   `channel` (`port`, `cert_dir`, the four spam thresholds) and `supervisor` (the four
   warning lines). Values are live rather than as-launched - the channel half reflects
@@ -268,9 +270,12 @@ the eval that spawned it.
   value for the lifetime of a process, then lets it lapse.
 - `grimm remote_channel_send <mcp_nom> <model> <event>` -> the message id. Deliver a
   Channel packet to a LINKED remote host's agent (RemoteChannel, below); it surfaces on
-  that agent's own Channel Monitor as `from = mcp/remote/<your_nom>`. `model` cannot be
-  under the `mcp/` reservation. Non-blocking - the delivery outcome lands async on YOUR
-  Channel as `mcp/remote/Sent` / `Unsent` (driven by your transport write, no app ack).
+  that agent's own Channel Monitor as `from = mcp/remote/<your_nom>`. The FIRST arg is the
+  PEER's `mcp_nom` - what `remote_channels` reports as `remote_mcp_nom`, and what a relayed
+  packet carries in `from = mcp/remote/<nom>` - NOT the link alias: you OPEN a link by its
+  alias but SEND over it by the peer's nom. `model` cannot be under the `mcp/` reservation.
+  Non-blocking - the delivery outcome lands async on YOUR Channel as `mcp/remote/Sent` /
+  `Unsent` (driven by your transport write, no app ack).
 - `grimm remote_channel_send_with <mcp_nom> <model> <event> <attached>` -> the message id.
   The same, plus files: `attached` is a `table<src: path, dest: path>`, each local `src`
   read now and landing at the receiver's `inbox/<your_nom>/<msg_id>/<dest>` (a `dest` is
@@ -401,8 +406,9 @@ mirror):
    {id, mcp_nom}` (the WHOLE send wrote - every file plus the message - there is NO
    application ack) or `Unsent {id, mcp_nom, error}`.
 4. The PEER'S agent sees the delivery on ITS Channel Monitor as a normal packet, `from =
-   mcp/remote/<your_nom>`, and reacts (e.g. echoes back with its own
-   `remote_channel_send`). That round-trip IS the cross-agent smoke test.
+   mcp/remote/<your_nom>`, and REPLIES with its own `remote_channel_send` addressed to your
+   nom (the `<nom>` in that `from`) - NOT `channel_send`, which would only loop back on its
+   own session Channel and never reach you. That round-trip IS the cross-agent smoke test.
 5. `remote_channel_close(alias)` tears the link down (emits `Disconnected`);
    `remote_channels()` lists the open links as `{alias, remote_mcp_nom, address}`.
 
@@ -1931,7 +1937,8 @@ mcp_nom}` lands async on your Channel.
 *List the open mTLS links to remote grammar hosts.*
 
 No parameters. Returns `{channels}`, each `{alias, remote_mcp_nom, address}`,
-alias-sorted.
+alias-sorted. `remote_mcp_nom` is the peer's nom - the first arg to
+`grimm remote_channel_send` (the `alias` is NOT).
 
 ## Purview scoping
 

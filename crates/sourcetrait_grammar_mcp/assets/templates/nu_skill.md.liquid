@@ -391,22 +391,29 @@ mirror):
 1. Both agents bring their Channel up + verified (the handshake above).
 2. `remote_channel_open(alias)` on EACH side, LISTENER FIRST (it binds), CONNECTOR second
    (it dials). It returns VOID while the link opens; the outcome lands async on your
-   Channel as `mcp/remote/Connected {mcp_nom}` once both connections handshake, or
-   `mcp/remote/Disconnected {alias, error}` if it never established. An inline `error
-   {kind, message}` is an immediate refusal (no such alias / already open).
+   Channel as `mcp/remote/Connected {remote, mcp_nom}` once both connections handshake, or
+   `mcp/remote/Disconnected {remote, error}` if it never established. `remote` is the alias
+   you opened. An inline `error {kind, message}` is an immediate refusal (no such alias /
+   already open).
 3. Learn the peer's `mcp_nom` (it rides the Connected packet; each host also reports its
    own via `info()`), then send from a body: `grimm remote_channel_send <peer_nom>
    <model> <event>` (or `_with` for files). Watch your OWN Channel for `mcp/remote/Sent
-   {id, mcp_nom}` (your transport write succeeded - there is NO application ack) or
-   `Unsent {id, mcp_nom, error}`.
+   {id, mcp_nom}` (the WHOLE send wrote - every file plus the message - there is NO
+   application ack) or `Unsent {id, mcp_nom, error}`.
 4. The PEER'S agent sees the delivery on ITS Channel Monitor as a normal packet, `from =
    mcp/remote/<your_nom>`, and reacts (e.g. echoes back with its own
    `remote_channel_send`). That round-trip IS the cross-agent smoke test.
 5. `remote_channel_close(alias)` tears the link down (emits `Disconnected`);
    `remote_channels()` lists the open links as `{alias, remote_mcp_nom, address}`.
 
-Every host-origin model sits under the `mcp/` reservation: `mcp/remote/{Connected,
-Disconnected, Sent, Unsent}`. `from nuon` every packet, as always.
+The host-origin models all sit under the `mcp/` reservation. The lifecycle pair keys on
+the always-present `remote` (your opened alias):
+- `mcp/remote/Connected {remote, mcp_nom}`.
+- `mcp/remote/Disconnected {remote, mcp_nom?, error?}` - ONE overloaded model: `mcp_nom`
+  present on a normal teardown, `error` present on an open that never established (there
+  `mcp_nom` is ABSENT - no peer nom exists yet). Branch on which fields are present.
+- `mcp/remote/Sent {id, mcp_nom}` / `Unsent {id, mcp_nom, error}` - keyed by the send id.
+`from nuon` every packet, as always.
 
 ## Rig Ecosystem
 
@@ -1465,6 +1472,7 @@ Output (partial):
       "nu_version": "{{ nu_version }}",
       "id": "emptwo",
       "namespace": "default",
+      "mcp_nom": "R2dhpN4kQ7m",
       "work_dir": "/home/user/ai/emptwo",
       "plugins": [ ["polars", "0.112.2"], ["inc", null] ],
       "signatures": "acme\n geo # planar geometry helpers\n  shape\n   plane\n    area <width:float,height:float> <area:float> # result is in the inputs' unit, squared\n",
@@ -1536,12 +1544,16 @@ nothing reads `ping <> <>`. Nested types keep their full spelling -
 `table<name:string,where:directory>`, `oneof<int,nothing>`, `list<string>`.
 
 `plugins` are positional `[name, version]` pairs (version is `null` when the
-plugin reports none). `id` + `namespace` are the id and namespace this server
-serves, and `work_dir` its configured agent work dir (its operator config); a
-body reads all three ambiently as `$env.EQUIP_ID` / `$env.EQUIP_NAMESPACE` /
-`$env.EQUIP_WORK_DIR` - the who-am-I and where-is-my-work answers, no pid
-matching needed. This is ground truth - prefer it over any static index. For a
-namepath's details and its source location, call `inspect()`.
+plugin reports none). `mcp_nom` is this host PROCESS's id - a base62 nonce (a
+"nom") minted once from its pid; it changes across a restart, so a value that
+differs between two calls is how you learn the server restarted (a reused pid
+cannot tell you). It is the peer id a RemoteChannel send targets, and it rides
+the `mcp/remote/Connected` / `Disconnected` packets. `id` + `namespace` are the
+id and namespace this server serves, and `work_dir` its configured agent work
+dir (its operator config); a body reads all three ambiently as `$env.EQUIP_ID` /
+`$env.EQUIP_NAMESPACE` / `$env.EQUIP_WORK_DIR` - the who-am-I and where-is-my-work
+answers, no pid matching needed. This is ground truth - prefer it over any static
+index. For a namepath's details and its source location, call `inspect()`.
 
 ### `inspect()`
 *Detailed documentation for rigs, modules, and calls.*
@@ -1905,15 +1917,15 @@ Schema (partial):
 
 `{alias: string}` - a `[[remote]]` from `<startup_cwd>/.grammar/mcp/remotes.toml`.
 Returns VOID on a partial success (the link is opening) or an `error {kind, message}` on
-an immediate refusal (no such alias, already open). `mcp/remote/Connected {mcp_nom}` or
-`Disconnected {alias, error}` lands async on your Channel. Deny-gated; no CLI mirror. See
-"RemoteChannel: reach another agent's host" above for the full flow.
+an immediate refusal (no such alias, already open). `mcp/remote/Connected {remote,
+mcp_nom}` or `Disconnected {remote, error}` lands async on your Channel. Deny-gated; no
+CLI mirror. See "RemoteChannel: reach another agent's host" above for the full flow.
 
 ### `remote_channel_close()`
 *Close an open mTLS link to a remote grammar host.*
 
-`{alias: string}`, no return. Cancels the link; `mcp/remote/Disconnected {mcp_nom}` lands
-async on your Channel.
+`{alias: string}`, no return. Cancels the link; `mcp/remote/Disconnected {remote,
+mcp_nom}` lands async on your Channel.
 
 ### `remote_channels()`
 *List the open mTLS links to remote grammar hosts.*

@@ -11,12 +11,20 @@ config-driven acceptor + its pairing coordinator + union_server_config are gone)
 ## fn open_remote
 The lifecycle OWNER: spawns one task and returns at once, so remote_channel_open is
 non-blocking. The task establishes (connect_link | listen_link), registers in
-remote_links by alias, emits mcp/remote/Connected {mcp_nom}, awaits BOTH driver
+remote_links by alias, emits mcp/remote/Connected {remote, mcp_nom}, awaits BOTH driver
 joins, deregisters (only if still the registered link - a re-open may have replaced
-it), and emits Disconnected {mcp_nom}. So a close + the Disconnected notice share this
-one path rather than each reporting. An establish failure emits Disconnected {alias,
-error} (no peer nom yet) and returns - emit, not eprintln (the_user), so the agent
-sees every open outcome on its Channel.
+it), and emits Disconnected {remote, mcp_nom}. So a close + the Disconnected notice
+share this one path rather than each reporting. An establish failure emits the SAME
+Disconnected model overloaded - {remote, error} with mcp_nom ABSENT (no peer nom yet) -
+and returns; emit, not eprintln (the_user), so the agent sees every open outcome on its
+Channel.
+
+`remote` (the opened alias) is ALWAYS present, so a consumer that opened by alias keys
+Connected and Disconnected on it directly (the earlier mcp_nom-only shape forced a
+correlation through remote_channels). The overloaded Disconnected signals its case by
+field PRESENCE, matching the packet convention (attached?, understood/14): mcp_nom
+present iff the link established, error present iff it failed - absent when not, never
+null (the_user).
 
 ## fn find_link_send / fn safe_dest
 find_link_send matches on the link's remote_mcp_nom (the id an agent sends to), holds
@@ -91,10 +99,9 @@ match uses the leaf DER and ignores any chain. PLACEHOLDER_SERVER_NAME is a fixe
 .invalid placeholder - rustls needs a syntactically valid ServerName even though the
 match ignores it (there is no real DNS identity under known-public-key).
 
-## scope (what is still absent)
-NO TLS runtime exercise: connect/accept/handshake/close + the send/recv coordination
-COMPILE and pass clippy + the unit tests (codec round-trip, the verifier match), but
-the TLS lifecycle has not been RUN. The two-host loopback (two entities cross-known, a
-bound port, connect <-> accept, a real send + relay) is system/integration tier and
-lands with RemoteChannelTests. This mirror + the code are the design of record until
-then.
+## runtime proof
+The TLS lifecycle IS runtime-exercised: RemoteChannelTests (sourcetrait_grammar_tests
+tests/remote_channel.rs, harness src/remote.rs) links two real hosts over mTLS through a
+reusable simulated rmcp consumer and runs an A->B->A echo - connect/accept/handshake, a
+real send + relay, and the Connected/Sent/Disconnected notice shapes - all green. The
+unit tests (codec round-trip, the verifier match) stand alongside it.

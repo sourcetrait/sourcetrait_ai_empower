@@ -99,7 +99,7 @@ pub(crate) fn open_remote(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(entry.alias.clone(), RemoteLinkEntry { handle, addr: addr_hint });
-        emit_lifecycle(MODEL_CONNECTED, &peer_nom);
+        emit_lifecycle(MODEL_CONNECTED, &entry.alias, &peer_nom);
         let _ = msg_join.await;
         let _ = file_join.await;
         // Deregister only if this link is still the one registered - a re-open
@@ -114,24 +114,24 @@ pub(crate) fn open_remote(
                 links.remove(&entry.alias);
             }
         }
-        emit_lifecycle(MODEL_DISCONNECTED, &peer_nom);
+        emit_lifecycle(MODEL_DISCONNECTED, &entry.alias, &peer_nom);
     });
 }
 
-/// Emit a host-origin lifecycle packet {mcp_nom: peer} onto the local Channel.
+/// Emit a host-origin lifecycle packet {remote, mcp_nom} onto the local Channel.
 fn emit_lifecycle(
     model: &str,
+    remote: &str,
     peer_nom: &str,
 ) {
     let span = nu::Span::unknown();
     let mut event = nu::Record::new();
+    event.insert("remote", nu::Value::string(remote.to_string(), span));
     event.insert("mcp_nom", nu::Value::string(peer_nom.to_string(), span));
     push_report(model, nu::Value::record(event, span));
 }
 
-/// Emit mcp/remote/Disconnected {alias, error} when a link never established.
-/// No peer McpNom exists (the handshake never completed), so the alias the agent
-/// opened is the identifier the report carries in its place.
+/// Emit mcp/remote/Disconnected {remote, error} when a link never established.
 fn emit_open_failed(
     alias: &str,
     kind: &str,
@@ -142,7 +142,7 @@ fn emit_open_failed(
     err.insert("kind", nu::Value::string(kind.to_string(), span));
     err.insert("message", nu::Value::string(message.to_string(), span));
     let mut event = nu::Record::new();
-    event.insert("alias", nu::Value::string(alias.to_string(), span));
+    event.insert("remote", nu::Value::string(alias.to_string(), span));
     event.insert("error", nu::Value::record(err, span));
     push_report(MODEL_DISCONNECTED, nu::Value::record(event, span));
 }

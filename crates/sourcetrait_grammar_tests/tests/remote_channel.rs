@@ -100,8 +100,12 @@ fn remote_loopback_echo() {
     let conn_b = b
         .await_packet(|p| p.model == "mcp/remote/Connected", Duration::from_secs(15))
         .expect("B should see Connected");
-    assert!(conn_a.event.contains(&nom_b), "A's Connected names B; got {conn_a:?}");
-    assert!(conn_b.event.contains(&nom_a), "B's Connected names A; got {conn_b:?}");
+    assert!(conn_a.event.contains(&nom_b), "A's Connected carries B's mcp_nom; got {conn_a:?}");
+    assert!(conn_b.event.contains(&nom_a), "B's Connected carries A's mcp_nom; got {conn_b:?}");
+    assert!(
+        conn_a.event.contains("remote") && conn_b.event.contains("remote"),
+        "Connected carries the always-present `remote` alias; got {conn_a:?} / {conn_b:?}",
+    );
 
     // A sends test/Ping to B; A sees its own mcp/remote/Sent (driven by the write).
     let send_id = remote_send(&mut a, &nom_b, "test/Ping", "note: \"ping-1\"");
@@ -131,7 +135,7 @@ fn remote_loopback_echo() {
     assert!(looped.event.contains("ping-1"), "the loopback carries the original payload; got {looped:?}");
 }
 
-/// A connector whose dial cannot land emits mcp/remote/Disconnected {alias, error}.
+/// A connector whose dial cannot land emits mcp/remote/Disconnected {remote, error}.
 #[tested]
 fn remote_open_failure_emits_disconnected() {
     let t = testing::test!({ .using_temp_dir() });
@@ -158,7 +162,8 @@ fn remote_open_failure_emits_disconnected() {
     let dc = c
         .await_packet(|p| p.model == "mcp/remote/Disconnected", Duration::from_secs(15))
         .expect("a failed dial should emit mcp/remote/Disconnected");
-    assert!(dc.event.contains("peer"), "Disconnected on a failed open names the alias; got {dc:?}");
+    assert!(dc.event.contains("remote"), "Disconnected on a failed open carries the alias under `remote`; got {dc:?}");
+    assert!(dc.event.contains("peer"), "the failed open's alias is `peer`; got {dc:?}");
     assert!(dc.event.contains("error"), "Disconnected on a failed open carries an error; got {dc:?}");
 }
 

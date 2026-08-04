@@ -376,13 +376,14 @@ ROLE is decided by the presence of `listen`:
     listen = "127.0.0.1:47900"
     # CONNECTOR instead: omit `listen`, and `address` is the peer's ip:port to DIAL:
     #   address = "127.0.0.1:47900"
-    self_public_key_file  = "/certs/entity_<self>.pem"       # your own leaf
-    self_private_key_file = "/certs/entity_<self>.key.pem"
-    public_key_file       = "/certs/entity_<peer>.pem"       # the peer's known leaf
+    self_public_key_file  = "/keys/my_public_key.pem"     # your own public key
+    self_private_key_file = "/keys/my_private_key.pem"    # its private key
+    public_key_file       = "/keys/peer_public_key.pem"   # the peer's known public key
 
-Trust is KNOWN-PUBLIC-KEY mTLS, not a CA chain: each host presents its own srcert entity
-leaf and matches the peer's `public_key_file` byte-for-byte, so two cross-known leaves
-suffice (no shared CA). This is independent of the WSS Channel's own trust store.
+Trust is by a KNOWN PUBLIC KEY: each host presents its own public key and the peer
+matches it byte-for-byte against the `public_key_file` it was configured with. Two hosts
+that each already hold the other's public key are enough. This is independent of the WSS
+Channel's own trust.
 
 THE FLOW to talk to a peer (the three tools are deny-gated + session-only, no CLI
 mirror):

@@ -1,12 +1,12 @@
 //! RemoteChannel test harness: a reusable simulated rmcp consumer - the existing
-//! stdio `Host` plus a REAL WSS Channel client that trusts a test-minted CA - and
-//! the one-off cert + config plumbing two linked hosts need.
+//! stdio `Host` plus a REAL WSS Channel client that trusts a one-off test CA - and
+//! the one-off key + config plumbing two linked hosts need.
 //!
 //! No test seam: the consumer connects to a host's Channel exactly as
 //! claude-code's Monitor does (a real TLS + WebSocket client), so it settles the
-//! observation question and is reusable to script any packet flow. Certs are
+//! observation question and is reusable to script any packet flow. Keys are
 //! one-off and trusted directly via a private root store - never the OS trust
-//! store, so the whole thing runs unattended with no `srcert install` / sudo.
+//! store, so the whole thing runs unattended with no OS-level install / sudo.
 //!
 //! Wire packets are NUON, so they are parsed by driving the consumer's own host
 //! (`from nuon`) rather than pulling the nushell crates into this crate - the host
@@ -22,66 +22,67 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use serde_json::json;
-use sourcetrait_cert_lib as cert;
+use sourcetrait_cert_lib as lib_cert;
 use tokio_rustls::rustls::pki_types::CertificateDer;
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 
 use crate::{Host, has_error_path, structured};
 
-// ---- one-off certs (trusted directly; never the OS trust store) ----
+// ---- one-off keys (trusted directly; never the OS trust store) ----
 
-/// The cert artifacts a `generate` run leaves under `<dir>/certs`.
-pub struct GeneratedCerts {
+/// The key material a `generate` run leaves under `<dir>/certs`.
+pub struct GeneratedKeys {
     /// `<dir>/certs` - the directory a host's `[channel].cert_dir` points at.
-    pub certs_dir: PathBuf,
-    /// The self-signed CA a WSS client trusts as its sole root.
-    pub authority_public: PathBuf,
-    /// The leaf `entity_<name>.pem` (the channel cert, or a remote public key).
-    pub entity_public: PathBuf,
-    /// The leaf's private key `entity_<name>.key.pem`.
-    pub entity_private: PathBuf,
+    pub dir: PathBuf,
+    /// The self-signed CA public key a WSS client trusts as its sole root.
+    pub ca: PathBuf,
+    /// This host's own public key (the channel key, or a remote peer's known key).
+    pub public_key: PathBuf,
+    /// The matching private key.
+    pub private_key: PathBuf,
 }
 
-fn cert_config(name: &str) -> cert::config::CertGenConfig {
-    cert::config::CertGenConfig {
+fn key_config(name: &str) -> lib_cert::config::CertGenConfig {
+    lib_cert::config::CertGenConfig {
         name: name.to_string(),
         organization: "SourceTrait".to_string(),
         validity_days: 3650,
-        authority: cert::AuthorityConfig {
+        authority: lib_cert::AuthorityConfig {
             common_name: format!("Test {name} CA"),
         },
-        entity: cert::EntityConfig {
+        entity: lib_cert::EntityConfig {
             common_name: "localhost".to_string(),
             subject_alt_names: vec![
                 "127.0.0.1".to_string(),
                 "::1".to_string(),
                 "localhost".to_string(),
             ],
-            usages: vec![cert::EntityUsage::Server, cert::EntityUsage::Client],
+            usages: vec![lib_cert::EntityUsage::Server, lib_cert::EntityUsage::Client],
         },
     }
 }
 
-/// Mint a fresh self-signed CA + leaf named `name` into `<dir>/certs`. The channel
-/// cert MUST use `name = "grammar"` (the hub loads `entity_grammar.*`); a remote
-/// link's leaves take any distinct name and are cross-known by byte match.
-pub fn generate_certs(name: &str, dir: &Path) -> GeneratedCerts {
-    let files = cert::generate(&cert_config(name), dir).expect("generate certs");
-    GeneratedCerts {
-        certs_dir: cert::certs_dir(dir),
-        authority_public: files.authority_public,
-        entity_public: files.entity_public,
-        entity_private: files.entity_private,
+/// Mint a fresh self-signed CA + public/private key pair named `name` into
+/// `<dir>/certs`. The channel key MUST use `name = "grammar"` (the hub loads the
+/// public key named for it) with a 127.0.0.1 SAN; a remote link's keys take any
+/// distinct name and are cross-known by byte match.
+pub fn generate_keys(name: &str, dir: &Path) -> GeneratedKeys {
+    let files = lib_cert::generate(&key_config(name), dir).expect("generate keys");
+    GeneratedKeys {
+        dir: lib_cert::certs_dir(dir),
+        ca: files.authority_public,
+        public_key: files.entity_public,
+        private_key: files.entity_private,
     }
 }
 
 // ---- host config + remotes.toml plumbing ----
 
 /// Write a `grammar_mcp.toml` overriding `[channel].cert_dir` to the test's own
-/// channel certs, into `host_dir` (created). Returns the path for `--config`.
-pub fn write_host_config(host_dir: &Path, channel_certs_dir: &Path) -> PathBuf {
+/// channel keys, into `host_dir` (created). Returns the path for `--config`.
+pub fn write_host_config(host_dir: &Path, channel_key_dir: &Path) -> PathBuf {
     std::fs::create_dir_all(host_dir).expect("mkdir host dir");
-    let toml = format!("[channel]\ncert_dir = \"{}\"\n", channel_certs_dir.display());
+    let toml = format!("[channel]\ncert_dir = \"{}\"\n", channel_key_dir.display());
     let path = host_dir.join("grammar_mcp.toml");
     std::fs::write(&path, toml).expect("write grammar_mcp.toml");
     path
@@ -97,7 +98,7 @@ fn write_remotes(cwd: &Path, body: &str) {
 pub fn write_remotes_connector(
     cwd: &Path,
     peer_addr: &str,
-    self_certs: &GeneratedCerts,
+    self_keys: &GeneratedKeys,
     peer_public: &Path,
 ) {
     let body = format!(
@@ -105,8 +106,8 @@ pub fn write_remotes_connector(
          self_public_key_file = \"{sp}\"\nself_private_key_file = \"{sk}\"\n\
          public_key_file = \"{pk}\"\n",
         addr = peer_addr,
-        sp = self_certs.entity_public.display(),
-        sk = self_certs.entity_private.display(),
+        sp = self_keys.public_key.display(),
+        sk = self_keys.private_key.display(),
         pk = peer_public.display(),
     );
     write_remotes(cwd, &body);
@@ -116,7 +117,7 @@ pub fn write_remotes_connector(
 pub fn write_remotes_listener(
     cwd: &Path,
     listen: &str,
-    self_certs: &GeneratedCerts,
+    self_keys: &GeneratedKeys,
     peer_public: &Path,
 ) {
     let body = format!(
@@ -124,8 +125,8 @@ pub fn write_remotes_listener(
          self_public_key_file = \"{sp}\"\nself_private_key_file = \"{sk}\"\n\
          public_key_file = \"{pk}\"\n",
         listen = listen,
-        sp = self_certs.entity_public.display(),
-        sk = self_certs.entity_private.display(),
+        sp = self_keys.public_key.display(),
+        sk = self_keys.private_key.display(),
         pk = peer_public.display(),
     );
     write_remotes(cwd, &body);

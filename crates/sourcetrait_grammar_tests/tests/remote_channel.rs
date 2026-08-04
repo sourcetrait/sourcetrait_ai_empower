@@ -2,7 +2,7 @@
 //! with a simulated rmcp consumer (stdio JSON-RPC + a REAL WSS Channel client),
 //! proving the transport end to end - the channel connect/verify/receive path, the
 //! A->B->A application echo, and the mcp/remote/{Connected, Sent, Disconnected}
-//! notice shapes. Certs are one-off and trusted directly, so this needs no OS
+//! notice shapes. Keys are one-off and trusted directly, so this needs no OS
 //! trust-store install and runs unattended. NO colony (dead pending redesign).
 
 use std::time::Duration;
@@ -20,14 +20,14 @@ fn consumer_connects_verifies_and_receives_a_packet() {
     let t = testing::test!({ .using_temp_dir() });
     let root = t.temp_dir();
 
-    let ch = generate_certs("grammar", &root.join("channel"));
-    let config = write_host_config(&root.join("host"), &ch.certs_dir);
+    let ch = generate_keys("grammar", &root.join("channel"));
+    let config = write_host_config(&root.join("host"), &ch.dir);
     let host = Host::spawn_in(
         &root.join("scratch"),
         &["--id", "chan", "--namespace", "default", "--config", config.to_str().unwrap()],
         &root.join("host"),
     );
-    let mut c = Consumer::attach(host, &ch.authority_public);
+    let mut c = Consumer::attach(host, &ch.ca);
 
     // A body-driven grimm channel_send must arrive on the real WSS client.
     let resp = c.host.run(json!({
@@ -59,35 +59,35 @@ fn remote_loopback_echo() {
     let t = testing::test!({ .using_temp_dir() });
     let root = t.temp_dir();
 
-    // Shared one-off channel cert (both hosts present entity_grammar; both
-    // consumers trust the same CA). Cross-known remote-link leaves for A and B.
-    let ch = generate_certs("grammar", &root.join("channel"));
-    let cert_a = generate_certs("a", &root.join("cert_a"));
-    let cert_b = generate_certs("b", &root.join("cert_b"));
+    // Shared one-off channel key both hosts present on their WSS Channel; both
+    // consumers trust its CA. A and B hold each other's remote-link public keys.
+    let ch = generate_keys("grammar", &root.join("channel"));
+    let cert_a = generate_keys("a", &root.join("cert_a"));
+    let cert_b = generate_keys("b", &root.join("cert_b"));
 
     let listen = format!("127.0.0.1:{}", free_port());
 
     // Host B: the listener (binds, waits).
     let b_dir = root.join("host_b");
-    let config_b = write_host_config(&b_dir, &ch.certs_dir);
-    write_remotes_listener(&b_dir, &listen, &cert_b, &cert_a.entity_public);
+    let config_b = write_host_config(&b_dir, &ch.dir);
+    write_remotes_listener(&b_dir, &listen, &cert_b, &cert_a.public_key);
     let host_b = Host::spawn_in(
         &root.join("scratch_b"),
         &["--id", "loop_b", "--namespace", "default", "--config", config_b.to_str().unwrap()],
         &b_dir,
     );
-    let mut b = Consumer::attach(host_b, &ch.authority_public);
+    let mut b = Consumer::attach(host_b, &ch.ca);
 
     // Host A: the connector (dials B).
     let a_dir = root.join("host_a");
-    let config_a = write_host_config(&a_dir, &ch.certs_dir);
-    write_remotes_connector(&a_dir, &listen, &cert_a, &cert_b.entity_public);
+    let config_a = write_host_config(&a_dir, &ch.dir);
+    write_remotes_connector(&a_dir, &listen, &cert_a, &cert_b.public_key);
     let host_a = Host::spawn_in(
         &root.join("scratch_a"),
         &["--id", "loop_a", "--namespace", "default", "--config", config_a.to_str().unwrap()],
         &a_dir,
     );
-    let mut a = Consumer::attach(host_a, &ch.authority_public);
+    let mut a = Consumer::attach(host_a, &ch.ca);
 
     let nom_a = mcp_nom(&mut a);
     let nom_b = mcp_nom(&mut b);
@@ -137,20 +137,20 @@ fn remote_open_failure_emits_disconnected() {
     let t = testing::test!({ .using_temp_dir() });
     let root = t.temp_dir();
 
-    let ch = generate_certs("grammar", &root.join("channel"));
-    let cert_a = generate_certs("a", &root.join("cert_a"));
-    let cert_dead = generate_certs("dead", &root.join("cert_dead"));
+    let ch = generate_keys("grammar", &root.join("channel"));
+    let cert_a = generate_keys("a", &root.join("cert_a"));
+    let cert_dead = generate_keys("dead", &root.join("cert_dead"));
 
     let dead = format!("127.0.0.1:{}", free_port());
     let host_dir = root.join("host");
-    let config = write_host_config(&host_dir, &ch.certs_dir);
-    write_remotes_connector(&host_dir, &dead, &cert_a, &cert_dead.entity_public);
+    let config = write_host_config(&host_dir, &ch.dir);
+    write_remotes_connector(&host_dir, &dead, &cert_a, &cert_dead.public_key);
     let host = Host::spawn_in(
         &root.join("scratch"),
         &["--id", "dc", "--namespace", "default", "--config", config.to_str().unwrap()],
         &host_dir,
     );
-    let mut c = Consumer::attach(host, &ch.authority_public);
+    let mut c = Consumer::attach(host, &ch.ca);
 
     let open = c.host.call("remote_channel_open", json!({"alias": "peer"}));
     assert!(!has_error_path(&open), "open is void on a partial success; got {open}");

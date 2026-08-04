@@ -266,6 +266,16 @@ the eval that spawned it.
   cell path, since a string variable binds as one member, dots included.
 - `grimm pin_config <cfg_key> <process_id> <value>` -> nothing. Holds a setting at a
   value for the lifetime of a process, then lets it lapse.
+- `grimm remote_channel_send <mcp_nom> <model> <event>` -> the message id. Deliver a
+  Channel packet to a LINKED remote host's agent (RemoteChannel, below); it surfaces on
+  that agent's own Channel Monitor as `from = mcp/remote/<your_nom>`. `model` cannot be
+  under the `mcp/` reservation. Non-blocking - the delivery outcome lands async on YOUR
+  Channel as `mcp/remote/Sent` / `Unsent` (driven by your transport write, no app ack).
+- `grimm remote_channel_send_with <mcp_nom> <model> <event> <attached>` -> the message id.
+  The same, plus files: `attached` is a `table<src: path, dest: path>`, each local `src`
+  read now and landing at the receiver's `inbox/<your_nom>/<msg_id>/<dest>` (a `dest` is
+  a relative path, no `..`). The files exist on the receiver before its agent sees the
+  packet.
 
 `data` / `event` / `attached` are each `oneof<record, table>`; anything else is
 rejected, as a literal at parse time and as a dynamic value at run time.
@@ -347,6 +357,55 @@ line.
 Close codes tell you what happened: `1000` planned, `1001` the host shut down, `1008` a
 failed handshake, `1013` someone else already claimed it, and a bare `1006` means the
 host DIED - the only one the host never sends.
+
+## RemoteChannel: reach another agent's host
+
+RemoteChannel is a TRANSPORT for the Channel between two grammar_mcp hosts, so two
+agents talk over their existing Channels. It is subservient to Channel mechanics: a
+delivered message is a NORMAL Channel packet on the receiver's Monitor, `from =
+mcp/remote/<sender_nom>`, and any files land in that same inbox. Both agents must have
+their own Channel UP AND VERIFIED first (above) - the link rides on top.
+
+CONFIG is a file the operator provides at `<startup_cwd>/.grammar/mcp/remotes.toml`, NOT
+an argument. No file, no RemoteChannel. Each `[[remote]]` names one peer by `alias`; the
+ROLE is decided by the presence of `listen`:
+
+    [[remote]]
+    alias = "peer"
+    # LISTENER: bind and wait. `address` here is an OPTIONAL bare source-IP filter.
+    listen = "127.0.0.1:47900"
+    # CONNECTOR instead: omit `listen`, and `address` is the peer's ip:port to DIAL:
+    #   address = "127.0.0.1:47900"
+    self_public_key_file  = "/certs/entity_<self>.pem"       # your own leaf
+    self_private_key_file = "/certs/entity_<self>.key.pem"
+    public_key_file       = "/certs/entity_<peer>.pem"       # the peer's known leaf
+
+Trust is KNOWN-PUBLIC-KEY mTLS, not a CA chain: each host presents its own srcert entity
+leaf and matches the peer's `public_key_file` byte-for-byte, so two cross-known leaves
+suffice (no shared CA). This is independent of the WSS Channel's own trust store.
+
+THE FLOW to talk to a peer (the three tools are deny-gated + session-only, no CLI
+mirror):
+
+1. Both agents bring their Channel up + verified (the handshake above).
+2. `remote_channel_open(alias)` on EACH side, LISTENER FIRST (it binds), CONNECTOR second
+   (it dials). It returns VOID while the link opens; the outcome lands async on your
+   Channel as `mcp/remote/Connected {mcp_nom}` once both connections handshake, or
+   `mcp/remote/Disconnected {alias, error}` if it never established. An inline `error
+   {kind, message}` is an immediate refusal (no such alias / already open).
+3. Learn the peer's `mcp_nom` (it rides the Connected packet; each host also reports its
+   own via `info()`), then send from a body: `grimm remote_channel_send <peer_nom>
+   <model> <event>` (or `_with` for files). Watch your OWN Channel for `mcp/remote/Sent
+   {id, mcp_nom}` (your transport write succeeded - there is NO application ack) or
+   `Unsent {id, mcp_nom, error}`.
+4. The PEER'S agent sees the delivery on ITS Channel Monitor as a normal packet, `from =
+   mcp/remote/<your_nom>`, and reacts (e.g. echoes back with its own
+   `remote_channel_send`). That round-trip IS the cross-agent smoke test.
+5. `remote_channel_close(alias)` tears the link down (emits `Disconnected`);
+   `remote_channels()` lists the open links as `{alias, remote_mcp_nom, address}`.
+
+Every host-origin model sits under the `mcp/` reservation: `mcp/remote/{Connected,
+Disconnected, Sent, Unsent}`. `from nuon` every packet, as always.
 
 ## Rig Ecosystem
 
@@ -1043,6 +1102,9 @@ before you return thousands of paths.
 - [`channel_verified()`](#channel_verified) Confirm the channel/Open packet was seen; ends the verify window.
 - [`channel_close()`](#channel_close) Close the host's packet channel.
 - [`config_channel()`](#config_channel) Read or adjust the channel's send-rate thresholds at runtime.
+- [`remote_channel_open()`](#remote_channel_open) Open a configured remote link by alias.
+- [`remote_channel_close()`](#remote_channel_close) Close an open remote link.
+- [`remote_channels()`](#remote_channels) List the open remote links.
 - [`purviews()`](#purviews) List every configured purview, and what is currently in view.
 - [`purview()`](#purview) Set the current view to these purviews.
 - [`purview_configure()`](#purview_configure) Set a purview's namepath patterns; an empty list deletes it.
@@ -1836,6 +1898,27 @@ Schema (partial):
   }
 }
 ```
+
+### `remote_channel_open()`
+*Open a configured remote link by alias; the link then rides your Channel.*
+
+`{alias: string}` - a `[[remote]]` from `<startup_cwd>/.grammar/mcp/remotes.toml`.
+Returns VOID on a partial success (the link is opening) or an `error {kind, message}` on
+an immediate refusal (no such alias, already open). `mcp/remote/Connected {mcp_nom}` or
+`Disconnected {alias, error}` lands async on your Channel. Deny-gated; no CLI mirror. See
+"RemoteChannel: reach another agent's host" above for the full flow.
+
+### `remote_channel_close()`
+*Close an open mTLS link to a remote grammar host.*
+
+`{alias: string}`, no return. Cancels the link; `mcp/remote/Disconnected {mcp_nom}` lands
+async on your Channel.
+
+### `remote_channels()`
+*List the open mTLS links to remote grammar hosts.*
+
+No parameters. Returns `{channels}`, each `{alias, remote_mcp_nom, address}`,
+alias-sorted.
 
 ## Purview scoping
 

@@ -16,6 +16,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+pub mod remote;
+pub use remote::*;
+
 /// The `grammar_mcp` host binary, resolved as the workspace-bin sibling of the
 /// running test binary's `deps/` dir.
 pub fn grammar_mcp_bin() -> PathBuf {
@@ -88,6 +91,21 @@ impl Host {
 
     /// Spawn with extra CLI args AND extra env vars (e.g. `USER`, `HOME`).
     pub fn spawn_full(scratch: &Path, args: &[&str], envs: &[(&str, &str)]) -> Self {
+        Self::spawn_core(scratch, args, envs, None)
+    }
+
+    /// Spawn with extra CLI args AND a working directory - for a host whose
+    /// `<cwd>/.grammar/mcp/remotes.toml` (the RemoteChannel config) must resolve.
+    pub fn spawn_in(scratch: &Path, args: &[&str], cwd: &Path) -> Self {
+        Self::spawn_core(scratch, args, &[], Some(cwd))
+    }
+
+    fn spawn_core(
+        scratch: &Path,
+        args: &[&str],
+        envs: &[(&str, &str)],
+        cwd: Option<&Path>,
+    ) -> Self {
         let data_home = scratch.join("data");
         let cache_home = scratch.join("cache");
         std::fs::create_dir_all(&data_home).expect("mkdir data");
@@ -101,6 +119,9 @@ impl Host {
             .stderr(Stdio::inherit());
         for (k, v) in envs {
             cmd.env(k, v);
+        }
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd);
         }
         let mut child = cmd.spawn().expect("spawn grammar_mcp");
         let stdin = child.stdin.take().expect("host stdin");

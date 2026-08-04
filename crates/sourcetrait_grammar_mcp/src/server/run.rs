@@ -28,7 +28,6 @@ pub(crate) async fn run_server() {
     let in_flight = server.in_flight.clone();
     let env_jobs = server.env_jobs.clone();
     spawn_signal_sweep(in_flight.clone(), env_jobs.clone());
-    spawn_remote_listener_from_config(server.mcp_nom.to_string(), server.remote_links.clone()).await;
     let service = server.serve(mcp::stdio()).await.expect("serve stdio");
     service.waiting().await.expect("service waiting");
     close_channel_for_shutdown().await;

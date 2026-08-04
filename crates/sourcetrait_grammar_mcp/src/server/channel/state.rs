@@ -6,6 +6,19 @@ pub(crate) const MCP_RESERVED_PREFIX: &str = "mcp/";
 /// The usable frame maximum.
 pub(crate) const MAX_FRAME_BYTES: usize = 1_048_575;
 
+/// The env var naming the tmpfs IPC root the inbox lives under.
+pub(crate) const SHM_ROOT_VAR: &str = "$XDGX_SHM_DIR";
+
+/// `<shm>/mcp/<mcp_nom>/inbox` - where a channel's attachments and a remote
+/// link's landed files meet, so an injected packet's refs resolve for the local
+/// agent. The one composition point both producers share.
+pub(crate) fn inbox_dir(mcp_nom: &str) -> Result<PathBuf, String> {
+    Ok(expand_path(SHM_ROOT_VAR)?
+        .join("mcp")
+        .join(mcp_nom)
+        .join("inbox"))
+}
+
 /// What an emit is allowed to do right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ChannelPhase {

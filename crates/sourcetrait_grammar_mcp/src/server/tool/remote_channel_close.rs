@@ -7,9 +7,6 @@ pub struct RemoteChannelCloseParams {
     pub alias: String,
 }
 
-/// How long a link's close handshake may take before its drivers are aborted.
-const REMOTE_CLOSE_TIMEOUT: tk::TkDuration = tk::TkDuration::from_secs(5);
-
 #[mcp::tool_router(router = remote_channel_close_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(description = "Close an open mTLS link to a remote grammar host.")]
@@ -17,10 +14,16 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RemoteChannelCloseParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let entry = self.remote_links.lock().await.remove(&p.alias);
+        let entry = self
+            .remote_links
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&p.alias);
         match entry {
-            Some(mut entry) => {
-                entry.handle.close(REMOTE_CLOSE_TIMEOUT).await;
+            Some(entry) => {
+                // Cancel the drivers; the link's open task observes the end,
+                // deregisters, and emits mcp/remote/Disconnected on the Channel.
+                entry.handle.cancel();
                 Ok(mcp::CallToolResult::default())
             }
             None => Ok(error_to_call_result(

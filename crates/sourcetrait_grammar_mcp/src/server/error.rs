@@ -141,10 +141,6 @@ pub enum Error {
     RemoteNotOpen {
         alias: String,
     },
-    RemoteConnect {
-        alias: String,
-        reason: String,
-    },
     ThreadDispatch {
         reason: String,
     },
@@ -188,7 +184,6 @@ impl Error {
             Self::RemoteInvalidParams { .. } => "remote::invalid_params",
             Self::RemoteAlreadyOpen { .. } => "remote::already_open",
             Self::RemoteNotOpen { .. } => "remote::not_open",
-            Self::RemoteConnect { .. } => "remote::connect",
             Self::ThreadDispatch { .. } => "thread::dispatch",
             Self::ThreadTimeout { .. } => "thread::timeout",
             Self::ThreadReturnedError { .. } => "thread::returned_error",
@@ -266,9 +261,6 @@ impl Error {
             }
             Self::RemoteAlreadyOpen { alias } => format!("remote link `{alias}` is already open"),
             Self::RemoteNotOpen { alias } => format!("no open remote link `{alias}`"),
-            Self::RemoteConnect { alias, reason } => {
-                format!("could not open remote link `{alias}`: {reason}")
-            }
             Self::ThreadDispatch { reason } => format!("eval dispatch failed: {reason}"),
             Self::ThreadTimeout { timeout_ms } => format!("eval timed out after {timeout_ms} ms"),
             Self::ThreadReturnedError { reason } => reason.clone(),

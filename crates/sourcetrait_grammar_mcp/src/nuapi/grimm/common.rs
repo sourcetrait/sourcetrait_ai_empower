@@ -85,4 +85,6 @@ pub(crate) fn register_nuapi(
     working_set.add_decl(Box::new(GrimmGetConfigAll));
     working_set.add_decl(Box::new(GrimmGetConfig));
     working_set.add_decl(Box::new(GrimmPinConfig));
+    working_set.add_decl(Box::new(GrimmRemoteChannelSend));
+    working_set.add_decl(Box::new(GrimmRemoteChannelSendWith));
 }

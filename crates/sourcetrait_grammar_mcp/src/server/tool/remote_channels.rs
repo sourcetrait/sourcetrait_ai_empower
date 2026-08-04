@@ -28,7 +28,7 @@ impl NuSh {
         &self,
         mcp::Parameters(_p): mcp::Parameters<RemoteChannelsParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let links = self.remote_links.lock().await;
+        let links = self.remote_links.lock().unwrap_or_else(|e| e.into_inner());
         let mut channels: Vec<RemoteChannelEntry> = links
             .iter()
             .map(|(alias, entry)| RemoteChannelEntry {

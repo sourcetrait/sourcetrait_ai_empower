@@ -77,6 +77,7 @@ pub(crate) mod nuapi {
         pub(crate) mod common;
         pub(crate) mod config;
         pub(crate) mod dbg;
+        pub(crate) mod remote_send;
     }
 }
 #[cfg(test)]
@@ -97,12 +98,13 @@ pub(crate) use crate::{
         common::{NuapiCall, data_shape, register_nuapi, require_record_or_table},
         config::{GrimmGetConfig, GrimmGetConfigAll, GrimmPinConfig},
         dbg::GrimmDbg,
+        remote_send::{GrimmRemoteChannelSend, GrimmRemoteChannelSendWith},
     },
     cli::CliTool,
     config::{
-        CONFIG, Config, ConfigToml, DEFAULT_NAMESPACE, DeniableTool, DenySet, SpamThresholds,
-        SupervisorConfig, TEST_NAMESPACE, config, default_id, default_work_dir, expand_path,
-        fraction_field,
+        CONFIG, Config, ConfigToml, DEFAULT_NAMESPACE, DeniableTool, DenySet, RemoteEntry,
+        RemoteRole, SpamThresholds, SupervisorConfig, TEST_NAMESPACE, config, default_id,
+        default_work_dir, expand_path, fraction_field,
     },
     engine::base_context,
     mcp::ServiceExt,
@@ -122,7 +124,7 @@ pub(crate) use crate::{
             state::{
                 ChannelHandle, ChannelPhase, ChannelSendError, ChannelVerifyError,
                 CloseSignal as ChannelCloseSignal, MAX_FRAME_BYTES, MCP_RESERVED_PREFIX,
-                SpamVerdict, channel_handle, mint_msg_id, render_nuon, render_packet,
+                SpamVerdict, channel_handle, inbox_dir, mint_msg_id, render_nuon, render_packet,
             },
         },
         cycle::detect_import_cycle,
@@ -164,11 +166,12 @@ pub(crate) use crate::{
             purviews_path, resolve_patterns, save_purviews,
         },
         remote::{
-            codec::{AcceptorToInitiator, BitcodeCodec, InitiatorToAcceptor, RemoteStream},
-            link::{
-                RemoteLink, RemoteLinkHandle, RemoteLinkOptions, spawn_remote_listener_from_config,
+            codec::{
+                AcceptorToInitiator, BitcodeCodec, DeliveryResult, FileFrame, InitiatorToAcceptor,
+                MsgFrame, RemoteStream,
             },
-            verify::{EntityPin, UnionPin},
+            link::{RemoteLinkHandle, find_link_send, open_remote, remote_links, safe_dest},
+            verify::EntityPin,
         },
         run::{eval_concurrency_cap, run_server},
         schema::{

@@ -75,3 +75,73 @@ fn bitcode_codec_round_trips_a_message_through_zstd() {
     let got = codec.decode(&mut dst).expect("decode ok").expect("a full frame");
     assert_eq!(got, msg, "encode -> zstd -> frame -> decode must round-trip");
 }
+
+/// The leg-5 send frames round-trip through both wire enums: a Deliver, both
+/// DeliverAck results, and a FileChunk carrying real bytes (a live zstd payload).
+#[test]
+fn bitcode_codec_round_trips_the_send_frames() {
+    use crate::tku::{BytesMut, Decoder, Encoder};
+    use crate::{
+        AcceptorToInitiator, BitcodeCodec, DeliveryResult, FileFrame, InitiatorToAcceptor, MsgFrame,
+    };
+
+    fn roundtrip_init(msg: InitiatorToAcceptor) {
+        let mut dst = BytesMut::new();
+        let mut codec: BitcodeCodec<InitiatorToAcceptor> = BitcodeCodec::new();
+        codec.encode(msg.clone(), &mut dst).expect("encode");
+        let got = codec.decode(&mut dst).expect("decode ok").expect("a full frame");
+        assert_eq!(got, msg);
+    }
+    fn roundtrip_acc(msg: AcceptorToInitiator) {
+        let mut dst = BytesMut::new();
+        let mut codec: BitcodeCodec<AcceptorToInitiator> = BitcodeCodec::new();
+        codec.encode(msg.clone(), &mut dst).expect("encode");
+        let got = codec.decode(&mut dst).expect("decode ok").expect("a full frame");
+        assert_eq!(got, msg);
+    }
+
+    let deliver = MsgFrame::Deliver {
+        id: "id1".to_string(),
+        model: "proj/thing/Changed".to_string(),
+        event_nuon: "{a: 1, b: \"x\"}".to_string(),
+        files: vec!["out.txt".to_string()],
+    };
+    let ack_ok = MsgFrame::DeliverAck {
+        id: "id1".to_string(),
+        result: DeliveryResult::Accepted,
+    };
+    let ack_err = MsgFrame::DeliverAck {
+        id: "id1".to_string(),
+        result: DeliveryResult::Refused {
+            kind: "channel".to_string(),
+            message: "closed".to_string(),
+        },
+    };
+    let chunk = FileFrame::Chunk {
+        id: "id1".to_string(),
+        dest: "out.txt".to_string(),
+        seq: 3,
+        bytes: (0u8..=255).cycle().take(4096).collect(),
+        last: true,
+    };
+
+    roundtrip_init(InitiatorToAcceptor::Msg(deliver.clone()));
+    roundtrip_init(InitiatorToAcceptor::Msg(ack_ok.clone()));
+    roundtrip_init(InitiatorToAcceptor::File(chunk.clone()));
+    roundtrip_acc(AcceptorToInitiator::Msg(deliver));
+    roundtrip_acc(AcceptorToInitiator::Msg(ack_err));
+    roundtrip_acc(AcceptorToInitiator::File(chunk));
+}
+
+/// safe_dest accepts a relative path, rejects an empty one, an absolute one, and
+/// any `..` escape from the per-packet inbox.
+#[test]
+fn safe_dest_rejects_escapes() {
+    use crate::safe_dest;
+    assert!(safe_dest("out.txt"));
+    assert!(safe_dest("sub/dir/out.txt"));
+    assert!(!safe_dest(""));
+    assert!(!safe_dest("/abs/path"));
+    assert!(!safe_dest("../escape"));
+    assert!(!safe_dest("sub/../../escape"));
+}

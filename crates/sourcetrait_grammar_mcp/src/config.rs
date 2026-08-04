@@ -19,35 +19,36 @@ const MIN_CHANNEL_PORT: u16 = 1024;
 pub(crate) struct ConfigToml {
     pub channel: Option<ChannelConfigToml>,
     pub supervisor: Option<SupervisorConfigToml>,
-    pub remote: Option<RemoteToml>,
 }
 
-/// One `[remote.<alias>]` table: a peer to link with. All fields required.
+/// One `[[remote]]` entry: a peer to link with, addressed by alias. Its role is
+/// the presence of `listen` - set means this host binds and waits (listener),
+/// unset means it dials `address` (connector). remote_channel_open drives it.
 #[derive(Debug, Clone, ser::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RemoteAliasToml {
-    /// The peer's socket address, `ip:port`.
+pub(crate) struct RemoteEntryToml {
+    /// The name remote_channel_open addresses this peer by.
+    pub alias: Option<String>,
+    /// `ip:port` to bind; present = listener, absent = connector.
+    pub listen: Option<String>,
+    /// Connector: the peer's `ip:port` to dial (required). Listener: optional -
+    /// a bare source IP to require on an inbound connection (no port).
     pub address: Option<String>,
-    /// This host's own entity leaf presented to the peer (public).
+    /// This host's own entity leaf it presents (public).
     pub self_public_key_file: Option<String>,
     /// The private key paired with `self_public_key_file`.
     pub self_private_key_file: Option<String>,
-    /// The peer's entity leaf to pin (public).
-    pub remote_public_key_file: Option<String>,
+    /// The peer's entity leaf to pin (public); `remote_` is implied by the entry.
+    pub public_key_file: Option<String>,
 }
 
-/// The `[remote]` table: the acceptor's own listen config plus the peer aliases.
+/// The `.grammar/mcp/remotes.toml` file: the RemoteChannel peer set, as
+/// `[[remote]]` entries. Optional - an absent file means no RemoteChannel.
 #[derive(Debug, Clone, Default, ser::Deserialize)]
-pub(crate) struct RemoteToml {
-    /// `ip:port` the acceptor binds; absent = initiator-only (no listener).
-    pub listen: Option<String>,
-    /// This host's own entity leaf the acceptor presents (public).
-    pub self_public_key_file: Option<String>,
-    /// The private key paired with `self_public_key_file`.
-    pub self_private_key_file: Option<String>,
-    /// The peer aliases, `[remote.<alias>]`.
-    #[serde(flatten)]
-    pub peers: HashMap<String, RemoteAliasToml>,
+#[serde(deny_unknown_fields)]
+pub(crate) struct RemotesToml {
+    #[serde(default)]
+    pub remote: Vec<RemoteEntryToml>,
 }
 
 /// The `[supervisor]` table: when a resource level is worth one warning.
@@ -96,32 +97,38 @@ pub(crate) struct Config {
     pub test: bool,
     pub channel: ChannelConfig,
     pub supervisor: SupervisorConfig,
-    /// Configured remote peers, by alias.
-    pub remote: HashMap<String, RemoteConfig>,
-    /// The acceptor's listen config, when `[remote].listen` is set.
-    pub remote_listen: Option<RemoteListen>,
+    /// Configured remote peers, by alias (from `.grammar/mcp/remotes.toml`).
+    pub remote: HashMap<String, RemoteEntry>,
+    /// The process's cwd at startup, captured before any interact() `cd` can
+    /// move it - the root `.grammar/mcp/remotes.toml` is resolved against it.
+    /// Held for future cwd-relative reads; not read again after the first load.
+    #[allow(dead_code)]
+    pub startup_cwd: PathBuf,
 }
 
-/// A resolved `[remote.<alias>]` peer: where it is and its mTLS material.
+/// A resolved remote peer: its role (dial or bind) plus its mTLS material.
 #[derive(Debug, Clone)]
-pub(crate) struct RemoteConfig {
-    pub addr: std::net::SocketAddr,
-    /// This host's own leaf, presented for client auth.
+pub(crate) struct RemoteEntry {
+    pub alias: String,
+    pub role: RemoteRole,
+    /// This host's own leaf it presents.
     pub self_cert_file: PathBuf,
     /// The private key paired with `self_cert_file`.
     pub self_key_file: PathBuf,
     /// The peer's leaf, pinned byte-for-byte.
-    pub remote_pin_file: PathBuf,
+    pub peer_pin_file: PathBuf,
 }
 
-/// The resolved `[remote]` acceptor config: its listen address and identity.
+/// A remote entry's role, decided by the presence of `listen`.
 #[derive(Debug, Clone)]
-pub(crate) struct RemoteListen {
-    pub addr: std::net::SocketAddr,
-    /// This host's own leaf, presented to inbound peers.
-    pub self_cert_file: PathBuf,
-    /// The private key paired with `self_cert_file`.
-    pub self_key_file: PathBuf,
+pub(crate) enum RemoteRole {
+    /// Dial the peer at this address.
+    Connector { addr: std::net::SocketAddr },
+    /// Bind here and wait; if `allow` is set, require that inbound source IP.
+    Listener {
+        bind: std::net::SocketAddr,
+        allow: Option<std::net::IpAddr>,
+    },
 }
 
 /// The channel hub's operating parameters.
@@ -224,66 +231,85 @@ fn merged_supervisor(
     })
 }
 
-/// Resolve the `[remote]` section: the peer aliases plus this host's own
-/// acceptor listen config. There are no embedded defaults.
-fn merged_remote(
-    user: Option<RemoteToml>,
-) -> Result<(HashMap<String, RemoteConfig>, Option<RemoteListen>), String> {
-    let RemoteToml {
-        listen,
-        self_public_key_file,
-        self_private_key_file,
-        peers,
-    } = user.unwrap_or_default();
+/// Load `.grammar/mcp/remotes.toml` under the startup cwd, if present. Absent =
+/// no RemoteChannel (an empty peer set).
+fn load_remotes(startup_cwd: &std::path::Path) -> Result<HashMap<String, RemoteEntry>, String> {
+    let path = startup_cwd
+        .join(".grammar")
+        .join("mcp")
+        .join("remotes.toml");
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    let parsed: RemotesToml =
+        toml::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))?;
+    merged_remote(parsed.remote)
+}
 
+/// Resolve the `[[remote]]` entries into peers keyed by alias. Each entry's role
+/// is the presence of `listen`. There are no embedded defaults.
+pub(crate) fn merged_remote(
+    entries: Vec<RemoteEntryToml>,
+) -> Result<HashMap<String, RemoteEntry>, String> {
     let mut out = HashMap::new();
-    for (alias, cfg) in peers {
-        let address = cfg
-            .address
-            .ok_or_else(|| format!("[remote.{alias}] is missing `address`"))?;
-        let addr = address
-            .parse::<std::net::SocketAddr>()
-            .map_err(|e| format!("[remote.{alias}] address `{address}` is not ip:port: {e}"))?;
-        let self_cert = cfg
+    for entry in entries {
+        let alias = entry
+            .alias
+            .ok_or_else(|| "a [[remote]] entry is missing `alias`".to_string())?;
+        let missing = |field: &str| format!("[[remote]] `{alias}` is missing `{field}`");
+        let self_cert = entry
             .self_public_key_file
-            .ok_or_else(|| format!("[remote.{alias}] is missing `self_public_key_file`"))?;
-        let self_key = cfg
+            .ok_or_else(|| missing("self_public_key_file"))?;
+        let self_key = entry
             .self_private_key_file
-            .ok_or_else(|| format!("[remote.{alias}] is missing `self_private_key_file`"))?;
-        let remote_pin = cfg
-            .remote_public_key_file
-            .ok_or_else(|| format!("[remote.{alias}] is missing `remote_public_key_file`"))?;
+            .ok_or_else(|| missing("self_private_key_file"))?;
+        let peer_pin = entry
+            .public_key_file
+            .ok_or_else(|| missing("public_key_file"))?;
+        let role = match entry.listen {
+            Some(listen) => {
+                let bind = listen.parse::<std::net::SocketAddr>().map_err(|e| {
+                    format!("[[remote]] `{alias}` listen `{listen}` is not ip:port: {e}")
+                })?;
+                let allow = match entry.address {
+                    Some(addr) => Some(addr.parse::<std::net::IpAddr>().map_err(|e| {
+                        format!(
+                            "[[remote]] `{alias}` address `{addr}` is not a bare IP (a listener's `address` is a source-IP filter, no port): {e}"
+                        )
+                    })?),
+                    None => None,
+                };
+                RemoteRole::Listener { bind, allow }
+            }
+            None => {
+                let addr = entry.address.ok_or_else(|| {
+                    format!(
+                        "[[remote]] `{alias}` has no `listen`, so it is a connector and needs `address` to dial",
+                    )
+                })?;
+                let addr = addr.parse::<std::net::SocketAddr>().map_err(|e| {
+                    format!("[[remote]] `{alias}` address `{addr}` is not ip:port: {e}")
+                })?;
+                RemoteRole::Connector { addr }
+            }
+        };
+        if out.contains_key(&alias) {
+            return Err(format!("duplicate [[remote]] alias `{alias}`"));
+        }
         out.insert(
-            alias,
-            RemoteConfig {
-                addr,
+            alias.clone(),
+            RemoteEntry {
+                alias,
+                role,
                 self_cert_file: expand_path(&self_cert)?,
                 self_key_file: expand_path(&self_key)?,
-                remote_pin_file: expand_path(&remote_pin)?,
+                peer_pin_file: expand_path(&peer_pin)?,
             },
         );
     }
-
-    let remote_listen = match (listen, self_public_key_file, self_private_key_file) {
-        (None, None, None) => None,
-        (Some(addr), Some(cert), Some(key)) => {
-            let parsed = addr.parse::<std::net::SocketAddr>().map_err(|e| {
-                format!("[remote] listen `{addr}` is not ip:port: {e}")
-            })?;
-            Some(RemoteListen {
-                addr: parsed,
-                self_cert_file: expand_path(&cert)?,
-                self_key_file: expand_path(&key)?,
-            })
-        }
-        _ => {
-            return Err("[remote] listen, self_public_key_file, and self_private_key_file \
-                 must all be set together (the acceptor's own listen address and identity)"
-                .to_string());
-        }
-    };
-
-    Ok((out, remote_listen))
+    Ok(out)
 }
 
 /// A fraction of total capacity; outside (0, 1] it would warn always or never.
@@ -338,7 +364,9 @@ impl Config {
             .map_err(|e| format!("the embedded defaults do not parse: {e}"))?;
         let channel = merged_channel(user.channel, base.channel)?;
         let supervisor = merged_supervisor(user.supervisor, base.supervisor)?;
-        let (remote, remote_listen) = merged_remote(user.remote)?;
+        let startup_cwd =
+            std::env::current_dir().map_err(|e| format!("cannot read the startup cwd: {e}"))?;
+        let remote = load_remotes(&startup_cwd)?;
         Ok(Self {
             id,
             namespace,
@@ -348,7 +376,7 @@ impl Config {
             channel,
             supervisor,
             remote,
-            remote_listen,
+            startup_cwd,
         })
     }
 

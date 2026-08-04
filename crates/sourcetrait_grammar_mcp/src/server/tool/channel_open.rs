@@ -18,9 +18,6 @@ pub(crate) struct ChannelOpenEnvelope {
 const STATUS_NEW: &str = "new";
 const STATUS_EXISTING: &str = "existing";
 
-/// The env var naming the tmpfs IPC root the inbox lives under.
-const SHM_ROOT_VAR: &str = "$XDGX_SHM_DIR";
-
 /// How long a peer has to prove it owns the stdio session.
 const VERIFY_WINDOW: tk::TkDuration = tk::TkDuration::from_secs(300);
 
@@ -33,11 +30,7 @@ fn ensure_inbox(
     channel: &ChannelHandle,
     mcp_nom: McpNom,
 ) -> Result<String, Error> {
-    let root = expand_path(SHM_ROOT_VAR).map_err(|reason| Error::ChannelStart { reason })?;
-    let dir = root
-        .join("mcp")
-        .join(mcp_nom.to_string())
-        .join("inbox");
+    let dir = inbox_dir(&mcp_nom.to_string()).map_err(|reason| Error::ChannelStart { reason })?;
     fs::create_dir_all(&dir)?;
     channel.set_inbox(dir.clone());
     Ok(dir.display().to_string())

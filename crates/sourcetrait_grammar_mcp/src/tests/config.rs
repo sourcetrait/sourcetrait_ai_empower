@@ -156,80 +156,112 @@ fn an_unset_variable_fails_the_load() {
     assert!(err.contains("GRAMMAR_TEST_UNSET_VAR"), "got {err}");
 }
 
+/// Parse a `remotes.toml` body and resolve it, as the startup load of
+/// `.grammar/mcp/remotes.toml` would.
+fn remotes(
+    text: &str,
+) -> Result<std::collections::HashMap<String, crate::config::RemoteEntry>, String> {
+    let parsed: crate::config::RemotesToml = toml::from_str(text).map_err(|e| e.to_string())?;
+    crate::config::merged_remote(parsed.remote)
+}
+
 #[test]
-fn a_remote_section_parses_peers_and_the_self_listen() {
+fn a_remote_entry_with_listen_is_a_listener() {
     let text = "\
-[remote]
+[[remote]]
+alias = \"bob\"
 listen = \"127.0.0.1:9000\"
+address = \"127.0.0.1\"
 self_public_key_file = \"/keys/self.pem\"
 self_private_key_file = \"/keys/self.key.pem\"
-
-[remote.grammar_b]
-address = \"127.0.0.1:9001\"
-self_public_key_file = \"/keys/self.pem\"
-self_private_key_file = \"/keys/self.key.pem\"
-remote_public_key_file = \"/keys/b.pem\"
+public_key_file = \"/keys/bob.pem\"
 ";
-    let config = from_text(text).expect("valid [remote] section");
-    let listen = config.remote_listen.expect("listen configured");
-    assert_eq!(listen.addr.to_string(), "127.0.0.1:9000");
-    assert!(listen.self_cert_file.ends_with("self.pem"), "got {}", listen.self_cert_file.display());
-    assert!(listen.self_key_file.ends_with("self.key.pem"));
-    assert_eq!(config.remote.len(), 1);
-    let peer = config.remote.get("grammar_b").expect("peer present");
-    assert_eq!(peer.addr.to_string(), "127.0.0.1:9001");
-    assert!(peer.remote_pin_file.ends_with("b.pem"));
+    let out = remotes(text).expect("valid listener entry");
+    let entry = out.get("bob").expect("bob present");
+    match &entry.role {
+        crate::config::RemoteRole::Listener { bind, allow } => {
+            assert_eq!(bind.to_string(), "127.0.0.1:9000");
+            // `address` on a listener is a bare source-IP filter.
+            assert_eq!(allow.map(|ip| ip.to_string()), Some("127.0.0.1".to_string()));
+        }
+        other => panic!("expected a listener, got {other:?}"),
+    }
+    assert!(entry.peer_pin_file.ends_with("bob.pem"));
 }
 
 #[test]
-fn a_remote_section_of_peers_only_leaves_the_listener_off() {
-    // The 4a shape (peers, no `[remote].listen`) stays backward compatible: an
-    // initiator-only host runs no acceptor.
+fn a_listener_address_with_a_port_is_rejected() {
+    // A listener's `address` is a bare source-IP filter; the host:port form is the
+    // connector's dial-target format and must not be accepted here.
     let text = "\
-[remote.grammar_b]
-address = \"127.0.0.1:9001\"
+[[remote]]
+alias = \"bob\"
+listen = \"127.0.0.1:9000\"
+address = \"127.0.0.1:5555\"
 self_public_key_file = \"/keys/self.pem\"
 self_private_key_file = \"/keys/self.key.pem\"
-remote_public_key_file = \"/keys/b.pem\"
+public_key_file = \"/keys/bob.pem\"
 ";
-    let config = from_text(text).expect("valid peers-only [remote]");
-    assert!(config.remote_listen.is_none(), "no listen -> no acceptor");
-    assert_eq!(config.remote.len(), 1);
+    let err = remotes(text).expect_err("a host:port listener address must fail");
+    assert!(err.contains("bare IP"), "got {err}");
 }
 
 #[test]
-fn a_half_specified_self_listen_is_rejected() {
-    // listen + the two self keys are all-or-nothing: the acceptor needs its own
-    // identity to present.
-    for text in [
-        "[remote]\nlisten = \"127.0.0.1:9000\"\n",
-        "[remote]\nlisten = \"127.0.0.1:9000\"\nself_public_key_file = \"/k/self.pem\"\n",
-        "[remote]\nself_public_key_file = \"/k/self.pem\"\nself_private_key_file = \"/k/self.key.pem\"\n",
-    ] {
-        assert!(from_text(text).is_err(), "{text:?} must be rejected");
+fn a_remote_entry_without_listen_is_a_connector() {
+    let text = "\
+[[remote]]
+alias = \"bob\"
+address = \"127.0.0.1:9001\"
+self_public_key_file = \"/keys/self.pem\"
+self_private_key_file = \"/keys/self.key.pem\"
+public_key_file = \"/keys/bob.pem\"
+";
+    let out = remotes(text).expect("valid connector entry");
+    match &out.get("bob").expect("bob present").role {
+        crate::config::RemoteRole::Connector { addr } => {
+            assert_eq!(addr.to_string(), "127.0.0.1:9001");
+        }
+        other => panic!("expected a connector, got {other:?}"),
     }
 }
 
 #[test]
-fn a_bad_self_listen_address_fails_the_load() {
-    let err = from_text(
-        "[remote]\nlisten = \"not-an-address\"\nself_public_key_file = \"/k/s.pem\"\nself_private_key_file = \"/k/s.key.pem\"\n",
-    )
-    .expect_err("a non ip:port listen must fail");
+fn a_connector_without_an_address_is_rejected() {
+    let text = "\
+[[remote]]
+alias = \"bob\"
+self_public_key_file = \"/keys/self.pem\"
+self_private_key_file = \"/keys/self.key.pem\"
+public_key_file = \"/keys/bob.pem\"
+";
+    let err = remotes(text).expect_err("a connector needs an address");
+    assert!(err.contains("address"), "got {err}");
+}
+
+#[test]
+fn a_remote_entry_missing_a_key_is_rejected() {
+    let text = "[[remote]]\nalias = \"bob\"\naddress = \"127.0.0.1:9001\"\n";
+    let err = remotes(text).expect_err("a missing key must fail");
+    assert!(err.contains("bob"), "got {err}");
+}
+
+#[test]
+fn a_typoed_remote_field_is_rejected() {
+    // deny_unknown_fields on the entry catches a field typo loudly.
+    let text = "[[remote]]\nalias = \"bob\"\naddres = \"127.0.0.1:9001\"\n";
+    assert!(remotes(text).is_err(), "a typo'd field must be rejected");
+}
+
+#[test]
+fn a_bad_remote_address_fails_the_load() {
+    let text = "\
+[[remote]]
+alias = \"bob\"
+address = \"not-an-address\"
+self_public_key_file = \"/keys/self.pem\"
+self_private_key_file = \"/keys/self.key.pem\"
+public_key_file = \"/keys/bob.pem\"
+";
+    let err = remotes(text).expect_err("a non ip:port address must fail");
     assert!(err.contains("is not ip:port"), "got {err}");
-}
-
-#[test]
-fn a_remote_peer_missing_a_field_is_rejected() {
-    let err = from_text("[remote.grammar_b]\naddress = \"127.0.0.1:9001\"\n")
-        .expect_err("a peer missing its keys must fail");
-    assert!(err.contains("grammar_b"), "got {err}");
-}
-
-#[test]
-fn a_typoed_remote_peer_field_is_rejected() {
-    // RemoteAliasToml keeps deny_unknown_fields even though RemoteToml (flatten)
-    // cannot, so a peer-field typo still fails loudly.
-    let text = "[remote.grammar_b]\naddres = \"127.0.0.1:9001\"\n";
-    assert!(from_text(text).is_err(), "a typo'd peer field must be rejected");
 }

@@ -14,10 +14,12 @@ both ends are Grammar MCP peers and the roles are per-connection (a host is the
 initiator of links it opens, the acceptor of links opened to it), so peer-neutral
 names read truer than the example's client/server (settles the followup's open
 naming decision). bitcode::Encode/Decode is the wire format; the serde derives
-ride along for any future non-wire use. Two variants each: Hello (the opening
+ride along for any future non-wire use. Four variants each: Hello (the opening
 McpNom handshake - the initiator's also names the stream, the acceptor's just
-replies its nom) and Close. The request/response + notice variants land with the
-send path (RemoteSend leg).
+replies its nom), Msg(MsgFrame), File(FileFrame), and Close. There is NO
+request/response pair: MsgFrame carries only Deliver (no DeliverAck), because the
+sender's own transport WRITE is the delivery ack - Sent/Unsent fire from it
+(understood/17). DeliveryResult is gone with the ack it reported.
 
 ## const REMOTE_ZSTD_LEVEL
 Every frame is zstd-compressed before framing (the_user): `zstd(bitcode(msg))`,

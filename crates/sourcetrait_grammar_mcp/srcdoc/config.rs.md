@@ -70,33 +70,32 @@ single digits per burst, a loop emits thousands per second - so the numbers bare
 affect DETECTION and mostly decide how often a well-behaved fast command gets
 flagged. That is why erring permissive is right here.
 
-## struct RemoteToml
-The `[remote]` file table carries two disjoint things: this host's own acceptor
-config (`listen` + the self key pair) and the peer aliases (`[remote.<alias>]`
-subtables). The aliases ride `#[serde(flatten)]` so they stay at `[remote.<alias>]`
-- the 4a shape, unchanged - while the self keys are named fields of the same table.
-Flatten forbids `deny_unknown_fields` on RemoteToml, but validation survives where
-it matters: a mistyped self key deserializes a string where a table (an alias) is
-expected and fails on the type mismatch, and a mistyped peer field is still caught
-by RemoteAliasToml's own `deny_unknown_fields`. The only unreachable case is a
-"typo'd alias name", which is not a concept - any table under `[remote]` is by
-design a peer. A peers-only `[remote]` (no `listen`) is the initiator-only host and
-parses exactly as at 4a, so the section is backward compatible.
+## struct RemoteToml / struct RemotesConfigToml
+The remotes.toml FILE layer, the sourcetrait split (config_toml_split). The file root
+is `RemotesConfigToml { remote: Vec<RemoteToml> }` - a `[[remote]]` ARRAY, one entry
+per peer, each `RemoteToml` a plain `deny_unknown_fields` struct (no flatten, no
+self-acceptor subtable: the retired leg-4a/4c `[remote.<alias>]` shape + the
+RemoteListen self-config are gone). The `<Foo>ConfigToml` suffix marks the FILE; a
+nested entry drops it to `<Foo>Toml`. The operator's field names are FIXED and never
+renamed for internal use (alias, listen, address, self_public_key_file,
+self_private_key_file, public_key_file); a mistyped field is a loud
+deny_unknown_fields error.
 
-## struct RemoteListen
-The acceptor's resolved self config: where it listens and the entity it presents.
-The self identity is EXPLICIT here (its own `self_public_key_file` / private key),
-extending 4a's "both self keys explicit, no derivation" ruling to the accept side
-(the_user's choice) rather than deriving the acceptor's leaf from the channel cert
-or a peer alias. Present only when `[remote].listen` is set.
+## struct RemoteConfig / struct RemotesConfig
+The model layer, field names MIRRORING the toml (self_public_key_file /
+self_private_key_file / peer_public_key_file - never cert / key / pin nouns in our own
+names). `RemotesConfig { by_alias: HashMap }` lives in `Config.remotes`.
 
-## fn merged_remote
-Returns BOTH the peer map and the optional listen config from the one `[remote]`
-table. The listen triple (`listen`, `self_public_key_file`, `self_private_key_file`)
-is all-or-nothing: an acceptor with an address but no identity, or an identity with
-nowhere to listen, is a half-configured listener, so any partial set is a load error
-rather than a silently-inert one. The address parses to a SocketAddr at load (like a
-peer's), so a bad `ip:port` fails at startup, not at bind.
+## impl TryFrom<RemoteToml> for RemoteConfig / impl TryFrom<RemotesConfigToml> for RemotesConfig
+The bridge is TryFrom, the house convention, retiring the bespoke `merged_remote`. The
+per-entry TryFrom resolves role from `listen` presence: a listener's `address` is a
+BARE source-IP filter (parses to IpAddr, no port - a host:port form is rejected), a
+connector's is the ip:port dial target (SocketAddr); the three key paths are required +
+expanded at load, so a bad address or a missing key fails at STARTUP, not at bind. The
+outer TryFrom rejects a duplicate alias. No embedded defaults (deployment-specific), so
+an absent file is `RemotesConfig::default()`. The top Config's `from_toml` stays a
+named constructor (NOT TryFrom) precisely because it carries fields the format layer
+lacks (id, namespace); this sub-config, which does not, uses TryFrom.
 
 ## fn fraction_field
 `pub(crate)` for one reason, and it is worth stating because the visibility looks

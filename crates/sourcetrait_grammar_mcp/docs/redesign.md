@@ -172,15 +172,95 @@ human reign as well.
 
 ## Nu Gaps
 
-The following are gaps in 'nugap' that have been observed doing review of this
+The following are gaps in 'nugap' that have been observed during review of this
 document and are provided to close them.
 
+### Attributes
+Observe that the following is fully idiomatic and completely valid.
 ```nu
-# this completion style is valid. however, it does not constrain.
-# it does, however, self-document
-export def test_complete [some: string@[shm tmp]]: nothing -> string {
-  $some
+export alias "attr myattr" = echo
+
+# This is a summary line.
+#
+# These are details.
+# @notattr no workie
+@category demo
+@search-terms 'demo::subcategory'
+@example 'shows shm' {
+  demo_attrs shm 6
+} --result { kind: shm, some: 6 }
+@example 'shows tmp' {
+  demo_attrs tmp 7
+} --result { kind: tmp, some: 7 }
+@myattr foo 8 'Something flies here' {k: 'keyed', v: 'valued'} [[field_a field_b]; [hey 1] [there 2]]
+export def demo_attrs [
+  kind: string@[shm tmp] # The kind
+  some: int # The some
+]: nothing -> record<kind: string, some: int> {
+  { kind: $kind, some: $some }
 }
 ```
 
+The `help` nu command is user facing and not appropriate for parsing.
+To programmaticaly parse a command:
+- `scope commands | where name == 'demo demo_attrs' | first`
+- `scope commands | where search-terms == 'demo::subcategory' | first`
+
+The result of either, passed via '| to nuon', for the above nu command is:
+```nuon
+{
+  name: "demo demo_attrs",
+  category: demo,
+  signatures: {
+    nothing: [
+      [parameter_name, parameter_type, syntax_shape,                      is_optional, short_flag, description, completion,                               parameter_default];
+      [null,           input,          nothing,                           false,       null,       null,        null,                                     null],
+      [kind,           positional,     string,                            false,       null,       "The kind",  [
+          shm,
+          tmp
+        ], null],
+      [some,           positional,     int,                               false,       null,       "The some",  null,                                     null],
+      [null,           output,         "record<kind: string, some: int>", false,       null,       null,        null,                                     null]
+    ]
+  },
+  description: "This is a summary line.",
+  examples: [
+    [description, example,            result];
+    ["shows shm", "demo_attrs shm 6", {
+        kind: shm,
+        some: 6
+      }],
+    ["shows tmp", "demo_attrs tmp 7", {
+        kind: tmp,
+        some: 7
+      }]
+  ],
+  attributes: [
+    [name,   value];
+    [myattr, [
+        foo,
+        8,
+        "Something flies here",
+        {
+          k: keyed,
+          v: valued
+        },
+        [
+          [field_a, field_b];
+          [hey,     1],
+          [there,   2]
+        ]
+      ]]
+  ],
+  type: custom,
+  is_sub: false,
+  is_const: false,
+  creates_scope: false,
+  extra_description: "These are details.
+@notattr no workie",
+  search_terms: "demo::subcategory",
+  complete: null,
+  decl_id: 732
+}
+```
   

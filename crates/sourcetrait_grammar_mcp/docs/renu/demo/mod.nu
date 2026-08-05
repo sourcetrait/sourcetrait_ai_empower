@@ -5,7 +5,7 @@ export alias "attr myattr" = echo
 # These are details.
 # @notattr no workie
 @category demo
-@search-terms 'demo::category'
+@search-terms 'demo::subcategory'
 @example 'tests shm' {
   demo_attrs shm 6
 } --result { kind: shm, some: 6 }

@@ -150,6 +150,9 @@ pub struct Packet {
     pub model: String,
     pub attached: Option<String>,
     pub event: String,
+    /// The full raw NUON wire line - what the client renders (and truncates) as a
+    /// notification, so a spilled-pointer packet can be asserted under the cap.
+    pub raw: String,
 }
 
 /// Parse one NUON wire line by driving the host's own `from nuon` - the host is
@@ -178,6 +181,7 @@ fn parse_line(host: &mut Host, line: &str) -> Option<Packet> {
         model,
         attached: (!attached.is_empty()).then_some(attached),
         event: field("event"),
+        raw: line.to_string(),
     })
 }
 

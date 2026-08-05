@@ -74,12 +74,14 @@ pub(crate) mod server {
 pub(crate) mod nuapi {
     pub(crate) mod grimm {
         pub(crate) mod channel {
+            pub(crate) mod remote {
+                pub(crate) mod send;
+            }
             pub(crate) mod send;
         }
         pub(crate) mod common;
         pub(crate) mod config;
         pub(crate) mod dbg;
-        pub(crate) mod remote_send;
     }
 }
 #[cfg(test)]
@@ -97,6 +99,9 @@ pub mod guts;
 pub(crate) use crate::{
     nuapi::grimm::{
         channel::{
+            remote::{
+                send::{GrimmRemoteChannelSend, GrimmRemoteChannelSendWith},
+            },
             send::GrimmChannelSend,
         },
         common::{
@@ -105,7 +110,6 @@ pub(crate) use crate::{
         },
         config::{GrimmGetConfig, GrimmGetConfigAll, GrimmPinConfig},
         dbg::GrimmDbg,
-        remote_send::{GrimmRemoteChannelSend, GrimmRemoteChannelSendWith},
     },
     cli::CliTool,
     config::{

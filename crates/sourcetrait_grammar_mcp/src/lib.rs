@@ -170,7 +170,10 @@ pub(crate) use crate::{
                 AcceptorToInitiator, BitcodeCodec, FileFrame, InitiatorToAcceptor, MsgFrame,
                 RemoteStream,
             },
-            link::{RemoteLinkHandle, find_link_send, open_remote_blocking, remote_links, safe_dest},
+            link::{
+                RemoteLinkHandle, bound_listeners, find_link_send, open_remote_blocking,
+                remote_links, safe_dest,
+            },
             verify::PublicKeyVerifier,
         },
         run::{eval_concurrency_cap, run_server},

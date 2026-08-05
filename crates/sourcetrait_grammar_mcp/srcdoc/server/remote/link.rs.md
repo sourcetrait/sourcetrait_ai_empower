@@ -41,6 +41,18 @@ consumer keys on it and branches on field presence (attached?, understood/14): m
 present iff the link established, error present iff it failed - absent when not, never null
 (the_user).
 
+## static BOUND_LISTENERS / fn unlisten
+The bound-but-unpaired listener registry (RemoteFirstBlood/RemoteChannelListeners),
+parallel to REMOTE_LINKS. open_listener registers the alias -> bind address the moment the
+bind succeeds - the clean registration point ConnectionWoes's synchronous bind created - so
+remote_channels can surface a listener that has bound but not yet paired, which was
+invisible before (remote_links holds only established links, so a bound listener read as
+empty, indistinguishable from down). On pairing the accept-serve task registers the
+established link THEN unlistens (briefly in both sets, never neither); on an accept failure
+it unlistens then emits Disconnected. unlisten is unconditional (no peer-nom guard like
+deregister_if_ours): the synchronous bind serializes opens on one address, so at most one
+accept-serve task owns an alias here.
+
 ## fn find_link_send / fn safe_dest
 find_link_send matches on the link's remote_mcp_nom (the id an agent sends to), holds
 the registry lock only for the lookup + the synchronous mpsc pushes. safe_dest is the

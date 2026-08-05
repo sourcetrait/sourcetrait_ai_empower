@@ -38,6 +38,19 @@ pub(crate) fn remote_links() -> Arc<std::sync::Mutex<HashMap<String, RemoteLinkE
     REMOTE_LINKS.clone()
 }
 
+/// Bound-but-unpaired listeners, keyed by alias with their bind address. A
+/// listener registers here once its bind succeeds (ConnectionWoes made bind
+/// synchronous) and leaves - into REMOTE_LINKS when a peer pairs, or dropped when
+/// the accept fails. remote_channels surfaces it as the `listening` set, distinct
+/// from the established `channels`.
+static BOUND_LISTENERS: LazyLock<Arc<std::sync::Mutex<HashMap<String, std::net::SocketAddr>>>> =
+    LazyLock::new(|| Arc::new(std::sync::Mutex::new(HashMap::new())));
+
+/// The shared bound-listener registry; remote_channels reads it for `listening`.
+pub(crate) fn bound_listeners() -> Arc<std::sync::Mutex<HashMap<String, std::net::SocketAddr>>> {
+    BOUND_LISTENERS.clone()
+}
+
 /// Find the open link to `mcp_nom` and enqueue a send. The lock is held only for
 /// the lookup + the synchronous mpsc pushes.
 pub(crate) fn find_link_send(
@@ -134,24 +147,44 @@ async fn open_listener(
         .await
         .map_err(|e| format!("bind {bind}: {e}"))?;
     let alias = entry.alias.clone();
+    bound_listeners()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(alias.clone(), bind);
     tk::spawn(async move {
         match accept_and_pair(&self_mcp_nom, listener, acceptor, allow).await {
             Ok((handle, msg_join, file_join)) => {
                 let peer_nom = handle.remote_mcp_nom.clone();
+                // Register the established link before dropping the bound-listener
+                // entry, so the pairing is briefly in both sets, never in neither.
                 remote_links()
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert(alias.clone(), RemoteLinkEntry { handle, addr: bind });
+                unlisten(&alias);
                 emit_lifecycle(MODEL_CONNECTED, &alias, &peer_nom);
                 let _ = msg_join.await;
                 let _ = file_join.await;
                 deregister_if_ours(&alias, &peer_nom);
                 emit_lifecycle(MODEL_DISCONNECTED, &alias, &peer_nom);
             }
-            Err(e) => emit_open_failed(&alias, "listen", &e.to_string()),
+            Err(e) => {
+                unlisten(&alias);
+                emit_open_failed(&alias, "listen", &e.to_string());
+            }
         }
     });
     Ok(())
+}
+
+/// Drop the bound-listener entry for `alias` - it paired or its accept failed.
+/// Unconditional (unlike deregister_if_ours): the synchronous bind serializes
+/// opens on one address, so at most one accept-serve task owns an alias here.
+fn unlisten(alias: &str) {
+    bound_listeners()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(alias);
 }
 
 /// Drop the link registered under `alias` only if it is still the one this task

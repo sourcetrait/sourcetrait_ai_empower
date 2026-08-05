@@ -55,7 +55,7 @@ Output (partial):
 ```
 
 The Output examples in this skill show the raw WIRE shape. An MCP client
-may present `structuredContent` UNWRAPPED - Claude Code renders the
+may present `structuredContent` UNWRAPPED - some clients render the
 envelope fields (`result`, `nonce`, or `error`) as the top
 level of the tool result - so when parsing a result programmatically,
 read the envelope fields where your client presents them, not a
@@ -100,72 +100,19 @@ the contract even where nu only partially enforces it.
 shm is the out-of-band channel for PASSING bulky DATA between your
 Read/Write tools and a run() / interact() / call() body - in EITHER
 direction - when the payload is too big for the structured tool channel
-(args + the `result` envelope, which has a CLIENT-side size cap). That is
-its ONLY purpose: moving data the channel can't carry between the agent
-and the MCP.
+(args plus the `result` envelope). That is its ONLY purpose: moving data
+the channel can't carry between the agent and the MCP.
 
 shm is NOT a logging mechanism. A body's external-command stdout/stderr is
 already captured per-call by the MCP at its cache log dir (the server
 `instructions` advertise the path) - to read a command's full output,
 fetch that per-nonce log; rather than `save` command output to shm.
 
-The oversize tell: a result too big comes back as
-`Error: result (N characters) exceeds...`, naming a file the payload was
-spilled to. Read that message carefully, because it is the CLIENT truncating,
-not a Grammar MCP failure, and it does not behave like one:
-
-- Your call SUCCEEDED. The body ran, the eval returned a normal envelope, and
-  any side effects it had are already done.
-- It is NOT an error envelope. There is no `kind`, no `errors[]`, no `nonce` -
-  so the "fetch the per-nonce log" recovery does NOT apply here, and there is no
-  diagnostic to read. Your nonce is inside the spilled payload, not the message.
-- The COMPLETE result is already on disk, at the path the message names. That path
-  is the CLIENT's OWN tool-results cache, NOT `$env.XDGX_SHM_DIR` - shm below is a
-  mechanism you drive, this spill is one the client chose. Take the path verbatim
-  from the message; never construct it, and do not expect it under the shm root.
-
-So the zero-write recovery is to READ that spill file - the client already wrote
-it for you. Two things the message does not tell you, and you need both:
-
-- The file holds the WHOLE envelope (`{result, nonce}`), not the bare result.
-  Your nonce is in THERE, not in the message.
-- It is a `.txt`, so a bare `open` hands you a STRING (see "open auto-parses
-  known extensions" below). Force the parse:
-
-```nu
-# args_schema { spill: string }  result_schema { n: int }
-let doc = (open --raw $args.spill | decode | from json)
-{ n: ($doc.result.paths | length) }
-```
-
-Project just what you need from that second body. Do not render the whole
-payload back into context - that is what the cap was stopping in the first place.
-
-Better: never spill. Return a COUNT or a summary, not the payload - a body
-ending `{ n: ($paths | length) }` cannot blow the cap. The cap is on TOKENS, so
-treat any figure as a rule of thumb, not a threshold: as an order of magnitude, a
-few hundred paths is comfortable and a few thousand is not (a recursive listing
-of ~1,200 paths runs ~72 KB and spills).
-
-PAGING MUST BE DESIGNED IN BEFORE THE FIRST CALL. `rerun()` cannot rescue a call
-that already spilled: it re-evaluates the SAME cached body, and that body is
-FROZEN. If it did not already take `skip` / `take`, rerun re-runs it unchanged
-and spills again - and it fails SILENTLY, because records are open, so your extra
-args are accepted and then ignored. (The `nonce` you would need is not in the
-oversize message either; it is in the spill file.) So if a big result is possible,
-write the body to page from the start:
-
-```nu
-# args_schema { root: string, skip: int, take: int }
-# result_schema { total: int, page: [string] }
-let all = (glob ($args.root | path join "**" "*"))
-{ total: ($all | length), page: ($all | skip $args.skip | take $args.take) }
-```
-
-then walk it with `rerun(<nonce>, {root: ..., skip: 100, take: 100})`, which
-re-uses the cached body with fresh args and writes nothing.
-
-Reach for shm when you must move the WHOLE payload AND you may write.
+Prefer a summary to the payload. A body that returns a count or a projection -
+`{ n: ($paths | length) }` rather than the whole list - keeps the result small,
+and a result carried over the structured channel should be genuinely small. Reach
+for shm only when you must move the WHOLE bulk between the agent and a body, and
+only when you may write.
 
 The MCP host and your Read/Write tools share one
 filesystem, so a file one writes another reads. The tmpfs IPC filesystem
@@ -315,17 +262,15 @@ here is a tiny summary"; you fetch the real data yourself. Put anything bulky in
 `attached`, which the host writes to the inbox and NAMES on the wire - or write a nuon
 file, or use `grimm dbg` when it is only a trace.
 
-Two caps bound an event, at different sizes. The wss frame carries up to 1 MiB (1048575
-bytes), but the harness renders a task-notification back to you truncated at about 500
-characters of the whole packet line - so an event between the two transits and fires
-Sent yet reaches you cut off. The host now auto-spills: an event whose rendered line
-would exceed the notification cap is written to a file and replaced on the wire by a
-compact pointer `{spilled_event_path, event_bytes}`, so the content survives. When you
-receive an event carrying `spilled_event_path`, read the full event from
-`<inbox>/<spilled_event_path>` (the inbox `channel_open()` returned). Sent still means
-the transport wrote the event, never that you rendered it whole - the spill is what makes
-the two agree again. Keep events genuinely small and the spill never fires; do not lean
-on it for routine bulk, which is what `attached` is for.
+Keep an event small - it is a state summary, not a payload. A large event auto-spills:
+when a `channel_send` / `remote_channel_send*` event exceeds the size the host delivers
+inline, the host writes the full event to a file and puts a compact pointer
+`{spilled_event_path, event_bytes}` on the wire in its place, so the content always
+survives. When you receive an event carrying `spilled_event_path`, read the full event
+from `<inbox>/<spilled_event_path>` (the inbox `channel_open()` returned). It is
+automatic and applies to every send path; do not lean on it for routine bulk, which is
+what `attached` is for. Sent means the send's bytes were written, not that the whole
+event arrived inline - the spill is what keeps a large event from being lost.
 
 THE HANDSHAKE, in order - it does not work out of order:
 
@@ -341,8 +286,8 @@ THE HANDSHAKE, in order - it does not work out of order:
 5. `channel_close()` when done.
 
 `status: existing` IS THE NORMAL CASE, NOT A FAULT. The host outlives your context - it
-keeps running across a `/clear` or a fresh conversation, and so does a `persistent`
-Monitor - so a channel you have no memory of opening is usually still open and still
+keeps running across a reset of your context, and so does a persistent Monitor - so a
+channel you have no memory of opening is usually still open and still
 claimed. On `existing` the host re-sends `mcp/channel/Open` to that peer, and THE CALL
 RETURNING IS THE LIVENESS TEST: a peer that has actually gone fails that send and
 surfaces `channel::peer_gone` instead. So a successful `existing` means you are already
@@ -2052,20 +1997,3 @@ otherwise look exactly like an empty purview.
 Returns `{revealed, current}`. `revealed` is what came INTO view, measured over
 what is VISIBLE rather than over the value strings - so a purview naming a rig
 already in view under a different id reveals nothing.
-
-## Bootstrap: run info() first
-
-`info()` returns the version-matched toolset for the current session - server +
-nu versions, loaded plugins, and the callable surface your PURVIEW puts in view,
-as one compact signature block. The rigs change between sessions;
-reading them live is how a fresh bootstrap (or a subagent) learns exactly which
-`call()` targets exist now - then `inspect()` for a namepath's details and its
-source location - rather than trusting a static index that drifts.
-
-The `mcp__<key>__*` tool-name prefix comes from the CLIENT's server-entry
-key (e.g. `.mcp.json`), not from the server: the same binary surfaces as
-`mcp__grammar__*` or `mcp__grammar_test__*` depending on which entry
-launched it.
-
-Call `info()` on every session - through whatever prefix your own client
-assigned it, per the paragraph above - so you are aware of the full toolset.

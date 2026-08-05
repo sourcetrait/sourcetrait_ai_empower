@@ -71,8 +71,14 @@ in general.
 # Creates a unique temporary file
 #
 # Guarantees unique filename: `random uuid | grimoire nom | append '.' $ext | str join`
-@example 'grimm scratch shm r#"This is data.\nThis is more data."' --returns /dev/shm/box/ai/myai/j4azJxladj/mNa35HuiozO.md
-@example 'grimm scratch tmp md' --returns /home/box/tmp/ai/myai/j4azJxladj/mNa35HuiozO.md
+@category grimm
+@search-terms 'grimm::tool'
+@example 'write a shm file' {
+    grimm scratch shm r#"This is data.\nThis is more data."
+} --returns '/dev/shm/box/ai/myai/j4azJxladj/mNa35HuiozO.md'
+@example 'touch a tmp file' {
+    grimm scratch tmp
+} --returns '/home/box/tmp/ai/myai/j4azJxladj/mNa35HuiozO.md'
 def 'grimm scratch' [
   kind: string@[shm tmp] # Directory to save to; EQUIP_SHM_DIR | EQUIP_TMP_DIR
   ext: string # File extension, not including the '.'
@@ -123,34 +129,46 @@ by simply only scoping it there.
   - `grimm control rig uninstall`
   - `grimm control rig commit`
 
-  ## SkillFiction
+### Nu Attributes for grimm
+- @category Always 'grimm'
+- @search-terms Always 'grimm::category::category::category'
+- @example Always formatted as seen above. Results are not necessarily testable.
 
-  The 'grammar' skill will encompass:
-  - Grammar MCP
-  - grimm plugin signatures
-  - grimoire plugin signatures
+Grimm documentation can then be iterated through either by category or search-term.
 
-  It will no longer need to explain how to use Nu correctly; the 'nugap' skill
-  exists for that, which is a pre-requisite for the 'grammar' skill.
+Search terms are consts in code.
+- grim::utility
+- grim::tool
+- grim::control
 
-  The new grammar skill template will be human reign and will use partial
-  liquid templating heavily. At the very end there will be a section a partial
-  for ai reign, that will allow new features that have been generated to get
-  a first pass at documentation before it is rewritten into human reign at
-  a later date. In a perfect world, there would no an empty 'ai reign' partial
-  as the entire skill would have been merged by the user.
+## SkillFiction
 
-  For plugin signatures, we will use nu's own help system to derive the data
-  to be used in a nucmd.liquid template. Thus, idiomatically documenting
-  signatures will be extremely important, as they will be directly rendered
-  into the skill document's final product.
+The 'grammar' skill will encompass:
+- Grammar MCP
+- grimm plugin signatures
+- grimoire plugin signatures
 
-  Documentation of plugin command signatures will be slowly taken by human
-  reign (marked in the docblock).
+It will no longer need to explain how to use Nu correctly; the 'nugap' skill
+exists for that, which is a pre-requisite for the 'grammar' skill.
 
-  Likewise, we will send tool call signatures to templates as well, as the
-  `nu --mcp` crate does (an .md for each call). Those will slowly be taken
-  human reign as well.
+The new grammar skill template will be human reign and will use partial
+liquid templating heavily. At the very end there will be a section a partial
+for ai reign, that will allow new features that have been generated to get
+a first pass at documentation before it is rewritten into human reign at
+a later date. In a perfect world, there would no an empty 'ai reign' partial
+as the entire skill would have been merged by the user.
+
+For plugin signatures, we will use nu's own help system to derive the data
+to be used in a nucmd.liquid template. Thus, idiomatically documenting
+signatures will be extremely important, as they will be directly rendered
+into the skill document's final product.
+
+Documentation of plugin command signatures will be slowly taken by human
+reign (marked in the docblock).
+
+Likewise, we will send tool call signatures to templates as well, as the
+`nu --mcp` crate does (an .md for each call). Those will slowly be taken
+human reign as well.
 
 ## Nu Gaps
 

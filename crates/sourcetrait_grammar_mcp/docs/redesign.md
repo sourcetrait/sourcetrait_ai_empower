@@ -121,9 +121,9 @@ by simply only scoping it there.
 - `grimm control ...` (interact only)
   - `grimm control channel open`
   - `grimm control channel close`
-  - `grimm control channel remote open`
-  - `grimm control channel remote close`
-  - `grimm control channel remote list`
+  - `grimm control remote channel open`
+  - `grimm control remote channel close`
+  - `grimm control remote channel list`
   - `grimm control purview ...`
   - `grimm control rig ...`
   - `grimm control rig install`

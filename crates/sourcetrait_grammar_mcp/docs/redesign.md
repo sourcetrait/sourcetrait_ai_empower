@@ -10,9 +10,9 @@ The MCP tools will reduce to:
 
 ## NuTool (DefExecute and DefInteract)
 The `execute` and `interact` tools will change form dramatically and will
-be combined into a single tool: `def`.
+be combined into a single tool: `nu`.
 
-The call will pass the entire `def` signature and how we actually perform
+The call will pass the entire `nu` signature and how we actually perform
 the call (as an execute (run) or as an interact) will be determined by
 reading the AST first.
 
@@ -29,7 +29,7 @@ it.
 As before, we will quietly allow `any` (undocumented by the skill) for very
 specific things, but never for the top-level record/table type.
 
-The signature and body will be passed as a single `def` paramter,
+The signature and body will be passed as a single `nu` paramter,
 reflecting the tool name. Nothing else is allowed at the top-level.
 
 ```nu

@@ -17,25 +17,39 @@ impl GrimmChannelSend {
 }
 
 // REIGN HUMAN
-pub(crate) const GRIMM_CHANNEL_SEND: GrimmSignatureDef = GrimmSignatureDef {
-    name: "grimm channel send",
-    description: "Emits a message to the Channel. Returns a message id on success.",
-    category: GrimmCategory::Tool,
-};
+impl GrimmChannelSend {
+    const DEF: GrimmSignatureDef = GrimmSignatureDef {
+        name: "grimm channel send",
+        description: "Emits a message to the Channel. Returns a message id on success.",
+        category: GrimmCategory::Tool,
+    };
+    const DEF_MODEL: GrimmParameterDef = GrimmParameterDef {
+        name: "model",
+        description: "Typedef namepath of the event data",
+    };
+    const DEF_EVENT: GrimmParameterDef = GrimmParameterDef {
+        name: "event",
+        description: "Notification data"
+    };
+    const DEF_ATTACHED: GrimmParameterDef = GrimmParameterDef {
+        name: "attached",
+        description: "Detailed data. Stored in the Channel inbox for retrieval"
+    };
+}
 
 impl nu::Command for GrimmChannelSend {
-    fn name(&self) -> &str { GRIMM_CHANNEL_SEND.name }
+    fn name(&self) -> &str { Self::DEF.name }
 
     fn signature(&self) -> nu::Signature {
-        nu::Signature::build(GRIMM_CHANNEL_SEND.name)
-            .required("model", nu::SyntaxShape::String, "the shape the event carries")
-            .required("event", data_shape(), "the state summary to notify")
-            .optional("attached", data_shape(), "bulk to leave in the inbox")
+        nu::Signature::build(Self::DEF.name)
+            .grimm(&Self::DEF)
+            .grimm_required(&Self::DEF_MODEL, nu::SyntaxShape::String)
+            .grimm_required(&Self::DEF_EVENT, data_shape())
+            .grimm_optional(&Self::DEF_ATTACHED, data_shape())
             .input_output_types(vec![(nu::Type::Nothing, nu::Type::String)])
-            .grimm(GRIMM_CHANNEL_SEND) // REIGN HUMAN
     }
 
-    fn description(&self) -> &str { GRIMM_CHANNEL_SEND.description }
+    fn description(&self) -> &str { Self::DEF.description }
 
     fn run(
         &self,

@@ -106,6 +106,7 @@ pub(crate) use crate::{
         common::{
             NuapiCall, data_shape, register_nuapi, require_record_or_table,
             GrimmCategory, GrimmNuSignature, GrimmSignatureDef,
+            GrimmParameterDef,
         },
         config::{GrimmGetConfig, GrimmGetConfigAll, GrimmPinConfig},
         dbg::GrimmDbg,

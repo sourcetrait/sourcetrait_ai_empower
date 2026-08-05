@@ -35,16 +35,33 @@ pub(crate) struct GrimmSignatureDef {
 }
 
 // REIGN HUMAN
-pub(crate) trait GrimmNuSignature {
-    fn grimm(self, sigdef: GrimmSignatureDef) -> Self;
+pub(crate) struct GrimmParameterDef {
+    pub(crate) name: &'static str,
+    pub(crate) description: &'static str,
 }
 
+// REIGN HUMAN
+pub(crate) trait GrimmNuSignature {
+    fn grimm(self, sigdef: &'static GrimmSignatureDef) -> Self;
+    fn grimm_required(self, paramdef: &'static GrimmParameterDef, shape: nu::SyntaxShape) -> Self;
+    fn grimm_optional(self, paramdef: &'static GrimmParameterDef, shape: nu::SyntaxShape) -> Self;
+}
+
+// REIGN HUMAN
 impl GrimmNuSignature for nu::Signature {
-    fn grimm(self, sigdef: GrimmSignatureDef) -> Self {
+    fn grimm(self, sigdef: &'static GrimmSignatureDef) -> Self {
         self
             .description(sigdef.description)
             .category(nu::Category::Custom(GrimmCategory::root().into()))
             .search_terms(vec![sigdef.category.str().into()])
+    }
+    
+    fn grimm_required(self, paramdef: &'static GrimmParameterDef, shape: nu::SyntaxShape) -> Self {
+        self.required(paramdef.name, shape, paramdef.description)
+    }
+    
+    fn grimm_optional(self, paramdef: &'static GrimmParameterDef, shape: nu::SyntaxShape) -> Self {
+        self.optional(paramdef.name, shape, paramdef.description)
     }
 }
 

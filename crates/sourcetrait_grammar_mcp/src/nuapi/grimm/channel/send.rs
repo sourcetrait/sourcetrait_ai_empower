@@ -16,23 +16,26 @@ impl GrimmChannelSend {
     }
 }
 
+// REIGN HUMAN
+pub(crate) const GRIMM_CHANNEL_SEND: GrimmSignatureDef = GrimmSignatureDef {
+    name: "grimm channel send",
+    description: "Emits a message to the Channel. Returns a message id on success.",
+    category: GrimmCategory::Tool,
+};
+
 impl nu::Command for GrimmChannelSend {
-    fn name(&self) -> &str {
-        "grimm channel_send"
-    }
+    fn name(&self) -> &str { GRIMM_CHANNEL_SEND.name }
 
     fn signature(&self) -> nu::Signature {
-        nu::Signature::build("grimm channel_send")
+        nu::Signature::build(GRIMM_CHANNEL_SEND.name)
             .required("model", nu::SyntaxShape::String, "the shape the event carries")
             .required("event", data_shape(), "the state summary to notify")
             .optional("attached", data_shape(), "bulk to leave in the inbox")
             .input_output_types(vec![(nu::Type::Nothing, nu::Type::String)])
-            .category(nu::Category::Custom("grimm".to_string()))
+            .grimm(GRIMM_CHANNEL_SEND) // REIGN HUMAN
     }
 
-    fn description(&self) -> &str {
-        "Notify the agent that state changed; returns the message id."
-    }
+    fn description(&self) -> &str { GRIMM_CHANNEL_SEND.description }
 
     fn run(
         &self,

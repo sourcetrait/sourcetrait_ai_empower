@@ -3,6 +3,51 @@ use crate::*;
 /// The file the embedded API appends to, inside this call's nonce log dir.
 pub(crate) const DEBUG_FILE: &str = "debug.nuonl";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GrimmCategory {
+    Utility,
+    Tool,
+    Control,
+}
+
+impl GrimmCategory {
+    const ROOT: &'static str = "grimm";
+    const UTILITY: &'static str = "grimm::utility";
+    const TOOL: &'static str = "grimm::tool";
+    const CONTROL: &'static str = "grimm::control";
+
+    pub(crate) const fn root() -> &'static str { Self::ROOT }
+    
+    pub(crate) const fn str(&self) -> &'static str {
+        match self {
+            Self::Utility => Self::UTILITY,
+            Self::Tool => Self::TOOL,
+            Self::Control => Self::CONTROL,
+        }
+    }
+}
+
+// REIGN HUMAN
+pub(crate) struct GrimmSignatureDef {
+    pub(crate) name: &'static str,
+    pub(crate) description: &'static str,
+    pub(crate) category: GrimmCategory,
+}
+
+// REIGN HUMAN
+pub(crate) trait GrimmNuSignature {
+    fn grimm(self, sigdef: GrimmSignatureDef) -> Self;
+}
+
+impl GrimmNuSignature for nu::Signature {
+    fn grimm(self, sigdef: GrimmSignatureDef) -> Self {
+        self
+            .description(sigdef.description)
+            .category(nu::Category::Custom(GrimmCategory::root().into()))
+            .search_terms(vec![sigdef.category.str().into()])
+    }
+}
+
 /// Per-eval state every `grimm *` decl carries: where this call's artifacts go.
 #[derive(Clone)]
 pub(crate) struct NuapiCall {
@@ -71,6 +116,16 @@ pub(crate) fn data_shape() -> nu::SyntaxShape {
     nu::SyntaxShape::OneOf(vec![
         nu::SyntaxShape::Record(nu::CollectionColumns::from(vec![])),
         nu::SyntaxShape::Table(nu::CollectionColumns::from(vec![])),
+    ])
+}
+
+/// The nullable `data` positional shared by the `grimm *` decls: record or table.
+#[allow(unused)]
+pub(crate) fn optional_data_shape() -> nu::SyntaxShape {
+    nu::SyntaxShape::OneOf(vec![
+        nu::SyntaxShape::Record(nu::CollectionColumns::from(vec![])),
+        nu::SyntaxShape::Table(nu::CollectionColumns::from(vec![])),
+        nu::SyntaxShape::Nothing,
     ])
 }
 

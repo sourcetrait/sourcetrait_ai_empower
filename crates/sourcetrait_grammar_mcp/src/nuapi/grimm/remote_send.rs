@@ -9,23 +9,26 @@ pub(crate) struct GrimmRemoteChannelSend;
 #[derive(Clone)]
 pub(crate) struct GrimmRemoteChannelSendWith;
 
+// REIGN HUMAN
+pub(crate) const GRIMM_CHANNEL_REMOTE_SEND: GrimmSignatureDef = GrimmSignatureDef {
+    name: "grimm channel remote send",
+    description: "Emits a message to a remote Channel. Returns a message id on success.",
+    category: GrimmCategory::Tool,
+};
+
 impl nu::Command for GrimmRemoteChannelSend {
-    fn name(&self) -> &str {
-        "grimm remote_channel_send"
-    }
+    fn name(&self) -> &str { GRIMM_CHANNEL_REMOTE_SEND.name }
 
     fn signature(&self) -> nu::Signature {
-        nu::Signature::build("grimm remote_channel_send")
+        nu::Signature::build(GRIMM_CHANNEL_REMOTE_SEND.name)
             .required("mcp_nom", nu::SyntaxShape::String, "the linked peer host's McpNom")
             .required("model", nu::SyntaxShape::String, "the shape the event carries")
             .required("event", data_shape(), "the state summary to deliver")
             .input_output_types(vec![(nu::Type::Nothing, nu::Type::String)])
-            .category(nu::Category::Custom("grimm".to_string()))
+            .grimm(GRIMM_CHANNEL_REMOTE_SEND) // REIGN HUMAN
     }
 
-    fn description(&self) -> &str {
-        "Deliver a message to a linked remote host's agent; returns the message id."
-    }
+    fn description(&self) -> &str { GRIMM_CHANNEL_REMOTE_SEND.description }
 
     fn run(
         &self,

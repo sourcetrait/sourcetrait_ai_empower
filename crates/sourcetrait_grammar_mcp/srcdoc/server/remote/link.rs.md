@@ -8,23 +8,38 @@ connections, not app-mux; understood/17). Shape from the raw_tls pattern +
 agent's Channel is verified; NO run_server auto-listener (the retired leg-4c
 config-driven acceptor + its pairing coordinator + union_server_config are gone).
 
-## fn open_remote
-The lifecycle OWNER: spawns one task and returns at once, so remote_channel_open is
-non-blocking. The task establishes (connect_link | listen_link), registers in
-remote_links by alias, emits mcp/remote/Connected {remote, mcp_nom}, awaits BOTH driver
-joins, deregisters (only if still the registered link - a re-open may have replaced
-it), and emits Disconnected {remote, mcp_nom}. So a close + the Disconnected notice
-share this one path rather than each reporting. An establish failure emits the SAME
-Disconnected model overloaded - {remote, error} with mcp_nom ABSENT (no peer nom yet) -
-and returns; emit, not eprintln (the_user), so the agent sees every open outcome on its
-Channel.
+## fn open_remote_blocking (open_connector / open_listener)
+Blocks on the link's immediate networking result so remote_channel_open returns
+synchronously; only a listener's peer-wait stays async. Void-then-async was the wrong
+shape (RemoteFirstBlood/ConnectionWoes): binding is immediate, so a bind clash from a
+redundant listener open surfaced late as a confusing async Disconnected{error} instead
+of a synchronous "address already in use" (the queen's first-blood double-open).
 
-`remote` (the opened alias) is ALWAYS present, so a consumer that opened by alias keys
-Connected and Disconnected on it directly (the earlier mcp_nom-only shape forced a
-correlation through remote_channels). The overloaded Disconnected signals its case by
-field PRESENCE, matching the packet convention (attached?, understood/14): mcp_nom
-present iff the link established, error present iff it failed - absent when not, never
-null (the_user).
+- Connector (open_connector): await connect_link under CONNECT_TIMEOUT (20s). On success
+  register the link and spawn only a teardown watcher (await both joins -> deregister ->
+  Disconnected); there is no Connected for the open attempt - the synchronous success is
+  the notice. A connect error/timeout returns Err, surfaced as remote::open_failed. A
+  redundant connector open fails its connect synchronously, or is caught by the already-open
+  guard once the first link registers.
+- Listener (open_listener): await bind_listener (bind + build the acceptor, the sync half)
+  and return the bind result synchronously (bound, or the bind error as remote::open_failed).
+  Then spawn the async accept-serve: accept_and_pair one peer's two connections, register the
+  link, emit Connected {remote, mcp_nom}, await both joins, deregister, emit Disconnected. An
+  accept failure after a good bind emits Disconnected {remote, error} (post-bind, so async).
+
+The only lifecycle events removed are Connected/Disconnected for a connector's OPEN ATTEMPT
+(now the synchronous return). Disconnected is retained for any established-link teardown,
+both roles (the_user): once told the link is up - Connected for a listener's peer, or the
+sync open-success for a connector - a later drop still emits Disconnected so a long-running
+consumer learns the live link died. deregister_if_ours drops the registry entry only if it
+is still this task's link (a re-open may have replaced it under the same alias).
+emit_open_failed (Disconnected {remote, error}, mcp_nom absent) now serves only the
+listener's post-bind accept failure; the connector and bind failures return synchronously.
+
+`remote` (the opened alias) is always present on a Connected/Disconnected packet, so a
+consumer keys on it and branches on field presence (attached?, understood/14): mcp_nom
+present iff the link established, error present iff it failed - absent when not, never null
+(the_user).
 
 ## fn find_link_send / fn safe_dest
 find_link_send matches on the link's remote_mcp_nom (the id an agent sends to), holds

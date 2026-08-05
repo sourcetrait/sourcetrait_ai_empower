@@ -68,54 +68,106 @@ pub(crate) fn safe_dest(dest: &str) -> bool {
             .all(|c| matches!(c, std::path::Component::Normal(_)))
 }
 
-/// Open the link for a configured entry: spawn its lifecycle task and return at
-/// once. remote_channel_open drives this; the Connected notification lands async.
-pub(crate) fn open_remote(
+/// The connector's blocking-connect timeout: the dial must land within this or
+/// the open returns a synchronous timeout error.
+const CONNECT_TIMEOUT: tk::TkDuration = tk::TkDuration::from_secs(20);
+
+/// Open a configured link, BLOCKING on its immediate networking result - bind
+/// for a listener, connect for a connector - so remote_channel_open returns
+/// synchronously. Only the listener's peer-wait stays asynchronous.
+pub(crate) async fn open_remote_blocking(
     self_mcp_nom: String,
     entry: RemoteConfig,
-) {
-    let addr_hint = match &entry.role {
-        RemoteRole::Connector { addr } => *addr,
-        RemoteRole::Listener { bind, .. } => *bind,
-    };
+) -> Result<(), String> {
+    match entry.role.clone() {
+        RemoteRole::Connector { addr } => open_connector(self_mcp_nom, entry, addr).await,
+        RemoteRole::Listener { bind, allow } => {
+            open_listener(self_mcp_nom, entry, bind, allow).await
+        }
+    }
+}
+
+/// Connector: block on the connect (20s), register the established link, then
+/// watch for its teardown asynchronously. No Connected for the open attempt (the
+/// synchronous success is the notice); Disconnected still fires on a later drop.
+async fn open_connector(
+    self_mcp_nom: String,
+    entry: RemoteConfig,
+    addr: std::net::SocketAddr,
+) -> Result<(), String> {
+    let (handle, msg_join, file_join) =
+        match tk::timeout(CONNECT_TIMEOUT, connect_link(&self_mcp_nom, &entry, addr)).await {
+            Ok(Ok(drivers)) => drivers,
+            Ok(Err(e)) => return Err(format!("connect {addr}: {e}")),
+            Err(_) => {
+                return Err(format!(
+                    "connect {addr} timed out after {}s",
+                    CONNECT_TIMEOUT.as_secs(),
+                ));
+            }
+        };
+    let peer_nom = handle.remote_mcp_nom.clone();
+    let alias = entry.alias.clone();
+    remote_links()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(alias.clone(), RemoteLinkEntry { handle, addr });
     tk::spawn(async move {
-        let (established, fail_kind) = match entry.role.clone() {
-            RemoteRole::Connector { addr } => {
-                (connect_link(&self_mcp_nom, &entry, addr).await, "connect")
-            }
-            RemoteRole::Listener { bind, allow } => {
-                (listen_link(&self_mcp_nom, &entry, bind, allow).await, "listen")
-            }
-        };
-        let (handle, msg_join, file_join) = match established {
-            Ok(v) => v,
-            Err(e) => {
-                emit_open_failed(&entry.alias, fail_kind, &e.to_string());
-                return;
-            }
-        };
-        let peer_nom = handle.remote_mcp_nom.clone();
-        remote_links()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(entry.alias.clone(), RemoteLinkEntry { handle, addr: addr_hint });
-        emit_lifecycle(MODEL_CONNECTED, &entry.alias, &peer_nom);
         let _ = msg_join.await;
         let _ = file_join.await;
-        // Deregister only if this link is still the one registered - a re-open
-        // may have replaced it under the same alias.
-        {
-            let links_arc = remote_links();
-            let mut links = links_arc.lock().unwrap_or_else(|e| e.into_inner());
-            if links
-                .get(&entry.alias)
-                .is_some_and(|e| e.handle.remote_mcp_nom == peer_nom)
-            {
-                links.remove(&entry.alias);
-            }
-        }
-        emit_lifecycle(MODEL_DISCONNECTED, &entry.alias, &peer_nom);
+        deregister_if_ours(&alias, &peer_nom);
+        emit_lifecycle(MODEL_DISCONNECTED, &alias, &peer_nom);
     });
+    Ok(())
+}
+
+/// Listener: block on the BIND, then accept + serve asynchronously. The bind
+/// result returns synchronously (bound, or the bind error); Connected fires when
+/// a peer pairs, Disconnected when the paired link later drops.
+async fn open_listener(
+    self_mcp_nom: String,
+    entry: RemoteConfig,
+    bind: std::net::SocketAddr,
+    allow: Option<std::net::IpAddr>,
+) -> Result<(), String> {
+    let (listener, acceptor) = bind_listener(&entry, bind)
+        .await
+        .map_err(|e| format!("bind {bind}: {e}"))?;
+    let alias = entry.alias.clone();
+    tk::spawn(async move {
+        match accept_and_pair(&self_mcp_nom, listener, acceptor, allow).await {
+            Ok((handle, msg_join, file_join)) => {
+                let peer_nom = handle.remote_mcp_nom.clone();
+                remote_links()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(alias.clone(), RemoteLinkEntry { handle, addr: bind });
+                emit_lifecycle(MODEL_CONNECTED, &alias, &peer_nom);
+                let _ = msg_join.await;
+                let _ = file_join.await;
+                deregister_if_ours(&alias, &peer_nom);
+                emit_lifecycle(MODEL_DISCONNECTED, &alias, &peer_nom);
+            }
+            Err(e) => emit_open_failed(&alias, "listen", &e.to_string()),
+        }
+    });
+    Ok(())
+}
+
+/// Drop the link registered under `alias` only if it is still the one this task
+/// established - a re-open may have replaced it under the same alias.
+fn deregister_if_ours(
+    alias: &str,
+    peer_nom: &str,
+) {
+    let links_arc = remote_links();
+    let mut links = links_arc.lock().unwrap_or_else(|e| e.into_inner());
+    if links
+        .get(alias)
+        .is_some_and(|e| e.handle.remote_mcp_nom == peer_nom)
+    {
+        links.remove(alias);
+    }
 }
 
 /// Emit a host-origin lifecycle packet {remote, mcp_nom} onto the local Channel.
@@ -295,15 +347,12 @@ async fn connect_link(
     ))
 }
 
-/// Listen as the acceptor: bind, take one peer's two connections
-/// (known-public-key-verified, optionally source-IP-filtered), spawn its drivers.
-/// Binding stops once paired.
-async fn listen_link(
-    self_mcp_nom: &str,
+/// Bind the listener socket + build its known-public-key TLS acceptor: the
+/// synchronous half of a listener open, so a bind failure surfaces at the tool.
+async fn bind_listener(
     entry: &RemoteConfig,
     bind: std::net::SocketAddr,
-    allow: Option<std::net::IpAddr>,
-) -> io::Result<LinkDrivers> {
+) -> io::Result<(tk::TcpListener, tls::TlsAcceptor)> {
     let tls_config = server_config(
         &entry.self_public_key_file,
         &entry.self_private_key_file,
@@ -311,6 +360,18 @@ async fn listen_link(
     )?;
     let acceptor = tls::TlsAcceptor::from(tls_config);
     let listener = tk::TcpListener::bind(bind).await?;
+    Ok((listener, acceptor))
+}
+
+/// Accept one peer's two connections (known-public-key-verified, optionally
+/// source-IP-filtered) on an already-bound listener + spawn its drivers. The
+/// asynchronous half of a listener open; the bind already succeeded.
+async fn accept_and_pair(
+    self_mcp_nom: &str,
+    listener: tk::TcpListener,
+    acceptor: tls::TlsAcceptor,
+    allow: Option<std::net::IpAddr>,
+) -> io::Result<LinkDrivers> {
     let mut message: Option<(String, AcceptFramedRead, AcceptFramedWrite)> = None;
     let mut file: Option<(String, AcceptFramedRead, AcceptFramedWrite)> = None;
     while message.is_none() || file.is_none() {
@@ -319,8 +380,7 @@ async fn listen_link(
             && peer.ip() != allow_ip
         {
             eprintln!(
-                "grammar: remote listener `{}` refuses source {} (allows {allow_ip} only)",
-                entry.alias,
+                "grammar: remote listener refuses source {} (allows {allow_ip} only)",
                 peer.ip(),
             );
             continue;

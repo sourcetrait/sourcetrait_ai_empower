@@ -44,6 +44,11 @@ The two violation variants `unreachable!()` here deliberately: they render throu
 a resolution cycle is not a rig-structure rule even when the validator is what finds
 it. The validator already emits non-`rig::` kinds, `lint::summary_length` among them.
 
+`remote::open_failed` is the SYNCHRONOUS bind/connect failure of a blocking
+remote_channel_open (ConnectionWoes): distinct from the async `mcp/remote/Disconnected
+{error}` Channel model, which now fires only for a listener's post-bind accept failure
+or an established link's later teardown.
+
 ## fn error_to_call_result
 WHY SUCCESS-SHAPE ERRORS: in the Claude Code CLI a success-shape result carrying
 `structured_content` renders a green bullet whose body is visible on expand, while

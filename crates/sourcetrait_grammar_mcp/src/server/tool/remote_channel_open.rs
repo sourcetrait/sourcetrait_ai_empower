@@ -10,7 +10,7 @@ pub struct RemoteChannelOpenParams {
 #[mcp::tool_router(router = remote_channel_open_router, vis = "pub(crate)")]
 impl NuSh {
     #[mcp::tool(
-        description = "Open a configured remote link by alias; returns nothing while it opens. mcp/remote/Connected (or Disconnected {error}) lands on the Channel."
+        description = "Open a configured remote link by alias; blocks on bind (listener) or connect (connector, 20s) and returns synchronously - void on success, an error envelope on failure. A listener then emits mcp/remote/Connected when a peer pairs; Disconnected fires on any established-link teardown."
     )]
     pub(crate) async fn remote_channel_open(
         &self,
@@ -40,7 +40,15 @@ impl NuSh {
                 None,
             ));
         }
-        open_remote(self.mcp_nom.to_string(), entry);
-        Ok(mcp::CallToolResult::default())
+        match open_remote_blocking(self.mcp_nom.to_string(), entry).await {
+            Ok(()) => Ok(mcp::CallToolResult::default()),
+            Err(reason) => Ok(error_to_call_result(
+                Error::RemoteOpenFailed {
+                    alias: p.alias,
+                    reason,
+                },
+                None,
+            )),
+        }
     }
 }

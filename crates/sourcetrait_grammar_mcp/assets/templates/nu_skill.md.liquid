@@ -315,6 +315,18 @@ here is a tiny summary"; you fetch the real data yourself. Put anything bulky in
 `attached`, which the host writes to the inbox and NAMES on the wire - or write a nuon
 file, or use `grimm dbg` when it is only a trace.
 
+Two caps bound an event, at different sizes. The wss frame carries up to 1 MiB (1048575
+bytes), but the harness renders a task-notification back to you truncated at about 500
+characters of the whole packet line - so an event between the two transits and fires
+Sent yet reaches you cut off. The host now auto-spills: an event whose rendered line
+would exceed the notification cap is written to a file and replaced on the wire by a
+compact pointer `{spilled_event_path, event_bytes}`, so the content survives. When you
+receive an event carrying `spilled_event_path`, read the full event from
+`<inbox>/<spilled_event_path>` (the inbox `channel_open()` returned). Sent still means
+the transport wrote the event, never that you rendered it whole - the spill is what makes
+the two agree again. Keep events genuinely small and the spill never fires; do not lean
+on it for routine bulk, which is what `attached` is for.
+
 THE HANDSHAKE, in order - it does not work out of order:
 
 1. `channel_open()` -> `{status, wss, inbox}`.
@@ -394,12 +406,16 @@ THE FLOW to talk to a peer (the three tools are deny-gated + session-only, no CL
 mirror):
 
 1. Both agents bring their Channel up + verified (the handshake above).
-2. `remote_channel_open(alias)` on EACH side, LISTENER FIRST (it binds), CONNECTOR second
-   (it dials). It returns VOID while the link opens; the outcome lands async on your
-   Channel as `mcp/remote/Connected {remote, mcp_nom}` once both connections handshake, or
-   `mcp/remote/Disconnected {remote, error}` if it never established. `remote` is the alias
-   you opened. An inline `error {kind, message}` is an immediate refusal (no such alias /
-   already open).
+2. `remote_channel_open(alias)` on each side, listener first, connector second. It blocks
+   on the immediate networking step and returns synchronously: a listener blocks on the
+   bind, a connector blocks on the connect with a 20s timeout. A void return means success
+   (bound, or connected); an `error {kind, message}` envelope means it failed - no such
+   alias, a link already open, or the bind/connect itself failing (`remote::open_failed`).
+   Only a listener's peer-wait stays async after its bind: `mcp/remote/Connected {remote,
+   mcp_nom}` fires when a peer pairs. A connector gets no Connected - its synchronous
+   success is the notice. Open the listener first so its bind is up before the connector
+   dials; a redundant listener open now fails synchronously with a clean `address already
+   in use` rather than a confusing async error.
 3. Learn the peer's `mcp_nom` (it rides the Connected packet; each host also reports its
    own via `info()`), then send from a body: `grimm remote_channel_send <peer_nom>
    <model> <event>` (or `_with` for files). Watch your OWN Channel for `mcp/remote/Sent
@@ -409,15 +425,20 @@ mirror):
    mcp/remote/<your_nom>`, and REPLIES with its own `remote_channel_send` addressed to your
    nom (the `<nom>` in that `from`) - NOT `channel_send`, which would only loop back on its
    own session Channel and never reach you. That round-trip IS the cross-agent smoke test.
-5. `remote_channel_close(alias)` tears the link down (emits `Disconnected`);
-   `remote_channels()` lists the open links as `{alias, remote_mcp_nom, address}`.
+5. `remote_channel_close(alias)` tears the link down (emits `Disconnected`).
+   `remote_channels()` returns two sets: `channels` (established links, `{alias,
+   remote_mcp_nom, address}`) and `listening` (bound-but-unpaired listeners, `{remote,
+   address}`) - so a listener that has bound but not yet paired is visible under
+   `listening`, and moves into `channels` when a peer connects.
 
 The host-origin models all sit under the `mcp/` reservation. The lifecycle pair keys on
 the always-present `remote` (your opened alias):
 - `mcp/remote/Connected {remote, mcp_nom}`.
-- `mcp/remote/Disconnected {remote, mcp_nom?, error?}` - ONE overloaded model: `mcp_nom`
-  present on a normal teardown, `error` present on an open that never established (there
-  `mcp_nom` is ABSENT - no peer nom exists yet). Branch on which fields are present.
+- `mcp/remote/Disconnected {remote, mcp_nom?, error?}` - one overloaded model: `mcp_nom`
+  present when an established link tears down (either role), `error` present when a
+  listener's post-bind accept fails (there `mcp_nom` is absent - no peer nom yet). A
+  connector's open failure is now synchronous (`remote::open_failed`), not this. Branch on
+  which fields are present.
 - `mcp/remote/Sent {id, mcp_nom}` / `Unsent {id, mcp_nom, error}` - keyed by the send id.
 `from nuon` every packet, as always.
 
@@ -1116,9 +1137,9 @@ before you return thousands of paths.
 - [`channel_verified()`](#channel_verified) Confirm the channel/Open packet was seen; ends the verify window.
 - [`channel_close()`](#channel_close) Close the host's packet channel.
 - [`config_channel()`](#config_channel) Read or adjust the channel's send-rate thresholds at runtime.
-- [`remote_channel_open()`](#remote_channel_open) Open a configured remote link by alias.
+- [`remote_channel_open()`](#remote_channel_open) Open a configured remote link by alias (blocks on bind/connect).
 - [`remote_channel_close()`](#remote_channel_close) Close an open remote link.
-- [`remote_channels()`](#remote_channels) List the open remote links.
+- [`remote_channels()`](#remote_channels) List remote links: established plus bound-waiting listeners.
 - [`purviews()`](#purviews) List every configured purview, and what is currently in view.
 - [`purview()`](#purview) Set the current view to these purviews.
 - [`purview_configure()`](#purview_configure) Set a purview's namepath patterns; an empty list deletes it.
@@ -1919,13 +1940,16 @@ Schema (partial):
 ```
 
 ### `remote_channel_open()`
-*Open a configured remote link by alias; the link then rides your Channel.*
+*Open a configured remote link by alias; blocks on bind/connect, then rides your Channel.*
 
 `{alias: string}` - a `[[remote]]` from `<startup_cwd>/.grammar/mcp/remotes.toml`.
-Returns VOID on a partial success (the link is opening) or an `error {kind, message}` on
-an immediate refusal (no such alias, already open). `mcp/remote/Connected {remote,
-mcp_nom}` or `Disconnected {remote, error}` lands async on your Channel. Deny-gated; no
-CLI mirror. See "RemoteChannel: reach another agent's host" above for the full flow.
+Blocks on the immediate networking step and returns synchronously: a listener on its
+bind, a connector on its connect (20s timeout). Void on success; an `error {kind,
+message}` envelope on failure - no such alias, a link already open, or the bind/connect
+itself failing (`remote::open_failed`). After a listener's bind, `mcp/remote/Connected
+{remote, mcp_nom}` fires async when a peer pairs (a connector gets none); `Disconnected`
+fires on any established-link teardown. Deny-gated; no CLI mirror. See "RemoteChannel:
+reach another agent's host" above for the full flow.
 
 ### `remote_channel_close()`
 *Close an open mTLS link to a remote grammar host.*
@@ -1934,11 +1958,13 @@ CLI mirror. See "RemoteChannel: reach another agent's host" above for the full f
 mcp_nom}` lands async on your Channel.
 
 ### `remote_channels()`
-*List the open mTLS links to remote grammar hosts.*
+*List remote grammar-host links: established `channels` plus bound-waiting `listening`.*
 
-No parameters. Returns `{channels}`, each `{alias, remote_mcp_nom, address}`,
-alias-sorted. `remote_mcp_nom` is the peer's nom - the first arg to
-`grimm remote_channel_send` (the `alias` is NOT).
+No parameters. Returns `{channels, listening}`: `channels` is the established links, each
+`{alias, remote_mcp_nom, address}` alias-sorted; `listening` is the bound-but-unpaired
+listeners, each `{remote, address}` alias-sorted. `remote_mcp_nom` is the peer's nom - the
+first arg to `grimm remote_channel_send` (the `alias` is NOT). A bound listener shows only
+under `listening` (no peer nom yet) and moves to `channels` on pairing.
 
 ## Purview scoping
 

@@ -115,8 +115,9 @@ by simply only scoping it there.
 - `grimm inspect ...` (formerly inspect tool)
 - `grimm channel ...`
   - `grimm channel send`
-  - `grimm channel remote send`
-  - `grimm channel remote send_with`
+- `grimm remote channel`
+  - `grimm remote channel send`
+  - `grimm remote channel send_with`
 - `grimm control ...` (interact only)
   - `grimm control channel open`
   - `grimm control channel close`

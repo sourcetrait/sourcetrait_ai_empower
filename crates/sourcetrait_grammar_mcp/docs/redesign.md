@@ -152,5 +152,17 @@ by simply only scoping it there.
   `nu --mcp` crate does (an .md for each call). Those will slowly be taken
   human reign as well.
 
+## Nu Gaps
+
+The following are gaps in 'nugap' that have been observed doing review of this
+document and are provided to close them.
+
+```nu
+# this completion style is valid. however, it does not constrain.
+# it does, however, self-document
+export def test_complete [some: string@[shm tmp]]: nothing -> string {
+  $some
+}
+```
 
   

@@ -156,6 +156,9 @@ impl nu::Command for GrimmChannelSend {
             .emit(line)
             .map_err(|e| shell_error(e.message(), call.head))?;
         Ok(nu::PipelineData::Value(
+            /*nu::Value::record(nu_protocol::record!{
+                id => nu::Value::string(id.to_string(), call.head),
+            }, call.head),*/
             nu::Value::string(id.to_string(), call.head),
             None,
         ))

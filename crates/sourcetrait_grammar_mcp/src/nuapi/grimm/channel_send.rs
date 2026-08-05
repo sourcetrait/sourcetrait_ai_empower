@@ -132,13 +132,25 @@ impl nu::Command for GrimmChannelSend {
 
         let attached_name = match &attached_nuon {
             Some(nuon) => Some(
-                write_attachment(&channel, &id.to_string(), nuon)
+                write_inbox_file(&channel, &format!("{id}.nuon"), nuon)
                     .map_err(|e| shell_error(&e, call.head))?,
             ),
             None => None,
         };
 
-        let line = render_packet(id, &from, &model, &event, attached_name.as_deref())
+        // CapNoCap: an event that would overflow the notification cap is spilled to
+        // an inbox file, and a compact pointer rides the wire in its place, so the
+        // full event survives to the receiving agent (the caller's attached is
+        // untouched - the pointer names its own spill file).
+        let wire_event = if event_overflows(&event_nuon) {
+            let rel = write_inbox_file(&channel, &format!("{id}.event.nuon"), &event_nuon)
+                .map_err(|e| shell_error(&e, call.head))?;
+            event_spill_pointer(&rel, event_nuon.len())
+        } else {
+            event
+        };
+
+        let line = render_packet(id, &from, &model, &wire_event, attached_name.as_deref())
             .map_err(|e| shell_error(&e, call.head))?;
         channel
             .emit(line)
@@ -180,18 +192,19 @@ fn stop_offender(engine_state: &nu::EngineState) -> String {
     }
 }
 
-/// Write `attached` to `inbox/<id>.nuon` and return the NAME the wire carries.
-fn write_attachment(
+/// Write `nuon` to `inbox/<name>` and return the name the wire carries. Serves
+/// both the caller's attachment (`<id>.nuon`) and an auto-spilled event
+/// (`<id>.event.nuon`).
+fn write_inbox_file(
     channel: &ChannelHandle,
-    id: &str,
+    name: &str,
     nuon: &str,
 ) -> Result<String, String> {
     let dir = channel
         .inbox()
         .ok_or_else(|| "the channel has no inbox; call channel_open() first".to_string())?;
     fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    let name = format!("{id}.nuon");
-    let path = dir.join(&name);
+    let path = dir.join(name);
     fs::write(&path, nuon.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
-    Ok(name)
+    Ok(name.to_string())
 }

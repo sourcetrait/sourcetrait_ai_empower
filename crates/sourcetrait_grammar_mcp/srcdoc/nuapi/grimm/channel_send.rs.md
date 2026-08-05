@@ -35,6 +35,13 @@ work started before verification emit to an unproven peer.
 The id is minted BEFORE the attachment write because the filename derives from it,
 which is also why the hash covers the attached CONTENT rather than its path.
 
+CapNoCap: after the id and the caller's attachment, the rendered event is checked
+against the notification cap (event_overflows, state.rs); an oversized event spills
+to inbox/<id>.event.nuon and a compact pointer rides the wire in its place. The
+pointer names its own spill file, so it is orthogonal to the caller's `attached` -
+a big event and a caller attachment both survive, in separate files. write_inbox_file
+is the generalized writer serving both.
+
 ## fn shell_error
 `GenericError` renders its TITLE through Display, and the title is all the eval
 envelope's `message` carries - so a bare command name there reaches the agent with

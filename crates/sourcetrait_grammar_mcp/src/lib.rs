@@ -123,8 +123,10 @@ pub(crate) use crate::{
             hub::{FROM_MCP, open_packet, start as start_channel_hub},
             state::{
                 ChannelHandle, ChannelPhase, ChannelSendError, ChannelVerifyError,
-                CloseSignal as ChannelCloseSignal, MAX_FRAME_BYTES, MCP_RESERVED_PREFIX,
-                SpamVerdict, channel_handle, inbox_dir, mint_msg_id, render_nuon, render_packet,
+                CloseSignal as ChannelCloseSignal, EVENT_SPILL_DEST, EVENT_SPILL_KEY,
+                MAX_FRAME_BYTES, MCP_RESERVED_PREFIX, SpamVerdict, channel_handle,
+                event_overflows, event_spill_pointer, inbox_dir, mint_msg_id, render_nuon,
+                render_packet,
             },
         },
         cycle::detect_import_cycle,

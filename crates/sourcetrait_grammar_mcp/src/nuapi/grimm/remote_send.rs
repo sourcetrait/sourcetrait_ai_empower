@@ -41,7 +41,9 @@ impl nu::Command for GrimmRemoteChannelSend {
         require_record_or_table(&event, call.head)?;
         let event_nuon = render_nuon(&event).map_err(|e| shell_error(&e, call.head))?;
         let id = mint_remote_id(&model, &event_nuon);
-        find_link_send(&mcp_nom, id.clone(), model, event_nuon, Vec::new())
+        let (wire_event_nuon, payloads) =
+            spill_remote_event(event_nuon, Vec::new()).map_err(|e| shell_error(&e, call.head))?;
+        find_link_send(&mcp_nom, id.clone(), model, wire_event_nuon, payloads)
             .map_err(|e| shell_error(&e, call.head))?;
         Ok(nu::PipelineData::Value(nu::Value::string(id, call.head), None))
     }
@@ -86,7 +88,9 @@ impl nu::Command for GrimmRemoteChannelSendWith {
         let payloads = read_attachments(&attached).map_err(|e| shell_error(&e, call.head))?;
         let event_nuon = render_nuon(&event).map_err(|e| shell_error(&e, call.head))?;
         let id = mint_remote_id(&model, &event_nuon);
-        find_link_send(&mcp_nom, id.clone(), model, event_nuon, payloads)
+        let (wire_event_nuon, payloads) =
+            spill_remote_event(event_nuon, payloads).map_err(|e| shell_error(&e, call.head))?;
+        find_link_send(&mcp_nom, id.clone(), model, wire_event_nuon, payloads)
             .map_err(|e| shell_error(&e, call.head))?;
         Ok(nu::PipelineData::Value(nu::Value::string(id, call.head), None))
     }
@@ -129,6 +133,25 @@ fn mint_remote_id(
     event_nuon: &str,
 ) -> String {
     mint_msg_id(channel_handle().nonce_gen(), "remote/send", model, event_nuon, None).to_string()
+}
+
+/// CapNoCap (sender side): if the rendered event would overflow the receiver's
+/// notification cap, move it to a transferred file (the reserved EVENT_SPILL_DEST,
+/// alongside any caller files) and return a compact pointer event in its place.
+/// The receiver rewrites the pointer's path under this delivery's inbox directory
+/// before relaying, so the agent resolves it as <inbox>/<spilled_event_path>. Via
+/// the file connection, so a >1 MiB event (which no Deliver frame could carry
+/// inline) still reaches the agent. Returns (wire event NUON, payloads).
+fn spill_remote_event(
+    event_nuon: String,
+    mut payloads: Vec<(String, Vec<u8>)>,
+) -> Result<(String, Vec<(String, Vec<u8>)>), String> {
+    if !event_overflows(&event_nuon) {
+        return Ok((event_nuon, payloads));
+    }
+    let pointer_nuon = render_nuon(&event_spill_pointer(EVENT_SPILL_DEST, event_nuon.len()))?;
+    payloads.push((EVENT_SPILL_DEST.to_string(), event_nuon.into_bytes()));
+    Ok((pointer_nuon, payloads))
 }
 
 /// The `mcp/` reservation is host-origin only; an agent send picks another path.

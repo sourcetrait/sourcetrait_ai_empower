@@ -94,6 +94,12 @@ slot-map is what makes the files EXIST on disk before the agent observes the emi
 same inbox the Channel's own attachments use, so a relayed packet's `attached` ref
 resolves for the local agent.
 
+rewrite_spill_pointer (CapNoCap): a sender spills an oversized event to the reserved
+EVENT_SPILL_DEST file with a dest-relative pointer; relay_to_channel rewrites that path to
+<peer_nom>/<id>/<dest> before emitting, so the agent resolves it as
+<inbox>/<spilled_event_path> uniformly with a local spill. A no-op for a normal event or a
+path already carrying a `/`.
+
 ## the McpNom handshake
 A Hello variant in each language (codec.rs), exchanged over the same Framed
 read/write before the steady loop. The initiator sends first (its nom + the stream

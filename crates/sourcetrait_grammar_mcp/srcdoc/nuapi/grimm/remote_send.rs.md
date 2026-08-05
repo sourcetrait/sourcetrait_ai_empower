@@ -20,3 +20,14 @@ Reads each {src, dest} row into (dest, bytes) SYNCHRONOUSLY, before the id is
 returned: a local src read failure is the agent's own problem and must surface at the
 CALL, not as a later async Unsent. safe_dest guards every dest (relative, no ..) here
 too, so a bad dest fails the send outright rather than being caught only receiver-side.
+
+### fn spill_remote_event
+CapNoCap, sender side: an event that would overflow the receiver's notification cap
+(event_overflows, state.rs) is moved to a transferred file - the reserved
+EVENT_SPILL_DEST, pushed alongside any caller files - and replaced on the wire by a
+compact pointer, on both _send and _send_with. Sender-side via the file connection, not
+a receiver-side render choice, because an event over 1 MiB cannot ride the inline
+Deliver frame at all, so only the file transfer reaches the agent. The pointer's path is
+dest-relative; the receiver rewrites it under the delivery's inbox dir (link.rs
+rewrite_spill_pointer) so the agent resolves it uniformly as <inbox>/<spilled_event_path>,
+exactly as for a local channel_send spill.

@@ -815,6 +815,11 @@ fn relay_to_channel(
 ) -> Result<(), (String, String)> {
     let event = nu::from_nuon(&info.event_nuon, None)
         .map_err(|e| ("event_unparseable".to_string(), e.to_string()))?;
+    // CapNoCap: a spilled-event pointer arrives with a dest-relative path; rewrite
+    // it to the inbox-relative path under this delivery's directory, so the agent
+    // resolves it uniformly as <inbox>/<spilled_event_path> (as for a local spill).
+    let event = rewrite_spill_pointer(event, &ctx.peer_nom, id);
+    let event_nuon = render_nuon(&event).map_err(|e| ("render".to_string(), e))?;
     let from = format!("{MCP_RESERVED_PREFIX}remote/{}", ctx.peer_nom);
     let attached = has_files.then(|| format!("{}/{}", ctx.peer_nom, id));
     let channel = channel_handle();
@@ -822,7 +827,7 @@ fn relay_to_channel(
         channel.nonce_gen(),
         &from,
         &info.model,
-        &info.event_nuon,
+        &event_nuon,
         attached.as_deref(),
     );
     let line = render_packet(msg_id, &from, &info.model, &event, attached.as_deref())
@@ -830,6 +835,30 @@ fn relay_to_channel(
     channel
         .emit(line)
         .map_err(|e| ("channel".to_string(), e.message().to_string()))
+}
+
+/// Rewrite a spilled-event pointer's dest-relative path (EVENT_SPILL_DEST) to the
+/// inbox-relative path under this delivery's directory (<peer_nom>/<id>/<dest>). A
+/// no-op for a normal event, or a pointer whose path already carries a `/`.
+fn rewrite_spill_pointer(
+    event: nu::Value,
+    peer_nom: &str,
+    id: &str,
+) -> nu::Value {
+    let span = nu::Span::unknown();
+    let Ok(rec) = event.as_record() else {
+        return event;
+    };
+    let Some(dest) = rec.get(EVENT_SPILL_KEY).and_then(|v| v.as_str().ok()) else {
+        return event;
+    };
+    if dest.contains('/') {
+        return event;
+    }
+    let full = format!("{peer_nom}/{id}/{dest}");
+    let mut new = rec.clone();
+    new.insert(EVENT_SPILL_KEY, nu::Value::string(full, span));
+    nu::Value::record(new, span)
 }
 
 /// Push a Sent report {id, mcp_nom} onto the LOCAL (sender's own) Channel.

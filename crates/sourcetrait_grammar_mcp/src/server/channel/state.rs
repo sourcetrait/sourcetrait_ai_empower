@@ -513,3 +513,40 @@ pub(crate) fn render_packet(
 pub(crate) fn escape_line(rendered: &str) -> String {
     rendered.replace('\n', "\\n").replace('\r', "\\r")
 }
+
+/// The client's task-notification character cap: the whole rendered packet line
+/// truncates past this on the receiving agent (a claude-code constant the server
+/// never observes; measured 500). CapNoCap couples the event auto-spill to it.
+pub(crate) const NOTIFICATION_CAP: usize = 500;
+
+/// Reserve for the packet wrapper (id, from, model, attached, NUON punctuation)
+/// around the event; a rendered event longer than the cap minus this auto-spills.
+const NOTIFICATION_WRAPPER_RESERVE: usize = 120;
+
+/// The reserved event key marking a spilled event: its value is the inbox-relative
+/// path to the full event NUON, which the receiving agent reads instead of the
+/// spilled-out inline event. `event_bytes` carries the original size.
+pub(crate) const EVENT_SPILL_KEY: &str = "spilled_event_path";
+const EVENT_BYTES_KEY: &str = "event_bytes";
+
+/// The reserved dest name a remote event spill transfers under, inside the
+/// delivery's per-message inbox directory.
+pub(crate) const EVENT_SPILL_DEST: &str = ".mcp_event.nuon";
+
+/// Would this rendered event NUON overflow the notification cap once wrapped?
+pub(crate) fn event_overflows(event_nuon: &str) -> bool {
+    event_nuon.chars().count() > NOTIFICATION_CAP - NOTIFICATION_WRAPPER_RESERVE
+}
+
+/// The compact pointer event that replaces an oversized event on the wire: it
+/// names the inbox-relative path holding the spilled full event, plus its size.
+pub(crate) fn event_spill_pointer(
+    path: &str,
+    event_bytes: usize,
+) -> nu::Value {
+    let span = nu::Span::unknown();
+    let mut r = nu::Record::new();
+    r.insert(EVENT_SPILL_KEY, nu::Value::string(path.to_string(), span));
+    r.insert(EVENT_BYTES_KEY, nu::Value::int(event_bytes as i64, span));
+    nu::Value::record(r, span)
+}

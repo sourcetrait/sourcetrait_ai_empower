@@ -75,10 +75,10 @@ in general.
 @search-terms 'grimm::tool'
 @example 'write a shm file' {
     grimm scratch shm r#"This is data.\nThis is more data."
-} --returns '/dev/shm/box/ai/myai/j4azJxladj/mNa35HuiozO.md'
+} --result '/dev/shm/box/ai/myai/j4azJxladj/mNa35HuiozO.md'
 @example 'touch a tmp file' {
     grimm scratch tmp
-} --returns '/home/box/tmp/ai/myai/j4azJxladj/mNa35HuiozO.md'
+} --result '/home/box/tmp/ai/myai/j4azJxladj/mNa35HuiozO.md'
 def 'grimm scratch' [
   kind: string@[shm tmp] # Directory to save to; EQUIP_SHM_DIR | EQUIP_TMP_DIR
   ext: string # File extension, not including the '.'
@@ -137,9 +137,9 @@ by simply only scoping it there.
 Grimm documentation can then be iterated through either by category or search-term.
 
 Search terms are consts in code.
-- grim::utility
-- grim::tool
-- grim::control
+- grimm::utility
+- grimm::tool
+- grimm::control
 
 ## SkillFiction
 

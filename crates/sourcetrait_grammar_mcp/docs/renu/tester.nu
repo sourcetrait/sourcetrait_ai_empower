@@ -1,17 +1,15 @@
 #!/usr/bin/nu
 
-glob ** | each {|f|
-  if (($f | path type) == 'file') {
-    print $"# FILE ($f):"
-    open --raw $f | print
-    print "## EOF\n\n"
-  }
-}
-
-print "# OUTPUT (tester.nu):"
 use demo
-demo demo_attrs shm 5 | to nuon | print
-help --find 'demo::time' | select name search_terms | to nuon | print
-scope commands | where name == 'demo demo_attrs' | first | to nuon --pretty | print
+let result_demo_attrs = demo demo_attrs shm 5
+let result_help_find_demo_attrs = help --find 'demo::time' | select name search_terms
+let result_scope_demo_attrs = scope commands | where name == 'demo demo_attrs' | first
 
+{
+    results: {
+        demo_attrs: $result_demo_attrs
+        help_find_demo_attrs: $result_help_find_demo_attrs
+        scope_demo_attrs: $result_scope_demo_attrs
+    }
+}
 

@@ -190,7 +190,7 @@ record<
 
 ### Inbox
 The inbox pathing for the MCP Channel changes to:
-(inbox_dir=)`$XDG_SHM_DIR/grammar/mcp/<local_mcp_nom>/inbox/`
+(inbox_dir=)`$XDGX_SHM_DIR/grammar/mcp/<local_mcp_nom>/inbox/`
 
 It then splits between origin; local and remote:
 (origin_inbox_dir = either:)

@@ -175,7 +175,7 @@ human reign as well.
 
 ## Event envelope
 The Channel event envelope has be redesigned and formalized in the MCP crate's
-assets/nutype/channel/Event.nutype (mcp/channel/Event):
+assets/reign/human/nutype/channel/Event.nutype (mcp/channel/Event):
 ```nu
 record<
   id: string,  # base62, generated on send

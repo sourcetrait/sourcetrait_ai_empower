@@ -171,6 +171,42 @@ Likewise, we will send tool call signatures to templates as well, as the
 `nu --mcp` crate does (an .md for each call). Those will slowly be taken
 human reign as well.
 
+## Channels
+
+## Event envelope
+The Channel event envelope has be redesigned and formalized in the MCP crate's
+assets/nutype/channel/Event.nutype (mcp/channel/Event):
+```nu
+record<
+  id: string,  # base62, generated on send
+  from: string,  # namepath, sender
+  model: string,  # namepath, for the nutype of the msg data. arbitrary or defined
+  msg: oneof<record<nuon:path,size:filesize>, record<  # either an msg's inbox path (spill, msg.nuon) for the msg or the actual data
+    data: oneof<record<>, table<>>,  # there always need to be some form of data
+    attached: oneof<nothing, table<file:path,size:filesize>>,  # path relative to msg's inbox/attached/<path>
+  >
+>
+```
+
+### Inbox
+The inbox pathing for the MCP Channel changes to:
+(inbox_dir=)`$XDG_SHM_DIR/grammar/mcp/<local_mcp_nom>/inbox/`
+
+It then splits between origin; local and remote:
+(origin_inbox_dir = either:)
+  (local_inbox_dir=)`(inbox_dir)/local/`
+  (remote_inbox_dir=)`(inbox_dir)/remote/<remote_mcp_nom>/`
+
+From there, it is sharded by message id:
+(msg_inbox_dir=)`(origin_inbox_dir)/<msg_id>/`
+
+If the data was spilled then the msg will be in:
+`(msg_inbox_dir)/msg.nuon`
+
+If there are file attachments, then they will be in:
+`(msg_inbox_dir)/attached/[<attached/file/path.ext>]`
+
+
 ## Nu Gaps
 
 The following are gaps in 'nugap' that have been observed during review of this

@@ -1,3 +1,6 @@
+# Channel event envelope
+@model mcp/channel/Event
+@version 0.0.0-1
 record<
   id: string,  # base62, generated on send
   from: string,  # namepath, sender

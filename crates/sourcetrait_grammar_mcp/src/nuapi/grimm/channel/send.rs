@@ -16,36 +16,15 @@ impl GrimmChannelSend {
     }
 }
 
-// REIGN HUMAN
-impl GrimmChannelSend {
-    const DEF: GrimmSignatureDef = GrimmSignatureDef {
-        name: "grimm channel send",
-        description: "Emits a message to the Channel. Returns a message id on success.",
-        category: GrimmCategory::Tool,
-    };
-    const DEF_MODEL: GrimmParameterDef = GrimmParameterDef {
-        name: "model",
-        description: "Typedef namepath of the event data",
-    };
-    const DEF_EVENT: GrimmParameterDef = GrimmParameterDef {
-        name: "event",
-        description: "Notification data"
-    };
-    const DEF_ATTACHED: GrimmParameterDef = GrimmParameterDef {
-        name: "attached",
-        description: "Detailed data. Stored in the Channel inbox for retrieval"
-    };
-}
-
 impl nu::Command for GrimmChannelSend {
     fn name(&self) -> &str { Self::DEF.name }
 
     fn signature(&self) -> nu::Signature {
         nu::Signature::build(Self::DEF.name)
-            .grimm(&Self::DEF)
-            .grimm_required(&Self::DEF_MODEL, nu::SyntaxShape::String)
-            .grimm_required(&Self::DEF_EVENT, data_shape())
-            .grimm_optional(&Self::DEF_ATTACHED, data_shape())
+            .vocab(&Self::DEF)
+            .vocab_required(&Self::DEF_MODEL, nu::SyntaxShape::String)
+            .vocab_required(&Self::DEF_EVENT, data_shape())
+            .vocab_optional(&Self::DEF_ATTACHED, data_shape())
             .input_output_types(vec![(nu::Type::Nothing, nu::Type::String)])
     }
 

@@ -45,6 +45,7 @@ serde.workspace = true
 serde_json.workspace = true
 sourcetrait_cert_lib.workspace = true
 sourcetrait_grammar_lib.workspace = true
+sourcetrait_nu_vocab.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
 tokio-tungstenite.workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "sourcetrait_nu_vocab"
+version = "0.0.0-1"
+edition = "2024"
+description = "Common conventions for Nu internals usage"
+authors = ["SourceTrait <development@sourcetrait.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "nu"]
+
+[dependencies]
+nu-cmd-lang.workspace = true
+nu-command = { workspace = true, features = ["rand"] }
+nu-engine.workspace = true
+nu-parser.workspace = true
+nu-protocol.workspace = true
+snafu.workspace = true
+
+[dev-dependencies]
+sourcetrait_testing.workspace = true

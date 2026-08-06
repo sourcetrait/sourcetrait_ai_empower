@@ -3,68 +3,6 @@ use crate::*;
 /// The file the embedded API appends to, inside this call's nonce log dir.
 pub(crate) const DEBUG_FILE: &str = "debug.nuonl";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GrimmCategory {
-    Utility,
-    Tool,
-    Control,
-}
-
-impl GrimmCategory {
-    const ROOT: &'static str = "grimm";
-    const UTILITY: &'static str = "grimm::utility";
-    const TOOL: &'static str = "grimm::tool";
-    const CONTROL: &'static str = "grimm::control";
-
-    pub(crate) const fn root() -> &'static str { Self::ROOT }
-    
-    pub(crate) const fn str(&self) -> &'static str {
-        match self {
-            Self::Utility => Self::UTILITY,
-            Self::Tool => Self::TOOL,
-            Self::Control => Self::CONTROL,
-        }
-    }
-}
-
-// REIGN HUMAN
-pub(crate) struct GrimmSignatureDef {
-    pub(crate) name: &'static str,
-    pub(crate) description: &'static str,
-    pub(crate) category: GrimmCategory,
-}
-
-// REIGN HUMAN
-pub(crate) struct GrimmParameterDef {
-    pub(crate) name: &'static str,
-    pub(crate) description: &'static str,
-}
-
-// REIGN HUMAN
-pub(crate) trait GrimmNuSignature {
-    fn grimm(self, sigdef: &'static GrimmSignatureDef) -> Self;
-    fn grimm_required(self, paramdef: &'static GrimmParameterDef, shape: nu::SyntaxShape) -> Self;
-    fn grimm_optional(self, paramdef: &'static GrimmParameterDef, shape: nu::SyntaxShape) -> Self;
-}
-
-// REIGN HUMAN
-impl GrimmNuSignature for nu::Signature {
-    fn grimm(self, sigdef: &'static GrimmSignatureDef) -> Self {
-        self
-            .description(sigdef.description)
-            .category(nu::Category::Custom(GrimmCategory::root().into()))
-            .search_terms(vec![sigdef.category.str().into()])
-    }
-    
-    fn grimm_required(self, paramdef: &'static GrimmParameterDef, shape: nu::SyntaxShape) -> Self {
-        self.required(paramdef.name, shape, paramdef.description)
-    }
-    
-    fn grimm_optional(self, paramdef: &'static GrimmParameterDef, shape: nu::SyntaxShape) -> Self {
-        self.optional(paramdef.name, shape, paramdef.description)
-    }
-}
-
 /// Per-eval state every `grimm *` decl carries: where this call's artifacts go.
 #[derive(Clone)]
 pub(crate) struct NuapiCall {

@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/sourcetrait_grammar_lib",
   "crates/sourcetrait_grammar_bed",
+  "crates/sourcetrait_nu_vocab",
   "crates/sourcetrait_nu_plugin_grimoire",
   "crates/sourcetrait_grammar_mcp",
   "crates/sourcetrait_grammar_know_rust",
@@ -64,6 +65,7 @@ sourcetrait_ronx = { version = "3" }
 sourcetrait_stdx = { version = "1" }
 sourcetrait_testing = { version = "4" }
 sourcetrait_tomlx = { version = "3" }
+sourcetrait_nu_vocab = { path = "crates/sourcetrait_nu_vocab" }
 strum = { version = "0.27", features = ["derive"] }
 spdx = { version = "0.13" }
 syn = { version = "2", features = ["full", "extra-traits", "visit"] }

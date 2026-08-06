@@ -9,12 +9,18 @@ pub(crate) struct GrimmRemoteChannelSend;
 #[derive(Clone)]
 pub(crate) struct GrimmRemoteChannelSendWith;
 
-// REIGN HUMAN
 impl GrimmRemoteChannelSend {
-    const DEF: GrimmSignatureDef = GrimmSignatureDef {
-        name: "grimm remote channel send",
-        description: "Emits a message to a remote Channel. Returns a message id on success.",
-        category: GrimmCategory::Tool,
+    pub(crate) const DEF_MCP_NOM: nuvocab::ParameterDef = nuvocab::ParameterDef {
+        name: "mcp_nom",
+        description: "Remote MCP",
+    };
+    pub(crate) const DEF_MODEL: nuvocab::ParameterDef = nuvocab::ParameterDef {
+        name: "model",
+        description: "Namepath of the event data type",
+    };
+    pub(crate) const DEF_EVENT: nuvocab::ParameterDef = nuvocab::ParameterDef {
+        name: "event",
+        description: "Notification data",
     };
 }
 
@@ -23,10 +29,10 @@ impl nu::Command for GrimmRemoteChannelSend {
 
     fn signature(&self) -> nu::Signature {
         nu::Signature::build(Self::DEF.name)
-            .grimm(&Self::DEF)
-            .required("mcp_nom", nu::SyntaxShape::String, "the linked peer host's McpNom")
-            .required("model", nu::SyntaxShape::String, "the shape the event carries")
-            .required("event", data_shape(), "the state summary to deliver")
+            .vocab(&Self::DEF)
+            .vocab_required(&Self::DEF_MCP_NOM, nu::SyntaxShape::String)
+            .vocab_required(&Self::DEF_MODEL, nu::SyntaxShape::String)
+            .vocab_required(&Self::DEF_EVENT, data_shape())
             .input_output_types(vec![(nu::Type::Nothing, nu::Type::String)])
     }
 

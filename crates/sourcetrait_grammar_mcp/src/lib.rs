@@ -1,3 +1,11 @@
+pub(crate) mod reign {
+    pub(crate) mod human {
+        pub(crate) mod grimm {
+            pub(crate) mod category;
+            pub(crate) mod def;
+        }
+    }
+}
 pub(crate) mod server {
     pub(crate) mod blocked;
     pub(crate) mod cache;
@@ -99,14 +107,15 @@ pub(crate) mod template;
 pub mod guts;
 
 pub(crate) use crate::{
+    reign::human::{
+        grimm::{category::*},
+    },
     nuapi::grimm::{
         channel::{
             send::GrimmChannelSend,
         },
         common::{
             NuapiCall, data_shape, register_nuapi, require_record_or_table,
-            GrimmCategory, GrimmNuSignature, GrimmSignatureDef,
-            GrimmParameterDef,
         },
         config::{GrimmGetConfig, GrimmGetConfigAll, GrimmPinConfig},
         dbg::GrimmDbg,
@@ -295,6 +304,8 @@ pub(crate) mod nu {
     pub(crate) use nu_protocol::shell_error::generic::GenericError;
     pub(crate) use nuon::{ToNuonConfig, from_nuon, to_nuon};
 }
+
+pub(crate) use sourcetrait_nu_vocab::{self as nuvocab, prelude::*};
 
 pub(crate) mod ser {
     pub(crate) use ::serde::{Deserialize, Serialize};

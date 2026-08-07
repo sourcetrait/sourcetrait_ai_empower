@@ -21,7 +21,7 @@ nuon.workspace = true
 nu-protocol.workspace = true
 nu-engine.workspace = true
 snafu.workspace = true
-include_dir = { version = "0.7", features = ["glob"] }
+include_dir.workspace = true
 
 [package.metadata]
-reign = human
+reign = "human"

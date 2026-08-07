@@ -23,6 +23,7 @@ derive_builder = { version = "0.20" }
 directories = { version = "6" }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 hek = { version = "0.5" }
+include_dir = { version = "0.7", features = ["glob"] }
 indexmap = { version = "2" }
 indoc = { version = "2" }
 liquid = { version = "0.26" }

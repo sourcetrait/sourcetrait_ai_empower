@@ -1,0 +1,23 @@
+[package]
+name = "sourcetrait_grammar_doc"
+version = "0.0.0-1"
+edition = "2024"
+description = "Grammar documentation generator"
+authors = ["SourceTrait <development@sourcetrait.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "grammar", "doc"]
+
+[[bin]]
+name = "grammar_doc"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+#liquid.workspace = true
+nuon.workspace = true
+nu-protocol.workspace = true
+nu-engine.workspace = true
+snafu.workspace = true

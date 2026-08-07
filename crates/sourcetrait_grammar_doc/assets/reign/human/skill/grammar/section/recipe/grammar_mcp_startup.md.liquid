@@ -1,7 +1,7 @@
 To begin usage of the Grammar MCP, perform the following instructions in exact order:
 1. Use Grammar MCP `info()`.
 2. Obtain your `session_nom`:
-   Use Grammar MCP `run(record<status:path>) -> record<session_nom:string> { open $args.status | select session_nom }` for `~/.sys/.xdg/cache/sourcetrait/grammar/claudeline/<ai_id>/status/latest.yaml`
+   Use Grammar MCP `nu(execute(record<status:path>) -> record<session_nom:string> { open $args.status | select session_nom })` for `~/.sys/.xdg/cache/sourcetrait/grammar/claudeline/<ai_id>/status/latest.yaml`
 3. Open the MCP `Channel` and leave it up for the session:
    - Note: This should be performed as a single uninterrupted sequence against a 5 minute verification window.
    1. Use Grammar MCP `channel_open()`. Based on its returned `status`:

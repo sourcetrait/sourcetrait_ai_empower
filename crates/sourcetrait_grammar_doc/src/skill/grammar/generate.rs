@@ -1,5 +1,3 @@
-use std::os::unix::fs::MetadataExt;
-
 use crate::*;
 
 static ASSETS: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/assets/reign/human/skill/grammar");
@@ -26,13 +24,13 @@ pub(crate) fn generate_grammar_skill(
     let skill_file = skill_dir.join("SKILL.md");
 
     if !skill_dir.exists() {
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        fs::create_dir_all(&skill_dir).unwrap();
     }
 
     let data = liquid::object!({});
     let out = template.render(&data).unwrap();
-    std::fs::write(&skill_file, &out).unwrap();
-    let skill_md_size = std::fs::metadata(skill_file).unwrap().len();
+    fs::write(&skill_file, &out).unwrap();
+    let skill_md_size = fs::metadata(skill_file).unwrap().len();
     
     const SPAN: nu::Span = nu::Span::unknown();
     let record = nu::record! {

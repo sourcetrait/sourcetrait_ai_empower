@@ -19,7 +19,6 @@ pub(crate) use crate::{
     },
     error::*,
     nuish::into_string_nuon,
-    run::*,
 };
 
 pub use crate::{
@@ -27,16 +26,17 @@ pub use crate::{
 };
 
 pub(crate) use std::{
+    fs,
     path::{Path,PathBuf},
     process,
 };
 
 pub(crate) mod nu {
     pub(crate) use nu_protocol::{
-        Value, Record, Span, record, engine::EngineState, Filesize,
+        Value, Span, record, engine::EngineState, Filesize,
     };
     
-    pub(crate) use nuon::{from_nuon, to_nuon, ToNuonConfig, ToStyle};
+    pub(crate) use nuon::{to_nuon, ToNuonConfig, ToStyle};
 }
 
 pub(crate) use clap::Parser;

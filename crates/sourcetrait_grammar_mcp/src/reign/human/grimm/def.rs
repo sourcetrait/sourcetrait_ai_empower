@@ -1,5 +1,7 @@
 use crate::*;
 
+const SPAN: nu::Span = nu::Span::unknown();
+
 impl GrimmChannelSend {
     pub(crate) const DEF: nuvocab::SignatureDef<GrimmCategory> = nuvocab::SignatureDef {
         name: "grimm channel send",
@@ -7,9 +9,38 @@ impl GrimmChannelSend {
         category: GrimmCategory::Tool,
         examples: &[
             nuvocab::ExampleDef {
-                description: "Send arbitrary event data",
-                example: "grimm channel send 'my/model/Event' {foo:'bar', num:3}",
-                result_fn: || nu::Value::string("msg_id", nu::Span::unknown()),
+                description: "Send arbitrary event data (as seen from: nu(execute))",
+                example: "grimm channel send 'my/adhoc/Thing' {foo:'bar', num:3}",
+                result_fn: || nu::Value::record(
+                    nu::record! {
+                        "event_id" => nu::Value::string("987654321X", nu::Span::unknown()),
+                    },
+                    nu::Span::unknown()
+                ),
+            },
+            nuvocab::ExampleDef {
+                description: "Send arbitrary event data (as seen from: Channel)",
+                example: "grimm channel send 'my/adhoc/Thing' {foo:'bar', num:3}",
+                result_fn: || nu::Value::record(
+                    nu::record! {
+                        "id" => nu::Value::string("987654321X", SPAN),
+                        "from" => nu::Value::string("mcp/nu/Execute", SPAN),
+                        "msg" => nu::Value::record(
+                            nu::record! {
+                                "data" => nu::Value::record(
+                                    nu::record! {
+                                        "foo" => nu::Value::string("bar", SPAN),
+                                        "num" => nu::Value::int(3, SPAN),
+                                    },
+                                    SPAN
+                                ),
+                                "attached" => nu::Value::nothing(SPAN),
+                            },
+                            SPAN
+                        )
+                    },
+                    SPAN
+                ),
             },
         ],
     };

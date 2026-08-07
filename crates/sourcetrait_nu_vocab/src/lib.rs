@@ -10,7 +10,7 @@ pub(crate) mod reign {
 pub use crate::{
     reign::human::{  // REIGN HUMAN
         def::command::{
-            SignatureDef, ParameterDef, SignatureTrait,
+            SignatureDef, ParameterDef, SignatureTrait, ExampleDef,
             SignatureCategoryTrait, SignatureParameterTrait,
         },
     },
@@ -24,7 +24,7 @@ pub mod prelude {
 
 pub(crate) mod nu {
     pub(crate) use nu_protocol::{
-        Category, Signature, SyntaxShape,
+        Category, Signature, SyntaxShape, Example, Value,
     };
 }
 

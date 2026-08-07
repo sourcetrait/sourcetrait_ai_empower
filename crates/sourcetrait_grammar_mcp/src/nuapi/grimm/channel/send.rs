@@ -25,8 +25,14 @@ impl nu::Command for GrimmChannelSend {
             .vocab_required(&Self::DEF_MODEL, nu::SyntaxShape::String)
             .vocab_required(&Self::DEF_EVENT, data_shape())
             .vocab_optional(&Self::DEF_ATTACHED, data_shape())
-            .input_output_types(vec![(nu::Type::Nothing, nu::Type::String)])
+            .input_output_types(vec![
+                (nu::Type::Nothing, nu::Type::Record(nu::CollectionColumns::from(vec![
+                    ("event_id".to_string(), nu::Type::String),
+                ])))
+            ])
     }
+
+    fn examples(&self) -> Vec<nu::Example<'_>> { Self::DEF.examples() }
 
     fn description(&self) -> &str { Self::DEF.description }
 

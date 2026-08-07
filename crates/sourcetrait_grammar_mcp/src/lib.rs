@@ -291,9 +291,9 @@ pub(crate) mod nu {
     pub(crate) use nu_plugin_engine::load_plugin_file;
     pub(crate) use nu_protocol::{
         BlockId, Category, CollectionColumns, DeclId, FromValue, Module, PipelineData,
-        PluginRegistryFile,
+        PluginRegistryFile, Example,
         PluginRegistryItemData, Record, ShellError, Signals, Signature, Span, SyntaxShape, Type,
-        Value, VarId,
+        Value, VarId, record,
         ast::{
             Argument, Block, Comparison, Expr, Expression, ExternalArgument, ListItem,
             Operator, Pattern, RecordItem,

@@ -4,6 +4,25 @@ pub struct SignatureDef<CAT: SignatureCategoryTrait> {
     pub name: &'static str,
     pub description: &'static str,
     pub category: CAT,
+    pub examples: &'static [ExampleDef],
+}
+
+pub struct ExampleDef {
+    pub description: &'static str,
+    pub example: &'static str,
+    pub result_fn: fn() -> nu::Value,
+}
+
+impl<CAT: SignatureCategoryTrait> SignatureDef<CAT> {
+    pub fn examples(&'static self) -> Vec<nu::Example<'static>> {
+        self.examples.iter()
+            .map(|x| nu::Example {
+                description: x.description,
+                example: x.example,
+                result: Some((x.result_fn)()),
+            })
+            .collect()
+    }
 }
 
 pub trait SignatureCategoryTrait: Copy {

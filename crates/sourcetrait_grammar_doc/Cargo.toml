@@ -22,3 +22,6 @@ nu-protocol.workspace = true
 nu-engine.workspace = true
 snafu.workspace = true
 include_dir = { version = "0.7", features = ["glob"] }
+
+[package.metadata]
+reign = human

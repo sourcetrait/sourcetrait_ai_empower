@@ -1,0 +1,17 @@
+To begin usage of the Grammar MCP, perform the following instructions in exact order:
+1. Use Grammar MCP `info()`.
+2. Obtain your `session_nom`:
+   Use Grammar MCP `run(record<status:path>) -> record<session_nom:string> { open $args.status | select session_nom }` for `~/.sys/.xdg/cache/sourcetrait/grammar/claudeline/<ai_id>/status/latest.yaml`
+3. Open the MCP `Channel` and leave it up for the session:
+   - Note: This should be performed as a single uninterrupted sequence against a 5 minute verification window.
+   1. Use Grammar MCP `channel_open()`. Based on its returned `status`:
+      - `new` Nothing is attached. Perform:
+        1. Start a Monitor on the returned `wss` with:
+           - `persistent: true`
+           - Description: `Channel`
+      - `existing` WSS is already attached and the `Channel` Monitor is already running; Normal for cross-session operation.
+      - `peer_gone` Monitor was closed cross-session without `channel_close()`. Perform:
+        1. Use Grammar MCP `channel_close()`.
+        2. Start from bootstrap step 3.1 again.
+   2. Watch for the `mcp/channel/Open` packet to come across the Channel. Once it is received:
+      Use Grammar MCP `channel_verified()` to finalize.

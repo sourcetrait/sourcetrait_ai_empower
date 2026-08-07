@@ -1,0 +1,7 @@
+Temporary files are written to either $env.XDGX_TMP_HOME (TMP) or $env.XDGX_SHM_DIR (SHM).
+
+Within those directories, paths are sharded uniquely:
+- Agents: ai/<ai_id>/<session_nom>/
+- MCP: grammar/mcp/<mcp_nom>/
+- General: <program/namespace>/<unique_key>/
+

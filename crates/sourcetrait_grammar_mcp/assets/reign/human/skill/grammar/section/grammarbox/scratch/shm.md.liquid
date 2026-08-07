@@ -1,0 +1,7 @@
+The Shared Memory filesystem is intended for fast single-use IPC.
+
+In a two-step process, the agent takes advantage of its efficient Write/Read tools to access a file before/after an MCP tool call. A SHM filepath is passed around rather than directly passing bulky text or data.
+
+A variable name with a '_shm' suffix indicates that a SHM file is to be written before making the call, in liu of passing that information directly.
+
+A SHM file is "consumed" by a single-use operation and is considered safe to individually delete upon success. It is good form to do so programmatically in authored source-code.

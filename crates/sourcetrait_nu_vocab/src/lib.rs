@@ -10,6 +10,10 @@ pub use crate::{
         SignatureDef, ParameterDef, SignatureTrait, ExampleDef,
         SignatureCategoryTrait, SignatureParameterTrait,
     },
+    model::model::{
+        NuModel, NuModelMeta, NuModelSummary, NuModelDetails, NuModelNamepath,
+        NuModelVersion,
+    },
 };
 
 pub mod prelude {
@@ -25,13 +29,13 @@ pub(crate) use std::{
 
 pub(crate) mod nu {
     pub(crate) use nu_protocol::{
-        Category, Signature, SyntaxShape, Example, Value, Type, Span,
+        Category, Signature, SyntaxShape, Example, Value, Span,
         engine::{
             EngineState, StateWorkingSet,
         },
     };
     pub(crate) use nu_parser::{
-        parse_shape_name, parse_type,
+        parse_shape_name,
     };
 }
 

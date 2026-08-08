@@ -1,18 +1,14 @@
-pub(crate) mod reign {
-    // REIGN HUMAN
-    pub(crate) mod human {
-        pub(crate) mod def {
-            pub(crate) mod command;
-        }
-    }
+pub(crate) mod def {
+    pub(crate) mod command;
+}
+pub(crate) mod model {
+    pub(crate) mod model;
 }
 
 pub use crate::{
-    reign::human::{  // REIGN HUMAN
-        def::command::{
-            SignatureDef, ParameterDef, SignatureTrait, ExampleDef,
-            SignatureCategoryTrait, SignatureParameterTrait,
-        },
+    def::command::{
+        SignatureDef, ParameterDef, SignatureTrait, ExampleDef,
+        SignatureCategoryTrait, SignatureParameterTrait,
     },
 };
 
@@ -22,9 +18,20 @@ pub mod prelude {
     };
 }
 
+#[allow(unused)]
+pub(crate) use std::{
+    fs,
+};
+
 pub(crate) mod nu {
     pub(crate) use nu_protocol::{
-        Category, Signature, SyntaxShape, Example, Value,
+        Category, Signature, SyntaxShape, Example, Value, Type, Span,
+        engine::{
+            EngineState, StateWorkingSet,
+        },
+    };
+    pub(crate) use nu_parser::{
+        parse_shape_name, parse_type,
     };
 }
 

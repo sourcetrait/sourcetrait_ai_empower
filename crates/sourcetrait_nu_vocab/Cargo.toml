@@ -16,7 +16,11 @@ nu-command = { workspace = true, features = ["rand"] }
 nu-engine.workspace = true
 nu-parser.workspace = true
 nu-protocol.workspace = true
+semver.workspace = true
 snafu.workspace = true
 
 [dev-dependencies]
 sourcetrait_testing.workspace = true
+
+[package.metadata]
+reign = "human"

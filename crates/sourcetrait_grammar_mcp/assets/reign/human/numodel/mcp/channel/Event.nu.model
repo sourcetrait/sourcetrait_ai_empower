@@ -1,12 +1,24 @@
 # Channel event envelope
-@model mcp/channel/Event
+@namepath mcp/channel/Event
 @version 0.0.0-1
 record<
   id: string,  # base62, generated on send
   from: string,  # namepath, sender
-  model: string,  # namepath, for the nutype of the msg data. arbitrary or defined
-  msg: oneof<record<nuon:path,size:filesize>, record<  # either an msg's inbox path (spill, msg.nuon) for the msg or the actual data
-    data: oneof<record<>, table<>>,  # there always need to be some form of data
-    attached: oneof<nothing, table<file:path,size:filesize>>,  # path relative to msg's inbox/attached/<path>
-  >
+  model: string,  # namepath, for the numodel of the msg data. arbitrary or defined
+  msg: oneof<  # the msg either spilled to inbox or inlined
+        record<  # spilled to inbox; msg.nuon
+            nuon: path,
+            size: filesize,
+        >,
+        record<  # actual data inline
+            data: oneof<record<>, table<>>,  # there always need to be some form of data
+            attached: oneof<
+                nothing,  # no attachments provided
+                table<  # attachments
+                    file: path,  # relative to the inbox
+                    size: filesize,
+                >
+            >,  # path relative to msg's inbox/attached/<path>
+        >,
+    >
 >

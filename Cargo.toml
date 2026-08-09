@@ -1,11 +1,12 @@
 [workspace]
 resolver = "3"
 members = [
-  "crates/sourcetrait_grammar_doc",
+  "crates/sourcetrait_grammar_dev",
   "crates/sourcetrait_grammar_lib",
   "crates/sourcetrait_grammar_bed",
   "crates/sourcetrait_nu_vocab",
   "crates/sourcetrait_nu_plugin_grimoire",
+  "crates/sourcetrait_nu_plugin_model",
   "crates/sourcetrait_grammar_mcp",
   "crates/sourcetrait_grammar_know_rust",
   "crates/sourcetrait_grammar_claudeline",

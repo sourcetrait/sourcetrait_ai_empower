@@ -28,7 +28,7 @@ impl NuSh {
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         if is_derived_purview(&p.purview) {
             return Ok(error_to_call_result(
-                Error::PurviewInvalidId {
+                GrammarMcpError::PurviewInvalidId {
                     id: p.purview.clone(),
                     reason: "`.` and `*` are derived, not stored, so they cannot be configured"
                         .to_string(),
@@ -38,7 +38,7 @@ impl NuSh {
         }
         if !is_valid_purview_id(&p.purview) {
             return Ok(error_to_call_result(
-                Error::PurviewInvalidId {
+                GrammarMcpError::PurviewInvalidId {
                     id: p.purview.clone(),
                     reason: "must be slash-separated snake components, bare relative \
                              (no leading `/` or `./`)"
@@ -52,7 +52,7 @@ impl NuSh {
                 && !is_valid_purview_ref(id)
             {
                 return Ok(error_to_call_result(
-                    Error::PurviewInvalidId {
+                    GrammarMcpError::PurviewInvalidId {
                         id: value.clone(),
                         reason: "`@` must reference a configurable purview; `@.` and `@*` \
                                  are derived and are never rows"

@@ -54,7 +54,7 @@ impl NuSh {
             p.spam_error_rate,
         ) {
             Ok(spam) => envelope_to_structured(&ConfigChannelEnvelope::from(spam)),
-            Err(reason) => Ok(error_to_call_result(Error::SchemaInvalid { reason }, None)),
+            Err(reason) => Ok(error_to_call_result(GrammarMcpError::SchemaInvalid { reason }, None)),
         }
     }
 }

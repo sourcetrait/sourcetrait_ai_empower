@@ -27,7 +27,7 @@ impl NuSh {
                 Ok(mcp::CallToolResult::default())
             }
             None => Ok(error_to_call_result(
-                Error::RemoteNotOpen { alias: p.alias },
+                GrammarMcpError::RemoteNotOpen { alias: p.alias },
                 None,
             )),
         }

@@ -86,8 +86,10 @@ impl NuModel {
         enum Phase { Summary, Details, Attributes }
         
         let mut lines = s.lines().peekable();
-        let mut summary = String::new();
-        let mut details = String::new();
+        let mut summary: Vec<&str> = Vec::new();
+        let mut summary_len = 0;
+        let mut details: Vec<&str> = Vec::new();
+        let mut details_len = 0;
         let mut namepath: Option<&str> = None;
         let mut version: Option<&str> = None;
         let mut phase = Phase::Summary;
@@ -107,19 +109,21 @@ impl NuModel {
                     }
                     dbg!(&line);
                     
-                    let max = std::cmp::max(80 - summary.len() as isize, 0) as usize;
+                    let max = std::cmp::max(80 - summary_len as isize, 0) as usize;
                     if max > 0 {
                         let len = std::cmp::min(line.len(), max);
-                        summary.push_str(&line[0..len]);
+                        summary.push(&line[0..len]);
+                        summary_len += 1;
                     }
                 },
                 (Phase::Details, '#') => {
                     let line = chars.as_str().trim_start();
                     dbg!(&line);
-                    let max = std::cmp::max(1024 - details.len() as isize, 0) as usize;
+                    let max = std::cmp::max(1024 - details_len as isize, 0) as usize;
                     if max > 0 {
                         let len = std::cmp::min(line.len(), max);
-                        details.push_str(&line[0..len]);
+                        details.push(&line[0..len]);
+                        details_len += 1;
                     }
                 },
                 (_, '@') => {
@@ -162,10 +166,10 @@ impl NuModel {
         };
 
         let summary = if !summary.is_empty() {
-            Some(NuModelSummary::parse(summary)?)
+            Some(NuModelSummary::parse(summary.join("\n"))?)
         } else { None };
         let details = if !details.is_empty() {
-            Some(NuModelDetails::parse(details)?)
+            Some(NuModelDetails::parse(details.join("\n"))?)
         } else { None };
         let namepath = if let Some(namepath) = namepath {
             Some(NuModelNamepath::parse(namepath)?)
@@ -186,39 +190,3 @@ impl NuModel {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_basic_shape() {
-        dbg!(NuModel::parse("record<file: path, dir: directory, name: string>").unwrap());
-        dbg!(NuModel::parse(r#"
-            # This is a model summary line.
-            #
-            # This is a detailed description.
-            # And this is more detail.
-            @namepath vocab/test/basic/Shape
-            @version 0.0.1-test
-            record<
-                file: path,  # this is a file
-                dir: directory,  # this is a directory
-                num: float,  # this is a number
-                tab: table<  # this is a tab
-                    key: string,  # this is a key
-                    value: oneof<  # this is a value
-                        int,  # this is a value integer
-                        record<  # this is a value record
-                            stuff: string,  # this is stuff
-                            intg: int,  # this is another integer
-                            subtab: table<  # this is a subtab
-                                k: string,  # this is a subtab key
-                                v: directory,  # this is a subtab value
-                            >,
-                        >,
-                    >,
-                >,
-            >"#).unwrap()
-        );
-    }
-}

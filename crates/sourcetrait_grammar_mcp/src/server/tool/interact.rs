@@ -19,13 +19,13 @@ impl NuSh {
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let (args_type, result_type) = match convert_schemas(&p.args_schema, &p.result_schema) {
             Ok(t) => t,
-            Err(reason) => return Ok(error_to_call_result(Error::SchemaInvalid { reason }, None)),
+            Err(reason) => return Ok(error_to_call_result(GrammarMcpError::SchemaInvalid { reason }, None)),
         };
         let lint_engine = self.lint_engine.current();
         let diagnostics = lint_run_params(&lint_engine, &args_type, &p.body);
         if !diagnostics.is_empty() {
             return Ok(error_to_call_result(
-                Error::LintViolations { diagnostics },
+                GrammarMcpError::LintViolations { diagnostics },
                 None,
             ));
         }
@@ -33,7 +33,7 @@ impl NuSh {
             Ok(b) => b,
             Err(e) => {
                 return Ok(error_to_call_result(
-                    Error::Internal {
+                    GrammarMcpError::Internal {
                         phase: "interact::serialize_payload".to_string(),
                         reason: e.to_string(),
                     },

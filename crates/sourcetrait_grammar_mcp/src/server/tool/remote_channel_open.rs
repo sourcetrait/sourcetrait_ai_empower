@@ -18,7 +18,7 @@ impl NuSh {
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         let Some(entry) = config().remotes.by_alias.get(&p.alias).cloned() else {
             return Ok(error_to_call_result(
-                Error::RemoteInvalidParams {
+                GrammarMcpError::RemoteInvalidParams {
                     reason: format!(
                         "no remote `{}` in .grammar/mcp/remotes.toml",
                         p.alias,
@@ -34,7 +34,7 @@ impl NuSh {
             .contains_key(&p.alias)
         {
             return Ok(error_to_call_result(
-                Error::RemoteAlreadyOpen {
+                GrammarMcpError::RemoteAlreadyOpen {
                     alias: p.alias.clone(),
                 },
                 None,
@@ -43,7 +43,7 @@ impl NuSh {
         match open_remote_blocking(self.mcp_nom.to_string(), entry).await {
             Ok(()) => Ok(mcp::CallToolResult::default()),
             Err(reason) => Ok(error_to_call_result(
-                Error::RemoteOpenFailed {
+                GrammarMcpError::RemoteOpenFailed {
                     alias: p.alias,
                     reason,
                 },

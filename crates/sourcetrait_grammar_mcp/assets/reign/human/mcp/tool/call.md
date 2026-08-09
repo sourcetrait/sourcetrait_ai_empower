@@ -1,0 +1,1 @@
+Invoke a committed rig function with typed args.

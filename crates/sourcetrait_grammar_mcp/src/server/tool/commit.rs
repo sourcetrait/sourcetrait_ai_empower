@@ -29,7 +29,7 @@ impl NuSh {
             Some(l) => l,
             None => {
                 return Ok(error_to_call_result(
-                    Error::RigNotRegistered {
+                    GrammarMcpError::RigNotRegistered {
                         rig: p.rig.clone(),
                     },
                     None,

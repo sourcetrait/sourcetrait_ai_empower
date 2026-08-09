@@ -1,3 +1,3 @@
 fn main() -> std::process::ExitCode {
-    sourcetrait_grammar_doc::run()
+    sourcetrait_grammar_dev::run()
 }

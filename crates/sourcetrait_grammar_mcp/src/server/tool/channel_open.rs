@@ -29,8 +29,8 @@ const UNVERIFIED_REASON: &str = "verification window expired";
 fn ensure_inbox(
     channel: &ChannelHandle,
     mcp_nom: McpNom,
-) -> Result<String, Error> {
-    let dir = inbox_dir(&mcp_nom.to_string()).map_err(|reason| Error::ChannelStart { reason })?;
+) -> Result<String, GrammarMcpError> {
+    let dir = inbox_dir(&mcp_nom.to_string()).map_err(|reason| GrammarMcpError::ChannelStart { reason })?;
     fs::create_dir_all(&dir)?;
     channel.set_inbox(dir.clone());
     Ok(dir.display().to_string())
@@ -41,14 +41,14 @@ fn resend_open_packet(
     channel: &ChannelHandle,
     nonce_gen: &NonceGen,
     mcp_nom: McpNom,
-) -> Result<(), Error> {
-    let line = open_packet(nonce_gen, mcp_nom).map_err(|reason| Error::Internal {
+) -> Result<(), GrammarMcpError> {
+    let line = open_packet(nonce_gen, mcp_nom).map_err(|reason| GrammarMcpError::Internal {
         phase: "channel_open::render".to_string(),
         reason,
     })?;
     channel.send_control(line).map_err(|e| match e {
-        ChannelSendError::NotOpen => Error::ChannelNotOpen,
-        _ => Error::ChannelPeerGone,
+        ChannelSendError::NotOpen => GrammarMcpError::ChannelNotOpen,
+        _ => GrammarMcpError::ChannelPeerGone,
     })
 }
 
@@ -90,7 +90,7 @@ impl NuSh {
         } else {
             let Some(url) = status.url else {
                 return Ok(error_to_call_result(
-                    Error::Internal {
+                    GrammarMcpError::Internal {
                         phase: "channel_open::url".to_string(),
                         reason: "an open channel carries no url".to_string(),
                     },

@@ -27,19 +27,19 @@ pub(crate) fn open_packet(
     render_packet(id, FROM_MCP, MODEL_OPEN, &event, None)
 }
 
-fn server_config() -> Result<Arc<tls::ServerConfig>, Error> {
+fn server_config() -> Result<Arc<tls::ServerConfig>, GrammarMcpError> {
     let (leaf_path, key_path) = config().channel.cert_paths();
-    let leaf = tls::CertificateDer::from_pem_file(&leaf_path).map_err(|e| Error::ChannelStart {
+    let leaf = tls::CertificateDer::from_pem_file(&leaf_path).map_err(|e| GrammarMcpError::ChannelStart {
         reason: format!("read {}: {e}", leaf_path.display()),
     })?;
-    let key = tls::PrivateKeyDer::from_pem_file(&key_path).map_err(|e| Error::ChannelStart {
+    let key = tls::PrivateKeyDer::from_pem_file(&key_path).map_err(|e| GrammarMcpError::ChannelStart {
         reason: format!("read {}: {e}", key_path.display()),
     })?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = tls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .and_then(|b| b.with_no_client_auth().with_single_cert(vec![leaf], key))
-        .map_err(|e| Error::ChannelStart {
+        .map_err(|e| GrammarMcpError::ChannelStart {
             reason: format!("server config: {e}"),
         })?;
     Ok(Arc::new(config))
@@ -50,16 +50,16 @@ pub(crate) async fn start(
     handle: &ChannelHandle,
     mcp_nom: McpNom,
     nonce_gen: Arc<NonceGen>,
-) -> Result<String, Error> {
+) -> Result<String, GrammarMcpError> {
     let tls_config = server_config()?;
     let listener = tk::TcpListener::bind((BIND, config().channel.port.unwrap_or(0)))
         .await
-        .map_err(|e| Error::ChannelStart {
+        .map_err(|e| GrammarMcpError::ChannelStart {
             reason: format!("bind {BIND}: {e}"),
         })?;
     let port = listener
         .local_addr()
-        .map_err(|e| Error::ChannelStart {
+        .map_err(|e| GrammarMcpError::ChannelStart {
             reason: format!("local_addr: {e}"),
         })?
         .port();

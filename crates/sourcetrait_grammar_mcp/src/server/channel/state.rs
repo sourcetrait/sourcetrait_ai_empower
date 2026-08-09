@@ -13,7 +13,7 @@ pub(crate) const SHM_ROOT_VAR: &str = "$XDGX_SHM_DIR";
 /// link's landed files meet, so an injected packet's refs resolve for the local
 /// agent. The one composition point both producers share.
 pub(crate) fn inbox_dir(mcp_nom: &str) -> Result<PathBuf, String> {
-    Ok(expand_path(SHM_ROOT_VAR)?
+    Ok(expand_path(Path::new(SHM_ROOT_VAR))?
         .join("mcp")
         .join(mcp_nom)
         .join("inbox"))

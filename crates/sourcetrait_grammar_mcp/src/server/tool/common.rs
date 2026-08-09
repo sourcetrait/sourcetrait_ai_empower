@@ -193,7 +193,7 @@ pub(crate) struct DispatchOutcome {
 }
 
 pub(crate) struct DispatchError {
-    pub(crate) error: Error,
+    pub(crate) error: GrammarMcpError,
     pub(crate) nonce: Option<Nonce>,
 }
 
@@ -213,7 +213,7 @@ pub(crate) async fn dispatch_pooled(
     let nonce_str = nonce.to_string();
     let log_dir = cache_dir(log_kind, nonce);
     fs::create_dir_all(&log_dir).map_err(|e| DispatchError {
-        error: Error::Internal {
+        error: GrammarMcpError::Internal {
             phase: "dispatch_pooled::create_log_dir".to_string(),
             reason: format!("create_dir_all {}: {e}", log_dir.display()),
         },
@@ -228,7 +228,7 @@ pub(crate) async fn dispatch_pooled(
         .acquire_owned()
         .await
         .map_err(|e| DispatchError {
-            error: Error::ThreadDispatch {
+            error: GrammarMcpError::ThreadDispatch {
                 reason: format!("eval semaphore: {e}"),
             },
             nonce: None,
@@ -279,7 +279,7 @@ pub(crate) async fn dispatch_pooled(
                 },
             );
             Err(DispatchError {
-                error: Error::ThreadTimeout {
+                error: GrammarMcpError::ThreadTimeout {
                     timeout_ms: effective_timeout,
                 },
                 nonce: Some(nonce),
@@ -301,7 +301,7 @@ pub(crate) async fn dispatch_interact(
     let nonce_str = nonce.to_string();
     let log_dir = cache_dir(CacheKind::Interacts, nonce);
     fs::create_dir_all(&log_dir).map_err(|e| DispatchError {
-        error: Error::Internal {
+        error: GrammarMcpError::Internal {
             phase: "dispatch_interact::create_log_dir".to_string(),
             reason: format!("create_dir_all {}: {e}", log_dir.display()),
         },
@@ -361,7 +361,7 @@ pub(crate) async fn dispatch_interact(
                 },
             );
             Err(DispatchError {
-                error: Error::ThreadTimeout {
+                error: GrammarMcpError::ThreadTimeout {
                     timeout_ms: effective_timeout,
                 },
                 nonce: Some(nonce),

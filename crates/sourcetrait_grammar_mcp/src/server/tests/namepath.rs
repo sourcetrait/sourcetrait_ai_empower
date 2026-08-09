@@ -1,7 +1,7 @@
 
 use crate::*;
 
-fn validate(s: &str) -> Result<NamepathRef, Error> {
+fn validate(s: &str) -> Result<NamepathRef, GrammarMcpError> {
     Namepath(s.to_string()).validate()
 }
 

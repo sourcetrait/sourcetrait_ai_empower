@@ -54,7 +54,7 @@ pub(crate) enum NamepathPattern {
 }
 
 impl NamepathStr {
-    pub(crate) fn parse(raw: &str) -> Result<Self, Error> {
+    pub(crate) fn parse(raw: &str) -> Result<Self, GrammarMcpError> {
         if is_pattern_shaped(raw) {
             Ok(Self::Pattern(NamepathPattern::parse(raw)?))
         } else {
@@ -92,9 +92,9 @@ impl NamepathRef {
 }
 
 impl Namepath {
-    pub(crate) fn validate(&self) -> Result<NamepathRef, Error> {
-        fn bad(raw: &str, reason: &str) -> Error {
-            Error::NamepathInvalid {
+    pub(crate) fn validate(&self) -> Result<NamepathRef, GrammarMcpError> {
+        fn bad(raw: &str, reason: &str) -> GrammarMcpError {
+            GrammarMcpError::NamepathInvalid {
                 namepath: raw.to_string(),
                 reason: reason.to_string(),
             }
@@ -167,12 +167,12 @@ fn check_module_path(module_path: &str) -> Result<(), &'static str> {
 }
 
 impl NamepathPattern {
-    pub(crate) fn parse(raw: &str) -> Result<Self, Error> {
+    pub(crate) fn parse(raw: &str) -> Result<Self, GrammarMcpError> {
         fn bad(
             raw: &str,
             reason: &str,
-        ) -> Error {
-            Error::NamepathInvalid {
+        ) -> GrammarMcpError {
+            GrammarMcpError::NamepathInvalid {
                 namepath: raw.to_string(),
                 reason: reason.to_string(),
             }

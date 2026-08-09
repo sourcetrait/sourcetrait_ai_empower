@@ -38,7 +38,7 @@ impl NuSh {
                 }) => targets.push((rig, module_path, Some(name))),
                 Ok(NamepathRef::Rig { .. }) => {
                     return Ok(error_to_call_result(
-                        Error::NamepathInvalid {
+                        GrammarMcpError::NamepathInvalid {
                             namepath: np.clone(),
                             reason: "new() needs a module or function namepath; use rig(new) to create a rig"
                                 .to_string(),
@@ -59,7 +59,7 @@ impl NuSh {
                 Some(l) => locks.push(l),
                 None => {
                     return Ok(error_to_call_result(
-                        Error::RigNotRegistered {
+                        GrammarMcpError::RigNotRegistered {
                             rig: lib.clone(),
                         },
                         None,
@@ -76,7 +76,7 @@ impl NuSh {
             match scaffold_leaf_exists(rig, module_path, name.as_deref()) {
                 Ok(true) => {
                     return Ok(error_to_call_result(
-                        Error::RigInvalidName {
+                        GrammarMcpError::RigInvalidName {
                             rig: module_path.clone(),
                             reason: format!(
                                 "`{}` already exists; edit it instead of scaffolding over it",

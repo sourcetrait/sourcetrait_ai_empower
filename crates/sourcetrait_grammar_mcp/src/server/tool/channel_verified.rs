@@ -16,10 +16,10 @@ impl NuSh {
         match self.channel.mark_verified() {
             Ok(()) => Ok(mcp::CallToolResult::default()),
             Err(ChannelVerifyError::NotOpen) => {
-                Ok(error_to_call_result(Error::ChannelNotOpen, None))
+                Ok(error_to_call_result(GrammarMcpError::ChannelNotOpen, None))
             }
             Err(ChannelVerifyError::NotClaimed) => {
-                Ok(error_to_call_result(Error::ChannelNotClaimed, None))
+                Ok(error_to_call_result(GrammarMcpError::ChannelNotClaimed, None))
             }
         }
     }

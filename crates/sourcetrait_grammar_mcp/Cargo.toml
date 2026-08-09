@@ -2,7 +2,7 @@
 name = "sourcetrait_grammar_mcp"
 version = "0.0.0-121"
 edition = "2024"
-description = "Nushell engine MCP server"
+description = "Grammar MCP"
 authors = ["SourceTrait <development@sourcetrait.com>"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/sourcetrait/sourcetrait_grammar"
@@ -59,3 +59,6 @@ sourcetrait_testing.workspace = true
 
 [build-dependencies]
 toml.workspace = true
+
+[package.metadata]
+reign = "ai"

@@ -1,12 +1,12 @@
 use crate::*;
 
 /// The host binary's CLI surface; a bare invocation serves MCP over stdio.
-#[derive(clap::Parser)]
-#[command(version, about = "Nushell engine MCP server")]
-pub(crate) struct HostCli {
+#[derive(Default, clap::Parser)]
+#[command(version, about = "Grammar MCP")]
+pub struct Cli {
     /// Path to a grammar_mcp.toml carrying the non-argument settings.
     #[arg(long)]
-    pub config: Option<String>,
+    pub config: Option<PathBuf>,
     /// Agent identity owning the state namespace; defaults to the invoking user.
     #[arg(long, default_value_t = default_id())]
     pub id: String,
@@ -18,17 +18,29 @@ pub(crate) struct HostCli {
     pub test: bool,
     /// Agent working directory, exported to bodies as $env.EQUIP_WORK_DIR.
     #[arg(long)]
-    pub workdir: Option<String>,
+    pub workdir: Option<PathBuf>,
     /// Comma-separated tools to withhold from the registered surface.
     #[arg(long, value_delimiter = ',', value_parser = parse_deniable)]
     pub deny: Vec<DeniableTool>,
     #[command(subcommand)]
-    pub command: Option<HostCommand>,
+    pub command: Option<CliCmd>,
+    #[arg(skip)]
+    pub env: Option<CliEnv>,
+}
+
+/// Environment overrides
+#[derive(Default, Debug, Clone)]
+pub struct CliEnv {
+    pub xdg_cache_home: Option<PathBuf>,
+    pub xdg_config_home: Option<PathBuf>,
+    pub xdg_data_home: Option<PathBuf>,
+    pub xdg_state_home: Option<PathBuf>,
+    pub vars: Option<HashMap<String, String>>,
 }
 
 /// The host's subcommands; absent means serve MCP over stdio.
 #[derive(clap::Subcommand)]
-pub(crate) enum HostCommand {
+pub enum CliCmd {
     /// One-shot CLI over the tool surface; prints one line of bare compact JSON.
     Cli {
         #[command(subcommand)]
@@ -38,7 +50,7 @@ pub(crate) enum HostCommand {
 
 /// One-shot mirrors of the MCP tools, for an operator with no agent.
 #[derive(clap::Subcommand)]
-pub(crate) enum CliTool {
+pub enum CliTool {
     /// Versions, plugins, and rigs summary.
     Info,
     /// Documentation of one namepath, at any arity.
@@ -120,7 +132,7 @@ pub(crate) enum CliTool {
 
 /// The `cli rig` action; an unknown one fails at parse.
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
-pub(crate) enum RigCliAction {
+pub enum RigCliAction {
     New,
     Install,
     Check,
@@ -135,89 +147,5 @@ impl RigCliAction {
             Self::Check => "check",
             Self::Uninstall => "uninstall",
         }
-    }
-}
-
-/// `--test` supplies a default namespace, never an override.
-fn resolve_namespace(
-    namespace: Option<String>,
-    test: bool,
-) -> String {
-    namespace.unwrap_or_else(|| {
-        if test {
-            TEST_NAMESPACE.to_string()
-        } else {
-            DEFAULT_NAMESPACE.to_string()
-        }
-    })
-}
-
-/// Expand a work-dir argument the same way a config path is expanded.
-fn resolve_work_dir(
-    raw: Option<&str>,
-    id: &str,
-) -> Result<PathBuf, String> {
-    match raw {
-        Some(s) => expand_path(s),
-        None => Ok(default_work_dir(id)),
-    }
-}
-
-fn parse_deniable(s: &str) -> Result<DeniableTool, String> {
-    DeniableTool::from_name(s).ok_or_else(|| {
-        format!(
-            "unknown tool `{s}`; deniable tools: run, rerun, interact, call, learn, new, \
-             commit, rig, channel_open, channel_verified, channel_close, config_channel, \
-             purviews, purview_configure, purview_extend, purview, \
-             remote_channel_open, remote_channel_close, remote_channels",
-        )
-    })
-}
-
-/// The argument-owned values plus whatever the file contributes.
-fn resolve_config(cli: HostCli) -> Result<(Config, Option<HostCommand>), String> {
-    let file = match &cli.config {
-        Some(raw) => Config::read_toml(&expand_path(raw)?)?,
-        None => ConfigToml::default(),
-    };
-    let work_dir = resolve_work_dir(cli.workdir.as_deref(), &cli.id)?;
-    let namespace = resolve_namespace(cli.namespace, cli.test);
-    let config = Config::from_toml(
-        file,
-        cli.id,
-        namespace,
-        work_dir,
-        DenySet::new(cli.deny),
-        cli.test,
-    )?;
-    Ok((config, cli.command))
-}
-
-/// Build the runtime, then run the host on it.
-pub fn host_main() -> process::ExitCode {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(EVAL_STACK_SIZE)
-        .build()
-        .expect("tokio runtime");
-    runtime.block_on(async { tk::spawn(serve_or_oneshot()).await.expect("host task") })
-}
-
-async fn serve_or_oneshot() -> process::ExitCode {
-    let cli = HostCli::parse();
-    let (config, command) = match resolve_config(cli) {
-        Ok(resolved) => resolved,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return process::ExitCode::from(2);
-        }
-    };
-    CONFIG.set(config).expect("CONFIG set once at startup");
-    match command {
-        None => {
-            run_server().await;
-            process::ExitCode::SUCCESS
-        }
-        Some(HostCommand::Cli { tool }) => run_oneshot(tool).await,
     }
 }

@@ -276,11 +276,11 @@ fn validate_new_names(
     rig: &str,
     module_path: &str,
     name: Option<&str>,
-) -> Result<(), Error> {
+) -> Result<(), GrammarMcpError> {
     let (author, lib_name) = match rig.split_once('/') {
         Some((a, n)) if !n.contains('/') => (a, n),
         _ => {
-            return Err(Error::RigInvalidName {
+            return Err(GrammarMcpError::RigInvalidName {
                 rig: rig.to_string(),
                 reason: "rig must be the compound `<author>/<name>`".to_string(),
             });
@@ -288,7 +288,7 @@ fn validate_new_names(
     };
     for seg in [author, lib_name] {
         if !is_valid_ident(seg) || is_reserved_term(seg) {
-            return Err(Error::RigInvalidName {
+            return Err(GrammarMcpError::RigInvalidName {
                 rig: seg.to_string(),
                 reason: "author/name must match [a-zA-Z_][a-zA-Z0-9_-]* and not be the reserved `main`"
                     .to_string(),
@@ -296,19 +296,19 @@ fn validate_new_names(
         }
     }
     if NAME_DENYLIST.contains(&lib_name) {
-        return Err(Error::RigNameDenied {
+        return Err(GrammarMcpError::RigNameDenied {
             rig: rig.to_string(),
         });
     }
     if !is_valid_module_path(module_path) {
-        return Err(Error::RigInvalidName {
+        return Err(GrammarMcpError::RigInvalidName {
             rig: module_path.to_string(),
             reason: "invalid module path".to_string(),
         });
     }
     for seg in module_path.split('/').filter(|s| !s.is_empty()) {
         if is_reserved_term(seg) {
-            return Err(Error::RigInvalidName {
+            return Err(GrammarMcpError::RigInvalidName {
                 rig: seg.to_string(),
                 reason: "reserved `main` cannot name a module".to_string(),
             });
@@ -316,7 +316,7 @@ fn validate_new_names(
     }
     if let Some(n) = name {
         if !is_valid_ident(n) || is_reserved_term(n) {
-            return Err(Error::RigInvalidName {
+            return Err(GrammarMcpError::RigInvalidName {
                 rig: n.to_string(),
                 reason: "invalid or reserved (`main`) function name".to_string(),
             });
@@ -325,11 +325,11 @@ fn validate_new_names(
     Ok(())
 }
 
-pub(crate) fn establish_rig(rig: &str, source_path: &std::path::Path) -> Result<(), Error> {
+pub(crate) fn establish_rig(rig: &str, source_path: &std::path::Path) -> Result<(), GrammarMcpError> {
     validate_new_names(rig, "", None)?;
     let canonical = rig_dir(rig);
     if canonical.exists() {
-        return Err(Error::RigAlreadyRegistered {
+        return Err(GrammarMcpError::RigAlreadyRegistered {
             rig: rig.to_string(),
         });
     }
@@ -342,7 +342,7 @@ pub(crate) fn establish_rig(rig: &str, source_path: &std::path::Path) -> Result<
         functions: Vec::new(),
         modules: Vec::new(),
     };
-    let index_nuon = index_to_nuon(&index).map_err(|reason| Error::Internal {
+    let index_nuon = index_to_nuon(&index).map_err(|reason| GrammarMcpError::Internal {
         phase: "establish::serialize_index".to_string(),
         reason,
     })?;
@@ -365,7 +365,7 @@ pub(crate) fn scaffold_leaf_exists(
     rig: &str,
     module_path: &str,
     name: Option<&str>,
-) -> Result<bool, Error> {
+) -> Result<bool, GrammarMcpError> {
     let index = load_index(rig)?;
     let mut dir = index.source_path.clone();
     for seg in module_path.split('/').filter(|s| !s.is_empty()) {
@@ -382,10 +382,10 @@ pub(crate) fn scaffold_leaf(
     rig: &str,
     module_path: &str,
     name: Option<&str>,
-) -> Result<Vec<String>, Error> {
+) -> Result<Vec<String>, GrammarMcpError> {
     validate_new_names(rig, module_path, name)?;
     if !rig_dir(rig).exists() {
-        return Err(Error::RigNotRegistered {
+        return Err(GrammarMcpError::RigNotRegistered {
             rig: rig.to_string(),
         });
     }
@@ -401,7 +401,7 @@ pub(crate) fn scaffold_leaf(
             let child = dir.join(seg);
             let terminal_module = name.is_none() && i == segs.len() - 1;
             if terminal_module && child.exists() {
-                return Err(Error::RigInvalidName {
+                return Err(GrammarMcpError::RigInvalidName {
                     rig: module_path.to_string(),
                     reason: "module already exists; edit it instead of scaffolding over it"
                         .to_string(),
@@ -421,7 +421,7 @@ pub(crate) fn scaffold_leaf(
     if let Some(fn_name) = name {
         let fn_dir = dir.join(fn_name);
         if fn_dir.exists() {
-            return Err(Error::RigInvalidName {
+            return Err(GrammarMcpError::RigInvalidName {
                 rig: fn_name.to_string(),
                 reason: "function already exists; edit it instead of scaffolding over it"
                     .to_string(),
@@ -773,20 +773,20 @@ pub(crate) fn inspect_impl(
     rig: &str,
     module_path: &str,
     name: Option<&str>,
-) -> Result<InspectDoc, Error> {
+) -> Result<InspectDoc, GrammarMcpError> {
     if !is_valid_rig(rig) {
-        return Err(Error::RigInvalidName {
+        return Err(GrammarMcpError::RigInvalidName {
             rig: rig.to_string(),
             reason: "rig must be the compound `<author>/<name>`".to_string(),
         });
     }
     if !rig_dir(rig).exists() {
-        return Err(Error::RigNotRegistered {
+        return Err(GrammarMcpError::RigNotRegistered {
             rig: rig.to_string(),
         });
     }
     if !is_valid_module_path(module_path) {
-        return Err(Error::RigInvalidModulePath {
+        return Err(GrammarMcpError::RigInvalidModulePath {
             module_path: module_path.to_string(),
             reason: "invalid module path".to_string(),
         });
@@ -797,13 +797,13 @@ pub(crate) fn inspect_impl(
     match name {
         Some(fn_name) => {
             let (fns, _) = index_node(&index, module_path).ok_or_else(|| {
-                Error::RigInvalidModulePath {
+                GrammarMcpError::RigInvalidModulePath {
                     module_path: module_path.to_string(),
                     reason: "module not found".to_string(),
                 }
             })?;
             let f = fns.iter().find(|f| f.name == fn_name).ok_or_else(|| {
-                Error::FunctionNotDefined {
+                GrammarMcpError::FunctionNotDefined {
                     rig: rig.to_string(),
                     module_path: module_path.to_string(),
                     name: fn_name.to_string(),
@@ -832,7 +832,7 @@ pub(crate) fn inspect_impl(
         })),
         None => {
             if index_node(&index, module_path).is_none() {
-                return Err(Error::RigInvalidModulePath {
+                return Err(GrammarMcpError::RigInvalidModulePath {
                     module_path: module_path.to_string(),
                     reason: "module not found".to_string(),
                 });
@@ -2239,7 +2239,7 @@ fn write_meta(
     name: &str,
     source_path: &std::path::Path,
     result: &ValidationResult,
-) -> Result<(), Error> {
+) -> Result<(), GrammarMcpError> {
     let canonical = rig_dir(name);
     let meta_dir = canonical.join(".meta");
     fs::create_dir_all(&meta_dir)?;
@@ -2248,7 +2248,7 @@ fn write_meta(
         functions: result.functions.clone(),
         modules: result.modules.clone(),
     };
-    let index_nuon = index_to_nuon(&index).map_err(|reason| Error::Internal {
+    let index_nuon = index_to_nuon(&index).map_err(|reason| GrammarMcpError::Internal {
         phase: "commit::serialize_index".to_string(),
         reason,
     })?;
@@ -2271,30 +2271,30 @@ fn write_meta(
     Ok(())
 }
 
-pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResult, Error> {
+pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResult, GrammarMcpError> {
     if !is_valid_rig(name) {
-        return Err(Error::RigInvalidName {
+        return Err(GrammarMcpError::RigInvalidName {
             rig: name.to_string(),
             reason: "rig must be the compound `<author>/<name>`".to_string(),
         });
     }
     let lib_root = rig_dir(name);
     if !lib_root.exists() {
-        return Err(Error::RigNotRegistered {
+        return Err(GrammarMcpError::RigNotRegistered {
             rig: name.to_string(),
         });
     }
     let index = load_index(name)?;
     let source_path = index.source_path.clone();
     if !source_path.exists() || !source_path.is_dir() {
-        return Err(Error::RigSourceMissing {
+        return Err(GrammarMcpError::RigSourceMissing {
             path: source_path.display().to_string(),
         });
     }
     let mut result = validate_rig_source(name, &source_path, engine)?;
     prefix_diagnostic_paths(&mut result, name);
     if !result.is_empty() {
-        return Err(Error::RigViolations {
+        return Err(GrammarMcpError::RigViolations {
             diagnostics: result.diagnostics,
         });
     }
@@ -2321,11 +2321,11 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
 }
 
 
-pub(crate) fn check_source_dir(rig: &str, source_dir: &str) -> Result<(), Error> {
+pub(crate) fn check_source_dir(rig: &str, source_dir: &str) -> Result<(), GrammarMcpError> {
     let index = load_index(rig)?;
     let registered = index.source_path.to_string_lossy().into_owned();
     if registered != source_dir {
-        return Err(Error::RigSourcePathMismatch {
+        return Err(GrammarMcpError::RigSourcePathMismatch {
             rig: rig.to_string(),
             passed: source_dir.to_string(),
             registered,
@@ -2338,7 +2338,7 @@ pub(crate) fn install_impl(
     rig: &str,
     source_dir: &std::path::Path,
     engine: &ParseEngine,
-) -> Result<CommitResult, Error> {
+) -> Result<CommitResult, GrammarMcpError> {
     establish_rig(rig, source_dir)?;
     match commit_impl(rig, engine) {
         Ok(result) => Ok(result),
@@ -2358,7 +2358,7 @@ pub(crate) fn install_impl(
     }
 }
 
-pub(crate) fn uninstall_impl(rig: &str) -> Result<(), Error> {
+pub(crate) fn uninstall_impl(rig: &str) -> Result<(), GrammarMcpError> {
     let lib_root = rig_dir(rig);
     if !lib_root.exists() {
         return Ok(());
@@ -2376,17 +2376,17 @@ pub(crate) fn uninstall_impl(rig: &str) -> Result<(), Error> {
 pub(crate) fn check_rig(
     rig: &str,
     engine: &ParseEngine,
-) -> Result<ValidationResult, Error> {
+) -> Result<ValidationResult, GrammarMcpError> {
     let lib_root = rig_dir(rig);
     if !lib_root.exists() {
-        return Err(Error::RigNotRegistered {
+        return Err(GrammarMcpError::RigNotRegistered {
             rig: rig.to_string(),
         });
     }
     let index = load_index(rig)?;
     let source_path = index.source_path.clone();
     if !source_path.exists() || !source_path.is_dir() {
-        return Err(Error::RigSourceMissing {
+        return Err(GrammarMcpError::RigSourceMissing {
             path: source_path.display().to_string(),
         });
     }

@@ -21,6 +21,7 @@ pub(crate) struct CallEnvelope {
 
 #[mcp::tool_router(router = call_router, vis = "pub(crate)")]
 impl NuSh {
+    #[doc = include_str!("../../../assets/reign/human/mcp/tool/call.md")]
     #[mcp::tool(
         description = "Invoke a committed rig function with typed args.",
         output_schema = mcp::schema_for_type::<CallEnvelope>()
@@ -37,7 +38,7 @@ impl NuSh {
             }) => (rig, module_path, name),
             Ok(_) => {
                 return Ok(error_to_call_result(
-                    Error::NamepathInvalid {
+                    GrammarMcpError::NamepathInvalid {
                         namepath: p.namepath.clone(),
                         reason: "call requires a function namepath: rig:module/path:function"
                             .to_string(),
@@ -51,7 +52,7 @@ impl NuSh {
             Some(l) => l,
             None => {
                 return Ok(error_to_call_result(
-                    Error::RigNotRegistered {
+                    GrammarMcpError::RigNotRegistered {
                         rig: rig.clone(),
                     },
                     None,
@@ -63,7 +64,7 @@ impl NuSh {
             Ok(i) => i,
             Err(e) => {
                 return Ok(error_to_call_result(
-                    Error::Internal {
+                    GrammarMcpError::Internal {
                         phase: "call::load_index".to_string(),
                         reason: e.to_string(),
                     },
@@ -76,7 +77,7 @@ impl NuSh {
             .unwrap_or(false);
         if !is_call_target {
             return Ok(error_to_call_result(
-                Error::FunctionNotDefined {
+                GrammarMcpError::FunctionNotDefined {
                     rig: rig.clone(),
                     module_path: module_path.clone(),
                     name: name.clone(),
@@ -88,7 +89,7 @@ impl NuSh {
             Ok(b) => b,
             Err(e) => {
                 return Ok(error_to_call_result(
-                    Error::Internal {
+                    GrammarMcpError::Internal {
                         phase: "call::serialize_payload".to_string(),
                         reason: e.to_string(),
                     },

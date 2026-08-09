@@ -23,10 +23,10 @@ impl From<String> for EvalFailure {
 }
 
 impl EvalFailure {
-    pub(crate) fn into_error(self) -> Error {
+    pub(crate) fn into_error(self) -> GrammarMcpError {
         match self {
-            Self::Reported(reason) => Error::ThreadReturnedError { reason },
-            Self::CircularImport(files) => Error::ModuleCircularImport { files },
+            Self::Reported(reason) => GrammarMcpError::ThreadReturnedError { reason },
+            Self::CircularImport(files) => GrammarMcpError::ModuleCircularImport { files },
         }
     }
 }

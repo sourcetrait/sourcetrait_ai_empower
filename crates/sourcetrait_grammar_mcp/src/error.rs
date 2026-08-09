@@ -63,8 +63,10 @@ impl Diagnostic {
     }
 }
 
+pub type GrammarMcpResult<T> = Result<T, GrammarMcpError>;
+
 #[derive(Debug, Clone)]
-pub enum Error {
+pub enum GrammarMcpError {
     RigNotRegistered {
         rig: String,
     },
@@ -163,7 +165,7 @@ pub enum Error {
     },
 }
 
-impl Error {
+impl GrammarMcpError {
     fn kind_str(&self) -> &'static str {
         match self {
             Self::RigNotRegistered { .. } => "rig::not_registered",
@@ -281,9 +283,9 @@ impl Error {
     }
 }
 
-impl From<io::Error> for Error {
+impl From<io::Error> for GrammarMcpError {
     fn from(e: io::Error) -> Self {
-        Error::Internal {
+        GrammarMcpError::Internal {
             phase: "io".to_string(),
             reason: e.to_string(),
         }
@@ -306,11 +308,11 @@ pub struct ErrorBody {
 }
 
 pub(crate) fn error_to_call_result(
-    error: Error,
+    error: GrammarMcpError,
     nonce: Option<Nonce>,
 ) -> mcp::CallToolResult {
     let (errors, warnings) = match error {
-        Error::RigViolations { diagnostics } | Error::LintViolations { diagnostics } => {
+        GrammarMcpError::RigViolations { diagnostics } | GrammarMcpError::LintViolations { diagnostics } => {
             Diagnostic::bucket(diagnostics)
         }
         single => {

@@ -29,16 +29,16 @@ pub(crate) fn generate_skill(
     harness_dir: &std::path::Path,
     version: &str,
     nu_version: &str,
-) -> Result<(PathBuf, u64), Error> {
+) -> Result<(PathBuf, u64), GrammarMcpError> {
     let parser = liquid::ParserBuilder::with_stdlib()
         .build()
-        .map_err(|e| Error::Internal {
+        .map_err(|e| GrammarMcpError::Internal {
             phase: "learn::parser".to_string(),
             reason: e.to_string(),
         })?;
     let template = parser
         .parse(NU_SKILL_TEMPLATE)
-        .map_err(|e| Error::Internal {
+        .map_err(|e| GrammarMcpError::Internal {
             phase: "learn::parse".to_string(),
             reason: e.to_string(),
         })?;
@@ -46,11 +46,11 @@ pub(crate) fn generate_skill(
         version: version.to_string(),
         nu_version: nu_version.to_string(),
     })
-    .map_err(|e| Error::Internal {
+    .map_err(|e| GrammarMcpError::Internal {
         phase: "learn::context".to_string(),
         reason: e.to_string(),
     })?;
-    let rendered = template.render(&globals).map_err(|e| Error::Internal {
+    let rendered = template.render(&globals).map_err(|e| GrammarMcpError::Internal {
         phase: "learn::render".to_string(),
         reason: e.to_string(),
     })?;

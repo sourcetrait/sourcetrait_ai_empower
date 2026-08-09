@@ -58,7 +58,7 @@ impl NuSh {
         for id in &p.purviews {
             if !is_nameable_purview(id, rows.as_ref()) {
                 return Ok(error_to_call_result(
-                    Error::PurviewInvalidId {
+                    GrammarMcpError::PurviewInvalidId {
                         id: id.clone(),
                         reason: "no such purview; configure it first".to_string(),
                     },

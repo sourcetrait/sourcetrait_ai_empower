@@ -31,7 +31,7 @@ impl NuSh {
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
         if !lib_grammar::is_base62(&p.nonce) {
             return Ok(error_to_call_result(
-                Error::RerunInvalidNonce {
+                GrammarMcpError::RerunInvalidNonce {
                     nonce: p.nonce.clone(),
                     reason: "nonce must be base62".to_string(),
                 },
@@ -43,7 +43,7 @@ impl NuSh {
             Ok(t) => t,
             Err(_) => {
                 return Ok(error_to_call_result(
-                    Error::RerunBodyMissing {
+                    GrammarMcpError::RerunBodyMissing {
                         nonce: p.nonce.clone(),
                     },
                     None,
@@ -54,7 +54,7 @@ impl NuSh {
             Ok(c) => c,
             Err(reason) => {
                 return Ok(error_to_call_result(
-                    Error::RerunBodyDecode {
+                    GrammarMcpError::RerunBodyDecode {
                         nonce: p.nonce.clone(),
                         reason,
                     },

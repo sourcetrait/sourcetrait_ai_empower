@@ -41,7 +41,7 @@ pub(crate) fn purviews_from_nuon(text: &str) -> Result<Vec<PurviewRow>, String> 
 }
 
 /// Every configured purview; None only before startup materialized it.
-pub(crate) fn load_purviews() -> Result<Option<Vec<PurviewRow>>, Error> {
+pub(crate) fn load_purviews() -> Result<Option<Vec<PurviewRow>>, GrammarMcpError> {
     let path = purviews_path();
     let text = match fs::read_to_string(&path) {
         Ok(t) => t,
@@ -50,18 +50,18 @@ pub(crate) fn load_purviews() -> Result<Option<Vec<PurviewRow>>, Error> {
     };
     purviews_from_nuon(&text)
         .map(Some)
-        .map_err(|reason| Error::Internal {
+        .map_err(|reason| GrammarMcpError::Internal {
             phase: "purview::decode".to_string(),
             reason,
         })
 }
 
-pub(crate) fn save_purviews(rows: &[PurviewRow]) -> Result<(), Error> {
+pub(crate) fn save_purviews(rows: &[PurviewRow]) -> Result<(), GrammarMcpError> {
     let path = purviews_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let nuon = purviews_to_nuon(rows).map_err(|reason| Error::Internal {
+    let nuon = purviews_to_nuon(rows).map_err(|reason| GrammarMcpError::Internal {
         phase: "purview::encode".to_string(),
         reason,
     })?;
@@ -141,7 +141,7 @@ pub(crate) fn expand_values(
 }
 
 /// Write `default` as `['*']` when it has no row. Runs at startup.
-pub(crate) fn ensure_default_purview() -> Result<(), Error> {
+pub(crate) fn ensure_default_purview() -> Result<(), GrammarMcpError> {
     let mut rows = load_purviews()?.unwrap_or_default();
     if rows.iter().any(|row| row.id == PURVIEW_DEFAULT) {
         return Ok(());

@@ -16,11 +16,6 @@ impl nu::Plugin for GrimoirePlugin {
             Box::new(crate::eye::tree::Command),
             Box::new(crate::liquid::from::Command),
             Box::new(crate::liquid::soak::Command),
-            //todo:ai: Box::new(crate::shm::dir::Command),
-            //todo:ai: Box::new(crate::shm::file::Command),
-            //todo:ai: Box::new(crate::shm::path::Command),
-            //todo:ai: Box::new(crate::shm::release::Command),
-            //todo:ai: Box::new(crate::shm::result::Command),
         ]
     }
 }

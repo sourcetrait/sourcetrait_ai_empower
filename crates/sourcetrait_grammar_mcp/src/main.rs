@@ -1,3 +1,3 @@
 fn main() -> std::process::ExitCode {
-    sourcetrait_grammar_mcp::host_main()
+    sourcetrait_grammar_mcp::run_main()
 }

@@ -208,7 +208,7 @@ fn merged_channel(
     };
     Ok(ChannelConfig {
         port,
-        cert_dir: expand_path(&cert_dir)?,
+        cert_dir: expand_path(Path::new(&cert_dir))?,
         spam,
     })
 }
@@ -305,9 +305,9 @@ impl TryFrom<RemoteToml> for RemoteConfig {
         Ok(RemoteConfig {
             alias,
             role,
-            self_public_key_file: expand_path(&self_public)?,
-            self_private_key_file: expand_path(&self_private)?,
-            peer_public_key_file: expand_path(&peer_public)?,
+            self_public_key_file: expand_path(Path::new(&self_public))?,
+            self_private_key_file: expand_path(Path::new(&self_private))?,
+            peer_public_key_file: expand_path(Path::new(&peer_public))?,
         })
     }
 }
@@ -449,17 +449,17 @@ fn var_or_xdg(name: &str) -> Result<String, String> {
 }
 
 /// Expand a leading `~` or `$VAR` segment so config files stay portable.
-pub(crate) fn expand_path(raw: &str) -> Result<PathBuf, String> {
+pub(crate) fn expand_path(raw: &Path) -> Result<PathBuf, String> {
     if raw == "~" {
         return Ok(BASE_DIRS.home_dir().to_path_buf());
     }
-    if let Some(rest) = raw.strip_prefix("~/") {
+    if let Ok(rest) = raw.strip_prefix("~/") {
         return Ok(BASE_DIRS.home_dir().join(rest));
     }
-    if let Some(rest) = raw.strip_prefix('$') {
-        let (name, tail) = match rest.find('/') {
-            Some(split) => rest.split_at(split),
-            None => (rest, ""),
+    if let Ok(rest) = raw.strip_prefix("$") {
+        let (name, tail) = match rest.to_string_lossy().find('/') {
+            Some(split) => rest.to_str().expect("valid").split_at(split),
+            None => (rest.to_str().expect("valid"), ""),
         };
         return Ok(PathBuf::from(format!("{}{tail}", var_or_xdg(name)?)));
     }
@@ -467,7 +467,7 @@ pub(crate) fn expand_path(raw: &str) -> Result<PathBuf, String> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DeniableTool {
+pub enum DeniableTool {
     Run,
     Rerun,
     Interact,

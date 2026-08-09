@@ -1,0 +1,49 @@
+use sourcetrait_testing::prelude::*;
+use sourcetrait_grammar_mcp::{self as mcp, prelude::*};
+use std::{
+    collections::HashMap, path::PathBuf, fs,
+};
+
+static TESTING: testing::Module = testing::module!(Integration, {
+    .using_temp_dir()
+    .using_fixture_dir()
+});
+
+#[tested]
+fn mock_wire() {
+    let test = testing::test!({
+        .using_temp_dir()
+        .inherit_fixture_dir()
+    });
+
+    let xdg_home = test.temp_dir().join("xdg");
+    let xdg_data_home = Some(xdg_home.join("data"));
+    let xdg_cache_home = Some(xdg_home.join("cache"));
+    let xdg_config_home = Some(xdg_home.join("config"));
+    let xdg_state_home = Some(xdg_home.join("state"));
+
+    let cli = mcp::Cli {
+        workdir: Some(test.temp_dir().into()),
+        env: Some(mcp::CliEnv {
+            xdg_cache_home,
+            xdg_config_home,
+            xdg_data_home,
+            xdg_state_home,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let client_request_initialize_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(test.fixture_dir().join("1_client_request_initialize.json")).expect("fixture")
+    ).expect("fixture json");
+    let client_request_tools_list_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(test.fixture_dir().join("2_client_request_tools_list.json")).expect("fixture")
+    ).expect("fixture json");
+    
+    /*
+    let mcp = mcp::start(cli);
+    let response = mcp.request(client_request_initialize_json);
+    let response = mcp.request(client_request_tools_list_json);
+    */
+}

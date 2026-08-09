@@ -66,7 +66,7 @@ impl NuSh {
                     Ok(l) => l,
                     Err(_) => {
                         return Ok(error_to_call_result(
-                            Error::RigAlreadyRegistered {
+                            GrammarMcpError::RigAlreadyRegistered {
                                 rig: p.rig.clone(),
                             },
                             None,
@@ -93,7 +93,7 @@ impl NuSh {
                     Ok(l) => l,
                     Err(_) => {
                         return Ok(error_to_call_result(
-                            Error::RigAlreadyRegistered {
+                            GrammarMcpError::RigAlreadyRegistered {
                                 rig: p.rig.clone(),
                             },
                             None,
@@ -124,7 +124,7 @@ impl NuSh {
                     Some(l) => l,
                     None => {
                         return Ok(error_to_call_result(
-                            Error::RigNotRegistered {
+                            GrammarMcpError::RigNotRegistered {
                                 rig: p.rig.clone(),
                             },
                             None,
@@ -165,7 +165,7 @@ impl NuSh {
                 }
             }
             other => Ok(error_to_call_result(
-                Error::RigInvalidAction {
+                GrammarMcpError::RigInvalidAction {
                     action: other.to_string(),
                 },
                 None,

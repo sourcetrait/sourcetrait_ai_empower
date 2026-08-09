@@ -1,0 +1,27 @@
+[package]
+name = "sourcetrait_grammar_dev"
+version = "0.0.0-1"
+edition = "2024"
+description = "Grammar dev tool"
+authors = ["SourceTrait <development@sourcetrait.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "grammar", "dev"]
+
+[[bin]]
+name = "grammar_dev"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+liquid.workspace = true
+nuon.workspace = true
+nu-protocol.workspace = true
+nu-engine.workspace = true
+snafu.workspace = true
+include_dir.workspace = true
+
+[package.metadata]
+reign = "human"

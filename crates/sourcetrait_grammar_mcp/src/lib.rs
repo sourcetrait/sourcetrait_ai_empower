@@ -6,6 +6,11 @@ pub(crate) mod reign {
         }
     }
 }
+pub(crate) mod error;
+pub(crate) mod service {
+    pub(crate) mod service;
+}
+pub(crate) mod run;
 pub(crate) mod server {
     pub(crate) mod blocked;
     pub(crate) mod cache;
@@ -17,7 +22,6 @@ pub(crate) mod server {
     pub(crate) mod cycle;
     pub(crate) mod embed;
     pub(crate) mod emergency;
-    pub(crate) mod error;
     pub(crate) mod executor;
     pub(crate) mod rig;
     pub(crate) mod lint;
@@ -123,9 +127,8 @@ pub(crate) use crate::{
             send::{GrimmRemoteChannelSend, GrimmRemoteChannelSendWith},
         },
     },
-    cli::CliTool,
     config::{
-        CONFIG, Config, ConfigToml, DEFAULT_NAMESPACE, DeniableTool, DenySet, RemoteConfig,
+        CONFIG, Config, ConfigToml, DEFAULT_NAMESPACE, DenySet, RemoteConfig,
         RemoteRole, SpamThresholds, SupervisorConfig, TEST_NAMESPACE, config, default_id,
         default_work_dir, expand_path, fraction_field,
     },
@@ -135,6 +138,8 @@ pub(crate) use crate::{
     nu::CallExt,
     nu::FromValue,
     plugins::{list_registered_plugins, load_plugin_decls, registry_mtime},
+    error::{Diagnostic, Severity, Source, error_to_call_result},
+    service::service::GrammarMcpService,
     server::{
         blocked::shadow_host_fatal_decls,
         cache::{
@@ -161,7 +166,6 @@ pub(crate) use crate::{
             RamWarningEmergency, VramWarningEmergency, append_line,
             spawn_emergency_responder,
         },
-        error::{Diagnostic, Error, Severity, Source, error_to_call_result},
         executor::Executor,
         rig::{
             RigLocks, ValidationResult, check_rig,
@@ -238,6 +242,9 @@ pub(crate) use crate::{
             rerun::RerunParams,
         },
     },
+    run::{
+        parse_deniable,
+    },
     template::{
         build_call_source, build_interact_source, build_run_source, json_value_to_nu_value,
     },
@@ -253,7 +260,7 @@ pub(crate) use std::{
     os::unix::fs::OpenOptionsExt,
     ops::ControlFlow,
     panic::{AssertUnwindSafe, catch_unwind},
-    path::PathBuf,
+    path::{PathBuf,Path},
     process,
     sync::{
         Arc, LazyLock, OnceLock,
@@ -377,4 +384,24 @@ pub(crate) mod json {
     pub(crate) use serde_json::{Value, from_slice, from_value, to_value, to_vec};
 }
 
-pub use crate::cli::host_main;
+pub use crate::{
+    cli::{
+        Cli, CliEnv, CliTool, CliCmd, RigCliAction,
+    },
+    config::{
+        DeniableTool,
+    },
+    error::{
+        GrammarMcpResult, GrammarMcpError,
+    },
+    run::{
+        run_main, run_with, start,
+    },
+    service::service::GrammarMcpServiceTrait,
+};
+
+pub mod prelude {
+    pub use crate::{
+        GrammarMcpServiceTrait,
+    };
+}

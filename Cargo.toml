@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "crates/sourcetrait_grammar_dev",
+  "crates/sourcetrait_grammar_engine",
   "crates/sourcetrait_grammar_lib",
   "crates/sourcetrait_nu_vocab",
   "crates/sourcetrait_grimoire",
@@ -68,6 +69,7 @@ serde_json = { version = "1" }
 serde_norway = { version = "0.9" }
 semver = { version = "1" }
 shellexpand = { version = "3", features = ["path"] }
+rkyv = "0.8"
 snafu = "0.8"
 strum = { version = "0.27", features = ["derive"] }
 spdx = { version = "0.13" }
@@ -83,13 +85,12 @@ walkdir = { version = "2" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = { version = "0.13" }
 
-sourcetrait_chronox     = { version = ">=0.0.0-0" }
-sourcetrait_clapx       = { version = ">=0.0.0-0" }
-sourcetrait_ronx        = { version = ">=0.0.0-0" }
-sourcetrait_stdx        = { version = ">=0.0.0-0" }
+sourcetrait_agnostic    = { version = ">=0.0.0-0" }
+sourcetrait_cereal      = { version = ">=0.0.0-0" }
 sourcetrait_sysgreen    = { version = ">=0.0.0-0" }
 sourcetrait_testing     = { version = ">=0.0.0-0" }
 sourcetrait_tomlx       = { version = ">=0.0.0-0" }
+
 
 sourcetrait_cert_lib    = { path = "../sourcetrait_cert/crates/sourcetrait_cert_lib" }
 

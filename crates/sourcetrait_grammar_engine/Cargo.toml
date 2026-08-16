@@ -1,0 +1,34 @@
+[package]
+name = "sourcetrait_grammar_engine"
+description = "Grammar Engine"
+version.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+categories.workspace = true
+keywords.workspace   = true
+
+[dependencies]
+bitcode.workspace = true
+nu-cmd-extra.workspace = true
+nu-cmd-lang.workspace = true
+nu-cmd-plugin.workspace = true
+nu-command.workspace = true
+nu-engine.workspace = true
+nu-json.workspace = true
+nu-parser.workspace = true
+nu-path.workspace = true
+nu-plugin-engine.workspace = true
+nu-protocol.workspace = true
+nuon.workspace = true
+serde.workspace = true
+tokio.workspace = true
+rkyv.workspace = true
+snafu.workspace = true
+
+sourcetrait_agnostic.workspace  = true
+sourcetrait_cereal.workspace    = true
+sourcetrait_sysgreen.workspace  = true
+sourcetrait_tomlx.workspace     = true

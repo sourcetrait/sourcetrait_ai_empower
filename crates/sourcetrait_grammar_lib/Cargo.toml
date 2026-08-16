@@ -1,14 +1,14 @@
 [package]
 name = "sourcetrait_grammar_lib"
-version = "0.0.0-1"
-edition = "2024"
-description = "Shared library for sourcetrait_grammar"
-authors = ["SourceTrait <development@sourcetrait.com>"]
-license = "AGPL-3.0-or-later WITH GPL-3.0-linking-exception"
-repository = "https://github.com/sourcetrait/sourcetrait_grammar"
-homepage = "https://sourcetrait.com"
-categories = []
-keywords = ["sourcetrait", "grammar", "lib"]
+description = "Shared library for SourceTrait Grammar"
+version.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+categories.workspace = true
+keywords.workspace   = true
 
 [dependencies]
 snafu.workspace = true

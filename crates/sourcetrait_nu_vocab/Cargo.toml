@@ -1,14 +1,14 @@
 [package]
 name = "sourcetrait_nu_vocab"
-version = "0.0.0-1"
-edition = "2024"
-description = "Common conventions for Nu internals usage"
-authors = ["SourceTrait <development@sourcetrait.com>"]
-license = "AGPL-3.0-or-later"
-repository = "https://github.com/sourcetrait/sourcetrait_grammar"
-homepage = "https://sourcetrait.com"
-categories = []
-keywords = ["sourcetrait", "nu"]
+description = "Nushell internals documentation support"
+version.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+categories.workspace = true
+keywords.workspace   = true
 
 [dependencies]
 nu-cmd-lang.workspace = true

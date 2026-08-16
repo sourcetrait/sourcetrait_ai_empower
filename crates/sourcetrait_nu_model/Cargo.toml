@@ -1,6 +1,6 @@
 [package]
-name = "sourcetrait_grammar_dev"
-description = "Grammar development support tool"
+name = "sourcetrait_nu_model"
+description = "Nushell plugin providing Nu model shaping"
 version.workspace    = true
 authors.workspace    = true
 license.workspace    = true
@@ -10,18 +10,16 @@ homepage.workspace   = true
 categories.workspace = true
 keywords.workspace   = true
 
-[[bin]]
-name = "grammar_dev"
-path = "src/main.rs"
-
 [dependencies]
-clap.workspace = true
-liquid.workspace = true
-nuon.workspace = true
-nu-protocol.workspace = true
 nu-engine.workspace = true
+nu-parser.workspace = true
+nu-protocol.workspace = true
+nu-plugin.workspace = true
+semver.workspace = true
 snafu.workspace = true
-include_dir.workspace = true
+
+[dev-dependencies]
+sourcetrait_testing.workspace = true
 
 [package.metadata]
 reign = "human"

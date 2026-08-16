@@ -3,17 +3,27 @@ resolver = "3"
 members = [
   "crates/sourcetrait_grammar_dev",
   "crates/sourcetrait_grammar_lib",
-  "crates/sourcetrait_grammar_bed",
   "crates/sourcetrait_nu_vocab",
-  "crates/sourcetrait_nu_plugin_grimoire",
-  "crates/sourcetrait_nu_plugin_model",
+  "crates/sourcetrait_grimoire",
+  "crates/sourcetrait_nu_model",
   "crates/sourcetrait_grammar_mcp",
-  "crates/sourcetrait_grammar_know_rust",
-  "crates/sourcetrait_grammar_claudeline",
-  "crates/sourcetrait_grammar_puremd_mdbook",
-  "crates/sourcetrait_grammar_arxivmd",
   "crates/sourcetrait_grammar_tests",
+  "crates/misc/sourcetrait_grammar_bed",
+  "crates/misc/sourcetrait_grammar_know_rust",
+  "crates/misc/sourcetrait_grammar_claudeline",
+  "crates/misc/sourcetrait_grammar_puremd_mdbook",
+  "crates/misc/sourcetrait_grammar_arxivmd",
 ]
+
+[workspace.package]
+version = "0.0.0-2"
+edition = "2024"
+authors = ["SourceTrait <development@sourcetrait.com"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sourcetrait/sourcetrait_grammar"
+homepage = "https://sourcetrait.com"
+categories = []
+keywords = ["sourcetrait", "grammar"]
 
 [workspace.dependencies]
 bitcode = { version = "0.6" }
@@ -59,16 +69,6 @@ serde_norway = { version = "0.9" }
 semver = { version = "1" }
 shellexpand = { version = "3", features = ["path"] }
 snafu = "0.8"
-sourcetrait_cert_lib = { path = "../sourcetrait_cert/crates/sourcetrait_cert_lib" }
-sourcetrait_chronox = { version = "1" }
-sourcetrait_clapx = { version = "1" }
-sourcetrait_grammar_bed = { path = "crates/sourcetrait_grammar_bed" }
-sourcetrait_grammar_lib = { path = "crates/sourcetrait_grammar_lib" }
-sourcetrait_ronx = { version = "3" }
-sourcetrait_stdx = { version = "1" }
-sourcetrait_testing = { version = "4" }
-sourcetrait_tomlx = { version = "3" }
-sourcetrait_nu_vocab = { path = "crates/sourcetrait_nu_vocab" }
 strum = { version = "0.27", features = ["derive"] }
 spdx = { version = "0.13" }
 syn = { version = "2", features = ["full", "extra-traits", "visit"] }
@@ -82,6 +82,20 @@ toml = { version = "0.8" }
 walkdir = { version = "2" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = { version = "0.13" }
+
+sourcetrait_chronox     = { version = ">=0.0.0-0" }
+sourcetrait_clapx       = { version = ">=0.0.0-0" }
+sourcetrait_ronx        = { version = ">=0.0.0-0" }
+sourcetrait_stdx        = { version = ">=0.0.0-0" }
+sourcetrait_sysgreen    = { version = ">=0.0.0-0" }
+sourcetrait_testing     = { version = ">=0.0.0-0" }
+sourcetrait_tomlx       = { version = ">=0.0.0-0" }
+
+sourcetrait_cert_lib    = { path = "../sourcetrait_cert/crates/sourcetrait_cert_lib" }
+
+sourcetrait_grammar_bed = { path = "crates/sourcetrait_grammar_bed" }
+sourcetrait_grammar_lib = { path = "crates/sourcetrait_grammar_lib" }
+sourcetrait_nu_vocab    = { path = "crates/sourcetrait_nu_vocab" }
 
 [patch."https://github.com/nushell/nushell"]
 nu-cmd-extra = { git = "https://github.com/sourcetrait/nufork", branch = "fork/sourcetrait" }

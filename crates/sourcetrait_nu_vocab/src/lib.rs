@@ -1,9 +1,13 @@
-pub(crate) mod def {
+pub(crate) mod val {
+    pub(crate) mod data;
+}
+pub(crate) mod sig {
     pub(crate) mod command;
 }
 
 pub use crate::{
-    def::command::{
+    val::data::ValueData,
+    sig::command::{
         SignatureDef, ParameterDef, SignatureTrait, ExampleDef,
         SignatureCategoryTrait, SignatureParameterTrait,
     },
@@ -18,6 +22,8 @@ pub mod prelude {
 #[allow(unused)]
 pub(crate) use std::{
     fs,
+    num::NonZero,
+    ops::Bound,
 };
 
 pub(crate) mod nu {
@@ -26,3 +32,4 @@ pub(crate) mod nu {
     };
 }
 
+pub(crate) use sourcetrait_cereal::{self as cereal, prelude::*};

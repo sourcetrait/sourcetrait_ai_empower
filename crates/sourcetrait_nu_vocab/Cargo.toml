@@ -11,13 +11,18 @@ categories.workspace = true
 keywords.workspace   = true
 
 [dependencies]
+bitcode.workspace = true
 nu-cmd-lang.workspace = true
 nu-command = { workspace = true, features = ["rand"] }
 nu-engine.workspace = true
 nu-parser.workspace = true
 nu-protocol.workspace = true
+rkyv.workspace = true
+serde.workspace = true
 semver.workspace = true
 snafu.workspace = true
+
+sourcetrait_cereal.workspace = true
 
 [dev-dependencies]
 sourcetrait_testing.workspace = true

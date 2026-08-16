@@ -1,12 +1,6 @@
 use crate::*;
 
 #[cereal::derived(Data)]
-pub enum MyData {
-    Bool(bool),
-    Vector(Vec<MyData>),
-}
-
-#[cereal::derived(Data)]
 pub enum ValueData {
     Bool(bool),
     Int(i64),
@@ -17,8 +11,8 @@ pub enum ValueData {
     Duration(i64),
     Date(DateData),
     Range(RangeData),
-    Record,//(RecordDatum),
-    List,//(Vec<ValueData>),
+    Record(Vec<(String, Box<ValueData>)>),
+    List(Vec<ValueData>),
     Error,
     Binary(Vec<u8>),
     CellPath,
@@ -51,8 +45,7 @@ pub enum RangeData {
     serialize = "T: cereal::DataCopy",
     deserialize = "T: cereal::DataCopy"
 ))]
-pub struct TypedRangeData<T>
-{
+pub struct TypedRangeData<T> {
     pub start: f64,
     pub step: f64,
     pub end: Bounded<T>,
@@ -67,6 +60,19 @@ pub enum Bounded<T> {
     Included(T),
     Excluded(T),
     Unbounded,
+}
+
+#[cereal::derived(Data)]
+pub struct SpanData {
+    pub start: u64,
+    pub end: u64,
+}
+
+#[cereal::derived(Data)]
+pub struct ErrorData {
+    pub code: String,
+    pub msg: String,
+    pub span: Option<SpanData>,
 }
 
 /*

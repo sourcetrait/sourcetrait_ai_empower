@@ -29,6 +29,9 @@ pub(crate) use std::{
 pub(crate) mod nu {
     pub(crate) use nu_protocol::{
         Category, Signature, SyntaxShape, Example, Value,
+        Span, Range,
+        ast::PathMember,
+        casing::Casing,
     };
 }
 

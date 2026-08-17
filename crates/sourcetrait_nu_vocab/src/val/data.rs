@@ -11,11 +11,11 @@ pub enum ValueData {
     Duration(i64),
     Date(DateData),
     Range(RangeData),
-    Record(Vec<(String, Box<ValueData>)>),
+    Record(Vec<(String, ValueData)>),
     List(Vec<ValueData>),
     Error,
     Binary(Vec<u8>),
-    CellPath,
+    CellPath(Vec<CellPathMemberData>),
     Nothing,
 }
 
@@ -36,7 +36,7 @@ pub struct DateData {
 
 #[cereal::derived(Data)]
 pub enum RangeData {
-    Int(TypedRangeData<u64>),
+    Int(TypedRangeData<i64>),
     Float(TypedRangeData<f64>),
 }
 
@@ -46,8 +46,8 @@ pub enum RangeData {
     deserialize = "T: cereal::DataCopy"
 ))]
 pub struct TypedRangeData<T> {
-    pub start: f64,
-    pub step: f64,
+    pub start: T,
+    pub step: T,
     pub end: Bounded<T>,
 }
 
@@ -73,6 +73,118 @@ pub struct ErrorData {
     pub code: String,
     pub msg: String,
     pub span: Option<SpanData>,
+}
+
+#[cereal::derived(Data)]
+pub enum CellPathMemberData {
+    String {
+        value: String,
+        optional: bool,
+        case_sensitive: bool,
+    },
+    Int {
+        value: u64,
+        optional: bool,
+    },
+}
+
+impl From<nu::PathMember> for CellPathMemberData {
+    fn from(v: nu::PathMember) -> Self {
+        match v {
+            nu::PathMember::String { val, optional, casing, .. } => Self::String {
+                value: val,
+                optional,
+                case_sensitive: matches!(casing, nu::Casing::Sensitive),
+            },
+            nu::PathMember::Int { val, optional, .. } => Self::Int {
+                value: val as u64,
+                optional,
+            },
+        }
+    }
+}
+
+const SPAN: nu::Span = nu::Span::unknown();
+
+impl From<CellPathMemberData> for nu::PathMember {
+    fn from(v: CellPathMemberData) -> Self {
+        match v {
+            CellPathMemberData::String { value, optional, case_sensitive } => Self::String {
+                val: value,
+                optional,
+                casing: match case_sensitive { true => nu::Casing::Sensitive, false => nu::Casing::Insensitive },
+                span: SPAN, 
+            },
+            CellPathMemberData::Int { value, optional } => Self::Int {
+                val: value as usize,
+                span: SPAN,
+                optional,
+            },
+        }
+    }
+}
+
+impl<T> From<Bound<T>> for Bounded<T> {
+    fn from(v: Bound<T>) -> Self {
+        match v {
+            Bound::Included(v) => Bounded::Included(v),
+            Bound::Excluded(v) => Bounded::Excluded(v),
+            Bound::Unbounded => Bounded::Unbounded,
+        } 
+    }
+}
+
+impl From<nu_protocol::IntRange> for TypedRangeData<i64> {
+    fn from(v: nu_protocol::IntRange) -> Self {
+        Self {
+            start: v.start(),
+            step: v.step(),
+            end: v.end().into(),
+        }
+    }
+}
+
+impl From<nu_protocol::FloatRange> for TypedRangeData<f64> {
+    fn from(v: nu_protocol::FloatRange) -> Self {
+        Self {
+            start: v.start(),
+            step: v.step(),
+            end: v.end().into(),
+        }
+    }
+}
+
+impl From<nu::Value> for ValueData {
+    fn from(value: nu::Value) -> Self {
+        match value {
+            nu::Value::Range { val, .. } => ValueData::Range(match *val {
+                nu::Range::IntRange(x) => RangeData::Int(
+                    TypedRangeData::from(x)
+                ),
+                nu::Range::FloatRange(x) => RangeData::Float(
+                    TypedRangeData::from(x)
+                )
+            }),
+            nu::Value::Record { val, .. } => ValueData::Record(
+                val.into_owned().drain(..)
+                    .map(|(k,v)| (k, ValueData::from(v)))
+                    .collect()
+            ),
+            nu::Value::List { vals, .. } => ValueData::List(
+                vals.into_iter()
+                    .map(|v| Self::from(v))
+                    .collect()
+            ),
+            nu::Value::Binary { val, .. } => ValueData::Binary(val),
+            nu::Value::CellPath { val, .. } => ValueData::CellPath(
+                val.members.into_iter()
+                    .map(|x| CellPathMemberData::from(x))
+                    .collect()
+            ),
+            nu::Value::Nothing {..} => ValueData::Nothing,
+            _ => todo!(),
+        }
+    }
 }
 
 /*

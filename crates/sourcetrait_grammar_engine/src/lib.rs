@@ -45,4 +45,4 @@ pub(crate) use sourcetrait_common::{
     sysgreen::{self as green},
     tomlx::{self, prelude::*},
 };
-pub(crate) use sourcetrait_nu_vocab as vocab;
+pub(crate) use sourcetrait_nuin as nuin;

@@ -1,5 +1,5 @@
 [package]
-name = "sourcetrait_nu_vocab"
+name = "sourcetrait_nuin"
 description = "Nushell internals documentation support"
 version.workspace    = true
 authors.workspace    = true

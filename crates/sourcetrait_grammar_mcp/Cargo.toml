@@ -55,7 +55,7 @@ sourcetrait_common.workspace = true
 
 sourcetrait_cert_lib.workspace    = true
 sourcetrait_grammar_lib.workspace = true
-sourcetrait_nu_vocab.workspace    = true
+sourcetrait_nuin.workspace    = true
 
 [build-dependencies]
 toml.workspace = true

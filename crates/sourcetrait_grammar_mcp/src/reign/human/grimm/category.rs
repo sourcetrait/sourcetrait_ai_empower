@@ -15,7 +15,7 @@ impl GrimmCategory {
     const CONTROL: &'static str = "grimm::control";
 }
 
-impl nuvocab::SignatureCategoryTrait for GrimmCategory {
+impl nuin::SignatureCategoryTrait for GrimmCategory {
     #[inline]
     fn root() -> &'static str { Self::ROOT }
     

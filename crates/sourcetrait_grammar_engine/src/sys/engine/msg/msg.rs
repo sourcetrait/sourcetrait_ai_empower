@@ -2,12 +2,12 @@ use crate::*;
 
 #[cereal::derived(Data)]
 pub enum ToEngineSys {
-    DefRequest(DefRequest),
+    DefRequest(NuRequest),
 }
 
 #[cereal::derived(Data)]
 pub enum FromEngineSys {
-    DefResponse(DefResponse),
+    DefResponse(NuResponse),
 }
 
 #[cereal::derived(Data, Copy, Eq)]
@@ -18,28 +18,34 @@ pub enum DefKind {
     Interact,
 }
 
+#[cereal::derived(Data, Copy, Eq)]
+pub enum Host {
+    Local,
+    Remote(datum::Nom),
+}
+
 #[cereal::derived(Data)]
-pub struct DefRequest {
+pub struct NuRequest {
+    host: Host,
     kind: DefKind,
-    remote: Option<datum::Nom>,
-    args: vocab::Val,
+    args: nuin::Val,
     def: String, 
 }
 
-pub type DefResult = Result<vocab::Val, EngineError>;
+pub type NuResult = Result<nuin::Val, EngineError>;
 
 #[cereal::derived(Data)]
 pub enum EngineError {
-    Def(DefError),
+    Nu(NuError),
 }
 
 #[cereal::derived(Data)]
-pub enum DefError {
+pub enum NuError {
     Unknown,
 }
 
 #[cereal::derived(Data)]
-pub struct DefResponse {
-    result: DefResult,
+pub struct NuResponse {
+    result: NuResult,
     nonce: u64,
 }

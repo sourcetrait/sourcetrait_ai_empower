@@ -4,7 +4,7 @@ members = [
   "crates/sourcetrait_grammar_dev",
   "crates/sourcetrait_grammar_engine",
   "crates/sourcetrait_grammar_lib",
-  "crates/sourcetrait_nu_vocab",
+  "crates/sourcetrait_nuin",
   "crates/sourcetrait_grimoire",
   "crates/sourcetrait_nu_model",
   "crates/sourcetrait_grammar_mcp",
@@ -96,7 +96,7 @@ sourcetrait_cert_lib    = { path = "../sourcetrait_cert/crates/sourcetrait_cert_
 
 sourcetrait_grammar_bed = { path = "crates/sourcetrait_grammar_bed" }
 sourcetrait_grammar_lib = { path = "crates/sourcetrait_grammar_lib" }
-sourcetrait_nu_vocab    = { path = "crates/sourcetrait_nu_vocab" }
+sourcetrait_nuin        = { path = "crates/sourcetrait_nuin" }
 
 [patch."https://github.com/nushell/nushell"]
 nu-cmd-extra = { git = "https://github.com/sourcetrait/nufork", branch = "fork/sourcetrait" }

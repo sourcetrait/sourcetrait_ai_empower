@@ -10,15 +10,15 @@ pub(crate) struct GrimmRemoteChannelSend;
 pub(crate) struct GrimmRemoteChannelSendWith;
 
 impl GrimmRemoteChannelSend {
-    pub(crate) const DEF_MCP_NOM: nuvocab::ParameterDef = nuvocab::ParameterDef {
+    pub(crate) const DEF_MCP_NOM: nuin::ParameterDef = nuin::ParameterDef {
         name: "mcp_nom",
         description: "Remote MCP",
     };
-    pub(crate) const DEF_MODEL: nuvocab::ParameterDef = nuvocab::ParameterDef {
+    pub(crate) const DEF_MODEL: nuin::ParameterDef = nuin::ParameterDef {
         name: "model",
         description: "Namepath of the event data type",
     };
-    pub(crate) const DEF_EVENT: nuvocab::ParameterDef = nuvocab::ParameterDef {
+    pub(crate) const DEF_EVENT: nuin::ParameterDef = nuin::ParameterDef {
         name: "event",
         description: "Notification data",
     };

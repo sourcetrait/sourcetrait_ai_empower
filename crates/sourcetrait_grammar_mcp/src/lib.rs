@@ -312,7 +312,7 @@ pub(crate) mod nu {
     pub(crate) use nuon::{ToNuonConfig, from_nuon, to_nuon};
 }
 
-pub(crate) use sourcetrait_nu_vocab::{self as nuvocab, prelude::*};
+pub(crate) use sourcetrait_nuin::{self as nuin, prelude::*};
 
 pub(crate) mod ser {
     pub(crate) use ::serde::{Deserialize, Serialize};

@@ -62,8 +62,9 @@ pub(crate) fn build_run_source(
     result_type: &str,
     args: &mcp::JsonObject,
     body: &str,
-    nonce: &str,
+    nonce: &datum::NoncePair,
 ) -> String {
+    let nonce = nonce.str();
     let lit = args_literal(args_type, args);
     formatdoc!(
         r#"

@@ -27,7 +27,6 @@ pub(crate) mod server {
     pub(crate) mod lint;
     pub(crate) mod liveness;
     pub(crate) mod namepath;
-    pub(crate) mod nonce;
     pub(crate) mod oneshot;
     pub(crate) mod parse_engine;
     pub(crate) mod pin;
@@ -180,7 +179,6 @@ pub(crate) use crate::{
         lint::{LINT_VIOLATION_CAP, lint_body},
         liveness::acquire as acquire_host_lock,
         namepath::{Namepath, NamepathPattern, NamepathRef, NamepathStr},
-        nonce::{McpNom, Nonce, NonceGen},
         oneshot::run_oneshot,
         parse_engine::{
             LintEngine, ParseEngine, set_lib_dirs_const, span_to_line_col, wrap_as_def_body,
@@ -312,6 +310,10 @@ pub(crate) mod nu {
     pub(crate) use nuon::{ToNuonConfig, from_nuon, to_nuon};
 }
 
+pub(crate) use sourcetrait_common::{
+    cereal,
+    datum,
+};
 pub(crate) use sourcetrait_nuin::{self as nuin, prelude::*};
 
 pub(crate) mod ser {

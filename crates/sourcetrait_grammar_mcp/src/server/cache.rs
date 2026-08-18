@@ -42,8 +42,8 @@ pub(crate) fn cache_kind_dir(kind: CacheKind) -> PathBuf {
     cache_base_dir().join(kind.dir_name())
 }
 
-pub(crate) fn cache_dir(kind: CacheKind, nonce: Nonce) -> PathBuf {
-    cache_kind_dir(kind).join(nonce.to_string())
+pub(crate) fn cache_dir(kind: CacheKind, nonce: &datum::NoncePair) -> PathBuf {
+    cache_kind_dir(kind).join(nonce.str())
 }
 
 pub(crate) const BODY_FILE: &str = "body.nuon";

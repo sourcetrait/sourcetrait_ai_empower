@@ -78,9 +78,9 @@ pub struct NuSh {
     pub(crate) executor: Arc<Executor>,
     /// Host-owned environment-wide jobs table shared into every eval.
     pub(crate) env_jobs: Arc<std::sync::Mutex<nu::Jobs>>,
-    pub(crate) nonce_gen: Arc<NonceGen>,
+    pub(crate) nonce_gen: Arc<datum::NonceGenerator>,
     /// This host process's identity, minted once at construction.
-    pub(crate) mcp_nom: McpNom,
+    pub(crate) mcp_nom: datum::NomPair,
     pub(crate) rig_locks: Arc<RigLocks>,
     /// The lint and rig-validator engine, taken through `current()`.
     pub(crate) lint_engine: Arc<LintEngine>,
@@ -95,7 +95,7 @@ pub struct NuSh {
     /// Which purview ids this host has in view; SESSION-resident.
     pub(crate) current_purview: Arc<CurrentPurview>,
     /// Open mTLS links to remote grammar hosts - a clone of the process-global
-    /// registry, keyed by alias (initiator) or peer McpNom (accepted).
+    /// registry, keyed by alias (initiator) or peer datum::Nom (accepted).
     pub(crate) remote_links: Arc<std::sync::Mutex<HashMap<String, RemoteLinkEntry>>>,
     pub(crate) tool_router: mcp::ToolRouter<NuSh>,
 }
@@ -133,14 +133,14 @@ pub(crate) enum InFlightKind {
 
 impl NuSh {
     pub(crate) fn new(
-        nonce_gen: Arc<NonceGen>,
+        nonce_gen: Arc<datum::NonceGenerator>,
         rig_locks: Arc<RigLocks>,
         lint_engine: Arc<LintEngine>,
     ) -> Self {
         nu::CRYPTO_PROVIDER.default();
         let env_jobs = Arc::new(std::sync::Mutex::new(nu::Jobs::default()));
         let executor = Arc::new(Executor::new(env_jobs.clone(), READY_POOL_TARGET));
-        let mcp_nom = McpNom::mint(&nonce_gen);
+        let mcp_nom = datum::Nom::generate(&nonce_gen).into_pair();
         Self {
             interact_engine: Arc::new(tk::AsyncMutex::new(None)),
             executor,
@@ -188,13 +188,13 @@ pub(crate) fn lint_run_params(
 }
 
 pub(crate) struct DispatchOutcome {
-    pub(crate) nonce: Nonce,
+    pub(crate) nonce: datum::Nonce,
     pub(crate) result: json::Value,
 }
 
 pub(crate) struct DispatchError {
     pub(crate) error: GrammarMcpError,
-    pub(crate) nonce: Option<Nonce>,
+    pub(crate) nonce: Option<datum::Nonce>,
 }
 
 pub(crate) async fn dispatch_pooled(
@@ -202,7 +202,7 @@ pub(crate) async fn dispatch_pooled(
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     hung_watch: &HungRegistry,
     log_kind: CacheKind,
-    nonce: Nonce,
+    nonce: datum::NoncePair,
     source: String,
     tool_name: &'static str,
     args_json: serde_json::Value,
@@ -210,8 +210,7 @@ pub(crate) async fn dispatch_pooled(
     cache_body: Option<CachedRunBody>,
     timeout_ms: Option<u64>,
 ) -> Result<DispatchOutcome, DispatchError> {
-    let nonce_str = nonce.to_string();
-    let log_dir = cache_dir(log_kind, nonce);
+    let log_dir = cache_dir(log_kind, &nonce);
     fs::create_dir_all(&log_dir).map_err(|e| DispatchError {
         error: GrammarMcpError::Internal {
             phase: "dispatch_pooled::create_log_dir".to_string(),
@@ -241,7 +240,7 @@ pub(crate) async fn dispatch_pooled(
     engine.current_job.background_thread_job = Some(tracker.clone());
     register_in_flight(
         in_flight,
-        nonce_str.clone(),
+        &nonce,
         tool_name,
         args_json,
         kind,
@@ -253,16 +252,16 @@ pub(crate) async fn dispatch_pooled(
     .await;
     let _flight_cleanup = InFlightCleanup {
         map: in_flight.clone(),
-        key: nonce_str,
+        key: nonce.str().to_string(),
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
     let eval_fut = eval_stateless(engine, cancel.clone(), log_dir, source, permit, finished.clone());
     let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
     match timed {
-        Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
+        Ok(Ok(result)) => Ok(DispatchOutcome { nonce: nonce.to_nonce(), result }),
         Ok(Err(failure)) => Err(DispatchError {
             error: failure.into_error(),
-            nonce: Some(nonce),
+            nonce: Some(nonce.to_nonce()),
         }),
         Err(_) => {
             cancel.store(true, Ordering::SeqCst);
@@ -270,7 +269,7 @@ pub(crate) async fn dispatch_pooled(
             register_hung(
                 hung_watch,
                 HungWatch {
-                    nonce: nonce.to_string(),
+                    nonce: nonce.str().to_string(),
                     tool: tool_name,
                     lane: Lane::Stateless,
                     started_at,
@@ -282,7 +281,7 @@ pub(crate) async fn dispatch_pooled(
                 error: GrammarMcpError::ThreadTimeout {
                     timeout_ms: effective_timeout,
                 },
-                nonce: Some(nonce),
+                nonce: Some(nonce.to_nonce()),
             })
         }
     }
@@ -293,12 +292,11 @@ pub(crate) async fn dispatch_interact(
     env_jobs: &Arc<std::sync::Mutex<nu::Jobs>>,
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
     hung_watch: &HungRegistry,
-    nonce: Nonce,
+    nonce: &datum::NoncePair,
     source: String,
     args_json: serde_json::Value,
     timeout_ms: Option<u64>,
 ) -> Result<DispatchOutcome, DispatchError> {
-    let nonce_str = nonce.to_string();
     let log_dir = cache_dir(CacheKind::Interacts, nonce);
     fs::create_dir_all(&log_dir).map_err(|e| DispatchError {
         error: GrammarMcpError::Internal {
@@ -323,7 +321,7 @@ pub(crate) async fn dispatch_interact(
     let finished = Arc::new(AtomicBool::new(false));
     register_in_flight(
         in_flight,
-        nonce_str.clone(),
+        nonce,
         "interact",
         args_json,
         InFlightKind::Interact,
@@ -335,16 +333,16 @@ pub(crate) async fn dispatch_interact(
     .await;
     let _flight_cleanup = InFlightCleanup {
         map: in_flight.clone(),
-        key: nonce_str,
+        key: nonce.str().to_string(),
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
     let eval_fut = engine.eval(log_dir, source, cancel.clone(), tracker.clone(), finished.clone());
     let timed = tk::timeout(tk::TkDuration::from_millis(effective_timeout), eval_fut).await;
     match timed {
-        Ok(Ok(result)) => Ok(DispatchOutcome { nonce, result }),
+        Ok(Ok(result)) => Ok(DispatchOutcome { nonce: nonce.to_nonce(), result }),
         Ok(Err(failure)) => Err(DispatchError {
             error: failure.into_error(),
-            nonce: Some(nonce),
+            nonce: Some(nonce.to_nonce()),
         }),
         Err(_) => {
             cancel.store(true, Ordering::SeqCst);
@@ -352,7 +350,7 @@ pub(crate) async fn dispatch_interact(
             register_hung(
                 hung_watch,
                 HungWatch {
-                    nonce: nonce.to_string(),
+                    nonce: nonce.str().to_string(),
                     tool: "interact",
                     lane: Lane::Interact,
                     started_at,
@@ -364,7 +362,7 @@ pub(crate) async fn dispatch_interact(
                 error: GrammarMcpError::ThreadTimeout {
                     timeout_ms: effective_timeout,
                 },
-                nonce: Some(nonce),
+                nonce: Some(nonce.to_nonce()),
             })
         }
     }
@@ -372,7 +370,7 @@ pub(crate) async fn dispatch_interact(
 
 async fn register_in_flight(
     in_flight: &Arc<tk::AsyncMutex<HashMap<String, InFlightEntry>>>,
-    nonce_str: String,
+    nonce: &datum::NoncePair,
     tool_name: &'static str,
     args_json: serde_json::Value,
     kind: InFlightKind,
@@ -383,7 +381,7 @@ async fn register_in_flight(
 ) {
     let mut map = in_flight.lock().await;
     map.insert(
-        nonce_str,
+        nonce.str().to_string(),
         InFlightEntry {
             tool: tool_name,
             started_at,

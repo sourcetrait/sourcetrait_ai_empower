@@ -62,13 +62,13 @@ impl NuSh {
                 ));
             }
         };
-        let nonce = self.nonce_gen.next(&text);
+        let nonce = self.nonce_gen.generate_with(&text).into_pair();
         let source = build_run_source(
             &cached.args_type,
             &cached.result_type,
             &p.args,
             &cached.body,
-            &nonce.to_string(),
+            &nonce,
         );
         let args_json = serde_json::Value::Object(p.args.clone());
         let cache_body = CachedRunBody {
@@ -99,7 +99,7 @@ impl NuSh {
         let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
         envelope_to_structured(&RerunEnvelope {
             result: result_obj,
-            nonce: outcome.nonce.to_string(),
+            nonce: outcome.nonce.into_pair().str().to_string(),
         })
     }
 }

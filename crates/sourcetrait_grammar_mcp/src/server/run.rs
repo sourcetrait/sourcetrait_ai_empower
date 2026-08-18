@@ -4,12 +4,11 @@ pub(crate) async fn run_server() {
     install_child_subreaper();
     ensure_cert_profile();
     let rig_locks = ensure_substrate().await.expect("ensure_substrate");
-    let nonce_gen = Arc::new(NonceGen::new());
+    let nonce_gen = Arc::new(datum::NonceGenerator::new());
     let lint_engine = Arc::new(LintEngine::new());
     let server = NuSh::new(nonce_gen, rig_locks, lint_engine);
-    let mcp_nom = server.mcp_nom.to_string();
     let (emergency_tx, emergency_rx) = tk::unbounded_channel::<Emergency>();
-    spawn_emergency_responder(emergency_rx, mcp_nom);
+    spawn_emergency_responder(emergency_rx, server.mcp_nom.str().to_string());
     server.channel.install_emergency(emergency_tx.clone());
     spawn_watchdog(WatchdogDeps {
         hung_watch: server.hung_watch.clone(),
@@ -18,7 +17,7 @@ pub(crate) async fn run_server() {
         env_jobs: server.env_jobs.clone(),
         tx: emergency_tx,
     });
-    let _host_lock = match acquire_host_lock(&server.mcp_nom.to_string()) {
+    let _host_lock = match acquire_host_lock(server.mcp_nom.str()) {
         Ok(lock) => Some(lock),
         Err(e) => {
             eprintln!("grammar: host lock not held: {e}");

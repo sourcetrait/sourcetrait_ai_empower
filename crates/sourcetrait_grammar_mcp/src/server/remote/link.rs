@@ -89,7 +89,7 @@ const CONNECT_TIMEOUT: tk::TkDuration = tk::TkDuration::from_secs(20);
 /// for a listener, connect for a connector - so remote_channel_open returns
 /// synchronously. Only the listener's peer-wait stays asynchronous.
 pub(crate) async fn open_remote_blocking(
-    self_mcp_nom: String,
+    self_mcp_nom: &datum::NomPair,
     entry: RemoteConfig,
 ) -> Result<(), String> {
     match entry.role.clone() {
@@ -104,12 +104,12 @@ pub(crate) async fn open_remote_blocking(
 /// watch for its teardown asynchronously. No Connected for the open attempt (the
 /// synchronous success is the notice); Disconnected still fires on a later drop.
 async fn open_connector(
-    self_mcp_nom: String,
+    self_mcp_nom: &datum::NomPair,
     entry: RemoteConfig,
     addr: std::net::SocketAddr,
 ) -> Result<(), String> {
     let (handle, msg_join, file_join) =
-        match tk::timeout(CONNECT_TIMEOUT, connect_link(&self_mcp_nom, &entry, addr)).await {
+        match tk::timeout(CONNECT_TIMEOUT, connect_link(self_mcp_nom, &entry, addr)).await {
             Ok(Ok(drivers)) => drivers,
             Ok(Err(e)) => return Err(format!("connect {addr}: {e}")),
             Err(_) => {
@@ -138,7 +138,7 @@ async fn open_connector(
 /// result returns synchronously (bound, or the bind error); Connected fires when
 /// a peer pairs, Disconnected when the paired link later drops.
 async fn open_listener(
-    self_mcp_nom: String,
+    self_mcp_nom: &datum::NomPair,
     entry: RemoteConfig,
     bind: std::net::SocketAddr,
     allow: Option<std::net::IpAddr>,
@@ -151,6 +151,7 @@ async fn open_listener(
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .insert(alias.clone(), bind);
+    let self_mcp_nom = self_mcp_nom.clone();
     tk::spawn(async move {
         match accept_and_pair(&self_mcp_nom, listener, acceptor, allow).await {
             Ok((handle, msg_join, file_join)) => {
@@ -356,7 +357,7 @@ type LinkDrivers = (RemoteLinkHandle, tk::JoinHandle<()>, tk::JoinHandle<()>);
 /// Connect as the initiator: two mTLS connections (message + file), each
 /// handshaked, both drivers spawned under one cancel.
 async fn connect_link(
-    self_mcp_nom: &str,
+    self_mcp_nom: &datum::NomPair,
     entry: &RemoteConfig,
     addr: std::net::SocketAddr,
 ) -> io::Result<LinkDrivers> {
@@ -400,7 +401,7 @@ async fn bind_listener(
 /// source-IP-filtered) on an already-bound listener + spawn its drivers. The
 /// asynchronous half of a listener open; the bind already succeeded.
 async fn accept_and_pair(
-    self_mcp_nom: &str,
+    self_mcp_nom: &datum::NomPair,
     listener: tk::TcpListener,
     acceptor: tls::TlsAcceptor,
     allow: Option<std::net::IpAddr>,
@@ -438,7 +439,7 @@ async fn accept_and_pair(
 
 /// Turn two handshaked initiator connections into a running link + its joins.
 fn spawn_initiator_drivers(
-    self_mcp_nom: &str,
+    self_mcp_nom: &datum::NomPair,
     remote_mcp_nom: String,
     message: (InitFramedRead, InitFramedWrite),
     file: (InitFramedRead, InitFramedWrite),
@@ -479,7 +480,7 @@ fn spawn_initiator_drivers(
 
 /// Turn two handshaked acceptor connections into a running link + its joins.
 fn spawn_acceptor_drivers(
-    self_mcp_nom: &str,
+    self_mcp_nom: &datum::NomPair,
     remote_mcp_nom: String,
     message: (AcceptFramedRead, AcceptFramedWrite),
     file: (AcceptFramedRead, AcceptFramedWrite),
@@ -564,7 +565,7 @@ struct RecvContext {
 
 impl RecvContext {
     fn new(
-        self_mcp_nom: &str,
+        self_mcp_nom: &datum::NomPair,
         peer_nom: &str,
     ) -> Self {
         let inbox_root = inbox_dir(self_mcp_nom).unwrap_or_else(|e| {
@@ -957,7 +958,7 @@ type InitFramedWrite = tku::FramedWrite<InitWriteHalf, BitcodeCodec<InitiatorToA
 async fn connect_conn(
     connector: &tls::TlsConnector,
     addr: std::net::SocketAddr,
-    self_mcp_nom: &str,
+    self_mcp_nom: &datum::NomPair,
     stream: RemoteStream,
 ) -> io::Result<(String, InitFramedRead, InitFramedWrite)> {
     let tcp = tk::TcpStream::connect(addr).await?;
@@ -968,7 +969,7 @@ async fn connect_conn(
     let mut framed_write = tku::FramedWrite::new(write, BitcodeCodec::<InitiatorToAcceptor>::new());
     framed_write
         .send(InitiatorToAcceptor::Hello {
-            mcp_nom: self_mcp_nom.to_string(),
+            mcp_nom: self_mcp_nom.str().to_string(),
             stream,
         })
         .await?;
@@ -1109,7 +1110,7 @@ type AcceptFramedWrite = tku::FramedWrite<AcceptWriteHalf, BitcodeCodec<Acceptor
 /// Accept one mTLS connection and answer the McpNom handshake.
 async fn accept_conn(
     acceptor: &tls::TlsAcceptor,
-    self_mcp_nom: &str,
+    self_mcp_nom: &datum::NomPair,
     tcp: tk::TcpStream,
 ) -> io::Result<(String, RemoteStream, AcceptFramedRead, AcceptFramedWrite)> {
     let tls = acceptor.accept(tcp).await?;
@@ -1124,7 +1125,7 @@ async fn accept_conn(
     };
     framed_write
         .send(AcceptorToInitiator::Hello {
-            mcp_nom: self_mcp_nom.to_string(),
+            mcp_nom: self_mcp_nom.str().to_string(),
         })
         .await?;
     Ok((remote, stream, framed_read, framed_write))

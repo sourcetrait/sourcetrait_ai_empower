@@ -40,7 +40,7 @@ impl NuSh {
                 None,
             ));
         }
-        match open_remote_blocking(self.mcp_nom.to_string(), entry).await {
+        match open_remote_blocking(&self.mcp_nom, entry).await {
             Ok(()) => Ok(mcp::CallToolResult::default()),
             Err(reason) => Ok(error_to_call_result(
                 GrammarMcpError::RemoteOpenFailed {

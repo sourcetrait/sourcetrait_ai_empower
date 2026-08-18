@@ -41,9 +41,9 @@ impl NuSh {
                 ));
             }
         };
-        let nonce = self.nonce_gen.next(&payload_bytes);
+        let nonce = self.nonce_gen.generate_with(&payload_bytes).into_pair();
         let source =
-            build_interact_source(&args_type, &result_type, &p.args, &p.body, &nonce.to_string());
+            build_interact_source(&args_type, &result_type, &p.args, &p.body, &nonce.str().to_string());
         let args_json = serde_json::Value::Object(p.args.clone());
         let timeout_ms = p.timeout_ms;
         let outcome = match dispatch_interact(
@@ -51,7 +51,7 @@ impl NuSh {
             &self.env_jobs,
             &self.in_flight,
             &self.hung_watch,
-            nonce,
+            &nonce,
             source,
             args_json,
             timeout_ms,
@@ -64,7 +64,7 @@ impl NuSh {
         let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
         let envelope = InteractEnvelope {
             result: result_obj,
-            nonce: outcome.nonce.to_string(),
+            nonce: outcome.nonce.into_pair().str().to_string(),
         };
         envelope_to_structured(&envelope)
     }

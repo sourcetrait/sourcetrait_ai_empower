@@ -12,10 +12,10 @@ pub(crate) const SHM_ROOT_VAR: &str = "$XDGX_SHM_DIR";
 /// `<shm>/mcp/<mcp_nom>/inbox` - where a channel's attachments and a remote
 /// link's landed files meet, so an injected packet's refs resolve for the local
 /// agent. The one composition point both producers share.
-pub(crate) fn inbox_dir(mcp_nom: &str) -> Result<PathBuf, String> {
+pub(crate) fn inbox_dir(mcp_nom: &datum::NomPair) -> Result<PathBuf, String> {
     Ok(expand_path(Path::new(SHM_ROOT_VAR))?
         .join("mcp")
-        .join(mcp_nom)
+        .join(mcp_nom.str())
         .join("inbox"))
 }
 
@@ -121,7 +121,7 @@ pub(crate) enum ChannelVerifyError {
 pub(crate) struct ChannelHandle {
     inner: std::sync::Mutex<ChannelInner>,
     /// Mints every `MsgId` on this channel, so all ids share one counter.
-    nonce_gen: Arc<NonceGen>,
+    nonce_gen: Arc<datum::NonceGenerator>,
 }
 
 impl ChannelHandle {
@@ -141,11 +141,11 @@ impl ChannelHandle {
                 verify_cancel: None,
                 inbox: None,
             }),
-            nonce_gen: Arc::new(NonceGen::new()),
+            nonce_gen: Arc::new(datum::NonceGenerator::new()),
         }
     }
 
-    pub(crate) fn nonce_gen(&self) -> &NonceGen {
+    pub(crate) fn nonce_gen(&self) -> &datum::NonceGenerator {
         &self.nonce_gen
     }
 
@@ -460,7 +460,7 @@ fn close_locked(
 
 /// A channel message's id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct MsgId(Nonce);
+pub(crate) struct MsgId(datum::Nonce);
 
 impl Display for MsgId {
     fn fmt(
@@ -473,13 +473,13 @@ impl Display for MsgId {
 
 /// Mint a packet's id over the packet's own fields.
 pub(crate) fn mint_msg_id(
-    nonce_gen: &NonceGen,
+    nonce_gen: &datum::NonceGenerator,
     from: &str,
     model: &str,
     event_nuon: &str,
     attached_nuon: Option<&str>,
 ) -> MsgId {
-    MsgId(nonce_gen.next(&(from, model, event_nuon, attached_nuon)))
+    MsgId(nonce_gen.generate_with(&(from, model, event_nuon, attached_nuon)))
 }
 
 /// Render a value as compact NUON - what the wire and the hash both see.

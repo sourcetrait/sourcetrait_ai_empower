@@ -28,9 +28,9 @@ const UNVERIFIED_REASON: &str = "verification window expired";
 /// `$XDGX_SHM_DIR/mcp/<mcp_nom>/inbox`, created here.
 fn ensure_inbox(
     channel: &ChannelHandle,
-    mcp_nom: McpNom,
+    mcp_nom: &datum::NomPair,
 ) -> Result<String, GrammarMcpError> {
-    let dir = inbox_dir(&mcp_nom.to_string()).map_err(|reason| GrammarMcpError::ChannelStart { reason })?;
+    let dir = inbox_dir(mcp_nom).map_err(|reason| GrammarMcpError::ChannelStart { reason })?;
     fs::create_dir_all(&dir)?;
     channel.set_inbox(dir.clone());
     Ok(dir.display().to_string())
@@ -39,8 +39,8 @@ fn ensure_inbox(
 /// Re-greet an existing channel's peer.
 fn resend_open_packet(
     channel: &ChannelHandle,
-    nonce_gen: &NonceGen,
-    mcp_nom: McpNom,
+    nonce_gen: &datum::NonceGenerator,
+    mcp_nom: &datum::NomPair,
 ) -> Result<(), GrammarMcpError> {
     let line = open_packet(nonce_gen, mcp_nom).map_err(|reason| GrammarMcpError::Internal {
         phase: "channel_open::render".to_string(),
@@ -76,14 +76,14 @@ impl NuSh {
         &self,
         mcp::Parameters(_p): mcp::Parameters<ChannelOpenParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        let inbox = match ensure_inbox(&self.channel, self.mcp_nom) {
+        let inbox = match ensure_inbox(&self.channel, &self.mcp_nom) {
             Ok(path) => path,
             Err(error) => return Ok(error_to_call_result(error, None)),
         };
         let _opening = self.channel_open_lock.lock().await;
         let status = self.channel.status();
         let (label, wss) = if matches!(status.phase, ChannelPhase::Closed) {
-            match start_channel_hub(&self.channel, self.mcp_nom, self.nonce_gen.clone()).await {
+            match start_channel_hub(&self.channel, &self.mcp_nom, self.nonce_gen.clone()).await {
                 Ok(url) => (STATUS_NEW, url),
                 Err(error) => return Ok(error_to_call_result(error, None)),
             }
@@ -99,7 +99,7 @@ impl NuSh {
             };
             if status.claimed
                 && let Err(error) =
-                    resend_open_packet(&self.channel, &self.nonce_gen, self.mcp_nom)
+                    resend_open_packet(&self.channel, &self.nonce_gen, &self.mcp_nom)
             {
                 return Ok(error_to_call_result(error, None));
             }

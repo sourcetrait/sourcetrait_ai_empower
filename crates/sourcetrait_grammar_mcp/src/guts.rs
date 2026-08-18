@@ -74,7 +74,7 @@ impl TestServer {
             .expect("tokio runtime");
         let locks = rt.block_on(ensure_substrate()).expect("ensure_substrate");
         let nush = NuSh::new(
-            Arc::new(NonceGen::new()),
+            Arc::new(datum::NonceGenerator::new()),
             locks,
             Arc::new(LintEngine::new()),
         );
@@ -489,7 +489,7 @@ pub fn build_run_source(
     result_type: &str,
     args: json::Value,
     body: &str,
-    nonce: &str,
+    nonce: &datum::NoncePair,
 ) -> String {
     crate::build_run_source(args_type, result_type, &to_obj(args), body, nonce)
 }

@@ -15,12 +15,12 @@ const CLAIM_REASON: &str = "channel already claimed";
 
 /// The host's `channel/Open` control packet - the thing the agent verifies.
 pub(crate) fn open_packet(
-    nonce_gen: &NonceGen,
-    mcp_nom: McpNom,
+    nonce_gen: &datum::NonceGenerator,
+    mcp_nom: &datum::NomPair,
 ) -> Result<String, String> {
     let span = nu::Span::unknown();
     let mut data = nu::Record::new();
-    data.insert("mcp_nom", nu::Value::string(mcp_nom.to_string(), span));
+    data.insert("mcp_nom", nu::Value::string(mcp_nom.str().to_string(), span));
     let event = nu::Value::record(data, span);
     let event_nuon = render_nuon(&event)?;
     let id = mint_msg_id(nonce_gen, FROM_MCP, MODEL_OPEN, &event_nuon, None);
@@ -48,8 +48,8 @@ fn server_config() -> Result<Arc<tls::ServerConfig>, GrammarMcpError> {
 /// Bind the hub and hand back the URL to advertise.
 pub(crate) async fn start(
     handle: &ChannelHandle,
-    mcp_nom: McpNom,
-    nonce_gen: Arc<NonceGen>,
+    mcp_nom: &datum::NomPair,
+    nonce_gen: Arc<datum::NonceGenerator>,
 ) -> Result<String, GrammarMcpError> {
     let tls_config = server_config()?;
     let listener = tk::TcpListener::bind((BIND, config().channel.port.unwrap_or(0)))
@@ -75,7 +75,7 @@ pub(crate) async fn start(
         close_rx,
         shutdown_rx,
         claimed.clone(),
-        mcp_nom,
+        mcp_nom.clone(),
         nonce_gen,
     ));
     handle.install(url.clone(), packet_tx, close_tx, shutdown_tx, claimed);
@@ -90,8 +90,8 @@ async fn accept_loop(
     close_rx: tk::oneshot::Receiver<ChannelCloseSignal>,
     shutdown_rx: tk::oneshot::Receiver<()>,
     claimed: Arc<AtomicBool>,
-    mcp_nom: McpNom,
-    nonce_gen: Arc<NonceGen>,
+    mcp_nom: datum::NomPair,
+    nonce_gen: Arc<datum::NonceGenerator>,
 ) {
     let mut peer_slot = Some((packet_rx, close_rx));
     let mut shutdown_rx = shutdown_rx;
@@ -111,7 +111,7 @@ async fn accept_loop(
                             acceptor,
                             packet_rx,
                             close_rx,
-                            mcp_nom,
+                            mcp_nom.clone(),
                             nonce_gen.clone(),
                         ));
                     }
@@ -129,8 +129,8 @@ async fn serve_peer(
     acceptor: tls::TlsAcceptor,
     mut packets: tk::UnboundedReceiver<String>,
     close_rx: tk::oneshot::Receiver<ChannelCloseSignal>,
-    mcp_nom: McpNom,
-    nonce_gen: Arc<NonceGen>,
+    mcp_nom: datum::NomPair,
+    nonce_gen: Arc<datum::NonceGenerator>,
 ) {
     let Ok(tls_stream) = acceptor.accept(tcp).await else {
         return;
@@ -139,7 +139,7 @@ async fn serve_peer(
         return;
     };
 
-    if let Ok(line) = open_packet(&nonce_gen, mcp_nom)
+    if let Ok(line) = open_packet(&nonce_gen, &mcp_nom)
         && socket.send(ws::Message::text(line)).await.is_err()
     {
         return;

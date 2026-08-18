@@ -60,7 +60,7 @@ impl NuSh {
             nu_version: env!("NU_VERSION").to_string(),
             id: config().id.clone(),
             namespace: config().namespace.clone(),
-            mcp_nom: self.mcp_nom.to_string(),
+            mcp_nom: self.mcp_nom.str().to_string(),
             work_dir: config().work_dir.display().to_string(),
             plugins: list_registered_plugins(),
             signatures: render_signatures_within(&self.rig_locks, &patterns).await,

@@ -283,7 +283,7 @@ fn an_event() -> nu::Value {
 }
 
 fn an_id() -> MsgId {
-    mint_msg_id(&NonceGen::new(), "mcp", "mcp/channel/Open", "{}", None)
+    mint_msg_id(&datum::NonceGenerator::new(), "mcp", "mcp/channel/Open", "{}", None)
 }
 
 #[test]
@@ -435,7 +435,7 @@ fn thresholds_update_partially_and_reject_zero() {
 
 #[test]
 fn ids_are_distinct_for_identical_packets() {
-    let nonce_gen = NonceGen::new();
+    let nonce_gen = datum::NonceGenerator::new();
     let a = mint_msg_id(&nonce_gen, "mcp", "mcp/channel/Open", "{}", None);
     let b = mint_msg_id(&nonce_gen, "mcp", "mcp/channel/Open", "{}", None);
     assert_ne!(

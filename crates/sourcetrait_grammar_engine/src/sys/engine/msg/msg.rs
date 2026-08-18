@@ -2,12 +2,14 @@ use crate::*;
 
 #[cereal::derived(Data)]
 pub enum ToEngineSys {
-    DefRequest(NuRequest),
+    NuRequest(NuRequest),
+    NuRemotesRequest(NuRemotesRequest),
 }
 
 #[cereal::derived(Data)]
 pub enum FromEngineSys {
-    DefResponse(NuResponse),
+    NuResponse(NuResponse),
+    NuRemotesResponse(NuRemotesResponse),
 }
 
 #[cereal::derived(Data, Copy, Eq)]
@@ -24,12 +26,26 @@ pub enum Host {
     Remote(datum::Nom),
 }
 
+#[cereal::derived(Data, Eq)]
+pub struct RemoteAlias {
+    pub nom: datum::Nom,
+    pub alias: String,
+}
+
 #[cereal::derived(Data)]
 pub struct NuRequest {
-    host: Host,
-    kind: DefKind,
-    args: nuin::Val,
-    def: String, 
+    pub host: Host,
+    pub kind: DefKind,
+    pub args: nuin::Val,
+    pub def: String, 
+}
+
+#[cereal::derived(Data, Copy, Eq)]
+pub struct NuRemotesRequest;
+
+#[cereal::derived(Data, Eq)]
+pub struct NuRemotesResponse {
+    pub remotes: Vec<RemoteAlias>,
 }
 
 pub type NuResult = Result<nuin::Val, EngineError>;
@@ -46,6 +62,6 @@ pub enum NuError {
 
 #[cereal::derived(Data)]
 pub struct NuResponse {
-    result: NuResult,
-    nonce: u64,
+    pub result: NuResult,
+    pub nonce: u64,
 }

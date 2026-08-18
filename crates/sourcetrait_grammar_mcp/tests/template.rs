@@ -3,70 +3,91 @@
 //! the resource caveat. Driven through the `guts` surface.
 
 use serde_json::json;
+use sourcetrait_common::datum;
 use sourcetrait_grammar_mcp::guts::{
     build_call_source, build_interact_source, build_run_source, parses_clean,
 };
 
 #[test]
 fn run_source_typed_args_single_line_body() {
+    let nonce = datum::NonceGenerator::new().generate().into_pair();
+    let nonce_str = nonce.str();
+    
     let got = build_run_source(
         "record<x: int>",
         "record<out: int>",
         json!({"x": 5}),
         "{ out: ($args.x + 1) }",
-        "nonce123",
+        &nonce,
     );
-    let expected = r#"do {
-    $env.NONCE = "nonce123"
-    def __run [args: record<x: int>]: nothing -> record<out: int> {
-        { out: ($args.x + 1) }
-    }
-    __run {x: 5}
-}
-"#;
+    let expected = indoc::formatdoc! {r#"
+            do {{
+                $env.NONCE = "{nonce_str}"
+                def __run [args: record<x: int>]: nothing -> record<out: int> {{
+                    {{ out: ($args.x + 1) }}
+                }}
+                __run {{x: 5}}
+            }}
+        "#,
+        nonce_str = nonce_str,
+    };
+    
     assert_eq!(got, expected);
     assert!(parses_clean(&got), "rendered run source must parse clean:\n{got}");
 }
 
 #[test]
 fn run_source_void_args() {
+    let nonce = datum::NonceGenerator::new().generate().into_pair();
+    let nonce_str = nonce.str();
+    
     let got = build_run_source(
         "nothing",
         "record<out: int>",
         json!({}),
         "{ out: 0 }",
-        "nonce123",
+        &nonce,
     );
-    let expected = r#"do {
-    $env.NONCE = "nonce123"
-    def __run [args: nothing]: nothing -> record<out: int> {
-        { out: 0 }
-    }
-    __run null
-}
-"#;
+    let expected = indoc::formatdoc! {r#"
+            do {{
+                $env.NONCE = "{nonce_str}"
+                def __run [args: nothing]: nothing -> record<out: int> {{
+                    {{ out: 0 }}
+                }}
+                __run null
+            }}
+        "#,
+        nonce_str = nonce_str,
+    };
+    
     assert_eq!(got, expected);
     assert!(parses_clean(&got), "void run source must parse clean:\n{got}");
 }
 
 #[test]
 fn run_source_multi_line_body() {
+    let nonce = datum::NonceGenerator::new().generate().into_pair();
+    let nonce_str = nonce.str();
+    
     let got = build_run_source(
         "record<x: int>",
         "record<out: int>",
         json!({"x": 3}),
         "let y = ($args.x * 2)\n{ out: $y }",
-        "nonce123",
+        &nonce,
     );
-    let expected = r#"do {
-    $env.NONCE = "nonce123"
-    def __run [args: record<x: int>]: nothing -> record<out: int> {
-        let y = ($args.x * 2)
-{ out: $y }
-    }
-    __run {x: 3}
-}
-"#;
+    let expected = indoc::formatdoc! {r#"
+        do {{
+            $env.NONCE = "{nonce_str}"
+            def __run [args: record<x: int>]: nothing -> record<out: int> {{
+                let y = ($args.x * 2)
+                {{ out: $y }}
+            }}
+            __run {{x: 3}}
+        }}
+        "#,
+        nonce_str = nonce_str,
+    };
     assert_eq!(got, expected);
     assert!(parses_clean(&got), "multi-line run source must parse clean:\n{got}");
 }

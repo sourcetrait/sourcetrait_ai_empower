@@ -309,7 +309,7 @@ pub struct ErrorBody {
 
 pub(crate) fn error_to_call_result(
     error: GrammarMcpError,
-    nonce: Option<Nonce>,
+    nonce: Option<datum::Nonce>,
 ) -> mcp::CallToolResult {
     let (errors, warnings) = match error {
         GrammarMcpError::RigViolations { diagnostics } | GrammarMcpError::LintViolations { diagnostics } => {
@@ -324,7 +324,7 @@ pub(crate) fn error_to_call_result(
         error: ErrorBody {
             errors,
             warnings,
-            nonce: nonce.map(|n| n.to_string()),
+            nonce: nonce.map(|n| n.into_pair().str().to_string()),
         },
     };
     let mut r = mcp::CallToolResult::default();

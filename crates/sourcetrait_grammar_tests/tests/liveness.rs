@@ -10,7 +10,7 @@ use nix::fcntl::{Flock, FlockArg};
 use nix::sys::signal::Signal;
 use serde_json::json;
 use sourcetrait_grammar_tests::{Host, namespace_dir, structured};
-use sourcetrait_testing::prelude::*;
+use sourcetrait_common::testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 

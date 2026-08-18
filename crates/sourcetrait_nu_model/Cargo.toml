@@ -18,8 +18,7 @@ nu-plugin.workspace = true
 semver.workspace = true
 snafu.workspace = true
 
-[dev-dependencies]
-sourcetrait_testing.workspace = true
+sourcetrait_common.workspace = true
 
 [package.metadata]
 reign = "human"

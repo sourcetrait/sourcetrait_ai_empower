@@ -1,6 +1,6 @@
 use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, has_error, write_tree};
-use sourcetrait_testing::prelude::*;
+use sourcetrait_common::testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 

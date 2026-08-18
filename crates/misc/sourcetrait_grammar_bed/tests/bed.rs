@@ -2,7 +2,7 @@ use indoc::indoc;
 use sourcetrait_grammar_bed::{
     Bed, BedConfig, BedError, BedResult, Value, record,
 };
-use sourcetrait_testing::prelude::*;
+use sourcetrait_common::testing::prelude::*;
 use std::time::Duration;
 
 static TESTING: testing::Module = testing::module!(Integration, {

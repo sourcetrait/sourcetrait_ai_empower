@@ -51,12 +51,11 @@ toml.workspace = true
 xxhash-rust.workspace = true
 zstd.workspace = true
 
+sourcetrait_common.workspace = true
+
 sourcetrait_cert_lib.workspace    = true
 sourcetrait_grammar_lib.workspace = true
 sourcetrait_nu_vocab.workspace    = true
-
-[dev-dependencies]
-sourcetrait_testing.workspace = true
 
 [build-dependencies]
 toml.workspace = true

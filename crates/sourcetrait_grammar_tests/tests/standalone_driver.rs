@@ -1,7 +1,7 @@
 use std::process::Command;
 
 use sourcetrait_grammar_tests::*;
-use sourcetrait_testing::prelude::*;
+use sourcetrait_common::testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 

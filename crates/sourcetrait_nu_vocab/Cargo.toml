@@ -22,10 +22,7 @@ serde.workspace = true
 semver.workspace = true
 snafu.workspace = true
 
-sourcetrait_cereal.workspace = true
-
-[dev-dependencies]
-sourcetrait_testing.workspace = true
+sourcetrait_common.workspace = true
 
 [package.metadata]
 reign = "human"

@@ -28,8 +28,6 @@ tokio.workspace = true
 rkyv.workspace = true
 snafu.workspace = true
 
-sourcetrait_agnostic.workspace  = true
-sourcetrait_cereal.workspace    = true
-sourcetrait_sysgreen.workspace  = true
-sourcetrait_tomlx.workspace     = true
+sourcetrait_common.workspace = true
+
 sourcetrait_nu_vocab.workspace  = true

@@ -1,7 +1,7 @@
 use crate::*;
 
 #[cereal::derived(Data)]
-pub enum ValueData {
+pub enum Val {
     Bool(bool),
     Int(i64),
     Float(f64),
@@ -11,8 +11,8 @@ pub enum ValueData {
     Duration(i64),
     Date(DateData),
     Range(RangeData),
-    Record(Vec<(String, ValueData)>),
-    List(Vec<ValueData>),
+    Record(Vec<(String, Val)>),
+    List(Vec<Val>),
     Error,
     Binary(Vec<u8>),
     CellPath(Vec<CellPathMemberData>),
@@ -154,10 +154,10 @@ impl From<nu_protocol::FloatRange> for TypedRangeData<f64> {
     }
 }
 
-impl From<nu::Value> for ValueData {
+impl From<nu::Value> for Val {
     fn from(value: nu::Value) -> Self {
         match value {
-            nu::Value::Range { val, .. } => ValueData::Range(match *val {
+            nu::Value::Range { val, .. } => Val::Range(match *val {
                 nu::Range::IntRange(x) => RangeData::Int(
                     TypedRangeData::from(x)
                 ),
@@ -165,23 +165,23 @@ impl From<nu::Value> for ValueData {
                     TypedRangeData::from(x)
                 )
             }),
-            nu::Value::Record { val, .. } => ValueData::Record(
+            nu::Value::Record { val, .. } => Val::Record(
                 val.into_owned().drain(..)
-                    .map(|(k,v)| (k, ValueData::from(v)))
+                    .map(|(k,v)| (k, Val::from(v)))
                     .collect()
             ),
-            nu::Value::List { vals, .. } => ValueData::List(
+            nu::Value::List { vals, .. } => Val::List(
                 vals.into_iter()
                     .map(|v| Self::from(v))
                     .collect()
             ),
-            nu::Value::Binary { val, .. } => ValueData::Binary(val),
-            nu::Value::CellPath { val, .. } => ValueData::CellPath(
+            nu::Value::Binary { val, .. } => Val::Binary(val),
+            nu::Value::CellPath { val, .. } => Val::CellPath(
                 val.members.into_iter()
                     .map(|x| CellPathMemberData::from(x))
                     .collect()
             ),
-            nu::Value::Nothing {..} => ValueData::Nothing,
+            nu::Value::Nothing {..} => Val::Nothing,
             _ => todo!(),
         }
     }

@@ -38,8 +38,11 @@ pub(crate) use std::{
     path::PathBuf,
 };
 
-pub(crate) use sourcetrait_agnostic::{self as agnostic, prelude::*};
-pub(crate) use sourcetrait_cereal::{self as cereal, prelude::*};
-pub(crate) use sourcetrait_sysgreen::{self as green, prelude::*};
-pub(crate) use sourcetrait_tomlx::{self as tomlx, prelude::*};
+pub(crate) use sourcetrait_common::{
+    agnostic::{self, prelude::*},
+    cereal::{self},
+    datum::{self},
+    sysgreen::{self as green},
+    tomlx::{self, prelude::*},
+};
 pub(crate) use sourcetrait_nu_vocab as vocab;

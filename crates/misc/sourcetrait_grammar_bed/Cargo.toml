@@ -18,7 +18,8 @@ nu-parser.workspace = true
 nu-protocol.workspace = true
 snafu.workspace = true
 
+sourcetrait_common.workspace = true
+
 [dev-dependencies]
 indoc.workspace = true
-sourcetrait_testing.workspace = true
 tempfile.workspace = true

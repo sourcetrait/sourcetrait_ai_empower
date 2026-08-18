@@ -6,7 +6,7 @@ pub(crate) mod sig {
 }
 
 pub use crate::{
-    val::data::ValueData,
+    val::data::Val,
     sig::command::{
         SignatureDef, ParameterDef, SignatureTrait, ExampleDef,
         SignatureCategoryTrait, SignatureParameterTrait,
@@ -35,4 +35,4 @@ pub(crate) mod nu {
     };
 }
 
-pub(crate) use sourcetrait_cereal::{self as cereal, prelude::*};
+pub(crate) use sourcetrait_common::cereal::{self as cereal};

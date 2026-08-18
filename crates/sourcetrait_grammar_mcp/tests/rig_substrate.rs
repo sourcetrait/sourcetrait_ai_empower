@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::Command;
 
 use sourcetrait_grammar_mcp::guts::{TestServer, has_error, valid_function_source, write_source};
-use sourcetrait_testing::prelude::*;
+use sourcetrait_common::testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 

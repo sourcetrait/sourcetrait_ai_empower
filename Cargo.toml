@@ -85,11 +85,12 @@ walkdir = { version = "2" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = { version = "0.13" }
 
-sourcetrait_agnostic    = { path = "../sourcetrait_common/crates/sourcetrait_agnostic", version = ">=0.0.0-0" }
-sourcetrait_cereal      = { path = "../sourcetrait_common/crates/sourcetrait_cereal", version = ">=0.0.0-0" }
-sourcetrait_sysgreen    = { path = "../sourcetrait_common/crates/sourcetrait_sysgreen", version = ">=0.0.0-0" }
-sourcetrait_testing     = { path = "../sourcetrait_common/crates/sourcetrait_testing", version = ">=0.0.0-0" }
-sourcetrait_tomlx       = { path = "../sourcetrait_common/crates/sourcetrait_tomlx", version = ">=0.0.0-0" }
+sourcetrait_common = {
+    path = "../sourcetrait_common/crates/sourcetrait_common",
+    version = ">=0.0.0-0",
+    default-features = false,
+    features = ["agnostic","cereal","datum","testing","tomlx","sysgreen"]
+}
 
 sourcetrait_cert_lib    = { path = "../sourcetrait_cert/crates/sourcetrait_cert_lib" }
 

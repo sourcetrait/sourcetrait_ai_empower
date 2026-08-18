@@ -12,7 +12,7 @@ use std::path::Path;
 use sourcetrait_grammar_mcp::guts::{
     TestServer, error_kind, has_error, rig_block, valid_function_source, write_source,
 };
-use sourcetrait_testing::prelude::*;
+use sourcetrait_common::testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 

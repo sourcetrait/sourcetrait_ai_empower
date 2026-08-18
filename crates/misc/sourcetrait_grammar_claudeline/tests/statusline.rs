@@ -1,4 +1,4 @@
-use sourcetrait_testing::prelude::*;
+use sourcetrait_common::testing::prelude::*;
 use std::io::Write;
 use std::path::{
     Path,

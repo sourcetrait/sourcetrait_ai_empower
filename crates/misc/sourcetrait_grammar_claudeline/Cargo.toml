@@ -25,5 +25,4 @@ snafu.workspace = true
 sourcetrait_grammar_lib.workspace = true
 xxhash-rust.workspace = true
 
-[dev-dependencies]
-sourcetrait_testing.workspace = true
+sourcetrait_common.workspace = true

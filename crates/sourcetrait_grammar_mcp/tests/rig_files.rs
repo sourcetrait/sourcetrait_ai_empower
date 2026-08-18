@@ -5,7 +5,7 @@ use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{
     TestServer, error_kind, error_kinds, has_error, has_kind, valid_function_source, write_source,
 };
-use sourcetrait_testing::prelude::*;
+use sourcetrait_common::testing::prelude::*;
 
 static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
 

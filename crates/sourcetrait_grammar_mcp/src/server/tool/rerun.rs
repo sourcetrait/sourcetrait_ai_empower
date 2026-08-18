@@ -29,7 +29,7 @@ impl NuSh {
         &self,
         mcp::Parameters(p): mcp::Parameters<RerunParams>,
     ) -> Result<mcp::CallToolResult, mcp::ErrorData> {
-        if !lib_grammar::is_base62(&p.nonce) {
+        if !cereal::is_base62(&p.nonce) {
             return Ok(error_to_call_result(
                 GrammarMcpError::RerunInvalidNonce {
                     nonce: p.nonce.clone(),

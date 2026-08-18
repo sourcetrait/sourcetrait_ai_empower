@@ -253,7 +253,7 @@ pub(crate) use std::{
     fmt::Display,
     fs,
     io::{self, Write},
-    hash::{Hash, Hasher},
+    hash::{Hash},
     marker::PhantomData,
     os::unix::fs::OpenOptionsExt,
     ops::ControlFlow,
@@ -262,7 +262,7 @@ pub(crate) use std::{
     process,
     sync::{
         Arc, LazyLock, OnceLock,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -271,10 +271,6 @@ pub(crate) use clap::Parser;
 
 pub(crate) use sourcetrait_cert_lib as lib_cert;
 pub(crate) use sourcetrait_grammar_lib as lib_grammar;
-
-pub(crate) mod xxh3 {
-    pub(crate) use xxhash_rust::xxh3::Xxh3;
-}
 
 pub(crate) mod dirs {
     pub(crate) use directories::BaseDirs;

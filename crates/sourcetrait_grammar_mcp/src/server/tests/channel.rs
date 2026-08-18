@@ -444,5 +444,5 @@ fn ids_are_distinct_for_identical_packets() {
         "the generator mixes a counter and a timestamp, so two byte-identical packets \
          still get distinct ids",
     );
-    assert!(lib_grammar::is_base62(&a.to_string()), "ids render base62");
+    assert!(cereal::is_base62(&a.to_string()), "ids render base62");
 }

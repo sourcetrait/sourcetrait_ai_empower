@@ -2,6 +2,7 @@ use crate::*;
 
 pub struct EngineSystem {
     inner: green::InnerSystem<Self>,
+    params: EngineSysParams,
 }
 
 impl green::System for EngineSystem {
@@ -20,6 +21,7 @@ impl green::System for EngineSystem {
     async fn init(inner: green::InnerSystem<Self>, params: Self::Params) -> green::GreenResult<Self> {
         Ok(Self {
             inner,
+            params,
         })
     }
     
@@ -57,4 +59,8 @@ impl green::System for EngineSystem {
     async fn on_resume(&mut self) -> green::SysResult<bool> {
         Ok(true)
     }
+}
+
+impl EngineSystem {
+    pub const fn params(&self) -> &EngineSysParams { &self.params }
 }

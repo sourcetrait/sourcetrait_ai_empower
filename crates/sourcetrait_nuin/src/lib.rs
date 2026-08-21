@@ -6,7 +6,7 @@ pub(crate) mod sig {
 }
 
 pub use crate::{
-    val::data::Val,
+    val::data::{Val,ValError,ValResult},
     sig::command::{
         SignatureDef, ParameterDef, SignatureTrait, ExampleDef,
         SignatureCategoryTrait, SignatureParameterTrait,

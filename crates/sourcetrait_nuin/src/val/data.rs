@@ -1,5 +1,16 @@
 use crate::*;
 
+/// Represents the 1:1 with serializable nu_protocol::Value
+/// Split between "ok" values and nu_protocol::Value::Error
+pub type ValResult = Result<Val, ValError>;
+
+/// Represents nu_protocol::Value::Error
+#[cereal::derived(Data)]
+pub enum ValError {
+    Unknown,
+}
+
+/// Represents serializable nu_protocol::Value, with the exception of nu_protocol::Value::Error
 #[cereal::derived(Data)]
 pub enum Val {
     Bool(bool),
@@ -13,7 +24,6 @@ pub enum Val {
     Range(RangeData),
     Record(Vec<(String, Val)>),
     List(Vec<Val>),
-    Error,
     Binary(Vec<u8>),
     CellPath(Vec<CellPathMemberData>),
     Nothing,

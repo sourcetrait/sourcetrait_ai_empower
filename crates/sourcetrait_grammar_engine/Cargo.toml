@@ -27,6 +27,7 @@ serde.workspace = true
 tokio.workspace = true
 rkyv.workspace = true
 snafu.workspace = true
+indoc.workspace = true
 
 sourcetrait_common.workspace = true
 

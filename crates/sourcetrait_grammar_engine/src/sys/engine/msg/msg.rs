@@ -11,7 +11,7 @@ pub enum ToEngineSys {
 
 #[cereal::derived(Data)]
 pub enum FromEngineSys {
-    NuReplResponse(EngineResult<NuResult>),
+    NuReplResponse(EngineResult<nuin::ValResult>),
     NuDefResponse(EngineResult<NuDefResponse>),
     ReNuResponse(EngineResult<NuDefResponse>),
 }
@@ -139,6 +139,7 @@ pub struct NuReplRequest {
 /// Re-runs a previous [NuDefRequest] with new args data, by its former nonce.
 #[cereal::derived(Data)]
 pub struct ReNuRequest {
+    pub host: Host,
     pub nonce: datum::Nonce,
     /// Either Table or Record
     pub args: nuin::Val,
@@ -173,8 +174,6 @@ pub enum EngineSystemError {
     Unknown,
 }
 
-pub type NuResult = Result<nuin::Val, NuError>;
-
 #[cereal::derived(Data)]
 pub enum NuError {
     Unknown,
@@ -183,7 +182,7 @@ pub enum NuError {
 #[cereal::derived(Data)]
 pub struct NuDefResponse {
     pub nonce: datum::Nonce,
-    pub result: NuResult,
+    pub result: nuin::ValResult,
 }
 
 #[cereal::derived(Data, Eq)]
@@ -217,4 +216,23 @@ impl ChannelStatus {
             _ => None,
         }
     }
+}
+
+pub trait EngineRequest: Into<ToEngineSys> {
+    type ResponseType;
+}
+
+impl From<NuReplRequest> for ToEngineSys { fn from(v: NuReplRequest) -> Self { Self::NuRepl(v) } }
+impl EngineRequest for NuReplRequest {
+    type ResponseType = nuin::ValResult;
+}
+
+impl From<NuDefRequest> for ToEngineSys { fn from(v: NuDefRequest) -> Self { Self::NuDef(v) } }
+impl EngineRequest for NuDefRequest {
+    type ResponseType = NuDefResponse;
+}
+
+impl From<ReNuRequest> for ToEngineSys { fn from(v: ReNuRequest) -> Self { Self::ReNu(v) } }
+impl EngineRequest for ReNuRequest {
+    type ResponseType = NuDefResponse;
 }

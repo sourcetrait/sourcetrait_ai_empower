@@ -14,22 +14,31 @@ pub(crate) mod sys {
 }
 pub(crate) mod error;
 pub(crate) mod face {
-    pub(crate) mod run;
+    pub(crate) mod setup;
 }
 
-pub use crate::{
-    error::{GrammarEngineError, GrammarEngineResult},
+pub(crate) use crate::{
     sys::engine::{
         config::EngineSysConfig,
-        msg::{
-            msg::{
-                ToEngineSys, FromEngineSys,
-                NuDefKind,
-            },
-        },
         params::EngineSysParams,
         paths::EngineSysPaths,
         system::EngineSystem,
+        msg::msg::*,
+    },
+};
+
+pub use crate::{
+    error::{GrammarEngineError, GrammarEngineResult},
+    face::setup::{
+        Engine, EngineBuilder, EngineParameters, EngineParameterKind,
+    },
+    sys::engine::{
+        msg::{
+            msg::{
+              EngineRequest, NuReplRequest, NuDefRequest, NuBedRequest,
+              NuDefResponse, ReNuRequest, NuDefKind, Host,
+            },
+        },
     },
 };
 
@@ -50,4 +59,5 @@ pub(crate) use sourcetrait_common::{
     sysgreen::{self as green},
     tomlx::{self, prelude::*},
 };
-pub(crate) use sourcetrait_nuin as nuin;
+
+pub use sourcetrait_nuin as nuin;

@@ -1,8 +1,7 @@
 use crate::*;
 
 #[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EngineSysConfig {
-}
+pub struct EngineSysConfig;
 
 impl EngineSysConfig {
     pub fn read(paths: &EngineSysPaths) -> green::GreenResult<Self> {

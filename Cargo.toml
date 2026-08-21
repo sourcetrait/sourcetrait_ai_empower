@@ -9,6 +9,7 @@ members = [
   "crates/sourcetrait_nu_model",
   "crates/sourcetrait_grammar_mcp",
   "crates/sourcetrait_grammar_tests",
+  "crates/sourcetrait_traintrack",
   "crates/misc/sourcetrait_grammar_bed",
   "crates/misc/sourcetrait_grammar_know_rust",
   "crates/misc/sourcetrait_grammar_claudeline",
@@ -89,7 +90,15 @@ sourcetrait_common = {
     path = "../sourcetrait_common/crates/sourcetrait_common",
     version = ">=0.0.0-0",
     default-features = false,
-    features = ["agnostic","cereal","datum","testing","tomlx","sysgreen"]
+    features = [
+        "agnostic",
+        "cereal",
+        "clapx",
+        "datum",
+        "sysgreen",
+        "testing",
+        "tomlx",
+    ]
 }
 
 sourcetrait_cert_lib    = { path = "../sourcetrait_cert/crates/sourcetrait_cert_lib" }

@@ -13,6 +13,9 @@ pub(crate) mod sys {
     }
 }
 pub(crate) mod error;
+pub(crate) mod face {
+    pub(crate) mod run;
+}
 
 pub use crate::{
     error::{GrammarEngineError, GrammarEngineResult},

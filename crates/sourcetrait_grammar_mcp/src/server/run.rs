@@ -8,7 +8,7 @@ pub(crate) async fn run_server() {
     let lint_engine = Arc::new(LintEngine::new());
     let server = NuSh::new(nonce_gen, rig_locks, lint_engine);
     let (emergency_tx, emergency_rx) = tk::unbounded_channel::<Emergency>();
-    spawn_emergency_responder(emergency_rx, server.mcp_nom.str().to_string());
+    spawn_emergency_responder(emergency_rx, server.mcp_nom.as_str().to_string());
     server.channel.install_emergency(emergency_tx.clone());
     spawn_watchdog(WatchdogDeps {
         hung_watch: server.hung_watch.clone(),
@@ -17,7 +17,7 @@ pub(crate) async fn run_server() {
         env_jobs: server.env_jobs.clone(),
         tx: emergency_tx,
     });
-    let _host_lock = match acquire_host_lock(server.mcp_nom.str()) {
+    let _host_lock = match acquire_host_lock(server.mcp_nom.as_str()) {
         Ok(lock) => Some(lock),
         Err(e) => {
             eprintln!("grammar: host lock not held: {e}");

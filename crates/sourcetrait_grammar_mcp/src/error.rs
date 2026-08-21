@@ -324,7 +324,7 @@ pub(crate) fn error_to_call_result(
         error: ErrorBody {
             errors,
             warnings,
-            nonce: nonce.map(|n| n.into_pair().str().to_string()),
+            nonce: nonce.map(|n| n.into_pair().as_str().to_string()),
         },
     };
     let mut r = mcp::CallToolResult::default();

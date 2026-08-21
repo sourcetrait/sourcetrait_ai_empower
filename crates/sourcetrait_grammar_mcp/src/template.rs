@@ -64,7 +64,7 @@ pub(crate) fn build_run_source(
     body: &str,
     nonce: &datum::NoncePair,
 ) -> String {
-    let nonce = nonce.str();
+    let nonce = nonce.as_str();
     let lit = args_literal(args_type, args);
     formatdoc!(
         r#"

@@ -73,7 +73,7 @@ impl NuSh {
         let result_obj = outcome.result.as_object().cloned().unwrap_or_default();
         let envelope = RunEnvelope {
             result: result_obj,
-            nonce: outcome.nonce.into_pair().str().to_string(),
+            nonce: outcome.nonce.into_pair().as_str().to_string(),
         };
         envelope_to_structured(&envelope)
     }

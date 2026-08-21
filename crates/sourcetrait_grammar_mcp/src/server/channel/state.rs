@@ -15,7 +15,7 @@ pub(crate) const SHM_ROOT_VAR: &str = "$XDGX_SHM_DIR";
 pub(crate) fn inbox_dir(mcp_nom: &datum::NomPair) -> Result<PathBuf, String> {
     Ok(expand_path(Path::new(SHM_ROOT_VAR))?
         .join("mcp")
-        .join(mcp_nom.str())
+        .join(mcp_nom.as_str())
         .join("inbox"))
 }
 

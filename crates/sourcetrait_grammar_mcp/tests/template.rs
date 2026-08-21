@@ -11,7 +11,7 @@ use sourcetrait_grammar_mcp::guts::{
 #[test]
 fn run_source_typed_args_single_line_body() {
     let nonce = datum::NonceGenerator::new().generate().into_pair();
-    let nonce_str = nonce.str();
+    let nonce_str = nonce.as_str();
     
     let got = build_run_source(
         "record<x: int>",
@@ -39,7 +39,7 @@ fn run_source_typed_args_single_line_body() {
 #[test]
 fn run_source_void_args() {
     let nonce = datum::NonceGenerator::new().generate().into_pair();
-    let nonce_str = nonce.str();
+    let nonce_str = nonce.as_str();
     
     let got = build_run_source(
         "nothing",
@@ -67,7 +67,7 @@ fn run_source_void_args() {
 #[test]
 fn run_source_multi_line_body() {
     let nonce = datum::NonceGenerator::new().generate().into_pair();
-    let nonce_str = nonce.str();
+    let nonce_str = nonce.as_str();
     
     let got = build_run_source(
         "record<x: int>",

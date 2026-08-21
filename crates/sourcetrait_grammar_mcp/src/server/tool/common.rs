@@ -252,7 +252,7 @@ pub(crate) async fn dispatch_pooled(
     .await;
     let _flight_cleanup = InFlightCleanup {
         map: in_flight.clone(),
-        key: nonce.str().to_string(),
+        key: nonce.as_str().to_string(),
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
     let eval_fut = eval_stateless(engine, cancel.clone(), log_dir, source, permit, finished.clone());
@@ -269,7 +269,7 @@ pub(crate) async fn dispatch_pooled(
             register_hung(
                 hung_watch,
                 HungWatch {
-                    nonce: nonce.str().to_string(),
+                    nonce: nonce.as_str().to_string(),
                     tool: tool_name,
                     lane: Lane::Stateless,
                     started_at,
@@ -333,7 +333,7 @@ pub(crate) async fn dispatch_interact(
     .await;
     let _flight_cleanup = InFlightCleanup {
         map: in_flight.clone(),
-        key: nonce.str().to_string(),
+        key: nonce.as_str().to_string(),
     };
     let effective_timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
     let eval_fut = engine.eval(log_dir, source, cancel.clone(), tracker.clone(), finished.clone());
@@ -350,7 +350,7 @@ pub(crate) async fn dispatch_interact(
             register_hung(
                 hung_watch,
                 HungWatch {
-                    nonce: nonce.str().to_string(),
+                    nonce: nonce.as_str().to_string(),
                     tool: "interact",
                     lane: Lane::Interact,
                     started_at,
@@ -381,7 +381,7 @@ async fn register_in_flight(
 ) {
     let mut map = in_flight.lock().await;
     map.insert(
-        nonce.str().to_string(),
+        nonce.as_str().to_string(),
         InFlightEntry {
             tool: tool_name,
             started_at,

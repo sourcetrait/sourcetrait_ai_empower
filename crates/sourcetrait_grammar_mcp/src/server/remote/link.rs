@@ -969,7 +969,7 @@ async fn connect_conn(
     let mut framed_write = tku::FramedWrite::new(write, BitcodeCodec::<InitiatorToAcceptor>::new());
     framed_write
         .send(InitiatorToAcceptor::Hello {
-            mcp_nom: self_mcp_nom.str().to_string(),
+            mcp_nom: self_mcp_nom.as_str().to_string(),
             stream,
         })
         .await?;
@@ -1125,7 +1125,7 @@ async fn accept_conn(
     };
     framed_write
         .send(AcceptorToInitiator::Hello {
-            mcp_nom: self_mcp_nom.str().to_string(),
+            mcp_nom: self_mcp_nom.as_str().to_string(),
         })
         .await?;
     Ok((remote, stream, framed_read, framed_write))

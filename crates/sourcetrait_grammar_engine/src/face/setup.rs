@@ -47,16 +47,33 @@ impl EngineBuilder {
     }
 
     pub async fn start(self) -> GrammarEngineResult<Engine> {
-        todo!()
+        let params = EngineSysParams::try_from_face(self.parameters)?;
+        let paths = EngineSysPaths::default();
+        let config = EngineSysConfig::default();
+        let control: green::SystemControl<EngineSystem> = green::SystemControl::start(
+            paths,
+            config,
+            params,
+        ).await.unwrap();
+
+        Ok(Engine {
+            control,
+        })
     }
 }
 
 impl Default for EngineBuilder { fn default() -> Self { Self::DEFAULT } }
 
-pub struct Engine;
+pub struct Engine {
+    control: green::SystemControl<EngineSystem>,
+}
 
 impl Engine {
     pub async fn request<T: EngineRequest>(&self, req: T) -> GrammarEngineResult<T::ResponseType> {
+        let packet = green::Packet::request(req.into());
+        self.control.send_packet(packet).await
+            .unwrap(); //todo
+
         todo!()
     }
 }

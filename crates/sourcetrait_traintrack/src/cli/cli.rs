@@ -3,7 +3,7 @@ use crate::*;
 /// Training material tool
 #[derive(Debug, clap::Parser)]
 #[clap(version,about)]
-#[clap(styles = clapx::STYLE_SOURCETRAIT)]
+#[clap(styles = clapx::style::SRCTRAIT)]
 pub struct Cli {
     #[command(subcommand)]
     pub cmd: Cmd,

@@ -4,7 +4,7 @@ pub fn run_main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
         Ok(_) => ExitCode::SUCCESS,
-        Err(e) => clapx::run_error_srctrait(e),
+        Err(e) => clapx::style::srctrait::exit_error(e),
     }
 }
 

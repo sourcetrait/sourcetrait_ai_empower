@@ -50,10 +50,19 @@ impl EngineBuilder {
         let params = EngineSysParams::try_from_face(self.parameters)?;
         let paths = EngineSysPaths::default();
         let config = EngineSysConfig::default();
-        let control: green::SystemControl<EngineSystem> = green::SystemControl::start(
+
+        struct Handler;
+        impl subsys::Handler<EngineSystem> for Handler {
+            fn on_packet(&mut self, pkt: subsys::Packet<<EngineSystem as System>::FromSys>) -> impl Future<Output = Option<subsys::Packet<<EngineSystem as System>::FromSys>>> + 'static + Send {
+                async move { Some(pkt) }
+            }
+        }
+        
+        let control: subsys::SystemControl<EngineSystem> = subsys::SystemControl::start(
             paths,
             config,
             params,
+            Handler,
         ).await.unwrap();
 
         Ok(Engine {
@@ -65,16 +74,15 @@ impl EngineBuilder {
 impl Default for EngineBuilder { fn default() -> Self { Self::DEFAULT } }
 
 pub struct Engine {
-    control: green::SystemControl<EngineSystem>,
+    control: subsys::SystemControl<EngineSystem>,
 }
 
 impl Engine {
-    pub async fn request<T: EngineRequest>(&self, req: T) -> GrammarEngineResult<T::ResponseType> {
-        let packet = green::Packet::request(req.into());
-        self.control.send_packet(packet).await
-            .unwrap(); //todo
-
-        todo!()
+    pub async fn request<T: subsys::Request<EngineSystem>>(&mut self, req: T) -> subsys::SubsysResult<T::ResponseType>
+    where
+        <T as subsys::Request<EngineSystem>>::ResponseType: TryFrom<<EngineSystem as subsys::System>::FromSys, Error = subsys::SubsysError>
+    {
+        self.control.request(req).await
     }
 }
 

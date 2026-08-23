@@ -4,12 +4,12 @@ use crate::*;
 pub struct EngineSysConfig;
 
 impl EngineSysConfig {
-    pub fn read(paths: &EngineSysPaths) -> green::GreenResult<Self> {
+    pub fn read(paths: &EngineSysPaths) -> subsys::SubsysResult<Self> {
         let config_path = paths.config_toml(); 
         EngineSysConfig::from_toml_file(&config_path)
-            .map_err(|e| green::GreenError::into_io(e))
+            .map_err(|e| subsys::SubsysError::into_io(e))
     }
 }
 
-impl green::Config for EngineSysConfig {}
+impl subsys::Config for EngineSysConfig {}
 impl tomlx::FromToml for EngineSysConfig {}

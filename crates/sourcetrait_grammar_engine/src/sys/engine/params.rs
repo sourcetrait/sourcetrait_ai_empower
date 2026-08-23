@@ -6,7 +6,7 @@ pub struct EngineSysParams {
     pub equip_namespace: String,
 }
 
-impl green::Params for EngineSysParams {}
+impl subsys::Params for EngineSysParams {}
 
 impl EngineSysParams {
     pub(crate) const fn equip_id(&self) -> &str { self.equip_id.as_str() }

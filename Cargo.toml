@@ -95,7 +95,7 @@ sourcetrait_common = {
         "cereal",
         "clapx",
         "datum",
-        "sysgreen",
+        "subsys",
         "testing",
         "tomlx",
     ]

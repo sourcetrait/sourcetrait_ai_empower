@@ -218,21 +218,30 @@ impl ChannelStatus {
     }
 }
 
-pub trait EngineRequest: Into<ToEngineSys> {
-    type ResponseType;
-}
-
+/*
 impl From<NuReplRequest> for ToEngineSys { fn from(v: NuReplRequest) -> Self { Self::NuRepl(v) } }
-impl EngineRequest for NuReplRequest {
+impl subsys::Request<EngineSystem> for NuReplRequest {
     type ResponseType = nuin::ValResult;
 }
+*/
 
 impl From<NuDefRequest> for ToEngineSys { fn from(v: NuDefRequest) -> Self { Self::NuDef(v) } }
-impl EngineRequest for NuDefRequest {
-    type ResponseType = NuDefResponse;
+impl TryFrom<FromEngineSys> for EngineResult<NuDefResponse> {
+    type Error = subsys::SubsysError;
+    fn try_from(v: FromEngineSys) -> subsys::SubsysResult<Self> {
+        match v {
+            FromEngineSys::NuDefResponse(r) => Ok(r),
+            _ => Err(subsys::SubsysError::ResponseType)
+        }
+    }
+}
+impl subsys::Request<EngineSystem> for NuDefRequest {
+    type ResponseType = EngineResult<NuDefResponse>;
 }
 
+/*
 impl From<ReNuRequest> for ToEngineSys { fn from(v: ReNuRequest) -> Self { Self::ReNu(v) } }
 impl EngineRequest for ReNuRequest {
     type ResponseType = NuDefResponse;
 }
+*/

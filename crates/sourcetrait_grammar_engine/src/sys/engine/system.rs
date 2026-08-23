@@ -1,11 +1,11 @@
 use crate::*;
 
 pub struct EngineSystem {
-    inner: green::InnerSystem<Self>,
+    inner: subsys::InnerSystem<Self>,
     params: EngineSysParams,
 }
 
-impl green::System for EngineSystem {
+impl subsys::System for EngineSystem {
     const CHANNEL_SIZE: usize = 100;
     
     type Paths = EngineSysPaths;
@@ -13,24 +13,24 @@ impl green::System for EngineSystem {
     type Config = EngineSysConfig;
     type ToSys = ToEngineSys;
     type FromSys = FromEngineSys;
-    type Flow = green::StdFlow;
+    type Flow = subsys::StdFlow;
 
-    fn inner(&self) -> &green::InnerSystem<Self> { &self.inner }
-    fn inner_mut(&mut self) -> &mut green::InnerSystem<Self> { &mut self.inner }
+    fn inner(&self) -> &subsys::InnerSystem<Self> { &self.inner }
+    fn inner_mut(&mut self) -> &mut subsys::InnerSystem<Self> { &mut self.inner }
     
-    async fn init(inner: green::InnerSystem<Self>, params: Self::Params) -> green::GreenResult<Self> {
+    async fn init(inner: subsys::InnerSystem<Self>, params: Self::Params) -> subsys::SubsysResult<Self> {
         Ok(Self {
             inner,
             params,
         })
     }
     
-    async fn run(mut self) -> green::UnitResult {
+    async fn run(mut self) -> subsys::RunResult {
         let result = loop {
             let result = tokio::select! {
                 rx = self.inner.channel.rx.recv() => match rx {
                     Some(msg) => self.handle_channel_recv(msg).await,
-                    None => Err(green::Failure),
+                    None => Err(subsys::Failure),
                 },
             };
             
@@ -42,21 +42,21 @@ impl green::System for EngineSystem {
         self.done(result).await
     }
     
-    async fn on_channel_recv(&mut self, pkt: green::Packet<ToEngineSys>) -> green::FlowResult<Self::Flow> {
+    async fn on_channel_recv(&mut self, pkt: subsys::Packet<ToEngineSys>) -> subsys::FlowResult<Self::Flow> {
         let (id, nature, msg) = pkt.into_tuple();
         match (nature, msg) {
-            /*(green::PacketNature::Request, ToEngineSys::MathRequest(req))
-                => self.on_math_request(green::Packet::new(id, nature, req)).await,
+            /*(subsys::PacketNature::Request, ToEngineSys::MathRequest(req))
+                => self.on_math_request(subsys::Packet::new(id, nature, req)).await,
             */
             _ => todo!(),
         }
     }
 
-    async fn on_stop(&mut self, _halt: bool) -> green::UnitResult {
-        green::Succeed
+    async fn on_stop(&mut self, _halt: bool) -> subsys::RunResult {
+        subsys::SUCCESS
     }
 
-    async fn on_resume(&mut self) -> green::SysResult<bool> {
+    async fn on_resume(&mut self) -> subsys::SysResult<bool> {
         Ok(true)
     }
 }

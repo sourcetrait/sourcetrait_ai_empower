@@ -35,7 +35,7 @@ pub use crate::{
     sys::engine::{
         msg::{
             msg::{
-              EngineRequest, NuReplRequest, NuDefRequest, NuBedRequest,
+              NuReplRequest, NuDefRequest, NuBedRequest,
               NuDefResponse, ReNuRequest, NuDefKind, Host,
             },
         },
@@ -56,7 +56,7 @@ pub(crate) use sourcetrait_common::{
     agnostic::{self, prelude::*},
     cereal::{self},
     datum::{self},
-    sysgreen::{self as green},
+    subsys::{self, prelude::*},
     tomlx::{self, prelude::*},
 };
 

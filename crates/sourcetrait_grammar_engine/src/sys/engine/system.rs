@@ -45,9 +45,8 @@ impl subsys::System for EngineSystem {
     async fn on_channel_recv(&mut self, pkt: subsys::Packet<ToEngineSys>) -> subsys::FlowResult<Self::Flow> {
         let (id, nature, msg) = pkt.into_tuple();
         match (nature, msg) {
-            /*(subsys::PacketNature::Request, ToEngineSys::MathRequest(req))
-                => self.on_math_request(subsys::Packet::new(id, nature, req)).await,
-            */
+            (subsys::PacketNature::Request, ToEngineSys::NuRepl(req))
+                => self.on_nu_repl_request(subsys::Packet::new(id, nature, req)).await,
             _ => todo!(),
         }
     }
@@ -62,5 +61,18 @@ impl subsys::System for EngineSystem {
 }
 
 impl EngineSystem {
-    pub const fn params(&self) -> &EngineSysParams { &self.params }
+    pub(crate) const fn params(&self) -> &EngineSysParams { &self.params }
+
+    async fn on_nu_repl_request(&mut self, req: subsys::Packet<NuReplRequest>) -> subsys::FlowResult<subsys::StdFlow> {
+        let mut bed = NubedReplBuilder.build();
+        let result = bed.evaluate(&req.msg.nu).unwrap();
+        
+        //temp: loopback
+        dbg!(&req);
+        self.send_channel_packet(req.respond(FromEngineSys::NuRepl(Ok(NuReplResponse {
+            result,
+        })))).await?;
+
+        subsys::CONTINUE
+    }
 }

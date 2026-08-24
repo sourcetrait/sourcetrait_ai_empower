@@ -1,3 +1,6 @@
+pub(crate) mod reign {
+    pub(crate) mod ai;
+}
 pub(crate) mod model {
     pub(crate) mod model;
 }
@@ -27,6 +30,12 @@ pub(crate) use crate::{
     },
 };
 
+pub(crate) use crate::reign::ai::{
+    nubed::repl::bed::{
+        NubedRepl, NubedReplBuilder
+    },
+};
+
 pub use crate::{
     error::{GrammarEngineError, GrammarEngineResult},
     face::setup::{
@@ -37,9 +46,13 @@ pub use crate::{
             msg::{
               NuReplRequest, NuDefRequest, NuBedRequest,
               NuDefResponse, ReNuRequest, NuDefKind, Host,
+              EngineResult, EngineError, NuReplResponse, ReNuResponse,
             },
         },
     },
+};
+
+pub use crate::reign::ai::{
 };
 
 pub mod nu {
@@ -50,6 +63,7 @@ pub mod nu {
 
 pub(crate) use std::{
     path::PathBuf,
+    fmt::{Display, Write},
 };
 
 pub(crate) use sourcetrait_common::{
@@ -60,4 +74,4 @@ pub(crate) use sourcetrait_common::{
     tomlx::{self, prelude::*},
 };
 
-pub use sourcetrait_nuin as nuin;
+pub use sourcetrait_nuin::{self as nuin, prelude::*};

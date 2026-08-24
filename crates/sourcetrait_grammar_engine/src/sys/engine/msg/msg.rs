@@ -11,9 +11,9 @@ pub enum ToEngineSys {
 
 #[cereal::derived(Data)]
 pub enum FromEngineSys {
-    NuReplResponse(EngineResult<nuin::ValResult>),
-    NuDefResponse(EngineResult<NuDefResponse>),
-    ReNuResponse(EngineResult<NuDefResponse>),
+    NuRepl(EngineResult<NuReplResponse>),
+    NuDef(EngineResult<NuDefResponse>),
+    ReNu(EngineResult<ReNuResponse>),
 }
 
 #[cereal::derived(Data, Copy, Eq)]
@@ -59,10 +59,93 @@ impl NuDefKind {
 }
 
 #[cereal::derived(Data, Copy, Eq)]
+pub enum HostKind {
+    Think,
+    Local,
+    Remote,
+}
+
+impl HostKind {
+    pub const STR_THINK: &'static str = "think";
+    pub const STR_LOCAL: &'static str = "local";
+    pub const STR_REMOTE: &'static str = "remote";
+    
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Think => Self::STR_THINK,
+            Self::Local => Self::STR_LOCAL,
+            Self::Remote => Self::STR_REMOTE,
+        }
+    }
+}
+
+#[cereal::derived(Data, Copy, Eq)]
 pub enum Host {
+    /// Only available when a thinkspace harness exists
+    Think,
     Local,
     Remote(datum::Nom),
 }
+
+impl Host {
+    pub const fn kind(&self) -> HostKind {
+        match self {
+            Self::Think => HostKind::Think,
+            Self::Local => HostKind::Local,
+            Self::Remote(_) => HostKind::Remote,
+        }
+    }
+
+    pub const fn into_host_str(self) -> HostStr {
+        match self {
+            Self::Think => HostStr::Think,
+            Self::Local => HostStr::Local,
+            Self::Remote(nom) => HostStr::Remote(nom.into_pair()),
+        }
+    }
+}
+
+/// Variation of [Host] that carries a parsed string.
+/// Not intended for transmission (use [Host]).
+#[cereal::derived(Data, Eq)]
+pub enum HostStr {
+    Think,
+    Local,
+    Remote(datum::NomPair),
+}
+
+impl HostStr {
+    pub const fn kind(&self) -> HostKind {
+        match self {
+            Self::Think => HostKind::Think,
+            Self::Local => HostKind::Local,
+            Self::Remote(_) => HostKind::Remote,
+        }
+    }
+    
+    pub const fn into_host(self) -> Host {
+        match self {
+            Self::Think => Host::Think,
+            Self::Local => Host::Local,
+            Self::Remote(nompair) => Host::Remote(nompair.nom()),
+        }
+    }
+}
+
+impl Display for HostStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Think => f.write_str(HostKind::STR_THINK),
+            Self::Local => f.write_str(HostKind::STR_LOCAL),
+            Self::Remote(nompair) => {
+                f.write_str(HostKind::STR_REMOTE)?;
+                f.write_char('/')?;
+                f.write_str(nompair.as_str())
+            }
+        }
+    }
+}
+
 
 #[cereal::derived(Data, Copy, Eq)]
 pub enum RemoteHostStatus {
@@ -133,6 +216,7 @@ pub struct NuBedRequest {
 /// Useful for evaluations against syntax, data, format, and mathematics.
 #[cereal::derived(Data)]
 pub struct NuReplRequest {
+    pub host: Host,
     pub nu: String, 
 }
 
@@ -167,10 +251,10 @@ pub struct RemotesResponse {
     pub remotes: Vec<RemoteHost>,
 }
 
-pub type EngineResult<T> = Result<T, EngineSystemError>;
+pub type EngineResult<T> = Result<T, EngineError>;
 
 #[cereal::derived(Data)]
-pub enum EngineSystemError {
+pub enum EngineError {
     Unknown,
 }
 
@@ -182,6 +266,17 @@ pub enum NuError {
 #[cereal::derived(Data)]
 pub struct NuDefResponse {
     pub nonce: datum::Nonce,
+    pub result: nuin::ValResult,
+}
+
+#[cereal::derived(Data)]
+pub struct ReNuResponse {
+    pub nonce: datum::Nonce,
+    pub result: nuin::ValResult,
+}
+
+#[cereal::derived(Data)]
+pub struct NuReplResponse {
     pub result: nuin::ValResult,
 }
 
@@ -224,13 +319,26 @@ impl subsys::Request<EngineSystem> for NuReplRequest {
     type ResponseType = nuin::ValResult;
 }
 */
+impl From<NuReplRequest> for ToEngineSys { fn from(v: NuReplRequest) -> Self { Self::NuRepl(v) } }
+impl TryFrom<FromEngineSys> for EngineResult<NuReplResponse> {
+    type Error = subsys::SubsysError;
+    fn try_from(v: FromEngineSys) -> subsys::SubsysResult<Self> {
+        match v {
+            FromEngineSys::NuRepl(r) => Ok(r),
+            _ => Err(subsys::SubsysError::ResponseType)
+        }
+    }
+}
+impl subsys::Request<EngineSystem> for NuReplRequest {
+    type ResponseType = EngineResult<NuReplResponse>;
+}
 
 impl From<NuDefRequest> for ToEngineSys { fn from(v: NuDefRequest) -> Self { Self::NuDef(v) } }
 impl TryFrom<FromEngineSys> for EngineResult<NuDefResponse> {
     type Error = subsys::SubsysError;
     fn try_from(v: FromEngineSys) -> subsys::SubsysResult<Self> {
         match v {
-            FromEngineSys::NuDefResponse(r) => Ok(r),
+            FromEngineSys::NuDef(r) => Ok(r),
             _ => Err(subsys::SubsysError::ResponseType)
         }
     }
@@ -245,3 +353,16 @@ impl EngineRequest for ReNuRequest {
     type ResponseType = NuDefResponse;
 }
 */
+impl From<ReNuRequest> for ToEngineSys { fn from(v: ReNuRequest) -> Self { Self::ReNu(v) } }
+impl TryFrom<FromEngineSys> for EngineResult<ReNuResponse> {
+    type Error = subsys::SubsysError;
+    fn try_from(v: FromEngineSys) -> subsys::SubsysResult<Self> {
+        match v {
+            FromEngineSys::ReNu(r) => Ok(r),
+            _ => Err(subsys::SubsysError::ResponseType)
+        }
+    }
+}
+impl subsys::Request<EngineSystem> for ReNuRequest {
+    type ResponseType = EngineResult<ReNuResponse>;
+}

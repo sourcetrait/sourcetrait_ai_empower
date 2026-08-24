@@ -26,6 +26,5 @@ impl EngineSysParams {
 
 impl TryFrom<EngineParameters> for EngineSysParams {
     type Error = GrammarEngineError;
-    
     fn try_from(v: EngineParameters) -> GrammarEngineResult<Self> { Self::try_from_face(v) }
 }

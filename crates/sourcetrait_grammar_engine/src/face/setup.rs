@@ -78,7 +78,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub async fn request<T: subsys::Request<EngineSystem>>(&mut self, req: T) -> subsys::SubsysResult<T::ResponseType>
+    pub async fn request<T: subsys::Request<EngineSystem>>(&self, req: T) -> subsys::SubsysResult<T::ResponseType>
     where
         <T as subsys::Request<EngineSystem>>::ResponseType: TryFrom<<EngineSystem as subsys::System>::FromSys, Error = subsys::SubsysError>
     {

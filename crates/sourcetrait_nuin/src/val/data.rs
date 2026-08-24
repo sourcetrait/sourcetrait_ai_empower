@@ -164,35 +164,53 @@ impl From<nu_protocol::FloatRange> for TypedRangeData<f64> {
     }
 }
 
-impl From<nu::Value> for Val {
-    fn from(value: nu::Value) -> Self {
+pub trait TryFromNu<V: Sized>: Sized {
+    fn try_from_nu(value: V) -> Result<Self, ()>;
+}
+
+impl TryFromNu<nu::Value> for ValResult {
+    fn try_from_nu(value: nu::Value) -> Result<Self, ()> {
         match value {
-            nu::Value::Range { val, .. } => Val::Range(match *val {
+            nu::Value::Error { .. } => Ok(Err(ValError::Unknown)),
+            _ => Ok(Ok(Val::try_from_nu(value)?))
+        }
+    }
+}
+
+//impl ValResultTrait for ValResult {
+impl TryFromNu<nu::Value> for Val {
+    fn try_from_nu(value: nu::Value) -> Result<Self, ()> {
+        match value {
+            nu::Value::Int { val, .. } => Ok(Val::Int(val)),
+            nu::Value::Float { val, .. } => Ok(Val::Float(val)),
+            nu::Value::Bool { val, .. } => Ok(Val::Bool(val)),
+            nu::Value::String { val, .. } => Ok(Val::String(val)),
+            nu::Value::Range { val, .. } => Ok(Val::Range(match *val {
                 nu::Range::IntRange(x) => RangeData::Int(
                     TypedRangeData::from(x)
                 ),
                 nu::Range::FloatRange(x) => RangeData::Float(
                     TypedRangeData::from(x)
                 )
-            }),
-            nu::Value::Record { val, .. } => Val::Record(
+            })),
+            nu::Value::Record { val, .. } => Ok(Val::Record(
                 val.into_owned().drain(..)
-                    .map(|(k,v)| (k, Val::from(v)))
-                    .collect()
-            ),
-            nu::Value::List { vals, .. } => Val::List(
+                    .map(|(k,v)| Self::try_from_nu(v).map(|v| (k, v)))
+                    .collect::<Result<Vec<_>, ()>>()?
+            )),
+            nu::Value::List { vals, .. } => Ok(Val::List(
                 vals.into_iter()
-                    .map(|v| Self::from(v))
-                    .collect()
-            ),
-            nu::Value::Binary { val, .. } => Val::Binary(val),
-            nu::Value::CellPath { val, .. } => Val::CellPath(
+                    .map(|v| Self::try_from_nu(v))
+                    .collect::<Result<Vec<_>, ()>>()?
+            )),
+            nu::Value::Binary { val, .. } => Ok(Val::Binary(val.into_owned())),
+            nu::Value::CellPath { val, .. } => Ok(Val::CellPath(
                 val.members.into_iter()
                     .map(|x| CellPathMemberData::from(x))
                     .collect()
-            ),
-            nu::Value::Nothing {..} => Val::Nothing,
-            _ => todo!(),
+            )),
+            nu::Value::Nothing {..} => Ok(Val::Nothing),
+            _ => Err(()),
         }
     }
 }

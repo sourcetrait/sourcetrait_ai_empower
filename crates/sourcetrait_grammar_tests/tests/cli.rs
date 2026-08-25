@@ -19,6 +19,34 @@ fn cli_info_prints_json() {
 }
 
 #[tested]
+fn cli_info_starts_without_the_sourcetrait_environment() {
+    // The embedded default cert_dir names $XDGX_SECRET_DATA_HOME; with the
+    // family absent the expansion falls back to its spec defaults instead of
+    // failing the load, so the host starts on a non-box system.
+    let t = testing::test!({ .using_temp_dir() });
+    let out = run_output_without(
+        t.temp_dir(),
+        &["--id", "cid", "cli", "info"],
+        &[
+            "XDGX_ASSET_HOME",
+            "XDGX_BASE_SPEC",
+            "XDGX_EXECUTE_HOME",
+            "XDGX_LIBRARY_HOME",
+            "XDGX_PACKAGE_HOME",
+            "XDGX_SECRET_DATA_HOME",
+            "XDGX_SHM_DIR",
+            "XDGX_TMP_HOME",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "a host without the XDGX environment must start; got {out:?}",
+    );
+    let v = stdout_json(&out);
+    assert_eq!(v["name"].as_str(), Some("grammar"), "got {v}");
+}
+
+#[tested]
 fn cli_rig_lifecycle_and_call() {
     let t = testing::test!({ .using_temp_dir() });
     let src = t.temp_dir().join("src").join("clilib");

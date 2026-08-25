@@ -150,10 +150,77 @@ fn cert_paths_derive_both_leaf_and_key_from_the_dir() {
 #[test]
 fn an_unset_variable_fails_the_load() {
     // Expansion happens at the boundary, so an unresolvable path is a config error
-    // rather than something that surfaces much later at first use.
+    // rather than something that surfaces much later at first use. Only variables
+    // off the XDG / XDGX families are unresolvable; those families fall back.
     let err = from_text("[channel]\ncert_dir = \"$GRAMMAR_TEST_UNSET_VAR/certs\"\n")
-        .expect_err("an unset variable must fail the load");
+        .expect_err("an unset off-family variable must fail the load");
     assert!(err.contains("GRAMMAR_TEST_UNSET_VAR"), "got {err}");
+}
+
+#[test]
+fn the_xdg_and_xdgx_families_carry_spec_defaults() {
+    // The expansion context falls back to these when a variable is unset, so the
+    // embedded default cert_dir resolves on a machine without the SourceTrait
+    // environment. Hardcoded here for now; sourcetrait_common's XdgDir does not
+    // export its defaults and carries no XDGX family. XDGX builds on the xdg /
+    // typical unix defaults; the .sys convention applies only under the dotsys
+    // base spec. spec_default_for is the pure core, so both specs are driven
+    // explicitly and nothing here reads the box's own environment.
+    let home = PathBuf::from(std::env::var("HOME").expect("HOME set"));
+    for (var, home_relative) in [
+        ("XDG_CACHE_HOME", ".cache"),
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_DATA_HOME", ".local/share"),
+        ("XDG_STATE_HOME", ".local/state"),
+        ("XDGX_ASSET_HOME", ".local/share"),
+        ("XDGX_EXECUTE_HOME", ".local/bin"),
+        ("XDGX_LIBRARY_HOME", ".local/lib"),
+        ("XDGX_PACKAGE_HOME", ".local/pkg"),
+        ("XDGX_SECRET_DATA_HOME", ".secret/data"),
+        ("XDGX_TMP_HOME", "tmp"),
+    ] {
+        assert_eq!(
+            crate::config::spec_default_for(var, "xdg"),
+            Some(home.join(home_relative)),
+            "{var} must default under $HOME on the xdg base spec",
+        );
+    }
+    for (var, home_relative) in [
+        ("XDGX_ASSET_HOME", ".sys/local/share"),
+        ("XDGX_EXECUTE_HOME", ".sys/local/bin"),
+        ("XDGX_LIBRARY_HOME", ".sys/local/lib"),
+        ("XDGX_PACKAGE_HOME", ".sys/local/pkg"),
+        ("XDGX_SECRET_DATA_HOME", ".sys/.xdg/secret/data"),
+    ] {
+        assert_eq!(
+            crate::config::spec_default_for(var, "dotsys"),
+            Some(home.join(home_relative)),
+            "{var} must move to the .sys convention under dotsys",
+        );
+    }
+    assert_eq!(
+        crate::config::spec_default_for("XDGX_TMP_HOME", "dotsys"),
+        Some(home.join("tmp")),
+        "the tmp home is home-relative on both specs",
+    );
+    assert_eq!(
+        crate::config::spec_default_for("XDGX_BASE_SPEC", "xdg"),
+        Some(PathBuf::from("xdg")),
+        "the base-spec selector itself defaults to xdg",
+    );
+    for spec in ["xdg", "dotsys"] {
+        assert!(
+            crate::config::spec_default_for("XDGX_SHM_DIR", spec)
+                .expect("XDGX_SHM_DIR has a default")
+                .starts_with("/dev/shm"),
+            "the shm default is user-keyed under /dev/shm on both specs",
+        );
+    }
+    assert_eq!(
+        crate::config::spec_default_for("GRAMMAR_TEST_UNSET_VAR", "xdg"),
+        None,
+        "an off-family variable has no default and stays a load error",
+    );
 }
 
 /// Parse a `remotes.toml` body and resolve it, as the startup load of

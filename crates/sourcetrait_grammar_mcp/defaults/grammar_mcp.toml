@@ -6,7 +6,7 @@
 # setting one here is an unknown-field error.
 #
 # Paths are STRINGS so this file stays portable: a leading `~` or `$VAR` expands at
-# load, with the XDG family honoring the basedir spec fallbacks.
+# load, with unset XDG / XDGX variables falling back to their spec defaults.
 
 [channel]
 # port is OMITTED here on purpose: absent means the kernel assigns one, which is the

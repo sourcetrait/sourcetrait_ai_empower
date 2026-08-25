@@ -46,6 +46,23 @@ pub fn run_output(scratch: &Path, args: &[&str]) -> Output {
         .expect("run grammar_mcp")
 }
 
+/// `run_output` with the named environment variables REMOVED from the child -
+/// the non-box case, a machine without the SourceTrait environment.
+pub fn run_output_without(scratch: &Path, args: &[&str], removed: &[&str]) -> Output {
+    let data = scratch.join("data");
+    let cache = scratch.join("cache");
+    std::fs::create_dir_all(&data).expect("mkdir data");
+    std::fs::create_dir_all(&cache).expect("mkdir cache");
+    let mut cmd = Command::new(grammar_mcp_bin());
+    cmd.args(args)
+        .env("XDG_DATA_HOME", &data)
+        .env("XDG_CACHE_HOME", &cache);
+    for var in removed {
+        cmd.env_remove(var);
+    }
+    cmd.output().expect("run grammar_mcp")
+}
+
 pub fn stdout_str(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }

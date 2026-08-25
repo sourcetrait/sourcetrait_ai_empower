@@ -434,13 +434,67 @@ pub(crate) fn default_work_dir(id: &str) -> PathBuf {
 /// Expand `~` and `$VAR` references so config files stay portable.
 pub(crate) fn expand_path(raw: &Path) -> Result<PathBuf, String> {
     let lossy = raw.to_string_lossy();
-    if lossy.contains(['$', '~']) {
-        shellexpand::full(lossy.as_ref())
-            .map(|expanded| PathBuf::from(expanded.as_ref()))
-            .map_err(|e| format!("expand {}: ${}: {}", raw.display(), e.var_name, e.cause))
-    } else {
-        Ok(raw.to_path_buf())
+    if !lossy.contains(['$', '~']) {
+        return Ok(raw.to_path_buf());
     }
+    shellexpand::full_with_context(lossy.as_ref(), home_dir, |var: &str| {
+        if let Ok(value) = std::env::var(var) {
+            return Ok(Some(value));
+        }
+        match spec_default(var) {
+            Some(default) => Ok(Some(default.to_string_lossy().into_owned())),
+            None => Err("environment variable not found".to_string()),
+        }
+    })
+    .map(|expanded| PathBuf::from(expanded.as_ref()))
+    .map_err(|e| format!("expand {}: ${}: {}", raw.display(), e.var_name, e.cause))
+}
+
+/// `$HOME`, read per call: the tilde source and the spec defaults' base.
+fn home_dir() -> Option<String> {
+    std::env::var("HOME").ok()
+}
+
+/// The XDGX base spec in force: the env value, else its default `xdg`.
+fn xdgx_base_spec() -> String {
+    std::env::var("XDGX_BASE_SPEC").unwrap_or_else(|_| "xdg".to_string())
+}
+
+/// The XDG basedir / SourceTrait XDGX spec default for an unset variable.
+pub(crate) fn spec_default(var: &str) -> Option<PathBuf> {
+    spec_default_for(var, &xdgx_base_spec())
+}
+
+/// The spec default under an explicit base spec; the pure, testable core.
+pub(crate) fn spec_default_for(
+    var: &str,
+    base_spec: &str,
+) -> Option<PathBuf> {
+    if var == "XDGX_BASE_SPEC" {
+        return Some(PathBuf::from(base_spec));
+    }
+    if var == "XDGX_SHM_DIR" {
+        return Some(PathBuf::from("/dev/shm").join(default_id()));
+    }
+    let dotsys = base_spec == "dotsys";
+    let home_relative = match var {
+        "XDG_CACHE_HOME" => ".cache",
+        "XDG_CONFIG_HOME" => ".config",
+        "XDG_DATA_HOME" => ".local/share",
+        "XDG_STATE_HOME" => ".local/state",
+        // SourceTrait's own concept: a standard user-level place for modern
+        // vendors to install to; EXECUTE_HOME is expected on the user's PATH.
+        "XDGX_ASSET_HOME" => if dotsys { ".sys/local/share" } else { ".local/share" },
+        "XDGX_EXECUTE_HOME" => if dotsys { ".sys/local/bin" } else { ".local/bin" },
+        "XDGX_LIBRARY_HOME" => if dotsys { ".sys/local/lib" } else { ".local/lib" },
+        "XDGX_PACKAGE_HOME" => if dotsys { ".sys/local/pkg" } else { ".local/pkg" },
+        "XDGX_SECRET_DATA_HOME" => {
+            if dotsys { ".sys/.xdg/secret/data" } else { ".secret/data" }
+        }
+        "XDGX_TMP_HOME" => "tmp",
+        _ => return None,
+    };
+    home_dir().map(|home| PathBuf::from(home).join(home_relative))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

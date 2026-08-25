@@ -134,12 +134,53 @@ runs under.
 Expanding at the BOUNDARY is what makes an unresolvable variable a load-time
 error naming the variable, rather than a puzzle at first use much later.
 
-The expansion itself is `shellexpand::full` behind sourcetrait_common's guard
-idiom (see agnostic's `XdgDir::homed`): a solved utility is never re-implemented
-by hand, and the dependency's version spec mirrors common's (`"3"`, no
-features). A hand-rolled predecessor died twice here: its `&str -> &Path` port
-kept `strip_prefix("$")`, and `Path::strip_prefix` matches whole COMPONENTS, so
-the `$` branch could never fire and `$VAR` paths passed through literally. The
-retired `var_or_xdg` XDG fallbacks are gone deliberately: generic expansion
-invents no values - XDG defaulting is `XdgDir`'s concern - so an unset variable
-in a config path fails the load, which is the tested contract.
+The expansion is `shellexpand::full_with_context` behind sourcetrait_common's
+guard idiom (see agnostic's `XdgDir::homed`); the dependency's version spec
+mirrors common's (`"3"`, no features). The context hits the real environment
+first and only then falls back to `spec_default`, so a set variable always wins
+and the box environment simply overrides the defaults - the same relationship
+XDG itself defines. This is what lets the embedded default `cert_dir` (which
+names `$XDGX_SECRET_DATA_HOME`) load on a machine without the SourceTrait
+environment; a plain `shellexpand::full` here made every config load - host
+startup and each test's `Config::default()` - fail off-box with
+"environment variable not found".
+
+An off-family unknown returns `Err`, NEVER `Ok(None)`: shellexpand leaves an
+`Ok(None)` reference literally unexpanded in the output, which would silently
+recreate the dead-branch failure this function already died of once (the
+`&str -> &Path` port kept `strip_prefix("$")`, which matches whole COMPONENTS,
+so `$VAR` paths passed through literally). The earlier hand-rolled
+`var_or_xdg` fallbacks were retired on the invents-no-values principle; the
+fallback returned as a lookup CONTEXT because a portable embedded default
+needs it - the principle now lives in the Err arm, which still refuses to
+invent a value for a variable outside the two families.
+
+## fn home_dir
+`$HOME` read per call rather than through `BASE_DIRS`: `BaseDirs` snapshots
+its environment at first construction, and `expand_path` runs inside
+`set_cli_env_path` BEFORE the CliEnv overrides land, so touching the LazyLock
+here would freeze pre-override state into every later path.
+
+## fn spec_default / fn spec_default_for / fn xdgx_base_spec
+HARDCODED IN THE MCP FOR NOW: the whole expansion eventually lives in
+sourcetrait_agnostic, which predates the box/grammarbox conventions and so
+carries no XDGX family (its `XdgDir` also keeps the XDG default constants
+private); until agnostic gains it, the mcp handles the expansion itself
+(ExpandOntoAgnostic).
+
+XDGX BUILDS ON the xdg / typical unix defaults; the `.sys` convention applies
+ONLY under `XDGX_BASE_SPEC = "dotsys"`, and the selector itself defaults to
+`xdg`. On the xdg spec: the vendor install four `~/.local/{bin,lib,pkg,share}`
+(SourceTrait's own concept - a standard user-level place for modern vendors to
+install to; EXECUTE_HOME is expected on the user's PATH), `~/tmp`,
+`/dev/shm/<user>` (via `default_id`). dotsys moves the vendor four to
+`~/.sys/local/*` and the secret tier to `~/.sys/.xdg/secret/data`. The XDG
+four stay the basedir spec on both. `XDGX_ASSET_HOME` coincides with
+`XDG_DATA_HOME`'s default on the xdg spec - faithful, not a bug.
+
+`spec_default_for` is the pure core so the unit table test drives both specs
+explicitly and never reads the box's own environment; `spec_default` wraps it
+with the env-first base-spec read. `XDGX_SECRET_DATA_HOME`'s xdg-side value
+(`~/.secret/data`) is PROVISIONAL: the ruled spec covered the vendor four plus
+tmp and shm, so the secret tier's xdg-side default is inferred from the dotsys
+mapping, pending a ruling.

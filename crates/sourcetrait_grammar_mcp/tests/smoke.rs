@@ -5,10 +5,18 @@
 
 use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, error_kind, error_text, has_error};
+use sourcetrait_common::testing::prelude::*;
+
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .setup(|_| TestServer::new())
+});
 
 #[test]
 fn arg_typecheck_error_surfaces() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"x": "int"}),
         json!({"out": "int"}),
@@ -20,7 +28,7 @@ fn arg_typecheck_error_surfaces() {
 
 #[test]
 fn result_typecheck_error_surfaces() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"x": "int"}),
         json!({"out": "int"}),
@@ -32,7 +40,7 @@ fn result_typecheck_error_surfaces() {
 
 #[test]
 fn external_command_runs() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"out": "string"}),
@@ -44,7 +52,7 @@ fn external_command_runs() {
 
 #[test]
 fn exit_decl_is_unreachable() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"out": "int"}),
@@ -63,7 +71,7 @@ fn exit_decl_is_unreachable() {
 
 #[test]
 fn timeout_fires_then_recovers() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let timed = s.run_timeout(
         json!({"noop": "int"}),
         json!({"out": "int"}),
@@ -92,6 +100,10 @@ fn timeout_fires_then_recovers() {
 
 #[test]
 fn processes_empty_when_idle() {
+    // A PRIVATE server: on the shared harness a sibling test's in-flight eval
+    // would legitimately show here. Touch the harness first so this private
+    // construction never races the module's one-time substrate init.
+    let _ = TESTING.harness();
     let s = TestServer::new();
     let env = s.processes();
     assert!(
@@ -102,7 +114,7 @@ fn processes_empty_when_idle() {
 
 #[test]
 fn kill_unknown_nonce_is_silent_ok() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.kill("doesnotexist");
     assert!(
         env.is_null(),
@@ -112,7 +124,7 @@ fn kill_unknown_nonce_is_silent_ok() {
 
 #[test]
 fn plugin_path_resolves() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"path": "string"}),
@@ -130,7 +142,7 @@ fn plugin_path_resolves() {
 
 #[test]
 fn tls_crypto_provider_installed() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"out": "string"}),
@@ -147,7 +159,7 @@ fn tls_crypto_provider_installed() {
 
 #[test]
 fn multi_call_stability_and_scoping() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     for i in 0..10i64 {
         let env = s.run(
             json!({"x": "int"}),

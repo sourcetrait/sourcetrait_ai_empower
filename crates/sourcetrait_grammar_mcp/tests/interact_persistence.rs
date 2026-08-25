@@ -1,9 +1,45 @@
 use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, has_error};
+use sourcetrait_common::testing::prelude::*;
 
-#[test]
-fn env_mutation_persists_across_interact_calls() {
-    let s = TestServer::new();
+/// One shared in-process server per test binary (substrate init must not race
+/// itself). Every case below asserts CROSS-CALL state on the one serial interact
+/// engine, so the whole file runs as one Stepper-sequenced test: interleaved
+/// env/cd mutations from parallel siblings would break the persistence asserts.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .setup(|_| TestServer::new())
+});
+
+#[tested]
+fn interact_persistence_is_sequenced() {
+    testing::Stepper::builder("interact_persistence")
+        .init(|_t, _o: ()| testing::StepState((), ()))
+        .step("env_mutation_persists_across_interact_calls", |t, s, p| {
+            env_mutation_persists_across_interact_calls(t);
+            testing::StepState(s, p)
+        })
+        .step("cd_persists_across_interact_calls", |t, s, p| {
+            cd_persists_across_interact_calls(t);
+            testing::StepState(s, p)
+        })
+        .step("interact_state_does_not_leak_into_run", |t, s, p| {
+            interact_state_does_not_leak_into_run(t);
+            testing::StepState(s, p)
+        })
+        .step("interact_cd_does_not_move_the_host_process_cwd", |t, s, p| {
+            interact_cd_does_not_move_the_host_process_cwd(t);
+            testing::StepState(s, p)
+        })
+        .step("multi_line_body_with_command_then_record_parses", |t, s, p| {
+            multi_line_body_with_command_then_record_parses(t);
+            testing::StepState(s, p)
+        })
+        .finalize()
+        .run(TESTING.as_testable(), ());
+}
+
+fn env_mutation_persists_across_interact_calls(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     let first = s.interact(
         json!({"value": "string"}),
         json!({"wrote": "string"}),
@@ -25,9 +61,8 @@ fn env_mutation_persists_across_interact_calls() {
     );
 }
 
-#[test]
-fn cd_persists_across_interact_calls() {
-    let s = TestServer::new();
+fn cd_persists_across_interact_calls(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     let _ = s.interact(
         json!({"target": "string"}),
         json!({"cwd": "string"}),
@@ -43,9 +78,8 @@ fn cd_persists_across_interact_calls() {
     assert_eq!(second["result"]["cwd"].as_str(), Some("/tmp"), "cd should propagate; got {second}");
 }
 
-#[test]
-fn interact_state_does_not_leak_into_run() {
-    let s = TestServer::new();
+fn interact_state_does_not_leak_into_run(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     let _ = s.interact(
         json!({"noop": "int"}),
         json!({"ok": "bool"}),
@@ -65,9 +99,8 @@ fn interact_state_does_not_leak_into_run() {
 /// In-process that would move the whole grammar host for the rest of its life, so the
 /// interact lane merges env WITHOUT that sync (server/embed.rs merge_env_no_chdir) and
 /// `cd` stays engine state. Linux-only, like the rest of the /proc-based checks.
-#[test]
-fn interact_cd_does_not_move_the_host_process_cwd() {
-    let s = TestServer::new();
+fn interact_cd_does_not_move_the_host_process_cwd(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     let before = std::fs::read_link("/proc/self/cwd").expect("read /proc/self/cwd");
     let env = s.interact(
         json!({"dir": "string"}),
@@ -88,9 +121,8 @@ fn interact_cd_does_not_move_the_host_process_cwd() {
     );
 }
 
-#[test]
-fn multi_line_body_with_command_then_record_parses() {
-    let s = TestServer::new();
+fn multi_line_body_with_command_then_record_parses(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     let env = s.interact(
         json!({"x": "int"}),
         json!({"y": "int", "slept_ms": "int"}),

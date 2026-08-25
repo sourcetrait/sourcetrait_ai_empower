@@ -13,7 +13,14 @@ use sourcetrait_grammar_mcp::guts::{
 };
 use sourcetrait_common::testing::prelude::*;
 
-static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests. Every test commits the SAME patlib fixture:
+/// the first establish wins, later ones are idempotent no-change commits.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .using_temp_dir()
+    .setup(|_| TestServer::new())
+});
 
 /// A rig shaped to exercise every pattern form at once:
 ///
@@ -82,15 +89,15 @@ const WHOLE: &str = "sourcetrait\n patlib # the patlib rig\n  m # the m module\n
 #[tested]
 fn the_namespace_wide_patterns_render_the_whole_block() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    commit_patlib(&s, &t.temp_dir().join("patlib"));
+    let s = TESTING.harness();
+    commit_patlib(s, &t.temp_dir().join("patlib"));
 
     // `*` and the only author present must both render exactly what info()
     // does, since this namespace holds one rig.
-    assert_eq!(signatures(&s, "*"), WHOLE);
-    assert_eq!(signatures(&s, "sourcetrait/"), WHOLE);
+    assert_eq!(signatures(s, "*"), WHOLE);
+    assert_eq!(signatures(s, "sourcetrait/"), WHOLE);
     assert_eq!(
-        signatures(&s, "*"),
+        signatures(s, "*"),
         s.info()["signatures"].as_str().expect("info signatures"),
         "a `*` inspect and info() are the SAME renderer and must not drift",
     );
@@ -99,24 +106,24 @@ fn the_namespace_wide_patterns_render_the_whole_block() {
 #[tested]
 fn a_rig_pattern_renders_that_rig() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    commit_patlib(&s, &t.temp_dir().join("patlib"));
-    assert_eq!(signatures(&s, "sourcetrait/patlib:"), WHOLE);
+    let s = TESTING.harness();
+    commit_patlib(s, &t.temp_dir().join("patlib"));
+    assert_eq!(signatures(s, "sourcetrait/patlib:"), WHOLE);
 }
 
 #[tested]
 fn a_module_tree_pattern_descends_and_excludes_its_siblings() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    commit_patlib(&s, &t.temp_dir().join("patlib"));
+    let s = TESTING.harness();
+    commit_patlib(s, &t.temp_dir().join("patlib"));
 
     assert_eq!(
-        signatures(&s, "sourcetrait/patlib:m/"),
+        signatures(s, "sourcetrait/patlib:m/"),
         "sourcetrait\n patlib # the patlib rig\n  m # the m module\n   here <x:int> <out:int>\n   deep\n    down <y:int> <out:int>\n",
         "`/` descends the whole subtree under m, and `other` is not in it",
     );
     assert_eq!(
-        signatures(&s, "sourcetrait/patlib:m/deep/"),
+        signatures(s, "sourcetrait/patlib:m/deep/"),
         "sourcetrait\n patlib # the patlib rig\n  m # the m module\n   deep\n    down <y:int> <out:int>\n",
         "a deeper root still emits every ANCESTOR line, so the indentation \
          spells sourcetrait/patlib:m/deep:down and the block stays readable",
@@ -126,11 +133,11 @@ fn a_module_tree_pattern_descends_and_excludes_its_siblings() {
 #[tested]
 fn a_module_calls_pattern_selects_calls_without_descending() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    commit_patlib(&s, &t.temp_dir().join("patlib"));
+    let s = TESTING.harness();
+    commit_patlib(s, &t.temp_dir().join("patlib"));
 
     assert_eq!(
-        signatures(&s, "sourcetrait/patlib:m:"),
+        signatures(s, "sourcetrait/patlib:m:"),
         "sourcetrait\n patlib # the patlib rig\n  m # the m module\n   here <x:int> <out:int>\n",
         "`:` selects the CALL level: `here` is in, the `deep` submodule is not",
     );
@@ -139,15 +146,15 @@ fn a_module_calls_pattern_selects_calls_without_descending() {
 #[tested]
 fn patterns_that_match_nothing_render_empty() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    commit_patlib(&s, &t.temp_dir().join("patlib"));
+    let s = TESTING.harness();
+    commit_patlib(s, &t.temp_dir().join("patlib"));
 
     // A filter matching nothing yields an empty block rather than an error -
     // the same answer a fresh namespace gives.
-    assert_eq!(signatures(&s, "bob/"), "", "an author with no rigs here");
-    assert_eq!(signatures(&s, "sourcetrait/ghostlib:"), "", "an absent rig");
+    assert_eq!(signatures(s, "bob/"), "", "an author with no rigs here");
+    assert_eq!(signatures(s, "sourcetrait/ghostlib:"), "", "an absent rig");
     assert_eq!(
-        signatures(&s, "sourcetrait/patlib:nosuch/"),
+        signatures(s, "sourcetrait/patlib:nosuch/"),
         "",
         "a module the rig does not have leaves NO orphan author or rig \
          heading behind",
@@ -157,15 +164,15 @@ fn patterns_that_match_nothing_render_empty() {
 #[tested]
 fn the_dot_pattern_resolves_rather_than_matching_nothing() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    commit_patlib(&s, &t.temp_dir().join("patlib"));
+    let s = TESTING.harness();
+    commit_patlib(s, &t.temp_dir().join("patlib"));
 
     // `.` was a STUB through eyesig: parsed, deliberately left unresolved, and
     // therefore matching nothing. Purview is what resolves it, and with none
     // configured the current purview is `default` - which is everything.
     assert_eq!(
-        signatures(&s, "."),
-        signatures(&s, "*"),
+        signatures(s, "."),
+        signatures(s, "*"),
         "an UNCONFIGURED default is everything, so `.` and `*` agree here",
     );
 }
@@ -173,8 +180,8 @@ fn the_dot_pattern_resolves_rather_than_matching_nothing() {
 #[tested]
 fn exact_namepaths_are_unchanged_by_the_pattern_arm() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    commit_patlib(&s, &t.temp_dir().join("patlib"));
+    let s = TESTING.harness();
+    commit_patlib(s, &t.temp_dir().join("patlib"));
 
     let call = s.inspect("sourcetrait/patlib:m:here");
     assert_eq!(
@@ -200,8 +207,8 @@ fn exact_namepaths_are_unchanged_by_the_pattern_arm() {
 #[tested]
 fn a_pattern_is_never_callable() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    commit_patlib(&s, &t.temp_dir().join("patlib"));
+    let s = TESTING.harness();
+    commit_patlib(s, &t.temp_dir().join("patlib"));
 
     for pattern in ["*", ".", "sourcetrait/", "sourcetrait/patlib:", "sourcetrait/patlib:m:"] {
         let env = s.call(pattern, json!({"x": 1}));

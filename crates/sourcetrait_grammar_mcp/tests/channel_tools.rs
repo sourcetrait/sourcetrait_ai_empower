@@ -5,10 +5,18 @@
 //! here, where it would only be asserting the box's certificate installation.
 
 use sourcetrait_grammar_mcp::guts::{TestServer, error_kind, has_error};
+use sourcetrait_common::testing::prelude::*;
+
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .setup(|_| TestServer::new())
+});
 
 #[test]
 fn verifying_an_unopened_channel_errors_with_channel_not_open() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.channel_verified();
     assert_eq!(
         error_kind(&env),
@@ -19,7 +27,7 @@ fn verifying_an_unopened_channel_errors_with_channel_not_open() {
 
 #[test]
 fn closing_an_unopened_channel_is_idempotent_success() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.channel_close();
     assert!(!has_error(&env), "closing what is already closed is the requested state; got {env}");
     assert!(

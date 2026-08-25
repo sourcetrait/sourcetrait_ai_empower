@@ -4,12 +4,18 @@ use sourcetrait_grammar_mcp::guts::{
 };
 use sourcetrait_common::testing::prelude::*;
 
-static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .using_temp_dir()
+    .setup(|_| TestServer::new())
+});
 
 #[tested]
 fn call_after_commit_returns_result() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("calc");
     let _ = s.rig("new", "sourcetrait/calc", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/calc:math:double"]);
@@ -28,7 +34,7 @@ fn call_after_commit_returns_result() {
 #[tested]
 fn call_after_module_commit_returns_result() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("importable");
     let _ = s.rig("new", "sourcetrait/importable", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/importable:util:triple"]);
@@ -44,7 +50,7 @@ fn call_after_module_commit_returns_result() {
 
 #[test]
 fn call_unknown_rig_errors() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.call("sourcetrait/ghost:m:noop", json!({"noop": 0}));
     assert!(has_error(&env), "got {env}");
 }
@@ -52,7 +58,7 @@ fn call_unknown_rig_errors() {
 #[tested]
 fn call_missing_function_errors() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("partlib");
     let _ = s.rig("new", "sourcetrait/partlib", src.to_str().unwrap());
     let env = s.call("sourcetrait/partlib:m:ghost", json!({"noop": 0}));
@@ -62,7 +68,7 @@ fn call_missing_function_errors() {
 #[tested]
 fn call_bad_module_path_errors() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("safelib");
     let _ = s.rig("new", "sourcetrait/safelib", src.to_str().unwrap());
     for bad in [
@@ -78,7 +84,7 @@ fn call_bad_module_path_errors() {
 #[tested]
 fn call_args_typecheck_failure_surfaces() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("strictlib");
     let _ = s.rig("new", "sourcetrait/strictlib", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/strictlib:m:needs_int"]);
@@ -95,7 +101,7 @@ fn call_args_typecheck_failure_surfaces() {
 #[tested]
 fn inspect_returns_function_doc() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("inspectlib");
     let _ = s.rig("new", "sourcetrait/inspectlib", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/inspectlib:math:double"]);
@@ -138,7 +144,7 @@ fn inspect_returns_function_doc() {
 #[tested]
 fn inspect_rig_root_and_module() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("inspectlib2");
     let _ = s.rig("new", "sourcetrait/inspectlib2", src.to_str().unwrap());
     write_source(&src, "mod.nu", "# the inspectlib2 rig\nexport module math\n");
@@ -170,7 +176,7 @@ fn inspect_rig_root_and_module() {
 #[tested]
 fn inspect_undocumented_is_empty() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("inspectlib3");
     let _ = s.rig("new", "sourcetrait/inspectlib3", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/inspectlib3:m:f"]);
@@ -191,7 +197,7 @@ fn inspect_undocumented_is_empty() {
 
 #[test]
 fn inspect_unknown_rig_errors() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.inspect("sourcetrait/ghost");
     assert!(has_error(&env), "got {env}");
 }
@@ -199,7 +205,7 @@ fn inspect_unknown_rig_errors() {
 #[tested]
 fn result_record_field_shapes_preserved() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("fidelitylib");
     let _ = s.rig("new", "sourcetrait/fidelitylib", src.to_str().unwrap());
     let _ = s.scaffold(&["sourcetrait/fidelitylib:m:shapes"]);
@@ -224,7 +230,7 @@ fn result_record_field_shapes_preserved() {
 #[tested]
 fn helper_file_pruned_from_info_and_not_callable() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("helperlib");
     let _ = s.rig("new", "sourcetrait/helperlib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export module m\n");

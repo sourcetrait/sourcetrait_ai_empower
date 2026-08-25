@@ -4,6 +4,14 @@
 
 use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, error_text, has_error};
+use sourcetrait_common::testing::prelude::*;
+
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .setup(|_| TestServer::new())
+});
 
 /// Read `debug.nuonl` back THROUGH nushell, so the assertion covers the round-trip
 /// (the file parses as NUON) and not merely the bytes we wrote.
@@ -19,7 +27,7 @@ fn read_back(s: &TestServer, nonce: &str, result_schema: serde_json::Value, body
 
 #[test]
 fn dbg_appends_one_line_per_call() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({}),
         json!({"ok": "bool"}),
@@ -30,7 +38,7 @@ fn dbg_appends_one_line_per_call() {
     let nonce = env["nonce"].as_str().expect("nonce");
 
     let back = read_back(
-        &s,
+        s,
         nonce,
         json!({"count": "int", "first_a": "int", "second_x": "int"}),
         "let recs = (open --raw $args.path | decode | lines | each {|l| $l | from nuon })\n\
@@ -46,7 +54,7 @@ fn dbg_appends_one_line_per_call() {
 /// nobody was told about is worse than no record.
 #[test]
 fn channel_send_without_a_channel_refuses() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({}),
         json!({"ok": "bool"}),
@@ -67,7 +75,7 @@ fn channel_send_without_a_channel_refuses() {
 /// round-trip, and must not disturb the fields after it.
 #[test]
 fn a_record_with_an_embedded_newline_stays_one_line() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({}),
         json!({"ok": "bool"}),
@@ -78,7 +86,7 @@ fn a_record_with_an_embedded_newline_stays_one_line() {
     let nonce = env["nonce"].as_str().expect("nonce");
 
     let back = read_back(
-        &s,
+        s,
         nonce,
         json!({"lines": "int", "msg": "string", "tail": "int"}),
         "let ls = (open --raw $args.path | decode | lines)\n\
@@ -106,7 +114,7 @@ fn a_record_with_an_embedded_newline_stays_one_line() {
 /// whether a channel happens to be open.
 #[test]
 fn a_body_cannot_claim_the_mcp_reservation() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     for model in ["mcp/channel/Open", "mcp/supervisor/CpuWarning", "mcp/anything"] {
         let env = s.run(
             json!({}),
@@ -128,7 +136,7 @@ fn a_body_cannot_claim_the_mcp_reservation() {
 /// is for. Both must fail.
 #[test]
 fn a_non_record_is_rejected() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     for body in ["grimm dbg 5\n{ ok: true }", "let x = 5\ngrimm dbg $x\n{ ok: true }"] {
         let env = s.run(json!({}), json!({"ok": "bool"}), json!({}), body);
         assert!(has_error(&env), "`{body}` should be rejected; got {env}");
@@ -143,7 +151,7 @@ fn a_non_record_is_rejected() {
 
 #[test]
 fn the_api_is_available_to_interact_too() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.interact(
         json!({}),
         json!({"ok": "bool"}),

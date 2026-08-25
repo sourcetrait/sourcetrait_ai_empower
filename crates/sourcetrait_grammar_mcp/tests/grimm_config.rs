@@ -10,6 +10,69 @@ use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{
     TestServer, clear_config_pins, error_text, has_error,
 };
+use sourcetrait_common::testing::prelude::*;
+
+/// One shared in-process server per test binary (substrate init must not race
+/// itself). Every case below mutates or reads the process-global pin registry
+/// through eval bodies, so the whole file runs as one Stepper-sequenced test.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .setup(|_| TestServer::new())
+});
+
+#[tested]
+fn grimm_config_surface_is_sequenced() {
+    testing::Stepper::builder("grimm_config_surface")
+        .init(|_t, _o: ()| {
+            clear_config_pins();
+            testing::StepState((), ())
+        })
+        .step("get_config_all_mirrors_the_toml_tables", |t, s, p| {
+            get_config_all_mirrors_the_toml_tables(t);
+            testing::StepState(s, p)
+        })
+        .step("a_dotted_key_is_a_path_into_the_record", |t, s, p| {
+            a_dotted_key_is_a_path_into_the_record(t);
+            testing::StepState(s, p)
+        })
+        .step("an_unknown_key_errors_and_names_the_valid_ones", |t, s, p| {
+            an_unknown_key_errors_and_names_the_valid_ones(t);
+            testing::StepState(s, p)
+        })
+        .step("an_unpinned_port_reads_as_null_rather_than_a_sentinel", |t, s, p| {
+            an_unpinned_port_reads_as_null_rather_than_a_sentinel(t);
+            testing::StepState(s, p)
+        })
+        .step("a_pin_changes_what_the_config_surface_reports", |t, s, p| {
+            a_pin_changes_what_the_config_surface_reports(t);
+            testing::StepState(s, p)
+        })
+        .step("the_motivating_case_is_zero_vram_headroom", |t, s, p| {
+            the_motivating_case_is_zero_vram_headroom(t);
+            testing::StepState(s, p)
+        })
+        .step("last_write_wins_across_calls", |t, s, p| {
+            last_write_wins_across_calls(t);
+            testing::StepState(s, p)
+        })
+        .step("only_the_supervisor_lines_are_pinnable", |t, s, p| {
+            only_the_supervisor_lines_are_pinnable(t);
+            testing::StepState(s, p)
+        })
+        .step("a_pin_is_held_to_the_config_files_own_bounds", |t, s, p| {
+            a_pin_is_held_to_the_config_files_own_bounds(t);
+            testing::StepState(s, p)
+        })
+        .step("a_pin_against_a_dead_process_is_refused", |t, s, p| {
+            a_pin_against_a_dead_process_is_refused(t);
+            testing::StepState(s, p)
+        })
+        .step("the_config_decls_reach_the_interact_lane_too", |t, s, p| {
+            the_config_decls_reach_the_interact_lane_too(t);
+            testing::StepState(s, p)
+        })
+        .finalize()
+        .run(TESTING.as_testable(), ());
+}
 
 /// The pid the eval actually runs under. Eval is in-process, so the test's own
 /// pid IS the host's.
@@ -17,9 +80,8 @@ fn me() -> u32 {
     std::process::id()
 }
 
-#[test]
-fn get_config_all_mirrors_the_toml_tables() {
-    let s = TestServer::new();
+fn get_config_all_mirrors_the_toml_tables(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     let env = s.run(
         json!({}),
         json!({"tables": ["string"], "channel_keys": ["string"], "supervisor_keys": ["string"]}),
@@ -58,9 +120,8 @@ fn get_config_all_mirrors_the_toml_tables() {
     );
 }
 
-#[test]
-fn a_dotted_key_is_a_path_into_the_record() {
-    let s = TestServer::new();
+fn a_dotted_key_is_a_path_into_the_record(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     // The coherence property: the key is a path into what get_config_all returns,
     // not a parallel naming scheme. If these ever disagree, one of the two
     // surfaces is lying about where a setting lives.
@@ -87,9 +148,8 @@ fn a_dotted_key_is_a_path_into_the_record() {
     );
 }
 
-#[test]
-fn an_unknown_key_errors_and_names_the_valid_ones() {
-    let s = TestServer::new();
+fn an_unknown_key_errors_and_names_the_valid_ones(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     let env = s.run(
         json!({}),
         json!({"out": "int"}),
@@ -107,9 +167,8 @@ fn an_unknown_key_errors_and_names_the_valid_ones() {
     );
 }
 
-#[test]
-fn an_unpinned_port_reads_as_null_rather_than_a_sentinel() {
-    let s = TestServer::new();
+fn an_unpinned_port_reads_as_null_rather_than_a_sentinel(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     let env = s.run(
         json!({}),
         json!({"is_null": "bool"}),
@@ -123,9 +182,8 @@ fn an_unpinned_port_reads_as_null_rather_than_a_sentinel() {
     );
 }
 
-#[test]
-fn a_pin_changes_what_the_config_surface_reports() {
-    let s = TestServer::new();
+fn a_pin_changes_what_the_config_surface_reports(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     clear_config_pins();
     let env = s.run(
         json!({"pid": "int"}),
@@ -146,9 +204,8 @@ fn a_pin_changes_what_the_config_surface_reports() {
     clear_config_pins();
 }
 
-#[test]
-fn the_motivating_case_is_zero_vram_headroom() {
-    let s = TestServer::new();
+fn the_motivating_case_is_zero_vram_headroom(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     clear_config_pins();
     // Pin the headroom to 0 for a training run: the gate fires at
     // `total - headroom`, so zero puts the line at the card's full capacity and
@@ -165,9 +222,8 @@ fn the_motivating_case_is_zero_vram_headroom() {
     clear_config_pins();
 }
 
-#[test]
-fn last_write_wins_across_calls() {
-    let s = TestServer::new();
+fn last_write_wins_across_calls(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     clear_config_pins();
     for value in ["0.5", "0.9"] {
         let env = s.run(
@@ -195,9 +251,8 @@ fn last_write_wins_across_calls() {
     clear_config_pins();
 }
 
-#[test]
-fn only_the_supervisor_lines_are_pinnable() {
-    let s = TestServer::new();
+fn only_the_supervisor_lines_are_pinnable(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     clear_config_pins();
     // config_channel stays the sole mutator of the channel settings; a value with
     // two mutators is one whose effective setting depends on which you ask.
@@ -218,9 +273,8 @@ fn only_the_supervisor_lines_are_pinnable() {
     clear_config_pins();
 }
 
-#[test]
-fn a_pin_is_held_to_the_config_files_own_bounds() {
-    let s = TestServer::new();
+fn a_pin_is_held_to_the_config_files_own_bounds(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     clear_config_pins();
     // A fraction outside (0, 1] would warn always or never. Sharing the file
     // layer's validator is what stops a pin reaching a state a config load would
@@ -240,9 +294,8 @@ fn a_pin_is_held_to_the_config_files_own_bounds() {
     clear_config_pins();
 }
 
-#[test]
-fn a_pin_against_a_dead_process_is_refused() {
-    let s = TestServer::new();
+fn a_pin_against_a_dead_process_is_refused(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     clear_config_pins();
     // pid 0 is never a real process. Refusing at pin time rather than reaping a
     // tick later matters because the two look identical a second afterwards.
@@ -272,9 +325,8 @@ fn a_pin_against_a_dead_process_is_refused() {
     clear_config_pins();
 }
 
-#[test]
-fn the_config_decls_reach_the_interact_lane_too() {
-    let s = TestServer::new();
+fn the_config_decls_reach_the_interact_lane_too(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     let env = s.interact(
         json!({}),
         json!({"tables": "int"}),

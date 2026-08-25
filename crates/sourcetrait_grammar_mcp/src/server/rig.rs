@@ -162,6 +162,19 @@ impl RigLocks {
 pub(crate) struct AlreadyRegistered;
 
 
+/// Serializes mutations of the ONE rigs repo and its namespace meta.
+///
+/// The per-rig RwLocks serialize same-rig work only; concurrent lifecycle ops on
+/// DIFFERENT rigs still race git's `index.lock`, which fails the second writer
+/// rather than waiting. One repo, one lock; read paths and validation stay
+/// outside the hold.
+static RIGS_REPO_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn rigs_repo_lock() -> std::sync::MutexGuard<'static, ()> {
+    RIGS_REPO_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+
 const KEY_COMMENT: &str = "grammar@localhost";
 
 pub(crate) fn ensure_keypair() -> io::Result<()> {
@@ -327,6 +340,7 @@ fn validate_new_names(
 
 pub(crate) fn establish_rig(rig: &str, source_path: &std::path::Path) -> Result<(), GrammarMcpError> {
     validate_new_names(rig, "", None)?;
+    let _repo = rigs_repo_lock();
     let canonical = rig_dir(rig);
     if canonical.exists() {
         return Err(GrammarMcpError::RigAlreadyRegistered {
@@ -2298,6 +2312,7 @@ pub(crate) fn commit_impl(name: &str, engine: &ParseEngine) -> Result<CommitResu
             diagnostics: result.diagnostics,
         });
     }
+    let _repo = rigs_repo_lock();
     if lib_root.exists() {
         fs::remove_dir_all(&lib_root)?;
     }
@@ -2343,6 +2358,7 @@ pub(crate) fn install_impl(
     match commit_impl(rig, engine) {
         Ok(result) => Ok(result),
         Err(e) => {
+            let _repo = rigs_repo_lock();
             let lib_root = rig_dir(rig);
             if lib_root.exists() {
                 let _ = fs::remove_dir_all(&lib_root);
@@ -2359,6 +2375,7 @@ pub(crate) fn install_impl(
 }
 
 pub(crate) fn uninstall_impl(rig: &str) -> Result<(), GrammarMcpError> {
+    let _repo = rigs_repo_lock();
     let lib_root = rig_dir(rig);
     if !lib_root.exists() {
         return Ok(());
@@ -2477,8 +2494,11 @@ fn migrate_meta_to_nuon() -> io::Result<usize> {
 }
 
 pub(crate) async fn ensure_substrate() -> io::Result<Arc<RigLocks>> {
-    ensure_keypair()?;
-    ensure_rigs_repo()?;
+    {
+        let _repo = rigs_repo_lock();
+        ensure_keypair()?;
+        ensure_rigs_repo()?;
+    }
     let migrated = migrate_meta_to_nuon()?;
     if migrated > 0 {
         eprintln!("grammar: migrated {migrated} rig index file(s) to NUON");

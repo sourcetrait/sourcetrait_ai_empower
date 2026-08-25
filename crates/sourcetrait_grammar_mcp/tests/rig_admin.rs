@@ -2,7 +2,13 @@ use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, error_kind, has_error, valid_function_source, write_source};
 use sourcetrait_common::testing::prelude::*;
 
-static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .using_temp_dir()
+    .setup(|_| TestServer::new())
+});
 
 fn author_double_tree(src: &std::path::Path) {
     write_source(src, "mod.nu", "export module m\n");
@@ -17,7 +23,7 @@ fn author_double_tree(src: &std::path::Path) {
 #[tested]
 fn install_brings_shipped_source_into_mcp() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("shiplib");
     author_double_tree(&src);
     let env = s.rig("install", "sourcetrait/shiplib", src.to_str().unwrap());
@@ -41,7 +47,7 @@ fn install_brings_shipped_source_into_mcp() {
 #[tested]
 fn install_rolls_back_on_validation_failure() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("badship");
     write_source(&src, "mod.nu", "export use thing\n");
     write_source(
@@ -66,7 +72,7 @@ fn install_rolls_back_on_validation_failure() {
 #[tested]
 fn check_reports_ok_for_clean_source() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("checkoklib");
     let _ = s.rig("new", "sourcetrait/checkoklib", src.to_str().unwrap());
     author_double_tree(&src);
@@ -87,7 +93,7 @@ fn check_reports_ok_for_clean_source() {
 #[tested]
 fn check_reports_structural_errors() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("checkerrlib");
     let _ = s.rig("new", "sourcetrait/checkerrlib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export use thing\n");
@@ -115,7 +121,7 @@ fn check_reports_structural_errors() {
 
 #[test]
 fn check_unregistered_rig_errors() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.rig("check", "sourcetrait/ghostlib", "/some/path");
     assert_eq!(
         error_kind(&env),
@@ -127,7 +133,7 @@ fn check_unregistered_rig_errors() {
 #[tested]
 fn check_source_dir_mismatch_errors() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("checkmmlib");
     let _ = s.rig("new", "sourcetrait/checkmmlib", src.to_str().unwrap());
     let env = s.rig("check", "sourcetrait/checkmmlib", "/wrong/path");
@@ -141,7 +147,7 @@ fn check_source_dir_mismatch_errors() {
 #[tested]
 fn uninstall_source_dir_mismatch_errors() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("unmmlib");
     let _ = s.rig("new", "sourcetrait/unmmlib", src.to_str().unwrap());
     let env = s.rig("uninstall", "sourcetrait/unmmlib", "/wrong/path");
@@ -158,7 +164,7 @@ fn uninstall_source_dir_mismatch_errors() {
 
 #[test]
 fn invalid_action_errors() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.rig("frobnicate", "sourcetrait/x", "/p");
     assert_eq!(
         error_kind(&env),
@@ -170,7 +176,7 @@ fn invalid_action_errors() {
 #[tested]
 fn run_body_can_use_a_committed_rig() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("uselib");
     let _ = s.rig("new", "sourcetrait/uselib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export module calc\n");

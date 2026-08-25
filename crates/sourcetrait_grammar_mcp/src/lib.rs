@@ -169,7 +169,7 @@ pub(crate) use crate::{
             InspectDoc, index_node, inspect_impl, install_impl, is_reserved_term, is_valid_ident,
             is_valid_rig,
             is_valid_module_path,
-            rigs_dir, load_index, registered_rig_names, scaffold_leaf,
+            rigs_dir, rigs_repo_lock, load_index, registered_rig_names, scaffold_leaf,
             scaffold_leaf_exists, uninstall_impl,
         },
         lint::{LINT_VIOLATION_CAP, lint_body},

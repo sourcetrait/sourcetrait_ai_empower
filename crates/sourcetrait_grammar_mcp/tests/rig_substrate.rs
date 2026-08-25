@@ -8,7 +8,13 @@ use std::process::Command;
 use sourcetrait_grammar_mcp::guts::{TestServer, has_error, valid_function_source, write_source};
 use sourcetrait_common::testing::prelude::*;
 
-static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .using_temp_dir()
+    .setup(|_| TestServer::new())
+});
 
 /// Commit-log subjects in the in-process namespace's rigs repo (read-only).
 fn git_log_subjects(repo: &Path) -> Vec<String> {
@@ -28,7 +34,7 @@ fn git_log_subjects(repo: &Path) -> Vec<String> {
 #[tested]
 fn rig_new_writes_repo_and_records_meta() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("mylib");
     let env = s.rig("new", "sourcetrait/mylib", src.to_str().unwrap());
     assert!(!has_error(&env), "rig(new) should succeed; got {env}");
@@ -55,7 +61,7 @@ fn rig_new_writes_repo_and_records_meta() {
 #[tested]
 fn uninstall_removes_subtree_keeps_source() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("droppable");
     let _ = s.rig("new", "sourcetrait/droppable", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export module m\n");
@@ -87,7 +93,7 @@ fn uninstall_removes_subtree_keeps_source() {
 
 #[test]
 fn uninstall_missing_succeeds() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.rig("uninstall", "sourcetrait/neverexisted", "/some/path");
     assert!(
         !has_error(&env),

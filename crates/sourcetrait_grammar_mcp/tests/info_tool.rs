@@ -5,7 +5,13 @@ use sourcetrait_grammar_mcp::guts::{
 };
 use sourcetrait_common::testing::prelude::*;
 
-static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .using_temp_dir()
+    .setup(|_| TestServer::new())
+});
 
 /// Read a committed golden under `<crate>/testing/goldens/`, comparing it to
 /// `actual`. `BLESS=1 cargo test` (re)writes it from the actual value; without
@@ -38,7 +44,7 @@ fn signatures(s: &TestServer) -> String {
 
 #[test]
 fn info_returns_static_server_state() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.info();
     assert_eq!(env["name"].as_str(), Some("grammar"), "name should be grammar; got {env}");
 
@@ -80,7 +86,7 @@ fn info_returns_static_server_state() {
 #[tested]
 fn info_renders_a_committed_rig_as_a_signature_block() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("treelib");
     let est = s.rig("new", "sourcetrait/treelib", src.to_str().unwrap());
     assert!(!has_error(&est), "establish failed: {est}");
@@ -110,7 +116,7 @@ fn info_renders_a_committed_rig_as_a_signature_block() {
     let committed = s.commit("sourcetrait/treelib");
     assert!(!has_error(&committed), "commit failed: {committed}");
 
-    let block = signatures(&s);
+    let block = signatures(s);
     let actual = rig_block(&block, "treelib");
     assert_eq!(
         actual,
@@ -126,7 +132,7 @@ fn info_renders_a_committed_rig_as_a_signature_block() {
 #[tested]
 fn the_indentation_is_the_hierarchy() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("implib");
     let est = s.rig("new", "sourcetrait/implib", src.to_str().unwrap());
     assert!(!has_error(&est), "establish failed: {est}");
@@ -141,7 +147,7 @@ fn the_indentation_is_the_hierarchy() {
     assert!(!has_error(&committed), "commit failed: {committed}");
 
     assert_eq!(
-        rig_block(&signatures(&s), "implib"),
+        rig_block(&signatures(s), "implib"),
         " implib\n  math\n   double <x:int> <out:int>\n",
         "one space per level, and an undocumented line carries no ` # `",
     );
@@ -150,7 +156,7 @@ fn the_indentation_is_the_hierarchy() {
 #[tested]
 fn summaries_ride_the_line_and_are_omitted_when_absent() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("doctreelib");
     let _ = s.rig("new", "sourcetrait/doctreelib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "# the doctree rig\nexport module m\n");
@@ -164,7 +170,7 @@ fn summaries_ride_the_line_and_are_omitted_when_absent() {
     assert!(!has_error(&committed), "commit failed: {committed}");
 
     assert_eq!(
-        rig_block(&signatures(&s), "doctreelib"),
+        rig_block(&signatures(s), "doctreelib"),
         " doctreelib # the doctree rig\n  m # the m module\n   fn <x:int> <out:int> # the fn summary\n",
         "summary is part of the line, on every kind that has one",
     );
@@ -173,7 +179,7 @@ fn summaries_ride_the_line_and_are_omitted_when_absent() {
 #[tested]
 fn a_void_renders_as_empty_angles() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("voidlib");
     let _ = s.rig("new", "sourcetrait/voidlib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export module m\n");
@@ -187,7 +193,7 @@ fn a_void_renders_as_empty_angles() {
     assert!(!has_error(&committed), "commit failed: {committed}");
 
     assert_eq!(
-        rig_block(&signatures(&s), "voidlib"),
+        rig_block(&signatures(s), "voidlib"),
         " voidlib\n  m\n   ping <> <>\n",
         "a void arg list and a void result each render `<>`, never `<nothing>`",
     );
@@ -196,7 +202,7 @@ fn a_void_renders_as_empty_angles() {
 #[tested]
 fn a_multi_line_summary_is_flattened_onto_its_line() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("wraplib");
     let _ = s.rig("new", "sourcetrait/wraplib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export module m\n");
@@ -212,7 +218,7 @@ fn a_multi_line_summary_is_flattened_onto_its_line() {
     let committed = s.commit("sourcetrait/wraplib");
     assert!(!has_error(&committed), "commit failed: {committed}");
 
-    let block = rig_block(&signatures(&s), "wraplib");
+    let block = rig_block(&signatures(s), "wraplib");
     assert_eq!(
         block,
         " wraplib\n  m\n   go <x:int> <out:int> # Runs the thing against the other thing, gating each step as it goes.\n",
@@ -229,7 +235,7 @@ fn a_multi_line_summary_is_flattened_onto_its_line() {
 #[tested]
 fn a_mixed_module_states_its_own_call_separator() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("mixedlib");
     let _ = s.rig("new", "sourcetrait/mixedlib", src.to_str().unwrap());
     write_source(&src, "mod.nu", "export module m\n");
@@ -253,7 +259,7 @@ fn a_mixed_module_states_its_own_call_separator() {
     assert!(!has_error(&committed), "commit failed: {committed}");
 
     assert_eq!(
-        rig_block(&signatures(&s), "mixedlib"),
+        rig_block(&signatures(s), "mixedlib"),
         " mixedlib\n  m\n   here <x:int> <out:int>\n   deep\n    down <y:int> <out:int>\n",
         "a mixed module needs no marker: `here` is a call because it CARRIES the \
          two signature groups, so a reader knows the module path ended at `m` \
@@ -264,7 +270,7 @@ fn a_mixed_module_states_its_own_call_separator() {
 #[tested]
 fn an_author_heads_its_group_exactly_once() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     for leaf in ["onelib", "twolib"] {
         let src = t.temp_dir().join(leaf);
         let name = format!("sourcetrait/{leaf}");
@@ -279,7 +285,7 @@ fn an_author_heads_its_group_exactly_once() {
         let committed = s.commit(&name);
         assert!(!has_error(&committed), "commit {name} failed: {committed}");
     }
-    let block = signatures(&s);
+    let block = signatures(s);
     let heads = block.lines().filter(|l| *l == "sourcetrait").count();
     assert_eq!(
         heads, 1,

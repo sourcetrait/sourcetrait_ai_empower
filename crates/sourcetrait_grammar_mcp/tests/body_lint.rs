@@ -1,9 +1,17 @@
 use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, has_kind};
+use sourcetrait_common::testing::prelude::*;
+
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .setup(|_| TestServer::new())
+});
 
 #[test]
 fn lint_rejects_run_hardcoded_path() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"out": "int"}),
@@ -15,7 +23,7 @@ fn lint_rejects_run_hardcoded_path() {
 
 #[test]
 fn lint_rejects_run_denied_external() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"out": "int"}),
@@ -27,7 +35,7 @@ fn lint_rejects_run_denied_external() {
 
 #[test]
 fn lint_passes_clean_run() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"x": "int"}),
         json!({"out": "int"}),
@@ -39,7 +47,7 @@ fn lint_passes_clean_run() {
 
 #[test]
 fn lint_aggregates_multiple_violations() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"out": "int"}),
@@ -52,7 +60,7 @@ fn lint_aggregates_multiple_violations() {
 
 #[test]
 fn lint_interact_rejects_hardcoded_path() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.interact(
         json!({"noop": "int"}),
         json!({"out": "int"}),
@@ -64,7 +72,7 @@ fn lint_interact_rejects_hardcoded_path() {
 
 #[test]
 fn lint_interact_rejects_denied_external() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.interact(
         json!({"noop": "int"}),
         json!({"out": "int"}),

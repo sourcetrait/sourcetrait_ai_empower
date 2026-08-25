@@ -14,7 +14,99 @@ use sourcetrait_grammar_mcp::guts::{
 };
 use sourcetrait_common::testing::prelude::*;
 
-static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
+/// One shared in-process server per test binary (substrate init must not race
+/// itself). Every case below mutates or reads the ONE persisted purview table
+/// and the ONE session view - incremental mutations of shared state - so they
+/// run as one Stepper-sequenced test. The id-refusal cases never load the
+/// table and stay parallel.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .using_temp_dir()
+    .setup(|_| TestServer::new())
+});
+
+#[tested]
+fn purview_state_is_sequenced() {
+    testing::Stepper::builder("purview_state")
+        .init(|_t, _o: ()| testing::StepState((), ()))
+        .step("a_fresh_namespace_starts_at_default_seeing_everything", |t, s, p| {
+            a_fresh_namespace_starts_at_default_seeing_everything(t);
+            testing::StepState(s, p)
+        })
+        .step("deleting_default_resets_it_rather_than_removing_it", |t, s, p| {
+            deleting_default_resets_it_rather_than_removing_it(t);
+            testing::StepState(s, p)
+        })
+        .step("configure_writes_the_namespace_meta_file_and_reads_back", |t, s, p| {
+            configure_writes_the_namespace_meta_file_and_reads_back(t);
+            testing::StepState(s, p)
+        })
+        .step("configure_returns_everything_the_purview_reveals", |t, s, p| {
+            configure_returns_everything_the_purview_reveals(t);
+            testing::StepState(s, p)
+        })
+        .step("an_empty_pattern_list_deletes_the_purview", |t, s, p| {
+            an_empty_pattern_list_deletes_the_purview(t);
+            testing::StepState(s, p)
+        })
+        .step("the_current_view_filters_what_info_reports", |t, s, p| {
+            the_current_view_filters_what_info_reports(t);
+            testing::StepState(s, p)
+        })
+        .step("blinders_render_another_purview_without_changing_the_current_one", |t, s, p| {
+            blinders_render_another_purview_without_changing_the_current_one(t);
+            testing::StepState(s, p)
+        })
+        .step("an_alias_names_the_same_purview_as_a_bare_id", |t, s, p| {
+            an_alias_names_the_same_purview_as_a_bare_id(t);
+            testing::StepState(s, p)
+        })
+        .step("setting_the_view_replaces_it_and_an_empty_list_means_default", |t, s, p| {
+            setting_the_view_replaces_it_and_an_empty_list_means_default(t);
+            testing::StepState(s, p)
+        })
+        .step("extending_is_additive_and_reveals_only_what_was_not_visible", |t, s, p| {
+            extending_is_additive_and_reveals_only_what_was_not_visible(t);
+            testing::StepState(s, p)
+        })
+        .step("naming_an_unknown_purview_is_refused", |t, s, p| {
+            naming_an_unknown_purview_is_refused(t);
+            testing::StepState(s, p)
+        })
+        .step("a_purview_may_hold_an_exact_call_as_well_as_patterns", |t, s, p| {
+            a_purview_may_hold_an_exact_call_as_well_as_patterns(t);
+            testing::StepState(s, p)
+        })
+        .step("the_dot_pattern_inspects_the_current_purview", |t, s, p| {
+            the_dot_pattern_inspects_the_current_purview(t);
+            testing::StepState(s, p)
+        })
+        .step("a_reference_expands_only_when_filtering_and_a_cycle_flattens", |t, s, p| {
+            a_reference_expands_only_when_filtering_and_a_cycle_flattens(t);
+            testing::StepState(s, p)
+        })
+        .step("a_dangling_reference_is_pruned_like_any_other_pattern", |t, s, p| {
+            a_dangling_reference_is_pruned_like_any_other_pattern(t);
+            testing::StepState(s, p)
+        })
+        .step("a_dangling_pattern_is_pruned_when_the_table_is_next_written", |t, s, p| {
+            a_dangling_pattern_is_pruned_when_the_table_is_next_written(t);
+            testing::StepState(s, p)
+        })
+        .step("a_purview_pruned_down_to_nothing_is_dropped_rather_than_left_empty", |t, s, p| {
+            a_purview_pruned_down_to_nothing_is_dropped_rather_than_left_empty(t);
+            testing::StepState(s, p)
+        })
+        .step("installing_adds_the_rig_to_default_without_narrowing_the_view", |t, s, p| {
+            installing_adds_the_rig_to_default_without_narrowing_the_view(t);
+            testing::StepState(s, p)
+        })
+        .step("uninstalling_drops_its_pattern_from_every_purview", |t, s, p| {
+            uninstalling_drops_its_pattern_from_every_purview(t);
+            testing::StepState(s, p)
+        })
+        .finalize()
+        .run(TESTING.as_testable(), ());
+}
 
 /// Commit a one-call rig, so a purview has something concrete to include or
 /// exclude.
@@ -77,12 +169,10 @@ fn signatures(env: &serde_json::Value) -> &str {
     env["signatures"].as_str().expect("signatures block")
 }
 
-#[tested]
-fn a_fresh_namespace_starts_at_default_seeing_everything() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvone"), "sourcetrait/pvone");
+fn a_fresh_namespace_starts_at_default_seeing_everything(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvone"), "sourcetrait/pvone");
 
     let info = s.info();
     assert_eq!(info["purview"][0][0].as_str(), Some("default"));
@@ -94,33 +184,29 @@ fn a_fresh_namespace_starts_at_default_seeing_everything() {
     );
     assert!(signatures(&info).contains("pvone"), "got {info}");
     assert!(
-        patterns_of(&s, "default").is_some(),
+        patterns_of(s, "default").is_some(),
         "and it is really PERSISTED, not synthesized on read",
     );
 }
 
-#[tested]
-fn deleting_default_resets_it_rather_than_removing_it() {
-    let _t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
+fn deleting_default_resets_it_rather_than_removing_it(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
 
     let env = s.purview_configure("default", &[]);
     assert!(!has_error(&env), "configure failed: {env}");
     assert_eq!(
-        patterns_of(&s, "default"),
+        patterns_of(s, "default"),
         Some(vec!["*".to_string()]),
         "an empty list DELETES any other purview, but `default` has no \
          not-existing state - it resets to what startup would write",
     );
 }
 
-#[tested]
-fn configure_writes_the_namespace_meta_file_and_reads_back() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvtwo"), "sourcetrait/pvtwo");
+fn configure_writes_the_namespace_meta_file_and_reads_back(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvtwo"), "sourcetrait/pvtwo");
 
     let env = s.purview_configure("iter/one", &["sourcetrait/pvtwo:"]);
     assert!(!has_error(&env), "configure failed: {env}");
@@ -136,17 +222,15 @@ fn configure_writes_the_namespace_meta_file_and_reads_back() {
     // renders a string bare or quoted by content, so raw text is never the
     // thing to assert on.
     assert_eq!(
-        patterns_of(&s, "iter/one"),
+        patterns_of(s, "iter/one"),
         Some(vec!["sourcetrait/pvtwo:".to_string()]),
     );
 }
 
-#[tested]
-fn configure_returns_everything_the_purview_reveals() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvshow"), "sourcetrait/pvshow");
+fn configure_returns_everything_the_purview_reveals(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvshow"), "sourcetrait/pvshow");
 
     // NOT in view - the session is on `default` - and it still reports, because
     // the point is to CHECK the configuration you just wrote.
@@ -162,12 +246,10 @@ fn configure_returns_everything_the_purview_reveals() {
     );
 }
 
-#[tested]
-fn an_empty_pattern_list_deletes_the_purview() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvthree"), "sourcetrait/pvthree");
+fn an_empty_pattern_list_deletes_the_purview(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvthree"), "sourcetrait/pvthree");
 
     let _ = s.purview_configure("gone/soon", &["sourcetrait/pvthree:"]);
     let after = s.purview_configure("gone/soon", &[]);
@@ -177,12 +259,12 @@ fn an_empty_pattern_list_deletes_the_purview() {
         None,
         "a deleted purview reveals nothing, so `signatures` is null; got {after}",
     );
-    assert!(patterns_of(&s, "gone/soon").is_none(), "and the row is gone");
+    assert!(patterns_of(s, "gone/soon").is_none(), "and the row is gone");
 }
 
 #[test]
 fn derived_and_malformed_ids_are_refused() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     for id in [".", "*"] {
         let env = s.purview_configure(id, &["*"]);
         assert_eq!(
@@ -198,13 +280,11 @@ fn derived_and_malformed_ids_are_refused() {
     }
 }
 
-#[tested]
-fn the_current_view_filters_what_info_reports() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvseen"), "sourcetrait/pvseen");
-    commit_rig(&s, &t.temp_dir().join("pvhidden"), "sourcetrait/pvhidden");
+fn the_current_view_filters_what_info_reports(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvseen"), "sourcetrait/pvseen");
+    commit_rig(s, &t.temp_dir().join("pvhidden"), "sourcetrait/pvhidden");
 
     let _ = s.purview_configure("default", &["sourcetrait/pvseen:"]);
     let info = s.info();
@@ -217,13 +297,11 @@ fn the_current_view_filters_what_info_reports() {
     );
 }
 
-#[tested]
-fn blinders_render_another_purview_without_changing_the_current_one() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvmine"), "sourcetrait/pvmine");
-    commit_rig(&s, &t.temp_dir().join("pvtheirs"), "sourcetrait/pvtheirs");
+fn blinders_render_another_purview_without_changing_the_current_one(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvmine"), "sourcetrait/pvmine");
+    commit_rig(s, &t.temp_dir().join("pvtheirs"), "sourcetrait/pvtheirs");
 
     let _ = s.purview_configure("default", &["sourcetrait/pvmine:"]);
     let _ = s.purview_configure("sub/agent", &["sourcetrait/pvtheirs:"]);
@@ -239,12 +317,10 @@ fn blinders_render_another_purview_without_changing_the_current_one() {
     assert_eq!(mine["purview"][0][0].as_str(), Some("default"));
 }
 
-#[tested]
-fn an_alias_names_the_same_purview_as_a_bare_id() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvalias"), "sourcetrait/pvalias");
+fn an_alias_names_the_same_purview_as_a_bare_id(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvalias"), "sourcetrait/pvalias");
     let _ = s.purview_configure("aliased", &["sourcetrait/pvalias:"]);
 
     let bare = s.info_as(&["aliased"]);
@@ -257,12 +333,10 @@ fn an_alias_names_the_same_purview_as_a_bare_id() {
     );
 }
 
-#[tested]
-fn setting_the_view_replaces_it_and_an_empty_list_means_default() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvset"), "sourcetrait/pvset");
+fn setting_the_view_replaces_it_and_an_empty_list_means_default(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvset"), "sourcetrait/pvset");
     let _ = s.purview_configure("only/set", &["sourcetrait/pvset:"]);
 
     let env = s.purview(&["only/set"]);
@@ -285,13 +359,11 @@ fn setting_the_view_replaces_it_and_an_empty_list_means_default() {
     );
 }
 
-#[tested]
-fn extending_is_additive_and_reveals_only_what_was_not_visible() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvbase"), "sourcetrait/pvbase");
-    commit_rig(&s, &t.temp_dir().join("pvextra"), "sourcetrait/pvextra");
+fn extending_is_additive_and_reveals_only_what_was_not_visible(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvbase"), "sourcetrait/pvbase");
+    commit_rig(s, &t.temp_dir().join("pvextra"), "sourcetrait/pvextra");
     let _ = s.purview_configure("base", &["sourcetrait/pvbase:"]);
     let _ = s.purview_configure("extra", &["sourcetrait/pvextra:"]);
     // A DIFFERENT id naming a rig `base` already covers.
@@ -320,9 +392,8 @@ fn extending_is_additive_and_reveals_only_what_was_not_visible() {
     );
 }
 
-#[test]
-fn naming_an_unknown_purview_is_refused() {
-    let s = TestServer::new();
+fn naming_an_unknown_purview_is_refused(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
     for env in [s.purview_extend(&["never/configured"]), s.purview(&["never/configured"])] {
         assert_eq!(
             error_kind(&env),
@@ -334,12 +405,10 @@ fn naming_an_unknown_purview_is_refused() {
     }
 }
 
-#[tested]
-fn a_purview_may_hold_an_exact_call_as_well_as_patterns() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvexact"), "sourcetrait/pvexact");
+fn a_purview_may_hold_an_exact_call_as_well_as_patterns(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvexact"), "sourcetrait/pvexact");
 
     let _ = s.purview_configure("default", &["sourcetrait/pvexact:m:go"]);
     let info = s.info();
@@ -351,13 +420,11 @@ fn a_purview_may_hold_an_exact_call_as_well_as_patterns() {
     );
 }
 
-#[tested]
-fn the_dot_pattern_inspects_the_current_purview() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvdot"), "sourcetrait/pvdot");
-    commit_rig(&s, &t.temp_dir().join("pvnotdot"), "sourcetrait/pvnotdot");
+fn the_dot_pattern_inspects_the_current_purview(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvdot"), "sourcetrait/pvdot");
+    commit_rig(s, &t.temp_dir().join("pvnotdot"), "sourcetrait/pvnotdot");
     let _ = s.purview_configure("default", &["sourcetrait/pvdot:"]);
 
     let dot = s.inspect(".");
@@ -374,12 +441,10 @@ fn the_dot_pattern_inspects_the_current_purview() {
     assert_eq!(block, signatures(&info), "and `.` is the SAME view info() reports");
 }
 
-#[tested]
-fn a_reference_expands_only_when_filtering_and_a_cycle_flattens() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvref"), "sourcetrait/pvref");
+fn a_reference_expands_only_when_filtering_and_a_cycle_flattens(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvref"), "sourcetrait/pvref");
 
     let _ = s.purview_configure("base", &["sourcetrait/pvref:"]);
     // `@chain` pointing at its own purview is LEGAL - the visited set makes the
@@ -387,7 +452,7 @@ fn a_reference_expands_only_when_filtering_and_a_cycle_flattens() {
     let env = s.purview_configure("chain", &["@base", "@chain"]);
     assert!(!has_error(&env), "a cycle is legal to write: {env}");
     assert_eq!(
-        patterns_of(&s, "chain"),
+        patterns_of(s, "chain"),
         Some(vec!["@base".to_string(), "@chain".to_string()]),
         "reports stay RAW - a reference is stored and shown verbatim, never \
          expanded for display",
@@ -403,16 +468,14 @@ fn a_reference_expands_only_when_filtering_and_a_cycle_flattens() {
     );
 }
 
-#[tested]
-fn a_dangling_reference_is_pruned_like_any_other_pattern() {
-    let _t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
+fn a_dangling_reference_is_pruned_like_any_other_pattern(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
 
     let env = s.purview_configure("orphan", &["@nosuch", "*"]);
     assert!(!has_error(&env), "configure failed: {env}");
     assert_eq!(
-        patterns_of(&s, "orphan"),
+        patterns_of(s, "orphan"),
         Some(vec!["*".to_string()]),
         "a reference to a purview with no row is a dangling namepath pattern, \
          and the design prunes those on detection; `*` needs nothing and stays",
@@ -421,7 +484,7 @@ fn a_dangling_reference_is_pruned_like_any_other_pattern() {
 
 #[test]
 fn a_reference_to_a_derived_purview_is_refused() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     for value in ["@.", "@*"] {
         let env = s.purview_configure("derived/ref", &[value]);
         assert_eq!(
@@ -433,43 +496,37 @@ fn a_reference_to_a_derived_purview_is_refused() {
     }
 }
 
-#[tested]
-fn a_dangling_pattern_is_pruned_when_the_table_is_next_written() {
-    let _t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
+fn a_dangling_pattern_is_pruned_when_the_table_is_next_written(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
 
     let env = s.purview_configure("ghosts", &["humbletodd/", "*"]);
     assert!(!has_error(&env), "configure failed: {env}");
     assert_eq!(
-        patterns_of(&s, "ghosts"),
+        patterns_of(s, "ghosts"),
         Some(vec!["*".to_string()]),
         "an author with no installed rig DANGLES and is dropped on detection",
     );
 }
 
-#[tested]
-fn a_purview_pruned_down_to_nothing_is_dropped_rather_than_left_empty() {
-    let _t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
+fn a_purview_pruned_down_to_nothing_is_dropped_rather_than_left_empty(_t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
 
     let env = s.purview_configure("all/ghosts", &["humbletodd/"]);
     assert!(!has_error(&env), "configure failed: {env}");
     assert!(
-        patterns_of(&s, "all/ghosts").is_none(),
+        patterns_of(s, "all/ghosts").is_none(),
         "every pattern dangled, so nothing is left to configure - and an empty \
          list is ALREADY the delete operation, so keeping the row would be a \
          state the tool surface cannot otherwise produce; got {env}",
     );
 }
 
-#[tested]
-fn installing_adds_the_rig_to_default_without_narrowing_the_view() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
-    commit_rig(&s, &t.temp_dir().join("pvprior"), "sourcetrait/pvprior");
+fn installing_adds_the_rig_to_default_without_narrowing_the_view(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
+    commit_rig(s, &t.temp_dir().join("pvprior"), "sourcetrait/pvprior");
 
     let src = t.temp_dir().join("pvfresh");
     write_source(&src, "mod.nu", "export module m\n");
@@ -482,7 +539,7 @@ fn installing_adds_the_rig_to_default_without_narrowing_the_view() {
     let installed = s.rig("install", "sourcetrait/pvfresh", src.to_str().unwrap());
     assert!(!has_error(&installed), "install failed: {installed}");
 
-    let patterns = patterns_of(&s, "default").expect("default always has a row");
+    let patterns = patterns_of(s, "default").expect("default always has a row");
     assert!(
         patterns.contains(&"*".to_string())
             && patterns.contains(&"sourcetrait/pvfresh:".to_string()),
@@ -495,19 +552,17 @@ fn installing_adds_the_rig_to_default_without_narrowing_the_view() {
     assert!(block.contains("pvfresh") && block.contains("pvprior"), "nothing left view");
 }
 
-#[tested]
-fn uninstalling_drops_its_pattern_from_every_purview() {
-    let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
-    reset_purviews(&s);
+fn uninstalling_drops_its_pattern_from_every_purview(t: &testing::Testable<'_, '_, '_>) {
+    let s = TESTING.harness();
+    reset_purviews(s);
     let src = t.temp_dir().join("pvtemp");
-    commit_rig(&s, &src, "sourcetrait/pvtemp");
+    commit_rig(s, &src, "sourcetrait/pvtemp");
     let _ = s.purview_configure("holds/it", &["sourcetrait/pvtemp:", "*"]);
 
     let removed = s.rig("uninstall", "sourcetrait/pvtemp", src.to_str().unwrap());
     assert!(!has_error(&removed), "uninstall failed: {removed}");
     assert_eq!(
-        patterns_of(&s, "holds/it"),
+        patterns_of(s, "holds/it"),
         Some(vec!["*".to_string()]),
         "the uninstalled rig's pattern is gone and `*` - which needs no \
          particular rig - survives",

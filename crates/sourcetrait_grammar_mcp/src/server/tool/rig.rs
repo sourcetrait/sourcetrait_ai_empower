@@ -179,6 +179,9 @@ fn purview_add_rig(
     rig: &str,
     current_ids: &[String],
 ) {
+    // The purview table is namespace meta beside the rigs repo: its
+    // load-mutate-save is not atomic, so it rides the same repo-wide lock.
+    let _repo = rigs_repo_lock();
     let pattern = format!("{rig}:");
     let mut rows = match load_purviews() {
         Ok(rows) => rows.unwrap_or_default(),
@@ -208,6 +211,7 @@ fn purview_add_rig(
 
 /// Drop an uninstalled rig from every purview that named it.
 fn purview_remove_rig(rig: &str) {
+    let _repo = rigs_repo_lock();
     let mut rows = match load_purviews() {
         Ok(rows) => rows.unwrap_or_default(),
         Err(e) => {

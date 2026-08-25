@@ -2,11 +2,17 @@ use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, has_error, write_tree};
 use sourcetrait_common::testing::prelude::*;
 
-static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .using_temp_dir()
+    .setup(|_| TestServer::new())
+});
 
 #[test]
 fn run_body_sees_nonce_matching_envelope() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"seen": "string"}),
@@ -20,7 +26,7 @@ fn run_body_sees_nonce_matching_envelope() {
 
 #[test]
 fn run_nested_helper_inherits_nonce() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"seen": "string"}),
@@ -34,7 +40,7 @@ fn run_nested_helper_inherits_nonce() {
 #[tested]
 fn call_target_sees_nonce() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("noncelib");
     let _ = s.rig("new", "sourcetrait/noncelib", src.to_str().unwrap());
     write_tree(
@@ -57,7 +63,7 @@ fn call_target_sees_nonce() {
 
 #[test]
 fn interact_body_sees_nonce() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.interact(
         json!({"noop": "int"}),
         json!({"seen": "string"}),
@@ -70,7 +76,7 @@ fn interact_body_sees_nonce() {
 
 #[test]
 fn interact_nonce_is_fresh_per_call_and_keeps_env_persistence() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let a = s.interact(
         json!({"noop": "int"}),
         json!({"seen": "string"}),

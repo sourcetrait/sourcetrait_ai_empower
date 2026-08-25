@@ -21,11 +21,19 @@ shorthand to disambiguate.
 ## struct RigLocks
 The outer mutex guards only MAP MUTATION; the per-rig `RwLock` is what serializes work.
 Call takes a READ lock, and commit / new / install / uninstall take WRITE, so different rigs
-are fully parallel.
+are fully parallel on the read/validate side.
 
-The rigs git repo has no host-side lock of its own - git's index locking serializes the
-subprocess commits - and namespace isolation per `(id, namespace)` means there is no
-cross-process race to guard either.
+## static RIGS_REPO_LOCK / fn rigs_repo_lock
+The repo-wide write lock the per-rig locks cannot supply. The earlier belief that "git's
+index locking serializes the subprocess commits" was WRONG and measured so: git fails a
+second writer on an existing `.git/index.lock` immediately rather than waiting, so two
+concurrent lifecycle ops on DIFFERENT rigs through one host spuriously failed (five of five
+parallel integration sweeps, `index.lock` in each). One repo, one lock, held only across the
+canonical-tree wipe/copy plus the git section - validation is the expensive half and stays
+outside the hold, so different-rig validations still parallelize. The purview table rides
+the same lock (`purview_add_rig`/`purview_remove_rig`): it is namespace meta beside the
+repo whose load-mutate-save is not atomic. Namespace isolation per `(id, namespace)` still
+means no cross-process race to guard; this lock is for one process's own concurrency.
 
 ### fn hydrate_from_disk
 Pre-creates a lock per registered rig at startup, keying on the meta file's presence, so a

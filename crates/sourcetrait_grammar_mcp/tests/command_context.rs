@@ -1,5 +1,13 @@
 use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, lint_engine_reuses_until_the_registry_moves};
+use sourcetrait_common::testing::prelude::*;
+
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .setup(|_| TestServer::new())
+});
 
 /// The validator engine is rebuilt on a plugin-registry change, not on every
 /// call. Integration rather than unit: constructing one builds a whole shell
@@ -18,7 +26,7 @@ fn lint_engine_does_not_rebuild_when_the_registry_is_unchanged() {
 /// family; interact() carries both.
 #[test]
 fn run_has_extra_lacks_plugin() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({}),
         json!({"bits": "bool", "snake": "bool", "plugin": "bool", "bits_and": "int"}),
@@ -33,7 +41,7 @@ fn run_has_extra_lacks_plugin() {
 
 #[test]
 fn interact_has_extra_and_plugin() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.interact(
         json!({}),
         json!({"bits": "bool", "plugin": "bool"}),

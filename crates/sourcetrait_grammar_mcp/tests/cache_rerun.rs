@@ -1,9 +1,17 @@
 use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, error_kind, has_error};
+use sourcetrait_common::testing::prelude::*;
+
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .setup(|_| TestServer::new())
+});
 
 #[test]
 fn run_envelope_has_nonce_and_no_rerun_id() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"x": "int"}),
         json!({"out": "int"}),
@@ -19,7 +27,7 @@ fn run_envelope_has_nonce_and_no_rerun_id() {
 
 #[test]
 fn timeout_then_rerun_recovers() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let timed = s.run_timeout(
         json!({"x": "int"}),
         json!({"out": "int"}),
@@ -38,7 +46,7 @@ fn timeout_then_rerun_recovers() {
 
 #[test]
 fn rerun_by_nonce_roundtrips_with_new_args() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let first = s.run(
         json!({"x": "int"}),
         json!({"out": "int"}),
@@ -61,21 +69,21 @@ fn rerun_by_nonce_roundtrips_with_new_args() {
 
 #[test]
 fn rerun_unknown_nonce_errors() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.rerun("abcDEF123456", json!({"x": 0}));
     assert!(has_error(&env), "a base62 nonce with no cached body should error; got {env}");
 }
 
 #[test]
 fn rerun_rejects_non_base62_nonce() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.rerun("../etc/passwd", json!({"x": 0}));
     assert!(has_error(&env), "a non-base62 nonce should error; got {env}");
 }
 
 #[test]
 fn interact_envelope_has_no_rerun_id() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.interact(
         json!({"x": "int"}),
         json!({"out": "int"}),

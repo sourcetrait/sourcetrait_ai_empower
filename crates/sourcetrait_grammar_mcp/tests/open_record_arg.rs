@@ -2,11 +2,17 @@ use serde_json::json;
 use sourcetrait_grammar_mcp::guts::{TestServer, error_text, has_error, write_tree};
 use sourcetrait_common::testing::prelude::*;
 
-static TESTING: testing::Module = testing::module!(Integration, { .using_temp_dir() });
+/// One shared in-process server per test binary: constructing a TestServer runs
+/// the namespace substrate (keypair, rigs repo git config), which must not race
+/// itself across parallel tests.
+static TESTING: testing::ModuleWith<TestServer> = testing::module_with!(Integration, {
+    .using_temp_dir()
+    .setup(|_| TestServer::new())
+});
 
 #[test]
 fn run_binds_open_record_arg() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"fill": {}}),
         json!({"cols": "int"}),
@@ -18,7 +24,7 @@ fn run_binds_open_record_arg() {
 
 #[test]
 fn run_binds_empty_open_record_arg() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"fill": {}}),
         json!({"cols": "int"}),
@@ -30,7 +36,7 @@ fn run_binds_empty_open_record_arg() {
 
 #[test]
 fn run_rejects_non_record_open_arg() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"fill": {}}),
         json!({"cols": "int"}),
@@ -42,7 +48,7 @@ fn run_rejects_non_record_open_arg() {
 
 #[test]
 fn run_result_open_record_still_denied() {
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let env = s.run(
         json!({"noop": "int"}),
         json!({"fill": {}}),
@@ -56,7 +62,7 @@ fn run_result_open_record_still_denied() {
 #[tested]
 fn commit_inspect_and_call_open_record_arg_field() {
     let t = testing::test!({ .using_temp_dir() });
-    let s = TestServer::new();
+    let s = TESTING.harness();
     let src = t.temp_dir().join("openlib");
     let _ = s.rig("new", "sourcetrait/openlib", src.to_str().unwrap());
     write_tree(

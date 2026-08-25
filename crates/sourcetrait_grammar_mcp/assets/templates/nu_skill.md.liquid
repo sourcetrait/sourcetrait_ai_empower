@@ -200,10 +200,10 @@ the eval that spawned it.
   rather than in the return: it does not touch fd 1, does not have to fit in the result
   envelope, and keeps types. Read it back afterwards from
   `<cache>/<kind>/<nonce>/debug.nuonl`.
-- `grimm channel_send <model> <event> [attached]` -> the message id. The notification
+- `grimm channel send <model> <event> [attached]` -> the message id. The notification
   lane (below). It stays within your OWN session: it emits only onto this host's own
   Channel/Monitor and loops back to you, and does NOT cross a remote link. To reach or
-  reply to an agent on ANOTHER host, use `grimm remote_channel_send` (below), never this.
+  reply to an agent on ANOTHER host, use `grimm remote channel send` (below), never this.
 - `grimm get_config_all` -> the whole config record, mirroring the TOML's two tables:
   `channel` (`port`, `cert_dir`, the four spam thresholds) and `supervisor` (the four
   warning lines). Values are live rather than as-launched - the channel half reflects
@@ -215,7 +215,7 @@ the eval that spawned it.
   cell path, since a string variable binds as one member, dots included.
 - `grimm pin_config <cfg_key> <process_id> <value>` -> nothing. Holds a setting at a
   value for the lifetime of a process, then lets it lapse.
-- `grimm remote_channel_send <mcp_nom> <model> <event>` -> the message id. Deliver a
+- `grimm remote channel send <mcp_nom> <model> <event>` -> the message id. Deliver a
   Channel packet to a LINKED remote host's agent (RemoteChannel, below); it surfaces on
   that agent's own Channel Monitor as `from = mcp/remote/<your_nom>`. The FIRST arg is the
   PEER's `mcp_nom` - what `remote_channels` reports as `remote_mcp_nom`, and what a relayed
@@ -263,7 +263,7 @@ here is a tiny summary"; you fetch the real data yourself. Put anything bulky in
 file, or use `grimm dbg` when it is only a trace.
 
 Keep an event small - it is a state summary, not a payload. A large event auto-spills:
-when a `channel_send` / `remote_channel_send*` event exceeds the size the host delivers
+when a `channel send` / `remote channel send` (or `_send_with`) event exceeds the size the host delivers
 inline, the host writes the full event to a file and puts a compact pointer
 `{spilled_event_path, event_bytes}` on the wire in its place, so the content always
 survives. When you receive an event carrying `spilled_event_path`, read the full event
@@ -303,7 +303,7 @@ The packet:
 
 `from` is host-stamped and cannot be forged: `mcp` for the host, `thread/<nonce>` for
 an eval - and that nonce is the emitting call's own, so a packet traces back to its
-run. `mcp/` IS RESERVED for host-originated models, so `grimm channel_send` refuses a
+run. `mcp/` IS RESERVED for host-originated models, so `grimm channel send` refuses a
 model under it; pick your own path (`myproject/thing/Changed`).
 
 ALWAYS `from nuon` a packet; never pattern-match its text. NUON renders a string bare
@@ -362,13 +362,13 @@ mirror):
    dials; a redundant listener open now fails synchronously with a clean `address already
    in use` rather than a confusing async error.
 3. Learn the peer's `mcp_nom` (it rides the Connected packet; each host also reports its
-   own via `info()`), then send from a body: `grimm remote_channel_send <peer_nom>
-   <model> <event>` (or `_with` for files). Watch your OWN Channel for `mcp/remote/Sent
+   own via `info()`), then send from a body: `grimm remote channel send <peer_nom>
+   <model> <event>` (or `grimm remote_channel_send_with` for files). Watch your OWN Channel for `mcp/remote/Sent
    {id, mcp_nom}` (the WHOLE send wrote - every file plus the message - there is NO
    application ack) or `Unsent {id, mcp_nom, error}`.
 4. The PEER'S agent sees the delivery on ITS Channel Monitor as a normal packet, `from =
-   mcp/remote/<your_nom>`, and REPLIES with its own `remote_channel_send` addressed to your
-   nom (the `<nom>` in that `from`) - NOT `channel_send`, which would only loop back on its
+   mcp/remote/<your_nom>`, and REPLIES with its own `remote channel send` addressed to your
+   nom (the `<nom>` in that `from`) - NOT `channel send`, which would only loop back on its
    own session Channel and never reach you. That round-trip IS the cross-agent smoke test.
 5. `remote_channel_close(alias)` tears the link down (emits `Disconnected`).
    `remote_channels()` returns two sets: `channels` (established links, `{alias,
@@ -1042,7 +1042,7 @@ literal - the hardcoded-path lint fires on it):
 glob ($args.root | path join "**" "*")
 ```
 
-Verified (nu 0.114.1): the result INCLUDES the root dir itself AND
+Verified (nu 0.115.1): the result INCLUDES the root dir itself AND
 returns files as well as directories (`**` and `**/*` behave the same).
 So for "every subdirectory BELOW <root>", filter to dirs and drop the
 root:
@@ -1908,7 +1908,7 @@ mcp_nom}` lands async on your Channel.
 No parameters. Returns `{channels, listening}`: `channels` is the established links, each
 `{alias, remote_mcp_nom, address}` alias-sorted; `listening` is the bound-but-unpaired
 listeners, each `{remote, address}` alias-sorted. `remote_mcp_nom` is the peer's nom - the
-first arg to `grimm remote_channel_send` (the `alias` is NOT). A bound listener shows only
+first arg to `grimm remote channel send` (the `alias` is NOT). A bound listener shows only
 under `listening` (no peer nom yet) and moves to `channels` on pairing.
 
 ## Purview scoping

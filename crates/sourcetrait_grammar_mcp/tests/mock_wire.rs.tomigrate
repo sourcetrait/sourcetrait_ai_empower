@@ -1,5 +1,5 @@
 use sourcetrait_common::testing::prelude::*;
-use sourcetrait_grammar_mcp::{self as mcp, prelude::*};
+use sourcetrait_grammar_mcp::{self as mcp};
 use std::{
     collections::HashMap, path::PathBuf, fs,
 };

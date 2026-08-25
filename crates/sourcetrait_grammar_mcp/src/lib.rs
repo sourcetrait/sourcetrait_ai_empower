@@ -7,9 +7,6 @@ pub(crate) mod reign {
     }
 }
 pub(crate) mod error;
-pub(crate) mod service {
-    pub(crate) mod service;
-}
 pub(crate) mod run;
 pub(crate) mod server {
     pub(crate) mod blocked;
@@ -138,7 +135,6 @@ pub(crate) use crate::{
     nu::FromValue,
     plugins::{list_registered_plugins, load_plugin_decls, registry_mtime},
     error::{Diagnostic, Severity, Source, error_to_call_result},
-    service::service::GrammarMcpService,
     server::{
         blocked::shadow_host_fatal_decls,
         cache::{
@@ -288,7 +284,7 @@ pub(crate) mod nu {
     pub(crate) use nu_json::Value as JsonValue;
     pub(crate) use nu_parser::parse;
     pub(crate) use nu_parser::{FlatShape, flatten_block};
-    pub(crate) use nu_path::nu_config_dir;
+    pub(crate) use nu_config::{CliOverrides, SystemEnv, resolve_paths};
     pub(crate) use nu_plugin_engine::load_plugin_file;
     pub(crate) use nu_protocol::{
         BlockId, Category, CollectionColumns, DeclId, FromValue, Module, PipelineData,
@@ -393,13 +389,6 @@ pub use crate::{
         GrammarMcpResult, GrammarMcpError,
     },
     run::{
-        run_main, run_with, start,
+        run_main, run_with
     },
-    service::service::GrammarMcpServiceTrait,
 };
-
-pub mod prelude {
-    pub use crate::{
-        GrammarMcpServiceTrait,
-    };
-}

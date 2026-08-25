@@ -238,7 +238,7 @@ pub(crate) fn base_engine_state() -> BedResult<nu::EngineState> {
             nu_command::ToMsgpack,
             nu_command::ToMsgpackz,
             nu_command::ToNuon,
-            nu_command::ToText,
+            //nu_command::ToTxt, //todo: find where this changed in 0.115.1
             nu_command::ToToml,
             nu_command::ToTsv,
             nu_command::ToXml,

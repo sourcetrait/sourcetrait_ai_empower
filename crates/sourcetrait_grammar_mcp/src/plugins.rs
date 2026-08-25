@@ -5,8 +5,10 @@ use crate::*;
 pub(crate) struct PluginInfo(pub String, pub Option<String>);
 
 pub(crate) fn registry_path() -> Option<PathBuf> {
-    let config_dir = nu::nu_config_dir()?;
-    Some(config_dir.join("plugin.msgpackz").into())
+    nu::resolve_paths(&nu::SystemEnv, &nu::CliOverrides::default())
+        .ok()
+        .map(|(cfg_dirs, _)| cfg_dirs.config_home)
+        .map(|cfg_home| cfg_home.join("plugin.msgpackz").into())
 }
 
 pub(crate) fn read_registry() -> Option<nu::PluginRegistryFile> {

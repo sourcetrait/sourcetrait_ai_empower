@@ -31,10 +31,6 @@ pub fn run_with(cli: Cli) -> process::ExitCode {
     run(cli)
 }
 
-pub async fn start(cli: Cli) -> GrammarMcpResult<impl GrammarMcpServiceTrait> {
-    Ok(GrammarMcpService{}) //todo
-}
-
 fn run(cli: Cli) -> process::ExitCode {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

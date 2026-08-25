@@ -1,6 +1,6 @@
 use crate::*;
 
-/// `grimm remote_channel_send <mcp_nom> <model> <event>` - a message, no files.
+/// `grimm remote channel send <mcp_nom> <model> <event>` - a message, no files.
 #[derive(Clone)]
 pub(crate) struct GrimmRemoteChannelSend;
 
@@ -182,7 +182,7 @@ fn shell_error(
     span: nu::Span,
 ) -> nu::ShellError {
     nu::GenericError::new(
-        format!("grimm remote_channel_send: {message}"),
+        format!("grimm remote channel send: {message}"),
         message.to_string(),
         span,
     )

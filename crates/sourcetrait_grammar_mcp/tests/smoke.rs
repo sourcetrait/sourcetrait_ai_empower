@@ -157,15 +157,31 @@ fn multi_call_stability_and_scoping() {
         );
         assert_eq!(env["result"]["out"].as_i64(), Some(i + 100), "call {i}: got {env}");
     }
+    // `scope commands` reports LOCAL scope as of nushell 0.115 (PR #18684), so an
+    // eval always sees its own template `__run` and that name cannot witness
+    // leakage. Probe with a name only THIS eval defines instead: visible to its
+    // own eval, and absent from a later eval unless the shared base was polluted.
+    let env = s.run(
+        json!({"noop": "int"}),
+        json!({"defined": "int"}),
+        json!({"noop": 0}),
+        "def __leak_probe [] { 0 }\n\
+         { defined: (scope commands | where name == \"__leak_probe\" | length) }",
+    );
+    assert_eq!(
+        env["result"]["defined"].as_i64(),
+        Some(1),
+        "a block-local def is visible to its own eval under 0.115 local scope; got {env}",
+    );
     let env = s.run(
         json!({"noop": "int"}),
         json!({"leaked": "int"}),
         json!({"noop": 0}),
-        "{ leaked: (scope commands | where name == \"__run\" | length) }",
+        "{ leaked: (scope commands | where name == \"__leak_probe\" | length) }",
     );
     assert_eq!(
         env["result"]["leaked"].as_i64(),
         Some(0),
-        "do-block scoping should keep __run out of the persistent EngineState; got {env}",
+        "an earlier eval's def must not reach a later eval's engine; got {env}",
     );
 }

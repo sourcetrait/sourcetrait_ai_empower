@@ -56,7 +56,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 serde_norway = { version = "0.9" }
 semver = { version = "1" }
-shellexpand = { version = "3", features = ["path"] }
+shellexpand = "3"
 rkyv = "0.8"
 snafu = "0.8"
 strum = { version = "0.27", features = ["derive"] }

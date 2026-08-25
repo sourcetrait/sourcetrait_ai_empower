@@ -431,39 +431,16 @@ pub(crate) fn default_work_dir(id: &str) -> PathBuf {
     BASE_DIRS.home_dir().join("proj").join("equip").join(id)
 }
 
-/// A `$VAR` value, honoring the XDG basedir spec fallbacks.
-fn var_or_xdg(name: &str) -> Result<String, String> {
-    if let Ok(value) = std::env::var(name)
-        && !value.is_empty()
-    {
-        return Ok(value);
-    }
-    let home = || BASE_DIRS.home_dir().to_string_lossy().into_owned();
-    Ok(match name {
-        "XDG_DATA_HOME" => format!("{}/.local/share", home()),
-        "XDG_CONFIG_HOME" => format!("{}/.config", home()),
-        "XDG_STATE_HOME" => format!("{}/.local/state", home()),
-        "XDG_CACHE_HOME" => format!("{}/.cache", home()),
-        _ => return Err(format!("environment variable ${name} is not set")),
-    })
-}
-
-/// Expand a leading `~` or `$VAR` segment so config files stay portable.
+/// Expand `~` and `$VAR` references so config files stay portable.
 pub(crate) fn expand_path(raw: &Path) -> Result<PathBuf, String> {
-    if raw == "~" {
-        return Ok(BASE_DIRS.home_dir().to_path_buf());
+    let lossy = raw.to_string_lossy();
+    if lossy.contains(['$', '~']) {
+        shellexpand::full(lossy.as_ref())
+            .map(|expanded| PathBuf::from(expanded.as_ref()))
+            .map_err(|e| format!("expand {}: ${}: {}", raw.display(), e.var_name, e.cause))
+    } else {
+        Ok(raw.to_path_buf())
     }
-    if let Ok(rest) = raw.strip_prefix("~/") {
-        return Ok(BASE_DIRS.home_dir().join(rest));
-    }
-    if let Ok(rest) = raw.strip_prefix("$") {
-        let (name, tail) = match rest.to_string_lossy().find('/') {
-            Some(split) => rest.to_str().expect("valid").split_at(split),
-            None => (rest.to_str().expect("valid"), ""),
-        };
-        return Ok(PathBuf::from(format!("{}{tail}", var_or_xdg(name)?)));
-    }
-    Ok(PathBuf::from(raw))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

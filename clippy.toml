@@ -1,0 +1,5 @@
+# Workspace lint configuration.
+
+# type_complexity retired: a compound return type is often the honest signature,
+# and a one-use `type` alias hides more than it says.
+type-complexity-threshold = 999999

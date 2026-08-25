@@ -32,12 +32,12 @@ fn consumer_connects_verifies_and_receives_a_packet() {
     );
     let mut c = Consumer::attach(host, &ch.ca);
 
-    // A body-driven grimm channel_send must arrive on the real WSS client.
+    // A body-driven grimm channel send must arrive on the real WSS client.
     let resp = c.host.run(json!({
         "args_schema": {},
         "result_schema": {"ok": "bool"},
         "args": {},
-        "body": "grimm channel_send \"test/Ping\" {msg: \"hello-wss\"}; {ok: true}",
+        "body": "grimm channel send \"test/Ping\" {msg: \"hello-wss\"}; {ok: true}",
     }));
     assert!(!has_error_path(&resp), "channel_send body failed: {resp}");
 
@@ -240,7 +240,7 @@ fn channel_send_spills_oversized_event() {
         "args_schema": {},
         "result_schema": {"ok": "bool"},
         "args": {},
-        "body": "grimm channel_send \"test/Big\" {marker: \"SPILL_MARKER_42\", blob: (1..3000 | each { \"x\" } | str join)}; {ok: true}",
+        "body": "grimm channel send \"test/Big\" {marker: \"SPILL_MARKER_42\", blob: (1..3000 | each { \"x\" } | str join)}; {ok: true}",
     }));
     assert!(!has_error_path(&resp), "channel_send body failed: {resp}");
 
@@ -318,9 +318,9 @@ fn mcp_nom(c: &mut Consumer) -> String {
         .to_string()
 }
 
-/// Drive `grimm remote_channel_send` from a body and return the message id.
+/// Drive `grimm remote channel send` from a body and return the message id.
 fn remote_send(c: &mut Consumer, peer_nom: &str, model: &str, event_body: &str) -> String {
-    let body = format!("let id = (grimm remote_channel_send $args.nom \"{model}\" {{{event_body}}}); {{id: $id}}");
+    let body = format!("let id = (grimm remote channel send $args.nom \"{model}\" {{{event_body}}}); {{id: $id}}");
     let resp = c.host.run(json!({
         "args_schema": {"nom": "string"},
         "result_schema": {"id": "string"},

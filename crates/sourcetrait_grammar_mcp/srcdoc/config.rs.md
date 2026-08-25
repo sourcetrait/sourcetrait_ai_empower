@@ -133,3 +133,13 @@ runs under.
 ## fn expand_path
 Expanding at the BOUNDARY is what makes an unresolvable variable a load-time
 error naming the variable, rather than a puzzle at first use much later.
+
+The expansion itself is `shellexpand::full` behind sourcetrait_common's guard
+idiom (see agnostic's `XdgDir::homed`): a solved utility is never re-implemented
+by hand, and the dependency's version spec mirrors common's (`"3"`, no
+features). A hand-rolled predecessor died twice here: its `&str -> &Path` port
+kept `strip_prefix("$")`, and `Path::strip_prefix` matches whole COMPONENTS, so
+the `$` branch could never fire and `$VAR` paths passed through literally. The
+retired `var_or_xdg` XDG fallbacks are gone deliberately: generic expansion
+invents no values - XDG defaulting is `XdgDir`'s concern - so an unset variable
+in a config path fails the load, which is the tested contract.

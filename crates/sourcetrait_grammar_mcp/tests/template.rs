@@ -76,18 +76,13 @@ fn run_source_multi_line_body() {
         "let y = ($args.x * 2)\n{ out: $y }",
         &nonce,
     );
-    let expected = indoc::formatdoc! {r#"
-        do {{
-            $env.NONCE = "{nonce_str}"
-            def __run [args: record<x: int>]: nothing -> record<out: int> {{
-                let y = ($args.x * 2)
-                {{ out: $y }}
-            }}
-            __run {{x: 3}}
-        }}
-        "#,
-        nonce_str = nonce_str,
-    };
+    // The body is spliced VERBATIM: continuation lines land at column 0 (plain
+    // format! interpolation), which is deliberate - re-indenting them would
+    // corrupt a body carrying a multi-line string literal. formatdoc cannot
+    // express this expectation (a column-0 line would zero its dedent).
+    let expected = format!(
+        "do {{\n    $env.NONCE = \"{nonce_str}\"\n    def __run [args: record<x: int>]: nothing -> record<out: int> {{\n        let y = ($args.x * 2)\n{{ out: $y }}\n    }}\n    __run {{x: 3}}\n}}\n",
+    );
     assert_eq!(got, expected);
     assert!(parses_clean(&got), "multi-line run source must parse clean:\n{got}");
 }

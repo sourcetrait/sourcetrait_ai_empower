@@ -4,7 +4,7 @@ use crate::*;
 const CLOSE_UNVERIFIED_EMIT: u16 = 1008;
 const UNVERIFIED_EMIT_REASON: &str = "emit before verification";
 
-/// `grimm channel_send <model> <event> [attached]` - the state-update lane.
+/// `grimm channel send <model> <event> [attached]` - the state-update lane.
 #[derive(Clone)]
 pub(crate) struct GrimmChannelSend {
     call: NuapiCall,
@@ -173,7 +173,7 @@ fn shell_error(
     span: nu::Span,
 ) -> nu::ShellError {
     nu::GenericError::new(
-        format!("grimm channel_send: {message}"),
+        format!("grimm channel send: {message}"),
         message.to_string(),
         span,
     )

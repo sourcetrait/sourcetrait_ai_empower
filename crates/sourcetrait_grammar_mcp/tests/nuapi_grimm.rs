@@ -41,7 +41,7 @@ fn dbg_appends_one_line_per_call() {
     assert_eq!(back["result"]["second_x"].as_i64(), Some(1), "got {back}");
 }
 
-/// `channel_send` is no longer stubbed to `dbg`: it is the real notification lane, so
+/// `channel send` is no longer stubbed to `dbg`: it is the real notification lane, so
 /// with no channel open it REFUSES rather than quietly writing a file. A written record
 /// nobody was told about is worse than no record.
 #[test]
@@ -51,7 +51,7 @@ fn channel_send_without_a_channel_refuses() {
         json!({}),
         json!({"ok": "bool"}),
         json!({}),
-        "grimm channel_send \"foo/bar/Car\" {state: \"done\"}\n{ ok: true }",
+        "grimm channel send \"foo/bar/Car\" {state: \"done\"}\n{ ok: true }",
     );
     assert!(has_error(&env), "an unopened channel must refuse; got {env}");
     let text = error_text(&env).to_lowercase();
@@ -112,7 +112,7 @@ fn a_body_cannot_claim_the_mcp_reservation() {
             json!({}),
             json!({"ok": "bool"}),
             json!({}),
-            &format!("grimm channel_send \"{model}\" {{x: 1}}\n{{ ok: true }}"),
+            &format!("grimm channel send \"{model}\" {{x: 1}}\n{{ ok: true }}"),
         );
         assert!(has_error(&env), "`{model}` should be refused; got {env}");
         assert!(

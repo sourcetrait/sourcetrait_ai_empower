@@ -179,8 +179,10 @@ four stay the basedir spec on both. `XDGX_ASSET_HOME` coincides with
 `XDG_DATA_HOME`'s default on the xdg spec - faithful, not a bug.
 
 `spec_default_for` is the pure core so the unit table test drives both specs
-explicitly and never reads the box's own environment; `spec_default` wraps it
-with the env-first base-spec read. `XDGX_SECRET_DATA_HOME`'s xdg-side value
-(`~/.secret/data`) is PROVISIONAL: the ruled spec covered the vendor four plus
-tmp and shm, so the secret tier's xdg-side default is inferred from the dotsys
-mapping, pending a ruling.
+explicitly; its one environment read is the secret arm's `xdg_data_home` - the
+xdg-side secret tier is RULED as `XDG_DATA_HOME/secret`, composing on the
+RESOLVED data home (the env value when set, else the data home's own spec
+default), so a system that relocated its data home carries its secret tier
+with it. The dotsys side stays the box layout, `~/.sys/.xdg/secret/data` -
+deliberately not `data/secret` under the relocated `.xdg` tree. `spec_default`
+wraps the core with the env-first base-spec read.

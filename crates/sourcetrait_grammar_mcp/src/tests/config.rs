@@ -176,7 +176,6 @@ fn the_xdg_and_xdgx_families_carry_spec_defaults() {
         ("XDGX_EXECUTE_HOME", ".local/bin"),
         ("XDGX_LIBRARY_HOME", ".local/lib"),
         ("XDGX_PACKAGE_HOME", ".local/pkg"),
-        ("XDGX_SECRET_DATA_HOME", ".secret/data"),
         ("XDGX_TMP_HOME", "tmp"),
     ] {
         assert_eq!(
@@ -185,6 +184,16 @@ fn the_xdg_and_xdgx_families_carry_spec_defaults() {
             "{var} must default under $HOME on the xdg base spec",
         );
     }
+    // The secret tier composes under the RESOLVED data home on the xdg spec:
+    // the env value when set, else XDG_DATA_HOME's own spec default.
+    let data_home = std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home.join(".local/share"));
+    assert_eq!(
+        crate::config::spec_default_for("XDGX_SECRET_DATA_HOME", "xdg"),
+        Some(data_home.join("secret")),
+        "the secret tier lives in XDG_DATA_HOME/secret on the xdg spec",
+    );
     for (var, home_relative) in [
         ("XDGX_ASSET_HOME", ".sys/local/share"),
         ("XDGX_EXECUTE_HOME", ".sys/local/bin"),

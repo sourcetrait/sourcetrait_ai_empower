@@ -477,6 +477,13 @@ pub(crate) fn spec_default_for(
         return Some(PathBuf::from("/dev/shm").join(default_id()));
     }
     let dotsys = base_spec == "dotsys";
+    if var == "XDGX_SECRET_DATA_HOME" {
+        return if dotsys {
+            home_dir().map(|home| PathBuf::from(home).join(".sys/.xdg/secret/data"))
+        } else {
+            xdg_data_home(base_spec).map(|data| data.join("secret"))
+        };
+    }
     let home_relative = match var {
         "XDG_CACHE_HOME" => ".cache",
         "XDG_CONFIG_HOME" => ".config",
@@ -488,13 +495,18 @@ pub(crate) fn spec_default_for(
         "XDGX_EXECUTE_HOME" => if dotsys { ".sys/local/bin" } else { ".local/bin" },
         "XDGX_LIBRARY_HOME" => if dotsys { ".sys/local/lib" } else { ".local/lib" },
         "XDGX_PACKAGE_HOME" => if dotsys { ".sys/local/pkg" } else { ".local/pkg" },
-        "XDGX_SECRET_DATA_HOME" => {
-            if dotsys { ".sys/.xdg/secret/data" } else { ".secret/data" }
-        }
         "XDGX_TMP_HOME" => "tmp",
         _ => return None,
     };
     home_dir().map(|home| PathBuf::from(home).join(home_relative))
+}
+
+/// XDG_DATA_HOME as the expansion resolves it: the env value, else its default.
+fn xdg_data_home(base_spec: &str) -> Option<PathBuf> {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| spec_default_for("XDG_DATA_HOME", base_spec))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
